@@ -1,0 +1,54 @@
+[package]
+name = "lume"
+version = "0.1.0"
+description = "A lightweight Windows productivity launcher."
+authors = ["Lume"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "lume_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+rusqlite = { version = "0.40", features = ["bundled"] }
+arboard = "3.6"
+pinyin = "0.11"
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Globalization",      # GetUserDefaultUILanguage (tray label locale)
+  "Win32_Graphics_Gdi",       # HBITMAP, GetDIBits, GetDC for icon conversion
+  "Win32_System_Com",         # CoInitializeEx / CoUninitialize
+  "Win32_UI_Shell",           # IShellItemImageFactory, SHCreateItemFromParsingName
+  "Win32_System_Services",    # SCM: CreateServiceW / StartServiceCtrlDispatcherW (LumeSVC)
+  "Win32_System_Registry",    # HKLM DataDir, HKCU Run (autostart)
+  "Win32_System_Pipes",       # CreateNamedPipeW (LumeSVC IPC)
+  "Win32_System_IO",          # ReadFile / WriteFile / ConnectNamedPipe / DisconnectNamedPipe
+  "Win32_Storage_FileSystem", # CreateFileW (pipe client)
+  "Win32_Security",           # TokenElevation check, GetTokenInformation
+  "Win32_Security_Authorization", # pipe SDDL (ConvertStringSecurityDescriptorToSecurityDescriptorW)
+  "Win32_System_Threading",   # GetCurrentProcess / OpenProcessToken
+] }
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_UI_Shell",            # ShellExecuteW for launching .lnk shortcuts
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input",            # GetAsyncKeyState (mid-drag detection)
+  "Win32_System_DataExchange", # GetClipboardSequenceNumber for the listener
+] }
+

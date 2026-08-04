@@ -1,0 +1,895 @@
+/* Lume launcher surface — minimal, focused, theme-aware
+   (docs/UI_GUIDELINES.md). The palette lives in the `--*` custom properties
+   below; `src/theme.ts` sets `data-theme` on <html> per the 颜色模式 setting.
+   Defaults here = dark (matches the historical theme, no flash before JS). */
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.4;
+  background-color: transparent;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+
+  /* Dark palette (default). */
+  --bg: rgba(30, 30, 32, 0.75);            /* launcher panel over the Acrylic */
+  --surface: #1e1e20;                      /* settings window / solid panels */
+  --surface-raised: rgba(38, 38, 40, 0.97);/* context menu */
+  --text: #f2f2f2;
+  --text-secondary: rgba(242, 242, 242, 0.6);
+  --text-muted: rgba(242, 242, 242, 0.45);
+  --text-faint: rgba(242, 242, 242, 0.35);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --hover: rgba(255, 255, 255, 0.08);
+  --selected: rgba(255, 255, 255, 0.14);
+  /* Bundled SVGs use dark `#333` strokes — invert so they read as light icons. */
+  --icon-filter: invert(1);
+  color: var(--text);
+}
+
+:root[data-theme="light"] {
+  --bg: rgba(248, 249, 250, 0.92);
+  --surface: #fbfbfd;
+  --surface-raised: #ffffff;
+  --text: #1f2328;
+  --text-secondary: rgba(31, 35, 40, 0.65);
+  --text-muted: rgba(31, 35, 40, 0.5);
+  --text-faint: rgba(31, 35, 40, 0.38);
+  --border: rgba(31, 35, 40, 0.1);
+  --border-strong: rgba(31, 35, 40, 0.2);
+  --hover: rgba(31, 35, 40, 0.06);
+  --selected: rgba(31, 35, 40, 0.08);
+  /* #333 strokes already read as dark icons on the light theme. */
+  --icon-filter: none;
+}
+
+/* Transparent chrome so the Acrylic backdrop and CSS rounded corners show. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* 1px padding lets the Acrylic blur glow around the panel's rounded edge. */
+#root {
+  padding: 1px;
+}
+
+.launcher {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.search-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--text-muted);
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 22px;
+  caret-color: #5ac8fa;
+}
+
+.search-input::placeholder {
+  color: var(--text-faint);
+}
+
+.results {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 6px;
+}
+
+.hint {
+  margin: auto;
+  color: var(--text-faint);
+  font-size: 14px;
+}
+
+.result-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.result-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border-radius: 8px;
+}
+
+.result-selected {
+  background: var(--selected);
+  box-shadow: inset 0 0 0 1px rgba(90, 200, 250, 0.6);
+}
+
+.result-tile {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.82);
+}
+
+.result-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+/* Clipboard results: muted accent tile + single-line content preview. */
+.result-tile-clip {
+  background: rgba(90, 200, 250, 0.16);
+  color: #5ac8fa;
+  overflow: hidden; /* keep the image thumbnail clipped to the rounded tile */
+}
+
+.result-tile-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* Image thumbnail tile: a bit larger than letter tiles, cover-cropped. */
+.result-tile-image {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
+.result-tile-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Pinned badge shown at the end of a pinned clipboard row. */
+.result-pin {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+
+.result-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+/* Icon-only button in the search row (e.g. the settings gear). */
+.icon-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.icon-btn-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Per-entry delete (trash) button on clipboard rows. */
+.result-delete {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-faint);
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.result-delete:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.result-delete-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Keyboard shortcut footer shown in clipboard mode. */
+.shortcut-hint {
+  padding: 6px 16px 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* Navigate main menu: grid of app boxes. */
+.result-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: grid;
+  /* Entry-box auto-adapts: columns are at least 条目框大小, then stretch to
+     fill the window — no right-side gap. 小/中/大 is the reference size. */
+  grid-template-columns: repeat(auto-fill, minmax(var(--entry-size), 1fr));
+  gap: 8px;
+  padding: 8px;
+  align-content: start;
+}
+
+/* Scrollbars are removed entirely: containers scroll on wheel/trackpad with
+   no visible bar, and content fills the full width (no right gap). */
+.result-grid::-webkit-scrollbar,
+.result-list::-webkit-scrollbar,
+.settings-body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.result-box {
+  /* The entry box fills its grid column (auto-adapts to the window) and stays
+     square. Edge size is steered by 条目框大小 as the column minimum. */
+  aspect-ratio: 1 / 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 4px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: default;
+}
+
+.result-box.result-selected {
+  background: var(--selected);
+  border-color: rgba(90, 200, 250, 0.7);
+}
+
+.result-box-tile {
+  /* The tile scales with the (auto-adapting) entry box. */
+  width: 44%;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--entry-size) * 0.18);
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.82);
+}
+
+/* Real app icon replaces the letter tile. */
+.result-box-icon {
+  background: transparent;
+}
+
+.result-box-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Pinned apps bar above the main-menu grid. */
+.pinned-bar {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pinned-item {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 76px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: default;
+}
+
+.pinned-item.result-selected {
+  background: var(--selected);
+  border-color: rgba(90, 200, 250, 0.7);
+}
+
+.pinned-item-tile {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.pinned-item-letter {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.82);
+  background: rgba(90, 200, 250, 0.22);
+}
+
+.pinned-item-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.pinned-item-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+/* Custom context menu: full-window overlay + positioned menu. */
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 101;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ctx-item:hover {
+  background: rgba(90, 200, 250, 0.18);
+  color: var(--text);
+}
+
+.result-box-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* Apps / Clipboard mode switch in the search row. */
+.mode-switch {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--border);
+}
+
+.mode-switch-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  outline: none; /* no white focus ring when Tab lands on the pill */
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mode-switch-item.active {
+  background: var(--selected);
+  color: var(--text);
+}
+
+.mode-switch-item:hover:not(.active) {
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------------------
+   Settings window (docs/SETTINGS.md) — a decorated, solid-background window.
+--------------------------------------------------------------------------- */
+
+/* The launcher leaves the body transparent (Acrylic); the settings window
+   needs a solid fill and no 1px transparent gutter. */
+body.settings-window {
+  background: var(--surface);
+}
+
+body.settings-window #root {
+  padding: 0;
+}
+
+.settings {
+  display: flex;
+  height: 100%;
+  background: var(--surface);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.settings-sidebar {
+  flex: none;
+  width: 148px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 8px;
+  border-right: 1px solid var(--border);
+}
+
+.settings-nav {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.settings-nav.active {
+  color: var(--text);
+  background: var(--selected);
+}
+
+.settings-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px;
+}
+
+.settings-placeholder {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.settings-footer {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-action {
+  min-width: 84px;
+  padding: 7px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-action:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.settings-action-primary {
+  border-color: #5ac8fa;
+  background: rgba(90, 200, 250, 0.14);
+  color: #5ac8fa;
+}
+
+.settings-action-primary:hover:not(:disabled) {
+  background: rgba(90, 200, 250, 0.24);
+}
+
+.settings-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Settings content controls (6.4 界面页). */
+.settings-group {
+  margin-bottom: 26px;
+}
+
+.settings-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-chip:hover {
+  background: var(--hover);
+}
+
+.settings-chip.active {
+  border-color: #5ac8fa;
+  background: rgba(90, 200, 250, 0.16);
+  color: #5ac8fa;
+}
+
+.settings-slider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 220px;
+}
+
+.settings-slider-input {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-slider-input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    #5ac8fa var(--fill, 50%),
+    var(--border-strong) var(--fill, 50%)
+  );
+}
+
+.settings-slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: #5ac8fa;
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  transition: transform 0.12s ease;
+}
+
+.settings-slider-input::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.settings-slider-input::-webkit-slider-thumb:active {
+  transform: scale(1.25);
+}
+
+.settings-slider-value {
+  min-width: 56px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.settings-sub-between {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-sub-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.settings-toggle {
+  width: 42px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--hover);
+  position: relative;
+  cursor: pointer;
+}
+
+.settings-toggle .settings-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.15s ease;
+}
+
+.settings-toggle.on {
+  border-color: #5ac8fa;
+  background: rgba(90, 200, 250, 0.35);
+}
+
+.settings-toggle.on .settings-toggle-knob {
+  transform: translateX(20px);
+  background: #5ac8fa;
+}
+
+/* Settings content controls (6.5 系统页). */
+.settings-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.settings-path {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-text-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.settings-text-input:focus {
+  outline: none;
+  border-color: #5ac8fa;
+}
+
+.settings-text-input::placeholder {
+  color: var(--text-faint);
+}
+
+.settings-icon-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-icon-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.settings-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.settings-icon-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.settings-error {
+  font-size: 12px;
+  color: #ff7b72;
+}
+
+.settings-status {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-status.error {
+  color: #ff7b72;
+}
+
+/* Small inline SVG icons beside buttons / pills / menu items. */
+.mode-switch-icon,
+.ctx-item-icon,
+.settings-chip-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+/* Icon buttons (user-index add / delete) get a slightly larger glyph. */
+.settings-icon-btn-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.settings-nav-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* The bundled SVGs use dark `#333` strokes — inverted to light in dark mode
+   (`--icon-filter`), left as-is on the light theme. Real extracted PNG icons
+   are unaffected; `.icon-unknown` is the bundled unknown-icon fallback. */
+.icon-btn-icon,
+.mode-switch-icon,
+.ctx-item-icon,
+.settings-nav-icon,
+.settings-chip-icon,
+.settings-icon-btn-icon,
+.icon-unknown {
+  filter: var(--icon-filter);
+}
+
+/* 「关于」页 — centered app icon + intro (docs/SETTINGS.md). */
+.about {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.about-icon {
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
+.about-name {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.about-version {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.about-desc {
+  max-width: 320px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}

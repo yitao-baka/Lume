@@ -159,6 +159,28 @@ dev server.
 9. **Bundle** — `npm run tauri build` puts `lume-svc.exe` next to `lume.exe`
    in the installer (`externalBin` + `scripts/copy-lume-svc.mjs`).
 
+### Environment sync (envwatch)
+
+> Watcher logs `[envwatch] ...` to the console (dev). `cargo test` covers the
+> PATH merge logic; the Win32 watcher itself is manual-only.
+
+1. **Dialog path** — with Lume running (dev console visible), open 设置→环境变量
+   (Environment Variables dialog) and append a new entry to the user `Path`.
+   Apply → the console logs `[envwatch] environment refreshed from registry`.
+   Launch `cmd.exe` from Lume: `echo %PATH%` shows the new entry. The change
+   also lands in the launcher process itself — `GetEnvironmentVariable` in the
+   Rust core returns the new value without a restart.
+2. **setx path** — in a terminal run `setx LUME_TEST 1` (no broadcast, registry
+   notify path) → the same refresh log appears within a moment; a freshly
+   launched `cmd.exe` from Lume sees `LUME_TEST=1`.
+3. **Startup snapshot** — restart Lume *without* changing anything: no refresh
+   logs; PATH still includes whatever the parent shell had.
+4. **Already-running processes untouched** — an `cmd.exe` opened *before* the
+   change keeps its old PATH until it is relaunched.
+5. **Idle cost** — with the watcher armed, the `envwatch` thread's CPU time
+   stays flat while the environment is untouched (no polling wakeups; thread
+   suspended in `MsgWaitForMultipleObjectsEx`).
+
 ## Known hotkey conflicts
 
 - **uTools / PowerToys Run** both register `Alt+Space` by default. Lume skips

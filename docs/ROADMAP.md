@@ -169,3 +169,32 @@ SYSTEM 级能力（如 USN 全盘索引）铺路。
 
 **后续可扩展**：USN / 全盘增量索引（服务是为此铺路的骨架）；在管道协议上
 扩展服务职责（REFRESH_NOW 推送等）；托盘服务状态实时推送。
+
+## 9. 环境变量同步（WM_SETTINGCHANGE 监听）
+
+**状态：已实现（2026-08-04）。**
+
+背景：系统环境变量修改后（设置→环境变量对话框、`setx`），Lume 自身进程的
+环境块仍是启动时快照，导致之后经 `ShellExecuteW` 启动的应用 / 命令行继承到
+**旧 PATH**。目标：让 Lume 随时跟上前台 / 后台的环境变量变更。
+
+设计要点（`src-tauri/src/envwatch.rs`）：
+
+- **纯事件驱动，零轮询**：专用线程阻塞在 `MsgWaitForMultipleObjectsEx`
+  （内核等待），系统安静时完全挂起、不占 CPU；仅当 Windows 广播
+  `WM_SETTINGCHANGE` 或环境注册表键被改写时才被唤醒。**刻意不做注册表轮询**
+  （那是每次空转唤醒、纯浪费）。相比之下剪贴板监听是 250ms 轮询，环境监听
+  比它安静几个数量级。
+- **覆盖两个通道**：环境变量对话框广播 `WM_SETTINGCHANGE`
+  （`lParam = "Environment"`，message-only 窗口接住）；`setx` / 直接改注册表
+  **不广播**，故额外用 `RegNotifyChangeKeyValue`（同为事件驱动、同样零轮询）
+  盯 `HKCU\Environment` 与 HKLM `Session Manager\Environment` 两个键。
+- **合并语义**：`PATH` = 系统 PATH + 用户 PATH（Windows 拼接顺序，整体替换、
+  删除项生效）；其余变量用户覆盖系统；`REG_EXPAND_SZ` 展开（`%SystemRoot%` 等）。
+- **边界**：只影响**之后启动**的进程（ShellExecuteW 子进程继承刷新后的环境）；
+  已运行进程保持原样（Windows 不会改写活进程）。进程里存在但注册表已无的变量
+  不删除（怕误伤 Lume 自身运行环境），仅 PATH 整体替换。
+
+**后续可扩展**：设置页开关（默认常开，成本可忽略）；向前端推送
+`env-refreshed` 事件供未来「运行命令」功能展示；按需把刷新结果可视化。
+

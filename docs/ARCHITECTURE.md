@@ -15,10 +15,11 @@ Rust Core (src-tauri/src/)
   ├─ icons.rs    — IShellItemImageFactory icon extraction + in-memory cache
   ├─ pins.rs     — pinned-apps bar (SQLite `pinned_apps`, WAL connection)
   ├─ tray.rs     — system tray icon, Restart/Exit menu, left-click toggle
-  └─ hotkey.rs   — toggle shortcut: Alt+Space preferred, fallback chain
+  ├─ hotkey.rs   — toggle shortcut: Alt+Space preferred, fallback chain
+  └─ envwatch.rs — keep the process env block in sync with system env changes
         ▼
 Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
-             IShellItemImageFactory, Acrylic window effects)
+             IShellItemImageFactory, Acrylic window effects, WM_SETTINGCHANGE)
 ```
 
 ## Modules
@@ -87,6 +88,25 @@ the `get_hotkey` command, so the hint line can tell the user what to press.
 The plugin handler filters `ShortcutState::Pressed` for the active combo and
 calls `window::toggle_launcher`. If no candidate registers, the failure is
 logged and the launcher stays keyboard-less until a key frees up.
+
+### `envwatch.rs`
+Spawns one background thread (no polling) that keeps Lume's **own process
+environment block** in sync with system changes, so everything Lume launches
+afterwards (via `ShellExecuteW`, or future "run a command" features) inherits a
+fresh PATH / variables instead of the ones frozen at startup.
+
+The thread parks in `MsgWaitForMultipleObjectsEx` — a kernel wait — so it
+consumes **zero CPU while idle**. It wakes on either:
+- `WM_SETTINGCHANGE` broadcast with `lParam = "Environment"` (the Environment
+  Variables dialog), caught by a hidden message-only window; and
+- `RegNotifyChangeKeyValue` on `HKCU\Environment` + the HKLM session-manager
+  environment key — this covers `setx` / direct registry edits, which never
+  broadcast.
+
+On a change it re-reads the registry and merges: `PATH` = system + user
+(Windows concatenation order, replaced wholesale), other vars user-over-system,
+`REG_EXPAND_SZ` expanded. Only **newly started** processes are affected;
+already-running ones keep their original environment.
 
 ### `clipboard.rs`
 - **Capture**: `spawn_listener` polls `GetClipboardSequenceNumber` every

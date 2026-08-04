@@ -4,6 +4,22 @@ All notable changes to Lume are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.2.11] — 2026-08-04
+
+Live environment-variable synchronization (ROADMAP item 9).
+
+### Added
+
+- **Environment sync** — Lume now listens for system environment changes
+  (`WM_SETTINGCHANGE` broadcast + registry-change notification on
+  `HKCU\Environment` and the HKLM session-manager environment key) and refreshes
+  its own process environment block, so apps and commands launched afterwards
+  inherit the **fresh** PATH / variables instead of the ones frozen at startup.
+  Event-driven and zero-CPU when idle — there is no registry polling. `PATH` is
+  rebuilt as system + user (Windows concatenation order); `REG_EXPAND_SZ`
+  values are expanded. Only newly started processes are affected, as Windows
+  never rewrites a live process's environment.
+
 ## [0.2.10] — 2026-08-02
 
 Auto-sizing launcher window.

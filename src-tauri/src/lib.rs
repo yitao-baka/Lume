@@ -1,6 +1,7 @@
 mod apps;
 pub mod cache;
 mod clipboard;
+mod envwatch;
 mod hotkey;
 mod i18n;
 mod icons;
@@ -86,6 +87,10 @@ pub fn run() {
             }
             // Alt+Space toggles the launcher (docs/ARCHITECTURE.md).
             hotkey::register(app);
+            // Keep our process env block in sync with system env changes
+            // (WM_SETTINGCHANGE + registry notify) so launched apps inherit a
+            // fresh PATH / variables. Event-driven, zero CPU when idle.
+            envwatch::init();
             // Clipboard history listener + SQLite store (docs/ARCHITECTURE.md).
             clipboard::init(app);
             // Pinned-apps store (Navigate main-menu bar).

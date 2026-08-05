@@ -89,5 +89,16 @@
   "indexEmpty": "未啟用索引，請在設定中啟用系統索引或新增用戶索引",
   "settingsCacheRefresh": "快取重新整理間隔",
   "settingsMinutes": "分鐘",
+  "recent": "最近使用",
+  "pinned": "已固定",
+  "expand": "展開",
+  "collapse": "收起",
+  "showRecent": "顯示最近使用",
+  "recentCount": "最近使用條數",
+  "searchPlaceholder": "搜尋框佔位符",
+  "placeholderApps": "應用模式佔位符",
+  "placeholderClipboard": "剪貼板模式佔位符",
+  "placeholderHint": "留空使用預設文案",
+  "removeFromRecent": "從最近使用中刪除",
   "aboutTagline": "一款輕量級的 Windows 效率啟動器"
 }

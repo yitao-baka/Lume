@@ -38,9 +38,11 @@ interface ClipboardItem {
   thumb: string | null;
 }
 
-/** Open custom context menu: app or clipboard item, positioned at the cursor. */
+/** Open custom context menu: app or clipboard item, positioned at the cursor.
+ * `fromRecent` marks an app opened from the 「最近使用」 bar, which adds a
+ * soft-delete (remove-from-recent) menu action. */
 type MenuState =
-  | { kind: "app"; x: number; y: number; app: AppEntry }
+  | { kind: "app"; x: number; y: number; app: AppEntry; fromRecent?: boolean }
   | { kind: "clip"; x: number; y: number; item: ClipboardItem }
   | null;
 
@@ -70,7 +72,6 @@ const APP_KEYS = new Set([
 const EDIT_KEYS = new Set(["c", "v", "x", "a", "z", "y"]);
 
 /** Auto-sizing the launcher window to its content (height only). */
-const MAX_RESULTS_H = 400; // results area content cap (scrolls beyond this)
 const MIN_WINDOW_H = 90; // empty-state minimum
 // `.results` padding (6+6) + launcher border (2) + 1px gutters (2) + buffer.
 const WINDOW_PAD = 20;
@@ -87,6 +88,17 @@ function App() {
   const [windowWidth, setWindowWidth] = createSignal(720);
   /** Key that switches Navigate/Clipboard modes (settings → 系统 → 快捷键). */
   const [switchKey, setSwitchKey] = createSignal("Tab");
+  /** Settings-driven: show the 「最近使用」 bar (display-only toggle). */
+  const [showRecent, setShowRecent] = createSignal(true);
+  /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
+   * so bar column measurement re-runs when it changes). */
+  const [entrySize, setEntrySize] = createSignal(110);
+  /** Settings-driven: custom search placeholder per mode ("" = default text). */
+  const [placeholderApps, setPlaceholderApps] = createSignal("");
+  const [placeholderClipboard, setPlaceholderClipboard] = createSignal("");
+  /** Measured column count of a bar grid — drives "one row" (collapsed slice)
+   * and the 展开 button's visibility. */
+  const [barCols, setBarCols] = createSignal(6);
 
 
   // Each mode keeps its own query, so clearing one never resets the other.
@@ -98,8 +110,12 @@ function App() {
   const [selected, setSelected] = createSignal(0);
   const [iconTick, setIconTick] = createSignal(0);
   const [pinnedApps, setPinnedApps] = createSignal<AppEntry[]>([]);
-  const [zone, setZone] = createSignal<"grid" | "bar">("grid");
+  const [recentApps, setRecentApps] = createSignal<AppEntry[]>([]);
+  const [zone, setZone] = createSignal<"recent" | "pinned" | "grid">("grid");
   const [pinnedSelected, setPinnedSelected] = createSignal(0);
+  const [recentSelected, setRecentSelected] = createSignal(0);
+  const [recentExpanded, setRecentExpanded] = createSignal(false);
+  const [pinnedExpanded, setPinnedExpanded] = createSignal(false);
   const [menu, setMenu] = createSignal<MenuState>(null);
 
   // Monotonic counter guards against out-of-order search responses.
@@ -121,6 +137,9 @@ function App() {
     setMode("apps");
     setZone("grid");
     setPinnedSelected(0);
+    setRecentSelected(0);
+    setRecentExpanded(false); // don't persist the expanded state across shows
+    setPinnedExpanded(false);
     setMenu(null);
   }
 
@@ -130,6 +149,9 @@ function App() {
       const pins = (await invoke("get_pinned_apps")) as AppEntry[];
       setPinnedApps(pins);
       if (pinnedSelected() >= pins.length) setPinnedSelected(0);
+      if (pins.length === 0 && zone() === "pinned") {
+        setZone(recentApps().length > 0 ? "recent" : "grid");
+      }
       void loadIcons(pins);
       scheduleResize();
     } catch (err) {
@@ -137,23 +159,58 @@ function App() {
     }
   }
 
+  /** Reload the recent-opens bar from the store. */
+  async function refreshRecent() {
+    try {
+      const recents = (await invoke("get_recent_apps")) as AppEntry[];
+      setRecentApps(recents);
+      if (recentSelected() >= recents.length) setRecentSelected(0);
+      if (recents.length === 0 && zone() === "recent") {
+        setZone(pinnedApps().length > 0 ? "pinned" : "grid");
+      }
+      void loadIcons(recents);
+      scheduleResize();
+    } catch (err) {
+      console.error("get_recent_apps failed", err);
+    }
+  }
+
+  /** Measure the bar grid's column count (drives the collapsed one-row slice
+   * and the 展开 button visibility). auto-fill tracks reflect the container
+   * width regardless of how many items are rendered, so this is stable. */
+  function measureBarCols() {
+    const barGrid = document.querySelector(".bar-grid") as HTMLElement | null;
+    if (!barGrid) return;
+    const cols = getComputedStyle(barGrid)
+      .gridTemplateColumns.split(" ")
+      .filter((t) => t.trim() !== "").length;
+    if (cols && cols !== barCols()) {
+      setBarCols(cols);
+      // The collapsed slice changed → re-measure the window against the
+      // corrected one-row height (terminates: barCols is now stable).
+      scheduleResize();
+    }
+  }
+
   /** Fit the launcher window height to the current content, then re-center. */
   async function resizeToContent() {
     const search = document.querySelector(".search") as HTMLElement | null;
     const footer = document.querySelector(".shortcut-hint") as HTMLElement | null;
-    const pinnedBar = document.querySelector(".pinned-bar") as HTMLElement | null;
     const container =
       (document.querySelector(".result-grid") as HTMLElement | null) ??
-      (document.querySelector(".result-list") as HTMLElement | null);
+      (document.querySelector(".result-list") as HTMLElement | null) ??
+      (document.querySelector(".bar-list") as HTMLElement | null);
     if (!container) return;
+
+    measureBarCols();
 
     const searchH = search?.offsetHeight ?? 0;
     const footerH = footer?.offsetHeight ?? 0;
-    const pinnedH = pinnedBar ? pinnedBar.getBoundingClientRect().height : 0;
 
     // Measure the content's natural height from the last child (scrollHeight
     // would clamp to the current viewport for short lists). Correct for any
-    // existing scroll so the measurement is scroll-independent.
+    // existing scroll so the measurement is scroll-independent. The bars live
+    // inside the container (bar-sections), so no separate bar height is added.
     const last = container.lastElementChild as HTMLElement | null;
     let contentH = 0;
     if (last) {
@@ -164,7 +221,6 @@ function App() {
     } else {
       contentH = 56; // empty-state hint
     }
-    contentH += pinnedH;
 
     const targetH = Math.max(
       MIN_WINDOW_H,
@@ -199,6 +255,17 @@ function App() {
     await refreshPins();
   }
 
+  /** Remove an entry from the recent-opens bar (soft delete — reopening the
+   * entry re-adds it; the file/app itself is untouched). */
+  async function deleteRecent(app: AppEntry) {
+    try {
+      await invoke("delete_recent", { path: app.path });
+    } catch (err) {
+      console.error("delete_recent failed", err);
+    }
+    await refreshRecent();
+  }
+
   /** Close the custom context menu. */
   function closeMenu() {
     setMenu(null);
@@ -210,7 +277,7 @@ function App() {
     if (elevated) {
       void (async () => {
         try {
-          await invoke("launch_app", { path: app.path, elevated: true });
+          await invoke("launch_app", { path: app.path, name: app.name, elevated: true });
           void resetAndHide();
         } catch (err) {
           if (String(err).includes("canceled")) return; // user dismissed UAC
@@ -220,7 +287,7 @@ function App() {
       })();
       return;
     }
-    void invoke("launch_app", { path: app.path, elevated: false });
+    void invoke("launch_app", { path: app.path, name: app.name, elevated: false });
     void resetAndHide();
   }
 
@@ -252,7 +319,7 @@ function App() {
     if (!m) return [];
     if (m.kind === "app") {
       const isPinned = pinnedApps().some((p) => p.path === m.app.path);
-      return [
+      const items = [
         {
           label: isPinned ? t("unpin") : t("pin"),
           icon: isPinned ? pinnedIcon : pinIcon,
@@ -264,12 +331,22 @@ function App() {
           icon: folderOpenIcon,
           action: () => revealInFolder(m.app),
         },
-        {
-          label: t("launchAsAdmin"),
-          icon: administratorRunIcon,
-          action: () => launchApp(m.app, true),
-        },
       ];
+      // The 「最近使用」 bar inserts a soft-delete (remove-from-recent) just
+      // before the admin action.
+      if (m.fromRecent) {
+        items.push({
+          label: t("removeFromRecent"),
+          icon: deleteIcon,
+          action: () => void deleteRecent(m.app),
+        });
+      }
+      items.push({
+        label: t("launchAsAdmin"),
+        icon: administratorRunIcon,
+        action: () => launchApp(m.app, true),
+      });
+      return items;
     }
     const isPinned = m.item.pinned;
     return [
@@ -294,6 +371,11 @@ function App() {
     setZone("grid");
     const id = ++requestSeq;
     if (mode() === "apps") {
+      if (q.trim() === "") {
+        // Empty query shows the two bars (最近使用 / 已固定), not a browse grid.
+        setApps([]);
+        return;
+      }
       const res = (await invoke("search_apps", { query: q })) as AppEntry[];
       if (id === requestSeq) {
         setApps(res);
@@ -362,6 +444,10 @@ function App() {
         "--entry-size",
         s.appearance.entry_size + "px"
       );
+      setEntrySize(s.appearance.entry_size);
+      setShowRecent(s.appearance.show_recent);
+      setPlaceholderApps(s.appearance.search_placeholder_apps || "");
+      setPlaceholderClipboard(s.appearance.search_placeholder_clipboard || "");
       setWindowHeight(s.appearance.window_height);
       setWindowWidth(s.appearance.window_width);
       setSwitchKey(s.hotkeys.switch_mode || "Tab");
@@ -405,10 +491,12 @@ function App() {
   /** Activate the selected entry: launch an app or copy a clipboard entry. */
   function activate() {
     if (mode() === "apps") {
-      const item =
-        zone() === "bar" ? pinnedApps()[pinnedSelected()] : apps()[selected()];
+      let item: AppEntry | undefined;
+      if (zone() === "recent") item = recentApps()[recentSelected()];
+      else if (zone() === "pinned") item = pinnedApps()[pinnedSelected()];
+      else item = apps()[selected()];
       if (!item) return;
-      void invoke("launch_app", { path: item.path, elevated: false });
+      void invoke("launch_app", { path: item.path, name: item.name, elevated: false });
       void resetAndHide();
     } else {
       const item = clips()[selected()];
@@ -455,38 +543,51 @@ function App() {
       e.preventDefault();
       void switchMode(mode() === "apps" ? "clipboard" : "apps");
     } else if (mode() === "apps") {
-      // The pinned bar is only present on the empty-query main menu.
-      const hasBar = appsQuery() === "" && pinnedApps().length > 0;
-      if (!hasResults && !hasBar) return;
+      // Empty query = the two bars (最近使用 / 已固定); typing = the results
+      // grid. ↑/↓ cycle between the bars, ←/→ move within the active bar.
+      const empty = appsQuery() === "";
+      const hasRecent = empty && showRecent() && recentApps().length > 0;
+      const hasPinned = empty && pinnedApps().length > 0;
+      const hasBars = hasRecent || hasPinned;
+      if (!empty && !hasResults) return;
+      if (empty && !hasBars) return;
       if (e.key === "ArrowLeft") {
         selectionSource = "keyboard";
         e.preventDefault();
-        if (zone() === "bar") setPinnedSelected(Math.max(0, pinnedSelected() - 1));
+        if (zone() === "recent") setRecentSelected(Math.max(0, recentSelected() - 1));
+        else if (zone() === "pinned") setPinnedSelected(Math.max(0, pinnedSelected() - 1));
         else moveSelection(-1);
       } else if (e.key === "ArrowRight") {
         selectionSource = "keyboard";
         e.preventDefault();
-        if (zone() === "bar")
+        if (zone() === "recent")
+          setRecentSelected(Math.min(recentApps().length - 1, recentSelected() + 1));
+        else if (zone() === "pinned")
           setPinnedSelected(Math.min(pinnedApps().length - 1, pinnedSelected() + 1));
         else moveSelection(1);
       } else if (e.key === "ArrowDown") {
         selectionSource = "keyboard";
         e.preventDefault();
-        if (zone() === "bar") {
-          setZone("grid");
-          setSelected(0);
-        } else {
-          moveSelection(gridCols());
-        }
+        if (zone() === "recent") { if (hasPinned) setZone("pinned"); }
+        else if (zone() === "pinned") { if (hasRecent) setZone("recent"); }
+        else if (!empty) moveSelection(gridCols());
+        else if (hasRecent) setZone("recent");
+        else if (hasPinned) setZone("pinned");
       } else if (e.key === "ArrowUp") {
         selectionSource = "keyboard";
         e.preventDefault();
-        const cols = gridCols();
-        if (zone() === "grid" && hasBar && selected() < cols) {
-          setZone("bar");
-          setPinnedSelected(pinnedApps().length - 1);
-        } else if (zone() === "grid") {
-          moveSelection(-cols);
+        if (zone() === "pinned") { if (hasRecent) setZone("recent"); }
+        else if (zone() === "recent") { if (hasPinned) setZone("pinned"); }
+        else if (!empty) moveSelection(-gridCols());
+        else if (hasPinned) setZone("pinned");
+        else if (hasRecent) setZone("recent");
+      } else if (e.key === "Delete") {
+        // Remove the selected recent entry (soft delete). In the grid zone
+        // (typing) Delete falls through to text editing in the search input.
+        if (zone() === "recent") {
+          e.preventDefault();
+          const item = recentApps()[recentSelected()];
+          if (item) void deleteRecent(item);
         }
       } else if (e.key === "Enter") {
         e.preventDefault();
@@ -507,15 +608,6 @@ function App() {
         activate();
       }
     }
-  }
-
-  function hintText(): string {
-    if (mode() === "apps") {
-      // The app index is empty until the file-search iteration lands — point
-      // the user at the settings 系统索引 instead of a dead "type to search".
-      return query() ? t("noResults") : t("indexEmpty");
-    }
-    return query() ? t("noResults") : t("noClipboardHistory");
   }
 
   // Handle navigation keys at the window level so they work regardless of
@@ -559,13 +651,12 @@ function App() {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
     document.addEventListener("contextmenu", (e) => e.preventDefault());
 
-    // Load the Navigate pinned bar.
+    // Load the Navigate bars (recent + pinned) so the empty-query main menu
+    // renders immediately — without this, the very first show can be blank if
+    // the window appears before the webview finishes loading and the focus
+    // event is missed (the listener below is async).
+    void refreshRecent();
     void refreshPins();
-
-    // Populate the main-menu grid immediately. Without this, the very first
-    // show can be blank if the window appears before the webview finishes
-    // loading and the focus event is missed (the listener below is async).
-    void runSearch("");
 
     // Focus the search input as soon as the launcher appears.
     document.getElementById("search-input")?.focus();
@@ -583,12 +674,103 @@ function App() {
     const unlisten = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
         clearSearch();
-        void runSearch("");
+        void refreshRecent();
+        void refreshPins();
         queueMicrotask(() => document.getElementById("search-input")?.focus());
       }
     });
     onCleanup(() => unlisten());
   });
+
+  // Re-measure the bar column count whenever the layout-affecting settings
+  // (window width / entry size) change, so "one row" and the 展开 button stay
+  // correct. Data-driven re-measurement happens inside resizeToContent.
+  createEffect(() => {
+    void windowWidth();
+    void entrySize();
+    requestAnimationFrame(measureBarCols);
+  });
+
+  /** A single app box (grid or bar) with a cached icon + unknown-icon fallback. */
+  function appBox(
+    app: AppEntry,
+    selected: boolean,
+    handlers: {
+      onActivate: () => void;
+      onSelect: () => void;
+      onContext: (e: MouseEvent) => void;
+    }
+  ) {
+    return (
+      <div
+        class="result-box"
+        classList={{ "result-selected": selected }}
+        role="option"
+        aria-selected={selected}
+        onMouseMove={handlers.onSelect}
+        onClick={handlers.onActivate}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          handlers.onContext(e);
+        }}
+      >
+        <Show
+          when={iconFor(app.path)}
+          fallback={
+            <span class="result-box-tile result-box-icon">
+              <img class="result-box-img icon-unknown" src={unknownIcon} alt="" />
+            </span>
+          }
+        >
+          <span class="result-box-tile result-box-icon">
+            <img class="result-box-img" src={iconFor(app.path)} alt="" />
+          </span>
+        </Show>
+        <span class="result-box-name">{app.name}</span>
+      </div>
+    );
+  }
+
+  /** A titled, expandable bar (最近使用 / 已固定) on the empty-query main menu.
+   * Collapsed = the measured column count (one row); expanded = everything.
+   * The 展开 button only appears when content exceeds one row. */
+  function barSection(opts: {
+    title: string;
+    items: AppEntry[];
+    expanded: boolean;
+    zoneActive: boolean;
+    selected: number;
+    onToggle: () => void;
+    onActivate: () => void;
+    onSelect: (i: number) => void;
+    onContext: (e: MouseEvent, app: AppEntry) => void;
+  }) {
+    const cols = Math.max(barCols(), 1);
+    const shown = opts.expanded ? opts.items : opts.items.slice(0, cols);
+    return (
+      <div class="bar-section">
+        <div class="bar-header">
+          <span class="bar-title">{opts.title}</span>
+          <Show when={opts.items.length > cols}>
+            <button class="bar-expand" onClick={opts.onToggle}>
+              {opts.expanded ? t("collapse") : t("expand")}
+            </button>
+          </Show>
+        </div>
+        <div class="bar-grid" classList={{ collapsed: !opts.expanded }}>
+          <For each={shown}>
+            {(app, i) =>
+              appBox(app, opts.zoneActive && i() === opts.selected, {
+                onActivate: opts.onActivate,
+                onSelect: () => opts.onSelect(i()),
+                onContext: (e) => opts.onContext(e, app),
+              })
+            }
+          </For>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div class="launcher">
@@ -614,7 +796,11 @@ function App() {
           type="text"
           value={query()}
           onInput={onInput}
-          placeholder={mode() === "apps" ? t("searchApps") : t("searchClipboard")}
+          placeholder={
+            mode() === "apps"
+              ? placeholderApps() || t("searchApps")
+              : placeholderClipboard() || t("searchClipboard")
+          }
           spellcheck={false}
           autocomplete="off"
         />
@@ -650,89 +836,82 @@ function App() {
         </button>
       </div>
       <div class="results">
-        <Show
-          when={currentResults().length > 0}
-          fallback={<span class="hint">{hintText()}</span>}
-        >
-          {mode() === "apps" ? (
-            <>
-              <Show when={appsQuery() === "" && pinnedApps().length > 0}>
-                <div class="pinned-bar">
-                  <For each={pinnedApps()}>
-                    {(app, i) => (
-                      <div
-                        class="pinned-item"
-                        classList={{
-                          "result-selected": zone() === "bar" && i() === pinnedSelected(),
-                        }}
-                        role="option"
-                        aria-selected={zone() === "bar" && i() === pinnedSelected()}
-                        onMouseMove={() => {
-                          selectionSource = "mouse";
-                          setZone("bar");
-                          setPinnedSelected(i());
-                        }}
-                        onClick={activate}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          setZone("bar");
-                          setPinnedSelected(i());
-                          setMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
-                        }}
-                      >
-                        <span class="pinned-item-tile">
-                          <Show
-                            when={iconFor(app.path)}
-                            fallback={<img class="pinned-item-img icon-unknown" src={unknownIcon} alt="" />}
-                          >
-                            <img class="pinned-item-img" src={iconFor(app.path)} alt="" />
-                          </Show>
-                        </span>
-                        <span class="pinned-item-name">{app.name}</span>
-                      </div>
-                    )}
-                  </For>
-                </div>
+        {mode() === "apps" ? (
+          appsQuery() === "" ? (
+            <div class="bar-list">
+              <Show when={showRecent() && recentApps().length > 0}>
+                {barSection({
+                  title: t("recent"),
+                  items: recentApps(),
+                  expanded: recentExpanded(),
+                  zoneActive: zone() === "recent",
+                  selected: recentSelected(),
+                  onToggle: () => {
+                    setRecentExpanded(!recentExpanded());
+                    scheduleResize(); // grow/shrink the window to the bars
+                  },
+                  onActivate: activate,
+                  onSelect: (i) => {
+                    selectionSource = "mouse";
+                    setZone("recent");
+                    setRecentSelected(i);
+                  },
+                  onContext: (e, app) => {
+                    setZone("recent");
+                    setRecentSelected(recentApps().findIndex((r) => r.path === app.path));
+                    setMenu({ kind: "app", x: e.clientX, y: e.clientY, app, fromRecent: true });
+                  },
+                })}
               </Show>
-              <div class="result-grid" role="grid">
-              <For each={apps()}>
-                {(app, i) => (
-                  <div
-                    class="result-box"
-                    classList={{ "result-selected": i() === selected() }}
-                    role="option"
-                    aria-selected={i() === selected()}
-                    onMouseMove={() => {
-                      selectionSource = "mouse";
-                      setSelected(i());
-                    }}
-                    onClick={activate}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setSelected(i());
-                      setZone("grid");
-                      setMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
-                    }}
-                  >
-                    <Show
-                      when={iconFor(app.path)}
-                      fallback={
-                        <span class="result-box-tile result-box-icon">
-                          <img class="result-box-img icon-unknown" src={unknownIcon} alt="" />
-                        </span>
-                      }
-                    >
-                      <span class="result-box-tile result-box-icon">
-                        <img class="result-box-img" src={iconFor(app.path)} alt="" />
-                      </span>
-                    </Show>
-                    <span class="result-box-name">{app.name}</span>
-                  </div>
-                )}
-              </For>
+              <Show when={pinnedApps().length > 0}>
+                {barSection({
+                  title: t("pinned"),
+                  items: pinnedApps(),
+                  expanded: pinnedExpanded(),
+                  zoneActive: zone() === "pinned",
+                  selected: pinnedSelected(),
+                  onToggle: () => {
+                    setPinnedExpanded(!pinnedExpanded());
+                    scheduleResize();
+                  },
+                  onActivate: activate,
+                  onSelect: (i) => {
+                    selectionSource = "mouse";
+                    setZone("pinned");
+                    setPinnedSelected(i);
+                  },
+                  onContext: (e, app) => {
+                    setZone("pinned");
+                    setPinnedSelected(pinnedApps().findIndex((p) => p.path === app.path));
+                    setMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
+                  },
+                })}
+              </Show>
             </div>
-            </>
           ) : (
+            <Show when={apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
+              <div class="result-grid" role="grid">
+                <For each={apps()}>
+                  {(app, i) =>
+                    appBox(app, i() === selected(), {
+                      onActivate: activate,
+                      onSelect: () => {
+                        selectionSource = "mouse";
+                        setSelected(i());
+                      },
+                      onContext: (e) => {
+                        setSelected(i());
+                        setZone("grid");
+                        setMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
+                      },
+                    })
+                  }
+                </For>
+              </div>
+            </Show>
+          )
+        ) : (
+          <Show when={clips().length > 0} fallback={<span class="hint">{clipQuery() ? t("noResults") : t("noClipboardHistory")}</span>}>
             <div class="result-list" role="listbox">
               <For each={clips()}>
                 {(item, i) => (
@@ -822,8 +1001,8 @@ function App() {
                 )}
               </For>
             </div>
-          )}
-        </Show>
+          </Show>
+        )}
       </div>
       <Show when={mode() === "clipboard"}>
         <div class="shortcut-hint">{t("shortcutHint")}</div>

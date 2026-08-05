@@ -10,12 +10,17 @@ Tauri IPC
         ▼
 Rust Core (src-tauri/src/)
   ├─ window.rs   — show / hide / toggle the launcher surface
-  ├─ apps.rs     — Start Menu scan, fuzzy search, ShellExecuteW launch
+  ├─ apps.rs     — file search from the index caches, fuzzy + pinyin scoring,
+  │                ShellExecuteW launch (+ records recent-opens)
+  ├─ cache.rs    — System32 / user / icons SQLite index caches
   ├─ clipboard.rs— clipboard capture → SQLite, search, copy back, pin/delete
   ├─ icons.rs    — IShellItemImageFactory icon extraction + in-memory cache
-  ├─ pins.rs     — pinned-apps bar (SQLite `pinned_apps`, WAL connection)
+  ├─ pins.rs     — 已固定 bar (SQLite `pinned_apps`, WAL connection)
+  ├─ recent.rs   — 最近使用 bar (SQLite `recent_apps`, WAL connection)
+  ├─ settings.rs — settings.toml / default.toml / backup.toml three-file system
   ├─ tray.rs     — system tray icon, Restart/Exit menu, left-click toggle
   ├─ hotkey.rs   — toggle shortcut: Alt+Space preferred, fallback chain
+  ├─ svc.rs      — LumeSVC SYSTEM-service skeleton (SCM + IPC pipe only)
   └─ envwatch.rs — keep the process env block in sync with system env changes
         ▼
 Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
@@ -33,22 +38,21 @@ on focus loss**: `lib.rs` registers a `WindowEvent::Focused(false)` handler
 that hides the window, so clicking elsewhere dismisses it.
 
 ### `apps.rs`
-- **Discovery**: walks the all-users and per-user Start Menu `Programs`
-  folders recursively for `*.lnk` files. Deduped by name (per-user wins),
-  sorted by name.
-- **Index**: `AppIndex` state holds a lazily-built `Vec<AppEntry>` inside a
-  `Mutex`. First search scans the disk; the result is cached for the process
-  lifetime (rule: never block startup).
+- **Index**: `AppIndex` state holds in-memory mirrors of the System32 and
+  Desktop/user entries loaded from the `cache.rs` SQLite DBs (see Data
+  management), refreshed at startup and hourly (rule: never block startup).
 - **Search**: `search_apps(query)` scores each entry with a case-insensitive
   fuzzy subsequence matcher (`fuzzy_score`). Rewards prefix, word-boundary and
   consecutive-run matches; penalizes name length. Chinese names additionally
   carry **pinyin** search aids (`pinyin_full`, `pinyin_initials`, computed at
   scan time via the `pinyin` crate and not serialized to the frontend);
   `score_app` takes the best of name / pinyin / initials (pinyin weighted
-  ×0.9). Returns the top 8.
-- **Launch**: `launch_app(path)` calls `ShellExecuteW(…, "open", …)`.
-  `std::process::Command` would use `CreateProcess`, which cannot resolve
-  `.lnk` targets, so the shell is required.
+  ×0.9). Returns the top 8; an empty query (browse) was removed in 0.2.12.
+- **Launch**: `launch_app(path, elevated, name)` calls
+  `ShellExecuteW(…, "open"/"runas", …)`. `std::process::Command` would use
+  `CreateProcess`, which cannot resolve `.lnk` targets, so the shell is
+  required. A successful launch is recorded into `recent_apps` (the single
+  chokepoint for the 最近使用 bar).
 
 ### `icons.rs`
 - **Extraction**: `extract_icon_png` calls `IShellItemImageFactory` (via
@@ -69,11 +73,12 @@ launcher (reuses `window::toggle_launcher`); the right-click menu has Restart
 the system UI language (`GetUserDefaultUILanguage`).
 
 ### `pins.rs`
-Persists the Navigate **pinned bar** in a `pinned_apps` table (`path` unique,
+Persists the Navigate **已固定 bar** in a `pinned_apps` table (`path` unique,
 ordered by pin time) inside `lume.db`. It uses its own WAL-mode connection so
 it shares the file safely with the clipboard store. Right-clicking an app
 pins/unpins it (via the custom context menu); the bar renders only on the
-empty-query main menu.
+empty-query main menu, below 最近使用. Both bars are titled + expandable (one
+row collapsed, all rows on 展开).
 
 ### `hotkey.rs`
 Registers the toggle shortcut through `tauri-plugin-global-shortcut`. Other
@@ -113,7 +118,7 @@ already-running ones keep their original environment.
   250 ms on a background thread. On change it prefers text via `arboard`, else
   reads an image (RGBA → PNG blob). The listener's own `copy_clipboard` writes
   are skipped (`last_text` / `last_image_hash`).
-- **Store**: SQLite at `app_data_dir()/lume.db` (`rusqlite`, bundled).
+- **Store**: SQLite at `data_dir()/lume.db` (`rusqlite`, bundled).
   Text rows are deduplicated — a partial unique index on `content WHERE kind
   = 'text'` plus an explicit update-then-insert bumps recency instead of
   duplicating. Images are stored as PNG blobs. Recency timestamps are forced
@@ -129,6 +134,78 @@ already-running ones keep their original environment.
   `arboard::set_text`, images via PNG-decode → `set_image`.
 - DB helpers take `&Connection`, which lets tests run against an in-memory DB.
 
+### `recent.rs`
+Persists the Navigate **最近使用 bar** in a `recent_apps` table (`path` unique,
+`opened_at` recency) inside `lume.db`, on its own WAL connection. Opens are
+recorded at the single `launch_app` chokepoint (`apps.rs`), deduped by path
+(re-opening bumps the timestamp) and pruned to `appearance.recent_count`.
+`delete_recent` soft-deletes a record (the file/app is untouched). The bar shows
+only on the empty-query main menu, above the 已固定 bar.
+
+## Data management
+
+Everything Lume persists lives under a single writable **base dir**, decided in
+`paths.rs` (`base_dir()`):
+
+- **Portable** (exe not under `Program Files`): `<exe_dir>/` — the whole folder
+  can be carried around.
+- **Installed** (exe under `Program Files`, read-only for normal users):
+  `%LOCALAPPDATA%\Lume\`. The SYSTEM service resolves the same dir from
+  `HKLM\Software\Lume\DataDir` (its own `%LOCALAPPDATA%` is the system profile,
+  which is wrong).
+
+First run migrates the legacy `app_data_dir()/lume.db` into `data/`
+(`paths::migrate_db`) and, in installed mode, copies any exe-adjacent `data/`,
+`settings/`, `languages/` folders into the writable base
+(`migrate_installed`). Both are copy-only — never delete.
+
+```
+<base>/
+├── settings/   settings.toml (the only one read) · default.toml (factory, read-only) · backup.toml (pre-save snapshot)
+├── data/       SQLite databases
+├── languages/  runtime i18n overrides
+└── res/        (read-only assets, stays next to the exe)
+```
+
+### SQLite databases (`data/`)
+
+`lume.db` holds the **user data** (WAL mode, three independent connections
+sharing the file safely):
+
+| table | module | writes |
+|---|---|---|
+| `clipboard` | `clipboard.rs` | background 250 ms sequence poll; pruned to newest 300 |
+| `pinned_apps` | `pins.rs` | pin/unpin commands (path unique) |
+| `recent_apps` | `recent.rs` | recorded at the `launch_app` chokepoint (path unique, pruned to `recent_count`) |
+
+Three rebuildable **index caches** (not user data — dropped and rebuilt freely):
+
+| db | contents | refresh |
+|---|---|---|
+| `system32_cache.db` | System32 openable executables (excludes DLLs) | built once |
+| `user_cache.db` | Desktop + user-dir files | startup + hourly differential (configurable) |
+| `icons.db` | icon PNGs deduped by content hash | lazy on first display |
+
+### Settings files
+
+`settings.toml` is the only file read at runtime; `default.toml` is the factory
+default copied on first run; `backup.toml` snapshots the previous file before
+every save / apply / import / restore-default. All fields are
+`#[serde(default)]`, so an older `settings.toml` loads unchanged and new fields
+pick up their defaults.
+
+### Rules
+
+- **Business logic lives in Rust** — the webview only calls `invoke` commands;
+  there is no frontend DB access.
+- **Icons never enter `lume.db`** — extracted lazily into `icons.db`
+  (hash-deduped) plus a process-level in-memory cache.
+- **WAL lets three connections share `lume.db`** concurrently
+  (`PRAGMA journal_mode=WAL`).
+- The SYSTEM service (`lume-svc.exe`) is a **dormant skeleton**: it reads and
+  writes no database — it only learns the data dir for future SYSTEM-level
+  features (USN indexing).
+
 ## Frontend
 
 - `App.tsx` holds query / mode / results / selection state. Two modes —
@@ -136,9 +213,11 @@ already-running ones keep their original environment.
   search row; switching keeps the current query and re-searches.
 - Each keystroke invokes the active mode's search command and drops stale
   responses via a monotonic request id.
-- **Navigate** renders apps as a 5-column box grid (letter tile + name). Empty
-  query browses all apps. Arrow keys navigate in four directions, mouse hover
-  selects, click launches.
+- **Navigate** — empty query shows the two bars (最近使用 above 已固定), each a
+  titled, expandable grid of app boxes sized like the results grid; typing shows
+  the search-results grid. ↑/↓ cycle the bars on the empty main menu, ←/→ move
+  within the active bar; mouse hover selects, click launches. Context menus
+  offer pin / launch / open location / (recent: remove-from-recent) / admin.
 - **Clipboard** renders a list: text as muted clipboard-icon tiles with
   single-line previews, images as cover-cropped thumbnails, pinned rows with a
   pin badge and every row with a trash button (per-entry delete).
@@ -155,9 +234,10 @@ already-running ones keep their original environment.
 - Window starts hidden (`"visible": false`), first shown by the hotkey, and
   auto-hides on focus loss (`lib.rs` window-event handler).
 - The webview clears the query, results and mode on window-focus, then
-  repopulates the Navigate grid — each invocation starts fresh (Spotlight-like).
-- `AppIndex` is built once on first search and never invalidated in v0.1;
-  a rescan or SQLite-backed index is future work.
+  repopulates the Navigate bars (最近使用 / 已固定) — each invocation starts
+  fresh (Spotlight-like), and the expanded-bar state is reset.
+- `AppIndex` mirrors the `cache.rs` SQLite DBs; it is refreshed at startup and
+  hourly (differential), so search reflects new files without a manual rescan.
 - `ActiveHotkey` is set once at startup from the first successful
   registration and read by the frontend on mount.
 - `ClipboardState` (SQLite connection + sequence tracking) is managed at
@@ -173,5 +253,5 @@ delete and clear (`src-tauri/src/clipboard.rs`). Run with `cargo test` — see
 
 ## Future
 
-Planned work is tracked in `docs/ROADMAP.md`: the Navigate pinned bar and the
-plugin system (not started until the user signals the groundwork is ready).
+Planned work is tracked in `docs/ROADMAP.md`: the plugin system (started only on
+explicit instruction) and the clipboard-page redesign (design pending).

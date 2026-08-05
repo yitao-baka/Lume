@@ -57,13 +57,14 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 - Toggle hotkey — `Alt+Space` preferred, auto-falls back to the next free
   combo (`Ctrl+Space`, `Ctrl+Alt+Space`) when taken; the active combo is shown
   in the launcher hint (`src-tauri/src/hotkey.rs`)
-- Navigate main menu — the Start Menu app scan was removed in 6.5 (search now
-  draws from the settings 系统索引); the grid shows an empty "enable an index"
-  state until the file-based search iteration lands. The 6-column box grid
-  (with `IShellItemImageFactory` icons, pinned bar in SQLite `pinned_apps`,
-  pinyin scoring) remains for that future index
-  (`src-tauri/src/apps.rs`, `src-tauri/src/icons.rs`, `src-tauri/src/pins.rs`,
-  `src/App.tsx`)
+- Navigate main menu — the empty-query main menu is the two bars: 「最近使用」
+  (recent opens, SQLite `recent_apps`, deduped by path, capped by
+  `appearance.recent_count`) above 「已固定」 (SQLite `pinned_apps`). Both are
+  titled + expandable (one row collapsed / all rows on 展开), sized like the
+  results grid; the empty-query browse grid was removed in 0.2.12. Typing shows
+  the file-search results grid (settings 系统索引). Launches are recorded at the
+  single `launch_app` chokepoint (`src-tauri/src/apps.rs`,
+  `src-tauri/src/recent.rs`, `src-tauri/src/pins.rs`, `src/App.tsx`)
 - Clipboard manager — background capture (250 ms seq poll) → SQLite history
   of text **and images**, search + copy back; `Tab` switches Navigate /
   Clipboard modes (`src-tauri/src/clipboard.rs`, `src/App.tsx`)
@@ -89,20 +90,28 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   verb (`apps.rs::launch_app`); the launcher itself stays non-elevated
 - Auto-start at logon — settings toggle writes/removes the
   `HKCU\...\CurrentVersion\Run` `Lume` value (registry is the source of truth)
+- Single instance — a named mutex (`lib.rs` `acquire_single_instance`) held for
+  the process lifetime; a second launch of `lume.exe` exits immediately
 
 ## Current iteration
 
-**Program Files install + LumeSVC service + admin launch + auto-start
-(ROADMAP #8) — complete as of 2026-08-04**: dual-mode paths in `paths.rs`
-(installed → `%LOCALAPPDATA%\Lume`, portable unchanged), the SYSTEM service
-`lume-svc.exe` as a **dormant skeleton** (register/uninstall via a settings
-button with UAC, AUTO start, SCM lifecycle + IPC pipe only — the GUI stays the
-sole DB refresher), app-entry 「以管理员身份启动」 via the `runas` verb, and
-the 「开机自启动」 HKCU Run toggle. Manual verify steps in `docs/TESTING.md`.
+**最近使用栏 + 固定栏改造 + 界面设置项 (ROADMAP #10) — complete as of
+2026-08-05**: the empty-query main menu is now the two expandable bars
+「最近使用」 (new, SQLite `recent_apps`, recorded at the single `launch_app`
+chokepoint, deduped by path, capped by `appearance.recent_count`) and
+「已固定」 (reworked with title + 展开/收起); the browse grid was removed. New
+interface settings: 「显示最近使用」 toggle, 「最近使用条数」 cap, and custom
+search-box placeholders per mode. Details + known edge cases in
+`docs/ROADMAP.md` #10.
 
-**Prior: Settings (ROADMAP #6) — complete as of 2026-08-03** (6.1–6.6).
+**Prior: Environment sync (ROADMAP #9) — complete as of 2026-08-04**
+(`envwatch.rs`, zero-polling WM_SETTINGCHANGE + registry notify).
+**Prior: Program Files install + LumeSVC + admin launch + auto-start
+(ROADMAP #8) — complete as of 2026-08-04**. **Prior: Settings (ROADMAP #6) —
+complete as of 2026-08-03** (6.1–6.6).
 Next up: ROADMAP #7 plugin system (started only on explicit instruction).
 
 Not yet implemented (future): plugin system; the file search is basic (lists
 the settings 索引目录 top-level files, non-recursive); USN / whole-drive
-SYSTEM indexing (LumeSVC is the skeleton for it) — see `docs/ROADMAP.md`.
+SYSTEM indexing (LumeSVC is the skeleton for it); clipboard page redesign
+(ROADMAP #10.4, design pending) — see `docs/ROADMAP.md`.

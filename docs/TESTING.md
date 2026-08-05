@@ -181,6 +181,35 @@ dev server.
    stays flat while the environment is untouched (no polling wakeups; thread
    suspended in `MsgWaitForMultipleObjectsEx`).
 
+### Recent + pinned bars (ROADMAP #10)
+
+> `cargo test` covers the recent store (upsert / dedupe / pruning); the UI is
+> manual-only. Requires a dev build (`npm run tauri dev`).
+
+1. **Recording** — launch a few apps/files from Lume (search, grid, context
+   menu, 管理员). Re-open the main menu → 「最近使用」 shows them newest-first.
+   Launch the same app again → it bumps to the front (dedupe by path).
+2. **One row + 展开** — with >1 row of recents, the collapsed bar shows exactly
+   one row and the header shows 展开. Click 展开 → all rows appear, the label
+   flips to 收起; click again → one row. Hide the launcher and re-show → the bar
+   is collapsed again (expand state is not persisted).
+3. **展开 hidden when ≤ 1 row** — pin/launch so a bar fits in one row → no 展开
+   button. A bar with 0 items (e.g. 显示最近使用 off, or no pins) hides entirely.
+4. **Removed browse grid** — empty query shows only the two bars (no all-apps
+   grid); typing a query shows the results grid; deleting back to empty returns
+   to the bars.
+5. **Keyboard** — on the empty main menu, ↑/↓ cycle 最近使用 ↔ 已固定, ←/→ move
+   within the active bar, Enter launches. Typing switches to grid navigation.
+6. **Settings** — 界面: 「显示最近使用」 off hides the bar (recording continues,
+   so re-enabling shows history); 「最近使用条数」 10/20/30 caps stored + shown
+   (lowering prunes immediately); two placeholder fields override the apps /
+   clipboard search-box placeholders (empty = default text). Old `settings.toml`
+   loads unchanged (`#[serde(default)]`).
+7. **Context menu** — right-click a recent item → pin/launch/reveal /
+   「从最近使用中删除」/ 以管理员身份启动 (remove-from-recent sits just before
+   the admin item); pin moves it into 「已固定」; remove-from-recent (or `Del` on
+   a selected recent entry) drops it from the list without touching the file.
+
 ## Known hotkey conflicts
 
 - **uTools / PowerToys Run** both register `Alt+Space` by default. Lume skips

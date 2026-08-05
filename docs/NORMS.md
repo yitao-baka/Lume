@@ -61,3 +61,13 @@ dev 为 `src-tauri/target/debug/` 下）。Lume 因此可以整体拷贝带走�
   的过渡，与 `docs/UI_GUIDELINES.md` 的视觉契约一致。
 - 当自建组件无法满足需求时，**可以从网络寻找外部组件库**（SolidJS 生态
   优先），但需保持风格统一、不破坏三语言 i18n 与简约原则。
+
+## 开发流程：每次改动必编译
+
+- **每完成一处改动，立即编译验证**，交付时必须是「可直接运行测试」的状态，
+  方便用户马上验证：Rust 侧跑 `cargo check` + 相关单测；前端改动跑
+  `npm run build` + `npx tsc --noEmit`；大改动/收尾时用
+  `npm run tauri build -- --no-bundle` 出独立 exe 并启动冒烟测试。
+- **编译或测试失败不允许声称完成**——如实报告失败输出，修复通过后再交付。
+- 涉及新 i18n 文案时，编译前确认 en / zh-CN / zh-TW 三语键已同步（`Messages`
+  类型以 en.json 为准，缺键会导致 tsc 报错）。

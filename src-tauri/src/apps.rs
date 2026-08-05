@@ -186,14 +186,29 @@ pub fn search_apps(
     Ok(filter_files(&entries, &query))
 }
 
+/// Best-effort display name for a path when the caller doesn't supply one:
+/// the file name, with a trailing `.lnk` extension removed (matches the index).
+fn display_name(path: &str) -> String {
+    let file = path.rsplit(['\\', '/']).next().unwrap_or(path);
+    let stem = file.strip_suffix(".lnk").unwrap_or(file);
+    stem.to_string()
+}
+
 /// Open a file or `.lnk` with the Windows shell.
 ///
 /// `std::process::Command` uses `CreateProcess`, which does not resolve
 /// `.lnk` targets, so we go through `ShellExecuteW`. When `elevated` is set the
 /// verb becomes `runas`, which pops the UAC confirmation and launches the
-/// target with an elevated token.
+/// target with an elevated token. A successful open is recorded for the
+/// main-menu 「最近使用」 bar (deduped by path, pruned to the configured count).
 #[tauri::command]
-pub fn launch_app(path: String, elevated: bool) -> Result<(), String> {
+pub fn launch_app(
+    path: String,
+    elevated: bool,
+    name: Option<String>,
+    recent: State<crate::recent::RecentState>,
+    settings: State<SettingsState>,
+) -> Result<(), String> {
     use windows_sys::Win32::Foundation::{ERROR_CANCELLED, HWND};
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -228,6 +243,12 @@ pub fn launch_app(path: String, elevated: bool) -> Result<(), String> {
     if code <= 32 {
         return Err(format!("ShellExecuteW failed with code {code}"));
     }
+    // Record the open — best-effort, never blocks the launch. Name comes from
+    // the frontend (`AppEntry.name`) with a path-derived fallback.
+    let display = name.unwrap_or_else(|| display_name(&path));
+    let max = settings.current().appearance.recent_count.max(1) as usize;
+    let conn = recent.lock();
+    let _ = crate::recent::record_recent(&conn, &path, &display, max);
     Ok(())
 }
 

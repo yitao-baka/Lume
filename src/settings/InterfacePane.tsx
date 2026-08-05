@@ -197,6 +197,58 @@ export default function InterfacePane(props: {
           />
         </div>
       </div>
+
+      <div class="settings-group">
+        <h2 class="settings-title">{t("recentCount")}</h2>
+        <NumberPreset
+          value={a().recent_count}
+          presets={[
+            { label: "10", value: 10 },
+            { label: "20", value: 20 },
+            { label: "30", value: 30 },
+          ]}
+          onCommit={(v) => props.onChange({ recent_count: v })}
+        />
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-sub settings-sub-between">
+          <span class="settings-sub-label">{t("showRecent")}</span>
+          <Toggle
+            checked={a().show_recent}
+            onChange={(v) => props.onChange({ show_recent: v })}
+          />
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <h2 class="settings-title">{t("searchPlaceholder")}</h2>
+        <div class="settings-sub">
+          <span class="settings-sub-label">{t("placeholderApps")}</span>
+          <input
+            class="settings-text-input"
+            type="text"
+            placeholder={t("searchApps")}
+            value={a().search_placeholder_apps}
+            onInput={(e) =>
+              props.onChange({ search_placeholder_apps: e.currentTarget.value })
+            }
+          />
+        </div>
+        <div class="settings-sub">
+          <span class="settings-sub-label">{t("placeholderClipboard")}</span>
+          <input
+            class="settings-text-input"
+            type="text"
+            placeholder={t("searchClipboard")}
+            value={a().search_placeholder_clipboard}
+            onInput={(e) =>
+              props.onChange({ search_placeholder_clipboard: e.currentTarget.value })
+            }
+          />
+        </div>
+        <span class="settings-hint">{t("placeholderHint")}</span>
+      </div>
     </>
   );
 }

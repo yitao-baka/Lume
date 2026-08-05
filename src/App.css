@@ -283,6 +283,7 @@ body,
    no visible bar, and content fills the full width (no right gap). */
 .result-grid::-webkit-scrollbar,
 .result-list::-webkit-scrollbar,
+.bar-list::-webkit-scrollbar,
 .settings-body::-webkit-scrollbar {
   width: 0;
   height: 0;
@@ -333,69 +334,59 @@ body,
   object-fit: contain;
 }
 
-/* Pinned apps bar above the main-menu grid. */
-.pinned-bar {
-  flex: none;
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 8px 10px;
+/* Main-menu bars (最近使用 / 已固定): a titled, expandable section on the
+   empty-query main menu. Each bar = a header row (label + 展开) and a grid of
+   app boxes sized exactly like the results grid. */
+.bar-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.bar-section {
   border-bottom: 1px solid var(--border);
 }
+.bar-section:last-child {
+  border-bottom: none;
+}
 
-.pinned-item {
-  flex: none;
+.bar-header {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 5px;
-  width: 76px;
-  padding: 8px 6px;
-  border-radius: 10px;
-  border: 1px solid transparent;
+  justify-content: space-between;
+  padding: 2px 10px 4px;
+}
+
+.bar-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.bar-expand {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
   cursor: default;
 }
-
-.pinned-item.result-selected {
-  background: var(--selected);
-  border-color: rgba(90, 200, 250, 0.7);
+.bar-expand:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
-.pinned-item-tile {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-
-.pinned-item-letter {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  font-weight: 600;
-  color: rgba(0, 0, 0, 0.82);
-  background: rgba(90, 200, 250, 0.22);
-}
-
-.pinned-item-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.pinned-item-name {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
+.bar-grid {
+  display: grid;
+  /* Same auto-adapting columns as the results grid, so "one row" means the
+     same number of boxes the main grid would show at this width. */
+  grid-template-columns: repeat(auto-fill, minmax(var(--entry-size), 1fr));
+  gap: 8px;
+  padding: 4px 10px 8px;
+  align-content: start;
 }
 
 /* Custom context menu: full-window overlay + positioned menu. */
@@ -778,6 +769,12 @@ body.settings-window #root {
 
 .settings-text-input::placeholder {
   color: var(--text-faint);
+}
+
+.settings-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
 }
 
 .settings-icon-btn {

@@ -89,5 +89,16 @@
   "indexEmpty": "No index — enable one in Settings",
   "settingsCacheRefresh": "Cache refresh interval",
   "settingsMinutes": "min",
+  "recent": "Recent",
+  "pinned": "Pinned",
+  "expand": "Expand",
+  "collapse": "Collapse",
+  "showRecent": "Show recent",
+  "recentCount": "Recent items count",
+  "searchPlaceholder": "Search box placeholder",
+  "placeholderApps": "Apps placeholder",
+  "placeholderClipboard": "Clipboard placeholder",
+  "placeholderHint": "Leave empty to use the default text",
+  "removeFromRecent": "Remove from recent",
   "aboutTagline": "A lightweight Windows productivity launcher"
 }

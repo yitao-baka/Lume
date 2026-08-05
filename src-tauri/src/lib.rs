@@ -7,6 +7,7 @@ mod i18n;
 mod icons;
 pub mod paths;
 mod pins;
+pub mod recent;
 pub mod settings;
 pub mod svc;
 mod tray;
@@ -14,8 +15,55 @@ mod window;
 
 use tauri::{Manager, WindowEvent};
 
+/// Result of the single-instance check.
+enum InstanceGuard {
+    /// This is the first instance — hold the mutex until the process exits.
+    Held(windows::Win32::Foundation::HANDLE),
+    /// Another instance holds the mutex — this process must exit.
+    Exit,
+}
+
+/// Single-instance guard: a per-session named mutex held for the process
+/// lifetime. A second launch fails to acquire it and exits immediately, so
+/// Lume never multi-opens. The handle must stay alive for the whole run.
+fn acquire_single_instance() -> InstanceGuard {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{
+        CloseHandle, GetLastError, HANDLE, ERROR_ALREADY_EXISTS,
+    };
+    use windows::Win32::System::Threading::CreateMutexW;
+
+    let name: Vec<u16> = "LumeLauncher_SingleInstance"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = match unsafe { CreateMutexW(None, true, PCWSTR(name.as_ptr())) } {
+        Ok(h) => h,
+        Err(e) => {
+            // Can't acquire the mutex — fail open so a mutex fault never
+            // blocks the app from starting.
+            eprintln!("[lume] single-instance mutex error: {e}");
+            return InstanceGuard::Held(HANDLE(std::ptr::null_mut()));
+        }
+    };
+    if handle.0.is_null() || unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        if !handle.0.is_null() {
+            let _ = unsafe { CloseHandle(handle) };
+        }
+        return InstanceGuard::Exit;
+    }
+    InstanceGuard::Held(handle)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Single instance: hold a named mutex for the process lifetime; a second
+    // launch exits immediately (docs/NORMS.md).
+    let _guard = match acquire_single_instance() {
+        InstanceGuard::Held(h) => h,
+        InstanceGuard::Exit => return,
+    };
+
     tauri::Builder::default()
         .manage(apps::AppIndex::default())
         .manage(hotkey::ActiveHotkey::default())
@@ -95,6 +143,8 @@ pub fn run() {
             clipboard::init(app);
             // Pinned-apps store (Navigate main-menu bar).
             pins::init(app);
+            // Recent-opens store (Navigate main-menu bar, above the pins).
+            recent::init(app);
             // System tray icon (Restart / Exit right-click menu).
             tray::setup(app);
             Ok(())
@@ -120,6 +170,8 @@ pub fn run() {
             pins::get_pinned_apps,
             pins::pin_app,
             pins::unpin_app,
+            recent::get_recent_apps,
+            recent::delete_recent,
             settings::get_settings,
             settings::save_settings,
             settings::export_settings,

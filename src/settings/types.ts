@@ -19,6 +19,14 @@ export interface SettingsData {
     window_position: string;
     /** Remember the manually-moved window position across shows. */
     remember_position: boolean;
+    /** Show the 「最近使用」 bar on the main menu. */
+    show_recent: boolean;
+    /** Cap for the recent-opens list. */
+    recent_count: number;
+    /** Custom search placeholder for apps mode ("" = localized default). */
+    search_placeholder_apps: string;
+    /** Custom search placeholder for clipboard mode ("" = localized default). */
+    search_placeholder_clipboard: string;
   };
   hotkeys: { toggle: string; switch_mode: string };
   index: {

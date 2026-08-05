@@ -198,3 +198,99 @@ SYSTEM 级能力（如 USN 全盘索引）铺路。
 **后续可扩展**：设置页开关（默认常开，成本可忽略）；向前端推送
 `env-refreshed` 事件供未来「运行命令」功能展示；按需把刷新结果可视化。
 
+## 10. 最近使用栏 + 固定栏改造 + 界面设置项
+
+**状态：已实现（2026-08-05）。**
+
+背景：主界面（应用模式、空查询）目前是「固定栏 + 全部应用浏览网格」。本迭代把
+**空查询浏览网格移除**——主菜单变为两栏：「最近使用」（新）+「已固定」（改造），
+输入搜索词时才出现结果网格。两栏都支持标题 + 展开/收起，默认收起始终展示一行。
+
+### 10.1 数据模型「最近使用」（新）
+
+- SQLite 新表 `recent_apps`（`pins.rs` 同款独立 WAL 连接）：
+  `id INTEGER PK AUTOINCREMENT, path TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+  opened_at INTEGER NOT NULL`。
+- **按路径去重**：重复打开 → `ON CONFLICT(path) DO UPDATE` 前移 `opened_at`；满
+  `appearance.recent_count` 条后按 `opened_at` 剔除最旧（删数据与显示同用该上限）。
+- **单一埋点**：在 `launch_app`（`apps.rs`，搜索/两栏/右键/管理员启动全走它）里记录，
+  应用 + 文件都记。`launch_app` 增加可选 `name` 参数（前端各调用点已有
+  `AppEntry.name`，与网格显示名一致、无扩展名）。
+- 新模块 `src-tauri/src/recent.rs`：命令 `get_recent_apps`（按 `opened_at` 倒序、
+  封顶 `recent_count`）+ 内部 `record_recent(path, name)`；`init` 接在 `lib.rs`。
+- **「显示最近使用」开关只影响显示**，关闭时仍照常记录，重新打开可见历史。
+
+### 10.2 界面改造（主菜单 = 两栏）
+
+- **移除空查询浏览网格**：空查询时 `.result-grid` 不渲染（输入时保留，现有搜索逻辑
+  不变）；`.pinned-bar` 仍仅空查询显示，新增 `.recent-bar` 位于其上方。
+- **两栏结构统一**：每栏 = 头部行（左标签「最近使用」/「已固定」，右「展开」按钮）
+  + 内容区。内容区复用 `.result-grid` 的
+  `repeat(auto-fill, minmax(var(--entry-size), 1fr))` → 条目尺寸、列数与主网格一致。
+  - **收起态 = 1 行**（实现：JS 按测量列数切片 `slice(0, barCols)`，非 CSS 裁剪）；
+    **展开态 = 全部条目换行铺满**。
+  - 点「展开」切换，文字「展开」↔「收起」；**不持久化展开状态**——每次呼出主界面
+    （`clearSearch` / 窗口聚焦）重置为收起。
+  - **「展开」显示条件**：栏内容 ≤ 1 行时不显示；**0 条时整栏（含标题）隐藏**，两栏
+    都空时空白无提示（不再显示空查询 `indexEmpty` 提示；仅输入搜索词且无结果时保留
+    `noResults` 提示）。
+- **键盘导航**：空查询时 zone 扩为 `recent | pinned` 两区，↑↓ 纵向循环，←→ 栏内
+  移动，Enter 启动；输入搜索词后只剩结果网格（现有导航不变）。
+- **右键菜单**：两栏条目复用现有应用菜单（固定/取消固定、启动、打开文件位置、以
+  管理员身份启动）；从最近栏「固定」即加入已固定栏。
+- **窗口自适应**：`resizeToContent` 需支持「无网格、仅两栏」的测量——现在没有
+  `.result-grid/.result-list` 会提前 return；把两栏容器纳入测量，展开内容超高时受
+  `window_height` 上限 + 内部滚动（现有滚动条隐藏 + 悬浮指示条机制不变）。
+- **图标**：两栏条目走现有 `iconCache` / `get_app_icons`，与网格一致。
+
+### 10.3 设置项（「界面」页，`appearance`）
+
+| 键 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `show_recent` | bool | `true` | 「显示最近使用」开关 |
+| `recent_count` | u32 | `20` | 「最近使用条数」上限 |
+| `search_placeholder_apps` | String | `""` | 应用模式搜索框占位符（空 = 默认文案） |
+| `search_placeholder_clipboard` | String | `""` | 剪贴板模式占位符（空 = 默认文案） |
+
+- 全部 `#[serde(default)]`，旧 `settings.toml` 直接加载（`meta.version` 保持 1 仅作
+  记录；`Settings::default()` 补齐新字段，`default.toml` 随之生成）。
+- `InterfacePane.tsx` 新增 groups：「显示最近使用」Toggle；「最近使用条数」预设
+  chips（10 / 20 / 30）；「搜索框占位符」两个文本输入（应用 / 剪贴板各一）。
+- 占位符生效：`App.tsx` 占位符改为 `设置值 || 模式默认文案`；`show_recent` 经
+  `applyRuntimeSettings` 读入、控制 `.recent-bar` 渲染。
+- i18n 新增三语字符串：`recent`/`pinned`/`expand`/`collapse`/`showRecent`/
+  `recentCount`/`searchPlaceholder` 等（en / zh-CN / zh-TW）。
+
+### 10.4 剪贴板页面重新设计
+
+**仅记入规划，方案待定**——由用户后续提供设计后，再开子步骤实现。
+
+### 测试
+
+- `recent.rs` 单测：upsert 前移、满额剔除、去重、`recent_count` 生效；`cargo test`。
+- 手工：打开多个条目 → 主菜单最近栏按时间倒序；展开/收起与重置；开关与上限设置
+  即时生效；输入搜索词后两栏隐藏。
+
+### 实现说明（2026-08-05）
+
+- **收起态实现**：不用 CSS `overflow` 裁剪，改为 JS 按测量列数切片——折叠渲染
+  `slice(0, barCols)`，展开渲染全部；`barCols` 由 `measureBarCols` 读 `.bar-grid`
+  计算 `gridTemplateColumns` 得出（auto-fill 轨道数稳定），窗口宽度/条目框变化时
+  经 effect 重测。比 `max-height` 裁剪更稳（方框高度随列宽自适应，无法用固定高度
+  定一行）。
+- **测量自洽**：`measureBarCols` 变更列数后补一次 `resizeToContent`，消除首帧
+  6 列默认值导致的窗口高度偏差。
+- **占位符**：`placeholderApps() || t("searchApps")`（剪贴板同理），两模式各一条。
+- **`runSearch("")` 短路**：空查询不再加载浏览网格（省掉 200 条浏览查询）。
+- **`launch_app` 埋点**：加 `name: Option<String>` 参数（前端各调用点传
+  `AppEntry.name`），启动成功后记入 `recent_apps`（按路径 upsert + 上限剔除）；
+  UAC 取消（`ERROR_CANCELLED`）不记录。
+- **已知边界**：展开栏的非首行仅鼠标可达（↑↓ 用于两栏循环，栏内只有 ←→ 移动第一
+  行）；栏内多行键盘导航留待后续。
+- **加（同日）**：最近栏条目右键菜单新增「从最近使用中删除」（软删除，只删
+  `recent_apps` 记录，重新打开即回），位于「以管理员身份启动」之前；最近栏
+  选中时按 `Del` 同样删除；仅最近栏右键显示，网格/固定栏菜单不变。
+  `recent::delete_recent` + `remove_recent` 单测。
+- 验证：`cargo test` 35 通过（含 recent 3 个）、`npm run build` + `tsc --noEmit`
+  通过。
+

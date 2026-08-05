@@ -138,6 +138,10 @@ window_width = 720              # 窗口横向长度 px
 window_height = 520             # 窗口初始纵向长度 px（自适应上限）
 window_position = "center"      # center | top-left | top-right | bottom-left | bottom-right
 remember_position = true        # 记住位置开关
+show_recent = true              # 主菜单显示「最近使用」栏（只影响显示，记录照常）
+recent_count = 20               # 最近使用条数上限（存 + 显示同用）
+search_placeholder_apps = ""    # 应用模式搜索框占位符（空 = 默认文案）
+search_placeholder_clipboard = "" # 剪贴板模式占位符（空 = 默认文案）
 
 [hotkeys]
 toggle = "Alt+Space"            # 呼出主界面

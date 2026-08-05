@@ -56,6 +56,19 @@ pub struct Appearance {
     pub window_position: String,
     /// Remember the manually-moved window position across shows.
     pub remember_position: bool,
+    /// Show the 「最近使用」 bar on the main menu (display-only — recording
+    /// always continues, so re-enabling shows the history).
+    #[serde(default = "default_show_recent")]
+    pub show_recent: bool,
+    /// Cap for the recent-opens list (stored and displayed).
+    #[serde(default = "default_recent_count")]
+    pub recent_count: u32,
+    /// Custom search placeholder for the apps mode (empty = localized default).
+    #[serde(default)]
+    pub search_placeholder_apps: String,
+    /// Custom search placeholder for the clipboard mode (empty = localized default).
+    #[serde(default)]
+    pub search_placeholder_clipboard: String,
 }
 
 /// Default entry-box edge (matches a ~110px box in the current 6-col grid).
@@ -71,6 +84,16 @@ fn default_color_mode() -> String {
 /// Default max/initial window height (the old fixed 520px auto-size cap).
 fn default_window_height() -> u32 {
     520
+}
+
+/// The 「最近使用」 bar shows by default.
+fn default_show_recent() -> bool {
+    true
+}
+
+/// Default recent-opens cap (20).
+fn default_recent_count() -> u32 {
+    20
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +133,10 @@ impl Default for Settings {
                 window_height: 520,
                 window_position: "center".into(),
                 remember_position: false,
+                show_recent: true,
+                recent_count: 20,
+                search_placeholder_apps: String::new(),
+                search_placeholder_clipboard: String::new(),
             },
             hotkeys: Hotkeys {
                 toggle: "Alt+Space".into(),

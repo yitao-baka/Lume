@@ -4,6 +4,46 @@ All notable changes to Lume are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.2.12] — 2026-08-05
+
+Recently-used bar + reworked pinned bar + interface settings (ROADMAP item 10).
+
+### Added
+
+- **最近使用 (Recent) bar** — the main menu now has a 「最近使用」 bar above the
+  pinned bar, recording the last launches (apps **and** files) via the single
+  `launch_app` chokepoint. Opens are deduped by path (re-opening bumps to the
+  top) and pruned to a configurable cap (default 20), persisted in SQLite
+  (`recent_apps`). The bar shows only one row by default; 展开 reveals the rest
+  and the expanded state is **not** persisted — each launcher show resets to
+  collapsed.
+- **Reworked 「已固定」 bar** — the pinned bar now has the same titled,
+  expandable structure: label + 展开/收起 header, one row collapsed, all rows
+  expanded. Both bars reuse the main grid's entry-box sizing and columns.
+- **Removed the empty-query browse grid** — the main menu is now exactly the two
+  bars; typing a query shows the results grid as before. An empty main menu
+  (no recents, no pins) shows a blank results area.
+- **Remove from recent** — right-clicking a 「最近使用」 entry (or selecting one
+  and pressing `Del`) removes it from the list. A soft delete: reopening the
+  entry re-adds it, and the file/app itself is untouched. Sits in the context
+  menu just before 以管理员身份启动.
+- **Single instance** — Lume enforces a single running instance with a named
+  mutex; launching a second copy (double-clicking the exe again) exits silently
+  instead of starting a second process.
+- **Interface settings order** — 「显示最近使用」 moved below 「最近使用条数」.
+- **Interface settings** — 「显示最近使用」 toggle (default on), 「最近使用条数」
+  cap (10 / 20 / 30), and custom search-box placeholders for the apps and
+  clipboard modes (empty = localized default). All `#[serde(default)]`, so old
+  settings load unchanged.
+- **Keyboard navigation** — on the empty-query main menu, ↑/↓ cycle between the
+  two bars and ←/→ move within the active bar; typed search keeps the existing
+  grid navigation.
+
+### Tests
+
+- `recent.rs` unit tests for upsert-bump ordering, dedupe-by-path and cap
+  pruning (`cargo test`, 35 passing).
+
 ## [0.2.11] — 2026-08-04
 
 Live environment-variable synchronization (ROADMAP item 9).

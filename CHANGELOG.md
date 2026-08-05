@@ -4,6 +4,32 @@ All notable changes to Lume are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.2.14] — 2026-08-05
+
+Clipboard storage redesign + continuous bar navigation + expand-to-screen
+(ROADMAP item 12).
+
+### Changed
+
+- **Clipboard storage** — the DB no longer stores copied data's original form.
+  Image rows (screenshots / web bitmaps) now write a PNG into
+  `data/PictureCache/<id>.png` and store the relative path; legacy image BLOBs
+  are extracted to files on first launch. File/folder copies from Explorer (a
+  CF_HDROP path list) are captured verbatim as one newline-joined `file` row —
+  the files are never read or copied. Deleting an image row (or clearing all)
+  removes its picture file too.
+- **File entries work everywhere** — a `file` history row shows 「N 个文件」 (or
+  the single file name), is searchable by path fragment, copies back by
+  re-assembling a CF_HDROP, and auto-pastes by putting that list on the
+  clipboard and sending Ctrl+V (pasting into Explorer copies the files in
+  place — expected).
+- **Continuous bar navigation** — on the empty-query main menu, ↑/↓ move across
+  the 最近使用 / 已固定 bars as one grid, keeping the column when crossing the
+  boundary; ←/→ stay within the current row. Works collapsed and expanded.
+- **Expand fills the screen** — expanding a bar grows the window to show all of
+  its content, capped at the monitor's work area (instead of the
+  `window_height` setting) so it never runs off-screen.
+
 ## [0.2.13] — 2026-08-05
 
 Clipboard auto-paste + copy button, follow-mouse position, interface extras

@@ -247,3 +247,19 @@ pub fn apply_position(app: AppHandle) -> Result<(), String> {
     apply_initial_position(&window, &appearance).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// Logical height (CSS px) of the current monitor's work area — the screen
+/// minus the taskbar. Used as the "expand everything" window-height cap so an
+/// expanded bar can fill the screen but never run off it. Returns `0.0` when
+/// no monitor is resolved; the frontend then falls back to `window_height`.
+#[tauri::command]
+pub fn get_work_area(app: AppHandle) -> Result<f64, String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or_else(|| "main window not found".to_string())?;
+    let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? else {
+        return Ok(0.0);
+    };
+    let wa = monitor.work_area();
+    Ok(wa.size.height as f64 / monitor.scale_factor())
+}

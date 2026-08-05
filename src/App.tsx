@@ -31,11 +31,17 @@ interface AppEntry {
 /** A history entry as returned by the Rust `search_clipboard` command. */
 interface ClipboardItem {
   id: number;
-  kind: "text" | "image";
+  kind: "text" | "image" | "file";
   content: string;
   pinned: boolean;
   created_at: number;
   thumb: string | null;
+}
+
+/** Last path segment (handles both `/` and `\` separators). */
+function basename(p: string): string {
+  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return i >= 0 ? p.slice(i + 1) : p;
 }
 
 /** Open custom context menu: app or clipboard item, positioned at the cursor.
@@ -46,11 +52,18 @@ type MenuState =
   | { kind: "clip"; x: number; y: number; item: ClipboardItem }
   | null;
 
-/** Display label for a clipboard entry (images get their capture time). */
+/** Display label for a clipboard entry: images get their capture time, file
+ * lists show the single file name or a "N files" count. */
 function clipLabel(item: ClipboardItem): string {
-  return item.kind === "image"
-    ? t("imageLabel", { time: new Date(item.created_at).toLocaleString() })
-    : item.content;
+  if (item.kind === "image") {
+    return t("imageLabel", { time: new Date(item.created_at).toLocaleString() });
+  }
+  if (item.kind === "file") {
+    const paths = item.content.split("\n").filter(Boolean);
+    if (paths.length === 1) return basename(paths[0]);
+    return t("fileCount", { count: String(paths.length) });
+  }
+  return item.content;
 }
 
 /**
@@ -75,6 +88,8 @@ const EDIT_KEYS = new Set(["c", "v", "x", "a", "z", "y"]);
 const MIN_WINDOW_H = 90; // empty-state minimum
 // `.results` padding (6+6) + launcher border (2) + 1px gutters (2) + buffer.
 const WINDOW_PAD = 20;
+/** Breathing room kept around the window when an expanded bar fills the screen. */
+const SCREEN_MARGIN = 32;
 let lastWindowH = 0; // avoid resize/center loops
 
 function App() {
@@ -90,6 +105,9 @@ function App() {
 
   /** Max launcher height for auto-sizing (settings → 窗口大小 → 高度). */
   const [windowHeight, setWindowHeight] = createSignal(_a?.window_height ?? 520);
+  /** Logical work-area height of the current monitor (`null` until fetched) —
+   * the cap when a bar is expanded. Invalidated on every expand toggle. */
+  const [workAreaH, setWorkAreaH] = createSignal<number | null>(null);
   /** Launcher width, from settings — the source of truth for resizing (never
    * re-read from the window, which drifts on DPI rounding). */
   const [windowWidth, setWindowWidth] = createSignal(_a?.window_width ?? 720);
@@ -207,6 +225,18 @@ function App() {
     }
   }
 
+  /** Fetch the current monitor's logical work-area height once (0/unknown →
+   * `null`). Cached until an expand toggle clears it. */
+  async function ensureWorkArea() {
+    if (workAreaH() != null) return;
+    try {
+      const h = await invoke<number>("get_work_area");
+      setWorkAreaH(h > 0 ? h : null);
+    } catch {
+      setWorkAreaH(null);
+    }
+  }
+
   /** Fit the launcher window height to the current content, then re-center. */
   async function resizeToContent() {
     const search = document.querySelector(".search") as HTMLElement | null;
@@ -237,9 +267,17 @@ function App() {
       contentH = 56; // empty-state hint
     }
 
+    // Height cap: an expanded bar fills the screen (up to the work area, minus
+    // a margin); a collapsed bar stays under the configured window_height.
+    let cap = windowHeight();
+    if (recentExpanded() || pinnedExpanded()) {
+      await ensureWorkArea();
+      const screen = workAreaH();
+      if (screen) cap = Math.max(windowHeight(), screen - SCREEN_MARGIN);
+    }
     const targetH = Math.max(
       MIN_WINDOW_H,
-      Math.min(searchH + contentH + footerH + WINDOW_PAD, windowHeight()),
+      Math.min(searchH + contentH + footerH + WINDOW_PAD, cap),
     );
     if (targetH === lastWindowH) return;
     lastWindowH = targetH;
@@ -563,6 +601,102 @@ function App() {
     if (item) await deleteItem(item.id);
   }
 
+  /** Bars currently visible on the empty-query main menu, top to bottom. */
+  function visibleBars(): ("recent" | "pinned")[] {
+    const bars: ("recent" | "pinned")[] = [];
+    if (showRecent() && recentApps().length > 0) bars.push("recent");
+    if (pinnedApps().length > 0) bars.push("pinned");
+    return bars;
+  }
+
+  /** Move the bar selection across the two bars treated as one continuous
+   * grid. `↓`/`↑` move to the next/previous row that actually has an item at
+   * the current column — a collapsed bar contributes exactly one row (only its
+   * visible items are reachable), and crossing a bar boundary keeps the column
+   * instead of landing on the bar's end. `←`/`→` move within the current row
+   * (clamped, no wrap). */
+  function moveBarSelection(dc: number, dr: number) {
+    const bars = visibleBars();
+    if (bars.length === 0) return;
+    const cols = Math.max(barCols(), 1);
+
+    const len = (k: "recent" | "pinned") =>
+      (k === "recent" ? recentApps() : pinnedApps()).length;
+    const expanded = (k: "recent" | "pinned") =>
+      k === "recent" ? recentExpanded() : pinnedExpanded();
+    // Navigation rows of a bar: one when collapsed, every row when expanded.
+    const rows = (k: "recent" | "pinned") =>
+      expanded(k) ? Math.ceil(len(k) / cols) : 1;
+    // Items a collapsed bar exposes to navigation: only its first row.
+    const reach = (k: "recent" | "pinned") =>
+      expanded(k) ? len(k) : Math.min(len(k), cols);
+
+    // The stacked grid, top to bottom: each visible bar contributes its rows.
+    const grid: { bar: "recent" | "pinned"; local: number }[] = [];
+    for (const k of bars) for (let r = 0; r < rows(k); r++) grid.push({ bar: k, local: r });
+
+    const setIdx = (k: "recent" | "pinned", v: number) =>
+      k === "recent" ? setRecentSelected(v) : setPinnedSelected(v);
+    const getIdx = (k: "recent" | "pinned") =>
+      k === "recent" ? recentSelected() : pinnedSelected();
+
+    // Resolve the current position to a (gridRow, col); with no bar active,
+    // start at the top bar.
+    let bi = bars.indexOf(zone() as "recent" | "pinned");
+    let idx = bi >= 0 ? getIdx(bars[bi]) : 0;
+    if (bi < 0) bi = 0;
+    const curReach = reach(bars[bi]);
+    idx = Math.min(idx, Math.max(0, curReach - 1));
+    let gridRow = 0;
+    for (let i = 0; i < bi; i++) gridRow += rows(bars[i]);
+    gridRow += Math.floor(idx / cols);
+    const col = idx % cols;
+
+    // Whether the item at grid row `r`, current column, exists.
+    const hasItem = (r: number) => {
+      const { bar, local } = grid[r];
+      return local * cols + col < reach(bar);
+    };
+    const commitGrid = (r: number) => {
+      const { bar, local } = grid[r];
+      const target = Math.min(Math.max(local * cols + col, 0), reach(bar) - 1);
+      setIdx(bar, target);
+      setZone(bar);
+    };
+
+    if (dr === 0) {
+      // Horizontal: stay in the current row of the current bar, clamped to the
+      // row's real extent (a partial last row, or a collapsed bar's one row).
+      const rowStart = Math.floor(idx / cols) * cols;
+      const rowEnd = Math.min(rowStart + cols, curReach) - 1;
+      setIdx(bars[bi], Math.min(Math.max(idx + dc, rowStart), rowEnd));
+      setZone(bars[bi]);
+      return;
+    }
+    if (dr > 0) {
+      // Down: the next row that has an item at this column, wrapping to the top.
+      let r = gridRow + 1;
+      while (r < grid.length && !hasItem(r)) r++;
+      if (r >= grid.length) {
+        r = 0;
+        while (r < grid.length && !hasItem(r)) r++;
+        if (r >= grid.length) return;
+      }
+      commitGrid(r);
+    } else {
+      // Up: the previous row that has an item at this column, wrapping to the
+      // bottom. Skips a partial last row that doesn't reach the column.
+      let r = gridRow - 1;
+      while (r >= 0 && !hasItem(r)) r--;
+      if (r < 0) {
+        r = grid.length - 1;
+        while (r >= 0 && !hasItem(r)) r--;
+        if (r < 0) return;
+      }
+      commitGrid(r);
+    }
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     const hasResults = currentResults().length > 0;
     if (e.key === "Escape") {
@@ -606,37 +740,25 @@ function App() {
         }
         return;
       }
-      // ── empty-query bar navigation (最近使用 / 已固定) ──
-      const hasRecent = showRecent() && recentApps().length > 0;
-      const hasPinned = pinnedApps().length > 0;
-      const hasBars = hasRecent || hasPinned;
+      // ── empty-query bar navigation (最近使用 / 已固定, one continuous grid) ──
+      const hasBars = (showRecent() && recentApps().length > 0) || pinnedApps().length > 0;
       if (!hasBars) return;
       if (e.key === "ArrowLeft") {
         selectionSource = "keyboard";
         e.preventDefault();
-        if (zone() === "recent") setRecentSelected(Math.max(0, recentSelected() - 1));
-        else if (zone() === "pinned") setPinnedSelected(Math.max(0, pinnedSelected() - 1));
+        moveBarSelection(-1, 0);
       } else if (e.key === "ArrowRight") {
         selectionSource = "keyboard";
         e.preventDefault();
-        if (zone() === "recent")
-          setRecentSelected(Math.min(recentApps().length - 1, recentSelected() + 1));
-        else if (zone() === "pinned")
-          setPinnedSelected(Math.min(pinnedApps().length - 1, pinnedSelected() + 1));
+        moveBarSelection(1, 0);
       } else if (e.key === "ArrowDown") {
         selectionSource = "keyboard";
         e.preventDefault();
-        if (zone() === "recent") { if (hasPinned) setZone("pinned"); }
-        else if (zone() === "pinned") { if (hasRecent) setZone("recent"); }
-        else if (hasRecent) setZone("recent");
-        else if (hasPinned) setZone("pinned");
+        moveBarSelection(0, 1);
       } else if (e.key === "ArrowUp") {
         selectionSource = "keyboard";
         e.preventDefault();
-        if (zone() === "pinned") { if (hasRecent) setZone("recent"); }
-        else if (zone() === "recent") { if (hasPinned) setZone("pinned"); }
-        else if (hasPinned) setZone("pinned");
-        else if (hasRecent) setZone("recent");
+        moveBarSelection(0, -1);
       } else if (e.key === "Delete") {
         // Remove the selected recent entry (soft delete). In the grid zone
         // (typing) Delete falls through to text editing in the search input.
@@ -914,6 +1036,7 @@ function App() {
                   selected: recentSelected(),
                   onToggle: () => {
                     setRecentExpanded(!recentExpanded());
+                    setWorkAreaH(null); // re-measure the current monitor
                     scheduleResize(); // grow/shrink the window to the bars
                   },
                   onActivate: activate,
@@ -938,6 +1061,7 @@ function App() {
                   selected: pinnedSelected(),
                   onToggle: () => {
                     setPinnedExpanded(!pinnedExpanded());
+                    setWorkAreaH(null); // re-measure the current monitor
                     scheduleResize();
                   },
                   onActivate: activate,
@@ -999,19 +1123,35 @@ function App() {
                       when={item.kind === "image" && item.thumb}
                       fallback={
                         <span class="result-tile result-tile-clip">
-                          <svg
-                            class="result-tile-icon"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            aria-hidden="true"
-                          >
-                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                            <rect x="8" y="2" width="8" height="4" rx="1" />
-                          </svg>
+                          {item.kind === "file" ? (
+                            <svg
+                              class="result-tile-icon"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <polyline points="14 2 14 8 20 8" />
+                            </svg>
+                          ) : (
+                            <svg
+                              class="result-tile-icon"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                              <rect x="8" y="2" width="8" height="4" rx="1" />
+                            </svg>
+                          )}
                         </span>
                       }
                     >

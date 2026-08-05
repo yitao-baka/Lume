@@ -202,6 +202,7 @@ pub fn run() {
             window::open_settings,
             window::close_settings,
             window::apply_position,
+            window::get_work_area,
             apps::search_apps,
             apps::launch_app,
             apps::reveal_in_folder,

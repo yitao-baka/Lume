@@ -17,6 +17,7 @@
   "pasteBack": "Paste back",
   "copyBack": "Copy to clipboard",
   "copyToClipboard": "Copy to clipboard",
+  "fileCount": "{count} files",
   "interface": "Interface",
   "system": "System",
   "plugins": "Plugins",

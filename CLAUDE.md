@@ -73,6 +73,18 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   the launcher appeared (`paste_clipboard`; the original clipboard is saved
   and restored, so it's never polluted); a per-row copy button copies without
   pasting (`src-tauri/src/clipboard.rs`, `src-tauri/src/window.rs` `FocusState`)
+- Clipboard storage — the DB stores only *references*, never the copied data's
+  original form: images write a PNG into `data/PictureCache/<id>.png` and store
+  the relative `path`; file/folder copies from Explorer (CF_HDROP) are captured
+  verbatim as a newline-joined `file` row (`content`); legacy image BLOBs are
+  extracted to files on launch; deleting a row/clearing removes the PNG too
+  (`clipboard.rs` `insert_*_history`/`migrate_blobs_to_files`/`gc_picture_cache`)
+- Continuous bar navigation — the empty-query 最近使用/已固定 bars are one
+  grid: `↑`/`↓` keep the column across the boundary, `←`/`→` stay in the row
+  (`App.tsx` `moveBarSelection`)
+- Expand fills the screen — expanding a bar grows the window to show all its
+  content, capped at the monitor work area instead of `window_height`
+  (`window.rs` `get_work_area`, `App.tsx` `resizeToContent`)
 - Window position presets — center / follow-mouse / four corners / custom;
   follow-mouse anchors to the cursor on show, clamped to the monitor
   (`window.rs` `position_at_mouse`)
@@ -107,16 +119,25 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**剪贴板自动粘贴 + 复制按钮 + 界面体验项 (ROADMAP #11) — merged from remote
-as of 2026-08-05**: clipboard-mode Enter now auto-pastes into the window that
-had focus before the launcher (`paste_clipboard`, original clipboard saved &
-restored), with a per-row copy button; new follow-mouse window position;
+**两栏连续导航 + 剪贴板存储重构 + 展开撑满窗口 (ROADMAP #12) — complete as
+of 2026-08-05**: the empty-query 最近使用/已固定 bars navigate as one
+continuous grid (`moveBarSelection`, column-kept across the boundary); the
+clipboard DB stores only references — images live in `data/PictureCache` as
+PNG files (legacy BLOBs migrated out), file/folder copies are captured as
+newline-joined path lists (CF_HDROP) and auto-paste by re-assembling an HDROP;
+expanding a bar grows the window to the monitor work area. Details + known
+edge cases in `docs/ROADMAP.md` #12. `cargo test` 39 passing.
+
+**Prior: 剪贴板自动粘贴 + 复制按钮 + 界面体验项 (ROADMAP #11) — merged from
+remote as of 2026-08-05**: clipboard-mode Enter now auto-pastes into the window
+that had focus before the launcher (`paste_clipboard`, original clipboard saved
+& restored), with a per-row copy button; new follow-mouse window position;
 「默认展开已固定」 + 「Shift+Enter 以管理员身份启动」 interface toggles;
 settings injected via `window.__LUME_CONFIG__` (initialization_script) so the
 first render reads persisted values synchronously; a search-grid keyboard-nav
-fix. Details + known edge cases in `docs/ROADMAP.md` #11. `cargo test` 36
-passing. Note: these commits landed on GitHub before the local docs were
-updated — the docs were brought up to date on 2026-08-05.
+fix. Details + known edge cases in `docs/ROADMAP.md` #11. Note: these commits
+landed on GitHub before the local docs were updated — the docs were brought up
+to date on 2026-08-05.
 
 **Prior: 最近使用栏 + 固定栏改造 + 界面设置项 (ROADMAP #10) — complete as of
 2026-08-05**: the empty-query main menu is now the two expandable bars

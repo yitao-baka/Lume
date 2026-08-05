@@ -356,3 +356,156 @@ SYSTEM 级能力（如 USN 全盘索引）铺路。
 - `cargo test` **36 通过**；`npm run build` + `tsc --noEmit` 通过。
 - 手工：剪贴板条目 Enter → 粘贴进呼出前窗口；复制按钮仅复制；跟随鼠标呼出
   位置、展开固定开关、Shift+Enter 提权启动。
+
+## 12. 两栏连续导航 + 剪贴板存储重构 + 展开撑满窗口
+
+**状态：已实现（2026-08-05）。**
+
+三条需求一次迭代：①主界面空查询两栏（最近使用/已固定）的键盘导航从「独立
+区域」改为**连续网格**；②剪贴板存储重构——DB 不再保存复制数据的原貌（图片
+落文件、文件存路径列表）；③点「展开」时窗口**纵向撑满内容**（受屏幕限制）。
+
+### 12.1 主界面键盘导航：两栏合并为连续网格（`App.tsx`）
+
+**现状**：空查询两栏是两个独立 `zone`（recent/pinned），各持
+`recentSelected`/`pinnedSelected`；`↓`/`↑` 只是切换 zone，选中项不按列对齐。
+
+**目标行为**（展开/收起同理，仅行数不同）：
+
+- 列数 `C = barCols`；每个栏可视作矩阵：行 = `ceil(条数/C)`、列 = C，末行可不满。
+- 选中态 =（栏, 栏内下标 i），列 `c = i mod C`、行 `r = ⌊i/C⌋`。
+- **`↓`**：当前栏还有下一行且该行第 c 个元素存在 → `i += C`；否则若存在下一栏
+  → 进入下一栏第 0 行、下标 = `min(c, 下一栏首行条数−1)`（**同列对齐**）；否则
+  （已是最后栏末行）→ 环绕到第一栏第 0 行，下标同式钳制。
+- **`↑`**：当前行非首行 → `i −= C`；否则若存在上一栏 → 进入上一栏末行，下标 =
+  `min(c, 该行条数−1)`；否则环绕到最后一栏末行。
+- **`←`/`→`**：行内移动，行首/行尾**钳制不环绕**（保持现状）。
+- 只有**可见栏**参与（`show_recent` 关 → 仅固定栏；空栏整栏隐藏）。
+- `Enter`/`Shift+Enter`/`Del`（仅选中项落在最近栏时删）/悬停，均作用于这个
+  唯一选中项。
+
+**实现**：`zone` 信号可移除；`recentSelected`/`pinnedSelected` 保留为
+「栏内下标」，但 `onKeyDown` 的两栏分支改为**行/列感知的跨栏转换**（见上）。
+列数变化（窗口宽度/条目框设置）时选中项保持列对齐语义。
+
+### 12.2 剪贴板存储重构（`clipboard.rs` / `paths.rs` / `window.rs`）
+
+**目标**：DB 只存「文本本体 / 图片文件引用 / 文件路径列表」，不存图片字节、
+不复制文件本体。
+
+#### 12.2.1 Schema（`init_db`/`migrate` 就地迁移）
+
+```sql
+CREATE TABLE clipboard (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL DEFAULT 'text',   -- 'text' | 'image' | 'file'
+    content    TEXT NOT NULL,                  -- 文本 / 图片标签"Image" / 文件路径列表(换行分隔)
+    data       BLOB,                           -- 仅旧版图片字节；迁移后恒为 NULL
+    path       TEXT,                           -- 新增：kind='image' 时指向 PictureCache 的 PNG（相对 data_dir）
+    pinned     INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+```
+
+- `migrate()`：检测缺 `path` 列 → 加列；遍历旧 `kind='image' AND data IS NOT NULL`
+  行 → 导出 PNG 到 `PictureCache/<id>.png`、`path` 写相对路径、`data` 置 NULL。
+- **图片文件命名** `<id>.png`（id 不复用，天然唯一）；**DB 存相对路径**
+  `PictureCache/<id>.png`，读取时 `data_dir().join(path)` 解析——保证便携版整体
+  拷贝不失效。
+
+#### 12.2.2 图片采集（截图 / 网页图片 = 位图）
+
+- `capture()` 现有 arboard `get_text()` → `get_image()` 流程保留；图片改为
+  **先写文件再入库**：编码 PNG → `std::fs::write` 到 `PictureCache/<id>.png` →
+  行存 `kind='image', path, data=NULL`。
+- 缩略图：序列化时按 `path` 读文件 → `make_thumb`（逻辑不变，数据源从 BLOB
+  换成文件）；文件缺失时回退未知图标。
+- 进程内 `last_image_hash` 防连续重复仍有效（写文件前先哈希比对）。
+
+#### 12.2.3 文件采集（资源管理器复制 = CF_HDROP 路径列表）
+
+- 新增 CF_HDROP 检测（`windows` crate：`DataExchange` 的
+  `OpenClipboard`/`GetClipboardData(CF_HDROP)`/`CloseClipboard` + `UI::Shell` 的
+  `DragQueryFileW`；`Cargo.toml` 补 feature）。
+- **采集顺序**：文本 → CF_HDROP → 位图（从资源管理器复制图片文件 = CF_HDROP →
+  记为文件条目，符合"路径原样入库"；截图/网页位图才记图片条目）。
+- **一次复制 = 一行**（已拍板）：整份路径列表用**换行**连接存 `content`
+  （Windows 文件名不含 `\n`/`\r`，无歧义）；`kind='file'`；不复制任何文件本体。
+- 去重：同内容（同列表）走文本同款「UPDATE 前移 created_at，无变更才 INSERT」，
+  无需对 file 加唯一索引。
+
+#### 12.2.4 复制回 / 自动粘贴（`copy_clipboard` / `paste_clipboard`）
+
+- **图片**：读 PNG 文件 → 解码 RGBA → `arboard set_image`（替换原 BLOB 直接 set）。
+- **文件**：重建 `CF_HDROP` 放回剪贴板——`GlobalAlloc(GMEM_MOVEABLE)` 写
+  `DROPFILES` 头（`pFiles` 偏移、`fWide=TRUE`）+ UTF-16 路径列表（逐个 NUL、
+  整体双 NUL 结尾）+ `SetClipboardData(CF_HDROP)`。
+- **自动粘贴**（已拍板：文件条目**也走自动粘贴**）：`paste_clipboard` 对文件
+  条目同样「重建 HDROP 放回 → Ctrl+V → 恢复原剪贴板」；前台若为资源管理器会
+  就地复制/移动文件，**属预期行为**。
+- 删条目（垃圾桶/Del）：`kind='image'` 时同步删除其 PNG；`clear_clipboard`
+  清空全部行 + 清空 `PictureCache`。
+
+#### 12.2.5 前端（`App.tsx` / `i18n`）
+
+- `ClipboardItem.kind` 扩为 `'text' | 'image' | 'file'`；文件条目 tile 用文件/文件夹
+  SVG，标签显示「N 个文件」（`fileCount` 三语 key）或单文件去扩展名名；
+  点击/Enter 走自动粘贴（同 12.2.4）。
+- 文件条目按 `content` LIKE 可搜（路径/文件名匹配，天然支持）。
+
+### 12.3 展开撑满窗口（`window.rs` / `App.tsx`）
+
+**现状**：`resizeToContent` 高度上限 = `window_height` 设置（默认 520px），展开
+内容超出即内部滚动。
+
+**目标**：任一栏展开（**两栏都生效**，已拍板）→ 窗口纵向撑到完整展示内容，
+仅当内容超屏幕时才滚动。
+
+- 高度上限动态化：`(recentExpanded() || pinnedExpanded()) ? 屏幕工作区逻辑高 −
+  边距(~40px) : window_height 设置`。收起后恢复设置封顶。
+- 新增 Rust 命令返回当前窗口所在显示器**工作区逻辑高度**
+  （`current_monitor().work_area()` + `scale_factor()` 换算），处理 HiDPI/多显示器；
+  读不到时回退 `window_height`。
+- 展开态内容自然高测量沿用现有 `resizeToContent`（lastElementChild rect）；
+  超出屏幕封顶才内部滚动（滚动条隐藏 + 悬浮指示条机制不变）。
+- `apply_position` 锚点逻辑不变（center/corner/follow-mouse），增长后照常锚定。
+
+### 测试
+
+- `cargo test` **39 通过**（新增：图片写文件+path、文件行去重、迁移 BLOB→文件、
+  HDROP 缓冲结构断言；原 36 个全保留）；`npm run build` + `tsc --noEmit` 通过。
+- 手工（待用户验证）：资源管理器复制多文件 → 历史出现「N 个文件」且可搜；文件
+  条目 Enter 自动粘贴到呼出前窗口；截图/网页图片 → `data/PictureCache` 出现 PNG、
+  DB 无 BLOB；删条目 PNG 被清；跨栏 ↓/↑ 列对齐；展开后窗口撑满/超屏滚动。
+
+### 实现说明（2026-08-05）
+
+- **schema**：`clipboard` 新增 `path TEXT`（图片相对 `data_dir` 的
+  `PictureCache/<id>.png`）；`data` 列保留但迁移后恒 NULL（`Row.data` 标
+  `#[allow(dead_code)]`）。`migrate()` 先做 v0.2 重建再加 `path` 列；
+  `migrate_blobs_to_files` 在 `open_db` 时一次性把旧 BLOB 导出成文件。
+- **采集顺序**：文本 → CF_HDROP（`read_file_list`，`IsClipboardFormatAvailable`/
+  `OpenClipboard`/`GetClipboardData`/`DragQueryFileW`，`windows` crate 补
+  `Win32_System_DataExchange` + `Win32_System_Memory` features）→ 位图。
+  从资源管理器复制图片文件 = CF_HDROP → 记为文件条目。
+- **防自写**：`ClipboardState` 新增 `last_files`（换行连接串）跳过自己放回的
+  文件列表，避免自动粘贴后又被采一条。
+- **复制回**：图片读 `PictureCache/<id>.png` 解码 set_image；文件用
+  `build_hdrop_buffer`（纯函数，`DROPFILES{ fWide=TRUE }` + UTF-16 路径双 NUL）
+  + `GlobalAlloc/SetClipboardData` 重建 CF_HDROP。
+- **文件清理**：`delete_row`/`clear_history` 同步删 PNG；`prune` 后
+  `gc_picture_cache` 清扫未被引用的文件。
+- **导航（12.1）**：新增 `visibleBars` + `moveBarSelection(dc, dr)`——两栏堆叠为
+  一个连续网格（每栏行数 = 展开 ? ⌈条数/cols⌉ : **1**；收起态只暴露首行
+  `min(条数, cols)` 个条目）。纵向 `↓`/`↑` 找该列**有内容的最近行**（跨栏保持
+  列对齐；上一栏末行未填满时跳过，落在上一行对应列而非栏末尾），横向 `←`/`→`
+  当前行内钳制；行首/行尾环绕。`zone` 语义保留（高亮/Enter/Del 用），默认从
+  顶栏开始。**修正（同日，用户反馈）**：收起态此前按完整列表算行、可走进隐藏
+  行；展开态跨栏 `↑` 此前钳到栏末尾——统一改为上述列对齐模型。
+- **撑满（12.3）**：`window.rs` 新命令 `get_work_area`（`current_monitor().work_area()`
+  + `scale_factor` → 逻辑高，0.0 回退）；`resizeToContent` 高度封顶 =
+  `(recentExpanded||pinnedExpanded) ? max(window_height, 工作区高-32) : window_height`；
+  展开切换时失效 `workAreaH` 缓存重新测量当前显示器。
+- **已知边界**：`get_work_area` 按窗口当前所在显示器取，跨屏移动后需重新展开
+  才刷新缓存；文件条目自动粘贴若前台是资源管理器会就地复制文件（预期行为，
+  已在规划拍板）。

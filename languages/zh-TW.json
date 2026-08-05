@@ -17,6 +17,7 @@
   "pasteBack": "貼上回視窗",
   "copyBack": "複製回剪貼簿",
   "copyToClipboard": "複製到剪貼簿",
+  "fileCount": "{count} 個檔案",
   "interface": "介面",
   "system": "系統",
   "plugins": "外掛程式",

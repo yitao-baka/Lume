@@ -340,6 +340,20 @@ body,
   border-color: rgba(90, 200, 250, 0.7);
 }
 
+/* Drag-and-drop reorder: the item being dragged gets a dimmed placeholder. */
+.result-box.result-dragging {
+  opacity: 0.25;
+}
+
+/* Insertion point marker — a white left border on the item that the dragged
+   item would be placed before. */
+.result-box.result-insert-before {
+  border-left: 3px solid rgba(255, 255, 255, 0.7) !important;
+}
+.result-box.result-insert-after {
+  border-right: 3px solid rgba(255, 255, 255, 0.7) !important;
+}
+
 .result-box-tile {
   /* The tile scales with the (auto-adapting) entry box. */
   width: 44%;

@@ -151,6 +151,11 @@ function App() {
   const [pinnedExpanded, setPinnedExpanded] = createSignal(false);
   const [menu, setMenu] = createSignal<MenuState>(null);
 
+  // ── Drag-and-drop for pinned bar reordering ──
+  // Use a plain ref (not a SolidJS signal) so drag event handlers never
+  // trigger reactive re-renders that would destroy the dragged DOM element.
+  let dragRef: { item: AppEntry; fromIndex: number; overIndex: number } | null = null;
+
   // Monotonic counter guards against out-of-order search responses.
   let requestSeq = 0;
   // Where the last selection change came from: only keyboard navigation
@@ -830,6 +835,73 @@ function App() {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
     document.addEventListener("contextmenu", (e) => e.preventDefault());
 
+    // ── Native drag-and-drop for pinned-bar reordering ──
+    // SolidJS event delegation can interfere with drag events; use raw DOM
+    // listeners so preventDefault() always reaches the native event.
+    document.addEventListener("dragover", (e) => {
+      const target = (e.target as HTMLElement).closest(".bar-grid") as HTMLElement | null;
+      if (!target || !dragRef) return;
+      e.preventDefault();
+      // Group items by row (same top ≈ same row), then find which row the
+      // cursor is on. Within that row, find the horizontal insertion point.
+      // When the cursor is below all rows, insert at the very end.
+      const boxes = Array.from(target.querySelectorAll(".result-box")) as HTMLElement[];
+      const rows: { top: number; bottom: number; indices: number[] }[] = [];
+      for (let idx = 0; idx < boxes.length; idx++) {
+        const r = boxes[idx].getBoundingClientRect();
+        const last = rows[rows.length - 1];
+        if (last && Math.abs(r.top - last.top) < 10) {
+          last.indices.push(idx);
+          last.bottom = Math.max(last.bottom, r.bottom);
+        } else {
+          rows.push({ top: r.top, bottom: r.bottom, indices: [idx] });
+        }
+      }
+      let overIndex = boxes.length;
+      let targetRow = rows[rows.length - 1]; // default to last row
+      for (const row of rows) {
+        if (e.clientY < row.bottom) { targetRow = row; break; }
+      }
+      if (e.clientY > targetRow.bottom) {
+        overIndex = boxes.length; // below all rows → end
+      } else {
+        for (const idx of targetRow.indices) {
+          const r = boxes[idx].getBoundingClientRect();
+          if (e.clientX < r.left + r.width / 2) { overIndex = idx; break; }
+        }
+        if (overIndex === boxes.length) {
+          overIndex = targetRow.indices[targetRow.indices.length - 1] + 1;
+        }
+      }
+      // Update insertion indicator classes on result-box elements.
+      boxes.forEach((b) => b.classList.remove("result-insert-before", "result-insert-after"));
+      if (overIndex !== dragRef.fromIndex && overIndex !== dragRef.fromIndex + 1) {
+        if (overIndex < boxes.length) {
+          boxes[overIndex].classList.add("result-insert-before");
+        } else {
+          boxes[boxes.length - 1].classList.add("result-insert-after");
+        }
+      }
+      dragRef.overIndex = overIndex;
+    });
+
+    document.addEventListener("dragend", (e) => {
+      const grid = document.querySelector(".bar-grid") as HTMLElement | null;
+      grid?.querySelectorAll(".result-dragging,.result-insert-before,.result-insert-after")
+        .forEach((c) => c.classList.remove("result-dragging", "result-insert-before", "result-insert-after"));
+      const dr = dragRef;
+      dragRef = null;
+      if (!dr || (e as DragEvent).dataTransfer?.dropEffect === "none") return;
+      if (dr.overIndex === dr.fromIndex || dr.overIndex === dr.fromIndex + 1) return;
+      const items = pinnedApps();
+      const reordered = items.filter((_, idx) => idx !== dr.fromIndex);
+      const insertAt = Math.min(dr.overIndex > dr.fromIndex ? dr.overIndex - 1 : dr.overIndex, reordered.length);
+      reordered.splice(insertAt, 0, items[dr.fromIndex]);
+      invoke("reorder_pins", { paths: reordered.map((p) => p.path) })
+        .then(() => void refreshPins())
+        .catch((err) => console.error("reorder_pins failed", err));
+    });
+
     // Apply persisted settings FIRST — CSS variables and signals must be
     // ready before the bars render, otherwise the initial paint shows wrong
     // sizes / collapsed state / missing icons.
@@ -885,20 +957,26 @@ function App() {
       onActivate: () => void;
       onSelect: () => void;
       onContext: (e: MouseEvent) => void;
+      draggable?: boolean;
+      onDragStart?: (e: DragEvent) => void;
     }
   ) {
     return (
       <div
         class="result-box"
-        classList={{ "result-selected": selected }}
+        classList={{
+          "result-selected": selected,
+        }}
         role="option"
         aria-selected={selected}
+        draggable={handlers.draggable ?? false}
         onMouseMove={handlers.onSelect}
         onClick={handlers.onActivate}
         onContextMenu={(e) => {
           e.preventDefault();
           handlers.onContext(e);
         }}
+        onDragStart={handlers.onDragStart}
       >
         <Show
           when={iconFor(app.path)}
@@ -926,13 +1004,16 @@ function App() {
     expanded: boolean;
     zoneActive: boolean;
     selected: number;
+    draggable?: boolean;
     onToggle: () => void;
     onActivate: () => void;
     onSelect: (i: number) => void;
     onContext: (e: MouseEvent, app: AppEntry) => void;
+    onDragStart?: (i: number, e: DragEvent) => void;
   }) {
     const cols = Math.max(barCols(), 1);
     const shown = opts.expanded ? opts.items : opts.items.slice(0, cols);
+
     return (
       <div class="bar-section">
         <div class="bar-header">
@@ -943,15 +1024,19 @@ function App() {
             </button>
           </Show>
         </div>
-        <div class="bar-grid" classList={{ collapsed: !opts.expanded }} onMouseLeave={() => {
-          if (selectionSource === "mouse") opts.onSelect(-1);
-        }}>
+        <div class="bar-grid" classList={{ collapsed: !opts.expanded }}
+          onMouseLeave={() => {
+            if (selectionSource === "mouse") opts.onSelect(-1);
+          }}
+        >
           <For each={shown}>
             {(app, i) =>
               appBox(app, opts.zoneActive && i() === opts.selected, {
                 onActivate: opts.onActivate,
                 onSelect: () => opts.onSelect(i()),
                 onContext: (e) => opts.onContext(e, app),
+                draggable: opts.draggable,
+                onDragStart: opts.onDragStart ? (e) => opts.onDragStart!(i(), e) : undefined,
               })
             }
           </For>
@@ -1059,9 +1144,10 @@ function App() {
                   expanded: pinnedExpanded(),
                   zoneActive: zone() === "pinned",
                   selected: pinnedSelected(),
+                  draggable: true,
                   onToggle: () => {
                     setPinnedExpanded(!pinnedExpanded());
-                    setWorkAreaH(null); // re-measure the current monitor
+                    setWorkAreaH(null);
                     scheduleResize();
                   },
                   onActivate: activate,
@@ -1074,6 +1160,25 @@ function App() {
                     setZone("pinned");
                     setPinnedSelected(pinnedApps().findIndex((p) => p.path === app.path));
                     setMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
+                  },
+                  onDragStart: (i, e) => {
+                    const items = pinnedApps();
+                    dragRef = { item: items[i], fromIndex: i, overIndex: i };
+                    const src = e.currentTarget as HTMLElement;
+                    src.classList.add("result-dragging");
+                    if (e.dataTransfer) {
+                      e.dataTransfer.setData("text/plain", "");
+                      e.dataTransfer.effectAllowed = "move";
+                      const clone = src.cloneNode(true) as HTMLElement;
+                      clone.style.opacity = "0.6";
+                      clone.style.position = "absolute";
+                      clone.style.top = "-9999px";
+                      clone.style.pointerEvents = "none";
+                      document.body.appendChild(clone);
+                      const rect = src.getBoundingClientRect();
+                      e.dataTransfer.setDragImage(clone, rect.width / 2, rect.height / 2);
+                      setTimeout(() => clone.remove(), 0);
+                    }
                   },
                 })}
               </Show>

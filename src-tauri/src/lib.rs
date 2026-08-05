@@ -108,6 +108,7 @@ pub fn run() {
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
+            .disable_drag_drop_handler()
             .initialization_script(&init_script)
             .build()?;
 
@@ -219,6 +220,7 @@ pub fn run() {
             pins::get_pinned_apps,
             pins::pin_app,
             pins::unpin_app,
+            pins::reorder_pins,
             recent::get_recent_apps,
             recent::delete_recent,
             settings::get_settings,

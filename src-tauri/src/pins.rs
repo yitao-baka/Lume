@@ -117,6 +117,26 @@ pub fn unpin_app(path: String, state: State<PinsState>) -> Result<(), String> {
     remove_pin(&conn, &path).map_err(|e| e.to_string())
 }
 
+/// Reorder pins by assigning new `created_at` timestamps that match the
+/// supplied path order (first = smallest timestamp = shown first).
+/// Paths not in the current pin set are silently ignored.
+#[tauri::command]
+pub fn reorder_pins(paths: Vec<String>, state: State<PinsState>) -> Result<(), String> {
+    let conn = state.0.lock().unwrap();
+    reorder(&conn, &paths).map_err(|e| e.to_string())
+}
+
+fn reorder(conn: &Connection, paths: &[String]) -> rusqlite::Result<()> {
+    let base = now_millis();
+    for (i, path) in paths.iter().enumerate() {
+        conn.execute(
+            "UPDATE pinned_apps SET created_at = ?1 WHERE path = ?2",
+            params![base + i as i64, path],
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

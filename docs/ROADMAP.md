@@ -294,3 +294,65 @@ SYSTEM 级能力（如 USN 全盘索引）铺路。
 - 验证：`cargo test` 35 通过（含 recent 3 个）、`npm run build` + `tsc --noEmit`
   通过。
 
+## 11. 剪贴板自动粘贴 + 复制按钮 + 界面体验项
+
+**状态：已实现（2026-08-05，由远程提交合入）。**
+
+背景：剪贴板历史此前只能「复制回剪贴板」。本迭代加入一键**自动粘贴**——把
+历史条目直接送到呼出启动器之前的那个窗口；并补三处界面体验项与一次架构修正。
+
+### 11.1 自动粘贴 + 复制按钮（`clipboard.rs` / `window.rs` / `App.tsx`）
+
+- 新命令 `paste_clipboard(id)`：**先保存当前剪贴板内容**（文本/图片，
+  `SavedClipboard`）→ 把条目写入系统剪贴板 → `hide_launcher` → 等 60ms 让
+  Windows 把焦点还给前台窗口 → `SendInput` 发 Ctrl+V（`send_ctrl_v`，
+  key-down/key-down/key-up/key-up）→ 等 100ms 处理 → **恢复原剪贴板**，用户
+  剪贴板不被污染。
+- **目标窗口来源**：`window.rs` 新增 `FocusState`（`last_hwnd`），
+  `toggle_launcher` 每次呼出时用 `GetForegroundWindow` 记录呼出前的窗口；
+  粘贴前 `IsWindow` 校验，窗口已消失或无记录则退化为普通复制
+  （`set_clipboard_from_row`）。
+- 剪贴板模式 **`Enter` 由「复制」改为「粘贴」**；右键菜单新增「粘贴回」
+  （`pasteBack`）；每条历史行新增**复制按钮**（`.result-copy`，与删除按钮
+  并列，`copyOnly` 仅复制不粘贴）。
+- 新 i18n：`pasteBack` / `copyToClipboard`（en / zh-CN / zh-TW 已同步）。
+- **无单测**：粘贴依赖真实前台窗口 + SendInput，靠手工验证；`cargo test` 由
+  35 → **36 通过**。
+
+### 11.2 跟随鼠标定位（`window.rs`）
+
+- `appearance.window_position` 新增 `"follow-mouse"`（界面位置第 6 个预设）：
+  呼出时窗口中心对齐鼠标光标（`GetCursorPos` + `position_at_mouse`），并
+  clamp 在当前显示器工作区内（不越界）。
+- `apply_position` 在 follow-mouse 模式下 **no-op**——内容高度自适应不再把
+  窗口拉回某个固定锚点。
+
+### 11.3 界面设置项（`appearance`，`InterfacePane.tsx`）
+
+| 键 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `expand_pinned` | bool | `false` | 「默认展开已固定」——每次呼出时已固定栏直接展开 |
+| `shift_enter_admin` | bool | `true` | 「Shift+Enter 以管理员身份启动」——选中项 Shift+Enter 提权启动 |
+
+- InterfacePane 新增两 Toggle；`clearSearch` 按 `expand_pinned` 初始化
+  `pinnedExpanded`（不再总是收起）；`onKeyDown` 的 Enter 分支在
+  `e.shiftKey && shiftEnterAdmin()` 时走 `activateAdmin`（网格与两栏均生效）。
+
+### 11.4 设置经 initialization_script 注入（`lib.rs` / `tauri.conf.json`）
+
+- `setup()` 序列化生效设置 → `window.__LUME_CONFIG__`，经
+  `.initialization_script()` 注入 main / settings 两个窗口；
+  `tauri.conf.json` 的 `windows` 清空（窗口改由 Rust 构建）。
+- 前端 createSignal 初始值同步读该全局（`_cfg?.appearance`），**消除首帧
+  渲染的异步 IPC 竞态**——语言/尺寸/开关不再首帧先显示默认值再闪变。
+
+### 11.5 修复：搜索网格键盘导航（`App.tsx`）
+
+- 输入搜索词后有查询时，方向键**总是**走结果网格导航（`!empty` 分支优先于
+  zone）——修复此前残留空查询两栏 `zone` 状态导致的方向键错位。
+
+### 测试
+
+- `cargo test` **36 通过**；`npm run build` + `tsc --noEmit` 通过。
+- 手工：剪贴板条目 Enter → 粘贴进呼出前窗口；复制按钮仅复制；跟随鼠标呼出
+  位置、展开固定开关、Shift+Enter 提权启动。

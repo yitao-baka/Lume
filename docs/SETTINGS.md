@@ -55,11 +55,17 @@
   内容少时收缩，即原 520px 固定封顶改为用户可配）。
 - 数值调整统一用**预设档位**（2026-08-04 起移除滑块，仅保留小 / 中 / 大
   三档；如需自定义数值后续再加）。
-- **窗口位置**：6 个按钮（居中 / 左上 / 右上 / 左下 / 右下 / 自定义），
-  **默认居中**。前五个为预设位，选中后窗口每次呼出都停在所选位置；「自定义」
-  相当于旧「记住位置」开关**打开**——窗口停在用户手动拖到的位置，其余按钮
-  相当于开关**关闭**（2026-08-04 重设计，移除「初始位置」标签与「记住位置」
-  开关）。
+- **窗口位置**：7 个按钮（居中 / 跟随鼠标 / 左上 / 右上 / 左下 / 右下 /
+  自定义），**默认居中**。前六个为预设位，选中后窗口每次呼出都停在所选位置
+  （「跟随鼠标」= 窗口中心对齐光标并 clamp 在当前显示器工作区内，2026-08-05
+  新增）；「自定义」相当于旧「记住位置」开关**打开**——窗口停在用户手动拖到
+  的位置，其余按钮相当于开关**关闭**（2026-08-04 重设计，移除「初始位置」
+  标签与「记住位置」开关）。
+- **最近使用 / 固定 / 快捷行为**（2026-08-05）：「显示最近使用」开关（只影响
+  显示，记录照常，重新打开可见历史）；「最近使用条数」上限（10/20/30）；
+  「默认展开已固定」开关（每次呼出时已固定栏直接展开，默认收起）；「Shift+Enter
+  以管理员身份启动」开关（选中项 Shift+Enter 提权启动，默认开）；「搜索框占位符」
+  应用/剪贴板两个文本输入（空 = 默认文案）。
 
 ## 「系统」页
 
@@ -136,9 +142,11 @@ color_mode = "system"           # "system" | "dark" | "light"
 entry_size = 110                # 条目框边长 px（包裹整个条目的方框）
 window_width = 720              # 窗口横向长度 px
 window_height = 520             # 窗口初始纵向长度 px（自适应上限）
-window_position = "center"      # center | top-left | top-right | bottom-left | bottom-right
-remember_position = true        # 记住位置开关
+window_position = "center"      # center | follow-mouse | top-left | top-right | bottom-left | bottom-right
+remember_position = false       # 记住位置开关（自定义按钮打开；预设位关闭）
 show_recent = true              # 主菜单显示「最近使用」栏（只影响显示，记录照常）
+expand_pinned = false           # 每次呼出时「已固定」栏直接展开
+shift_enter_admin = true        # Shift+Enter 以管理员身份启动选中项
 recent_count = 20               # 最近使用条数上限（存 + 显示同用）
 search_placeholder_apps = ""    # 应用模式搜索框占位符（空 = 默认文案）
 search_placeholder_clipboard = "" # 剪贴板模式占位符（空 = 默认文案）
@@ -151,6 +159,7 @@ switch_mode = "Tab"             # 切换模式
 system_dirs = [
   { path = "Desktop",  enabled = true },
   { path = "System32", enabled = true },
+  { path = "StartMenu", enabled = false },
 ]
 user_dirs = []                  # 用户索引路径列表
 ```

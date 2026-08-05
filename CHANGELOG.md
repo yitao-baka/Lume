@@ -4,6 +4,42 @@ All notable changes to Lume are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.2.13] — 2026-08-05
+
+Clipboard auto-paste + copy button, follow-mouse position, interface extras
+(ROADMAP item 11).
+
+### Added
+
+- **Clipboard auto-paste** — Enter on a clipboard entry (or 粘贴回 in the
+  context menu) now writes the entry to the system clipboard, hides the
+  launcher and sends `Ctrl+V` into the window that had focus **before** the
+  launcher appeared (`paste_clipboard`). The previous clipboard content is
+  saved first and restored after the paste, so the user's clipboard is never
+  polluted. The target window is recorded on every show and validated before
+  pasting; with no target it degrades to a plain copy.
+- **Per-row copy button** — each clipboard row gains a copy button (next to the
+  trash button) that writes the entry back without pasting.
+- **Follow-mouse position** — a new window-position preset 「跟随鼠标」 centers
+  the launcher at the cursor on show, clamped to the active monitor. While
+  active, content-height resizes keep the window at its spot instead of
+  re-anchoring it.
+- **Expand-pinned setting** — the interface pane gains a 「默认展开已固定」
+  toggle (default off); when on, the pinned bar starts expanded on every show.
+- **Shift+Enter admin** — the interface pane gains a 「Shift+Enter 以管理员
+  身份启动」 toggle (default on); Shift+Enter on a selected app launches it
+  elevated.
+- **Synchronous settings injection** — Rust serializes the effective settings
+  into `window.__LUME_CONFIG__` via a WebView2 initialization script, so the
+  very first render reads persisted values (language, sizes, toggles)
+  synchronously instead of racing the async settings IPC.
+
+### Fixed
+
+- **Search-grid keyboard navigation** — with a query typed, the arrow keys now
+  always navigate the results grid, even when a stale bar `zone` is active, so
+  ↑/↓/←/→ and Enter work correctly after returning from the empty-query bars.
+
 ## [0.2.12] — 2026-08-05
 
 Recently-used bar + reworked pinned bar + interface settings (ROADMAP item 10).

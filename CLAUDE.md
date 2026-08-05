@@ -68,6 +68,18 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 - Clipboard manager — background capture (250 ms seq poll) → SQLite history
   of text **and images**, search + copy back; `Tab` switches Navigate /
   Clipboard modes (`src-tauri/src/clipboard.rs`, `src/App.tsx`)
+- Clipboard auto-paste — Enter on a history entry writes it to the clipboard,
+  hides the launcher and sends `Ctrl+V` into the window that had focus before
+  the launcher appeared (`paste_clipboard`; the original clipboard is saved
+  and restored, so it's never polluted); a per-row copy button copies without
+  pasting (`src-tauri/src/clipboard.rs`, `src-tauri/src/window.rs` `FocusState`)
+- Window position presets — center / follow-mouse / four corners / custom;
+  follow-mouse anchors to the cursor on show, clamped to the monitor
+  (`window.rs` `position_at_mouse`)
+- Interface extras — 「默认展开已固定」 (`expand_pinned`) and 「Shift+Enter
+  以管理员身份启动」 (`shift_enter_admin`) toggles; settings are injected into
+  the webview as `window.__LUME_CONFIG__` via an initialization script so the
+  first render never races the async settings IPC (`lib.rs`, `src/App.tsx`)
 - Clipboard enhancements — right-click pin, `Del` / per-entry trash button; the
   SQLite table is migrated in place (see `docs/ARCHITECTURE.md`)
 - Window lifecycle: hidden at start, centered on show, auto-hides on focus
@@ -95,7 +107,18 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**最近使用栏 + 固定栏改造 + 界面设置项 (ROADMAP #10) — complete as of
+**剪贴板自动粘贴 + 复制按钮 + 界面体验项 (ROADMAP #11) — merged from remote
+as of 2026-08-05**: clipboard-mode Enter now auto-pastes into the window that
+had focus before the launcher (`paste_clipboard`, original clipboard saved &
+restored), with a per-row copy button; new follow-mouse window position;
+「默认展开已固定」 + 「Shift+Enter 以管理员身份启动」 interface toggles;
+settings injected via `window.__LUME_CONFIG__` (initialization_script) so the
+first render reads persisted values synchronously; a search-grid keyboard-nav
+fix. Details + known edge cases in `docs/ROADMAP.md` #11. `cargo test` 36
+passing. Note: these commits landed on GitHub before the local docs were
+updated — the docs were brought up to date on 2026-08-05.
+
+**Prior: 最近使用栏 + 固定栏改造 + 界面设置项 (ROADMAP #10) — complete as of
 2026-08-05**: the empty-query main menu is now the two expandable bars
 「最近使用」 (new, SQLite `recent_apps`, recorded at the single `launch_app`
 chokepoint, deduped by path, capped by `appearance.recent_count`) and

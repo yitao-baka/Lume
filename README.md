@@ -14,18 +14,19 @@ The goal is:
 
 # Status
 
-**v0.2.10 — auto-sizing window** (current)
+**v0.2.13 — clipboard auto-paste + interface extras** (current)
 
 - ✅ Global shortcut — Alt+Space preferred, auto-fallback to a free combo
-- ✅ Navigate grid — apps as a box grid with real icons, pinned bar, pinyin
-  search, arrow/mouse navigation
+- ✅ Main menu — 最近使用 + 已固定 bars (expandable), pinyin search, arrow/mouse
+  navigation, real icons
 - ✅ Clipboard manager — text + image history, pin / per-entry delete, SQLite
-  persistence, search + copy back
+  persistence, search + copy back, auto-paste into the previous window
 - ✅ Auto-hide on focus loss
 - ✅ i18n — Simplified Chinese / Traditional Chinese / English
 - ✅ Pinyin search for Chinese app names
 - ✅ System tray icon — left-click toggles, right-click Restart / Exit
 - ✅ Auto-sizing window — height fits the results, stays centered
+- ✅ Settings window — interface / system / plugins / about
 - 🔲 Plugin system — planned (see [docs/ROADMAP.md](docs/ROADMAP.md))
 
 Version history in [CHANGELOG.md](CHANGELOG.md); how to run and verify in
@@ -104,20 +105,24 @@ Business logic belongs to Rust.
 
 # Features
 
-## Current (v0.2.10)
+## Current (v0.2.13)
 
 - Launcher — hidden at startup, Alt+Space toggles (auto-fallback to a free
   combo when Alt+Space is taken, e.g. by uTools); auto-hides on focus loss
-- Navigate main menu — apps as a box grid, arrow + mouse navigation, click to
-  launch; empty query browses all apps
+- Navigate main menu — 最近使用 + 已固定 bars (both titled + expandable),
+  arrow + mouse navigation, click to launch; typing shows the search grid
 - Clipboard manager — text and image history, SQLite persistence, search and
   copy-back; `Tab` switches between Navigate and Clipboard modes
-- Clipboard enhancements — right-click pin, `Del` / per-entry trash button
-- Settings button (placeholder, page in a later iteration)
+- Clipboard auto-paste — Enter pastes an entry into the window that had focus
+  before the launcher (the original clipboard is saved and restored); a
+  per-row copy button copies without pasting
+- Clipboard enhancements — right-click pin / paste / copy, `Del` / per-entry
+  trash button
+- Settings window — interface / system / plugins / about panes, import-export
+  & restore, hotkey recording, system service & auto-start
+- Window position presets — center / follow-mouse / four corners / custom
 - i18n — Simplified Chinese / Traditional Chinese / English
 - Real app icons — `IShellItemImageFactory`, in-memory cached, not in SQL
-- Navigate pinned bar — right-click to pin apps to a bar above the grid,
-  SQLite persisted
 - Pinyin search — Chinese app names match by pinyin (`kuake`/`kk` → 夸克)
 
 ## Planned

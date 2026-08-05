@@ -77,14 +77,18 @@ fn cursor_is_over(window: &WebviewWindow) -> bool {
     x >= pos.x && x < pos.x + size.width as i32 && y >= pos.y && y < pos.y + size.height as i32
 }
 
-/// Place the launcher at the chosen initial position: centered, or flush to a
-/// monitor corner. Only called when 记住位置 is off.
+/// Place the launcher at the chosen initial position: centered, flush to a
+/// monitor corner, or centered at the mouse cursor. Only called when 记住位置
+/// is off.
 fn apply_initial_position(
     window: &WebviewWindow,
     appearance: &crate::settings::Appearance,
 ) -> tauri::Result<()> {
     if appearance.window_position == "center" {
         return window.center();
+    }
+    if appearance.window_position == "follow-mouse" {
+        return position_at_mouse(window);
     }
     let Some(monitor) = window.current_monitor()? else {
         return window.center();
@@ -103,6 +107,39 @@ fn apply_initial_position(
         _ => return window.center(),
     };
     window.set_position(PhysicalPosition::new(origin.x + x, origin.y + y))?;
+    Ok(())
+}
+
+/// Position the launcher so its center is at the current mouse cursor,
+/// clamped to stay within the active monitor's work area.
+fn position_at_mouse(window: &WebviewWindow) -> tauri::Result<()> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    let mut pt = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut pt) } == 0 {
+        return window.center();
+    }
+    let size = window.outer_size()?;
+    let Some(monitor) = window.current_monitor()? else {
+        return window.center();
+    };
+    let origin = monitor.position();
+    let area = monitor.size();
+
+    // Center the window on the cursor.
+    let mut x = pt.x - size.width as i32 / 2;
+    let mut y = pt.y - size.height as i32 / 2;
+
+    // Clamp so the window never extends beyond the monitor edges.
+    let min_x = origin.x;
+    let min_y = origin.y;
+    let max_x = (origin.x + area.width as i32 - size.width as i32).max(min_x);
+    let max_y = (origin.y + area.height as i32 - size.height as i32).max(min_y);
+    x = x.clamp(min_x, max_x);
+    y = y.clamp(min_y, max_y);
+
+    window.set_position(PhysicalPosition::new(x, y))?;
     Ok(())
 }
 
@@ -192,8 +229,9 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
 }
 
 /// Re-apply the launcher's position after the frontend resized its height
-/// (kept anchored to the center / chosen corner). No-op when 记住位置 is on —
-/// the window keeps its current spot.
+/// (kept anchored to the center / chosen corner). No-op when 记住位置 is on,
+/// or when the position is "follow-mouse" (the window stays at its initial
+/// cursor-triggered spot, unaffected by content-height changes).
 #[tauri::command]
 pub fn apply_position(app: AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
@@ -203,8 +241,9 @@ pub fn apply_position(app: AppHandle) -> Result<(), String> {
         .state::<crate::settings::SettingsState>()
         .current()
         .appearance;
-    if !appearance.remember_position {
-        apply_initial_position(&window, &appearance).map_err(|e| e.to_string())?;
+    if appearance.window_position == "follow-mouse" || appearance.remember_position {
+        return Ok(());
     }
+    apply_initial_position(&window, &appearance).map_err(|e| e.to_string())?;
     Ok(())
 }

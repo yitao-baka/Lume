@@ -69,6 +69,7 @@ export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void
 
 const POSITIONS: { value: string; label: keyof Messages }[] = [
   { value: "center", label: "settingsPosCenter" },
+  { value: "follow-mouse", label: "settingsPosFollowMouse" },
   { value: "top-left", label: "settingsPosTopLeft" },
   { value: "top-right", label: "settingsPosTopRight" },
   { value: "bottom-left", label: "settingsPosBottomLeft" },
@@ -217,6 +218,26 @@ export default function InterfacePane(props: {
           <Toggle
             checked={a().show_recent}
             onChange={(v) => props.onChange({ show_recent: v })}
+          />
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-sub settings-sub-between">
+          <span class="settings-sub-label">{t("expandPinned")}</span>
+          <Toggle
+            checked={a().expand_pinned}
+            onChange={(v) => props.onChange({ expand_pinned: v })}
+          />
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-sub settings-sub-between">
+          <span class="settings-sub-label">{t("shiftEnterAdmin")}</span>
+          <Toggle
+            checked={a().shift_enter_admin}
+            onChange={(v) => props.onChange({ shift_enter_admin: v })}
           />
         </div>
       </div>

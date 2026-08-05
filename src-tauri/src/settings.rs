@@ -52,7 +52,7 @@ pub struct Appearance {
     /// auto-sizing shrinks toward (the window never exceeds it).
     #[serde(default = "default_window_height")]
     pub window_height: u32,
-    /// `"center"` | `"top-left"` | `"top-right"` | `"bottom-left"` | `"bottom-right"`.
+    /// `"center"` | `"follow-mouse"` | `"top-left"` | `"top-right"` | `"bottom-left"` | `"bottom-right"`.
     pub window_position: String,
     /// Remember the manually-moved window position across shows.
     pub remember_position: bool,
@@ -60,6 +60,12 @@ pub struct Appearance {
     /// always continues, so re-enabling shows the history).
     #[serde(default = "default_show_recent")]
     pub show_recent: bool,
+    /// Start the launcher with the 「已固定」 bar expanded (default: collapsed).
+    #[serde(default)]
+    pub expand_pinned: bool,
+    /// Shift+Enter launches the selected app with administrator privileges.
+    #[serde(default = "default_shift_enter_admin")]
+    pub shift_enter_admin: bool,
     /// Cap for the recent-opens list (stored and displayed).
     #[serde(default = "default_recent_count")]
     pub recent_count: u32,
@@ -88,6 +94,10 @@ fn default_window_height() -> u32 {
 
 /// The 「最近使用」 bar shows by default.
 fn default_show_recent() -> bool {
+    true
+}
+
+fn default_shift_enter_admin() -> bool {
     true
 }
 
@@ -134,6 +144,8 @@ impl Default for Settings {
                 window_position: "center".into(),
                 remember_position: false,
                 show_recent: true,
+                expand_pinned: false,
+                shift_enter_admin: true,
                 recent_count: 20,
                 search_placeholder_apps: String::new(),
                 search_placeholder_clipboard: String::new(),

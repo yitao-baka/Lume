@@ -90,6 +90,10 @@ function App() {
   const [switchKey, setSwitchKey] = createSignal("Tab");
   /** Settings-driven: show the 「最近使用」 bar (display-only toggle). */
   const [showRecent, setShowRecent] = createSignal(true);
+  /** Settings-driven: start the 「已固定」 bar expanded. */
+  const [expandPinned, setExpandPinned] = createSignal(false);
+  /** Settings-driven: Shift+Enter launches with administrator privileges. */
+  const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(true);
   /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
    * so bar column measurement re-runs when it changes). */
   const [entrySize, setEntrySize] = createSignal(110);
@@ -139,7 +143,7 @@ function App() {
     setPinnedSelected(0);
     setRecentSelected(0);
     setRecentExpanded(false); // don't persist the expanded state across shows
-    setPinnedExpanded(false);
+    setPinnedExpanded(expandPinned());
     setMenu(null);
   }
 
@@ -381,6 +385,7 @@ function App() {
       if (q.trim() === "") {
         // Empty query shows the two bars (最近使用 / 已固定), not a browse grid.
         setApps([]);
+        scheduleResize();
         return;
       }
       const res = (await invoke("search_apps", { query: q })) as AppEntry[];
@@ -453,6 +458,8 @@ function App() {
       );
       setEntrySize(s.appearance.entry_size);
       setShowRecent(s.appearance.show_recent);
+      setExpandPinned(s.appearance.expand_pinned || false);
+      setShiftEnterAdmin(s.appearance.shift_enter_admin !== false);
       setPlaceholderApps(s.appearance.search_placeholder_apps || "");
       setPlaceholderClipboard(s.appearance.search_placeholder_clipboard || "");
       setWindowHeight(s.appearance.window_height);
@@ -495,15 +502,24 @@ function App() {
     await runSearch(m === "apps" ? appsQuery() : clipQuery());
   }
 
-  /** Activate the selected entry: launch an app or copy a clipboard entry. */
+  /** Activate the selected entry: launch an app or paste a clipboard entry. */
   function activate() {
+    activateApp(false);
+  }
+
+  /** Like activate(), but forces administrator elevation on app launch. */
+  function activateAdmin() {
+    activateApp(true);
+  }
+
+  function activateApp(elevated: boolean) {
     if (mode() === "apps") {
       let item: AppEntry | undefined;
       if (zone() === "recent") item = recentApps()[recentSelected()];
       else if (zone() === "pinned") item = pinnedApps()[pinnedSelected()];
       else item = apps()[selected()];
       if (!item) return;
-      void invoke("launch_app", { path: item.path, name: item.name, elevated: false });
+      void invoke("launch_app", { path: item.path, name: item.name, elevated });
       void resetAndHide();
     } else {
       const item = clips()[selected()];
@@ -549,20 +565,46 @@ function App() {
       e.preventDefault();
       void switchMode(mode() === "apps" ? "clipboard" : "apps");
     } else if (mode() === "apps") {
-      // Empty query = the two bars (最近使用 / 已固定); typing = the results
-      // grid. ↑/↓ cycle between the bars, ←/→ move within the active bar.
       const empty = appsQuery() === "";
-      const hasRecent = empty && showRecent() && recentApps().length > 0;
-      const hasPinned = empty && pinnedApps().length > 0;
+      // ── search results grid (non-empty query) ──
+      // Grid navigation always wins when there is a query, regardless of
+      // `zone` — the zone signal belongs to the bar view and may carry a
+      // stale value from a prior empty-query interaction.
+      if (!empty) {
+        if (!hasResults) return;
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          selectionSource = "keyboard";
+          moveSelection(-1);
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          selectionSource = "keyboard";
+          moveSelection(1);
+        } else if (e.key === "ArrowDown") {
+          e.preventDefault();
+          selectionSource = "keyboard";
+          moveSelection(gridCols());
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          selectionSource = "keyboard";
+          moveSelection(-gridCols());
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          if (e.shiftKey && shiftEnterAdmin()) activateAdmin();
+          else activate();
+        }
+        return;
+      }
+      // ── empty-query bar navigation (最近使用 / 已固定) ──
+      const hasRecent = showRecent() && recentApps().length > 0;
+      const hasPinned = pinnedApps().length > 0;
       const hasBars = hasRecent || hasPinned;
-      if (!empty && !hasResults) return;
-      if (empty && !hasBars) return;
+      if (!hasBars) return;
       if (e.key === "ArrowLeft") {
         selectionSource = "keyboard";
         e.preventDefault();
         if (zone() === "recent") setRecentSelected(Math.max(0, recentSelected() - 1));
         else if (zone() === "pinned") setPinnedSelected(Math.max(0, pinnedSelected() - 1));
-        else moveSelection(-1);
       } else if (e.key === "ArrowRight") {
         selectionSource = "keyboard";
         e.preventDefault();
@@ -570,13 +612,11 @@ function App() {
           setRecentSelected(Math.min(recentApps().length - 1, recentSelected() + 1));
         else if (zone() === "pinned")
           setPinnedSelected(Math.min(pinnedApps().length - 1, pinnedSelected() + 1));
-        else moveSelection(1);
       } else if (e.key === "ArrowDown") {
         selectionSource = "keyboard";
         e.preventDefault();
         if (zone() === "recent") { if (hasPinned) setZone("pinned"); }
         else if (zone() === "pinned") { if (hasRecent) setZone("recent"); }
-        else if (!empty) moveSelection(gridCols());
         else if (hasRecent) setZone("recent");
         else if (hasPinned) setZone("pinned");
       } else if (e.key === "ArrowUp") {
@@ -584,7 +624,6 @@ function App() {
         e.preventDefault();
         if (zone() === "pinned") { if (hasRecent) setZone("recent"); }
         else if (zone() === "recent") { if (hasPinned) setZone("pinned"); }
-        else if (!empty) moveSelection(-gridCols());
         else if (hasPinned) setZone("pinned");
         else if (hasRecent) setZone("recent");
       } else if (e.key === "Delete") {
@@ -597,7 +636,8 @@ function App() {
         }
       } else if (e.key === "Enter") {
         e.preventDefault();
-        activate();
+        if (e.shiftKey && shiftEnterAdmin()) activateAdmin();
+        else activate();
       }
     } else {
       // Clipboard list navigation.
@@ -897,22 +937,20 @@ function App() {
           ) : (
             <Show when={apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
               <div class="result-grid" role="grid">
-                <For each={apps()}>
-                  {(app, i) =>
-                    appBox(app, i() === selected(), {
-                      onActivate: activate,
-                      onSelect: () => {
-                        selectionSource = "mouse";
-                        setSelected(i());
-                      },
-                      onContext: (e) => {
-                        setSelected(i());
-                        setZone("grid");
-                        setMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
-                      },
-                    })
-                  }
-                </For>
+                {apps().map((app, i) =>
+                  appBox(app, i === selected(), {
+                    onActivate: activate,
+                    onSelect: () => {
+                      selectionSource = "mouse";
+                      setSelected(i);
+                    },
+                    onContext: (e) => {
+                      setSelected(i);
+                      setZone("grid");
+                      setMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
+                    },
+                  })
+                )}
               </div>
             </Show>
           )

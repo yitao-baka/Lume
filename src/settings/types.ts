@@ -15,12 +15,16 @@ export interface SettingsData {
     window_width: number;
     /** Launcher initial vertical length in px (auto-size cap). */
     window_height: number;
-    /** `"center"` | `"top-left"` | `"top-right"` | `"bottom-left"` | `"bottom-right"`. */
+    /** `"center"` | `"follow-mouse"` | `"top-left"` | `"top-right"` | `"bottom-left"` | `"bottom-right"`. */
     window_position: string;
     /** Remember the manually-moved window position across shows. */
     remember_position: boolean;
     /** Show the 「最近使用」 bar on the main menu. */
     show_recent: boolean;
+    /** Start with the 「已固定」 bar expanded. */
+    expand_pinned: boolean;
+    /** Shift+Enter launches the selected app with administrator privileges. */
+    shift_enter_admin: boolean;
     /** Cap for the recent-opens list. */
     recent_count: number;
     /** Custom search placeholder for apps mode ("" = localized default). */

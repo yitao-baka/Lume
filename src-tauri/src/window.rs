@@ -7,12 +7,27 @@
 //! The commands below are the window API for the rest of the core: the
 //! Global hotkey module (v0.1) and the frontend Esc key both call them.
 
+use std::sync::Mutex;
+
 use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Label of the launcher window defined in `tauri.conf.json`.
 const MAIN_WINDOW: &str = "main";
 /// Label of the settings window defined in `tauri.conf.json`.
 const SETTINGS_WINDOW: &str = "settings";
+
+/// Last foreground window HWND captured before the launcher is shown — used by
+/// the clipboard auto-paste feature to send content back to the right window.
+pub struct FocusState {
+    pub last_hwnd: Mutex<Option<isize>>,
+}
+
+impl Default for FocusState {
+    fn default() -> Self {
+        Self { last_hwnd: Mutex::new(None) }
+    }
+}
 
 /// Apply the configured width and (unless 记住位置) the chosen initial
 /// position to the launcher. Called on every show.
@@ -103,6 +118,8 @@ fn show(window: &WebviewWindow) -> tauri::Result<()> {
 /// Toggle the launcher window.
 ///
 /// Hidden → shown (centered + focused); shown → hidden.
+/// When about to show, records the current foreground window for
+/// clipboard auto-paste.
 #[tauri::command]
 pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
     let window = app
@@ -111,6 +128,11 @@ pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
     if window.is_visible().map_err(|e| e.to_string())? {
         window.hide().map_err(|e| e.to_string())?;
     } else {
+        // Record which window had focus before the launcher appeared.
+        if let Some(focus) = app.try_state::<FocusState>() {
+            let fg = unsafe { GetForegroundWindow() };
+            *focus.last_hwnd.lock().unwrap() = Some(fg.0 as isize);
+        }
         show(&window).map_err(|e| e.to_string())?;
     }
     Ok(())

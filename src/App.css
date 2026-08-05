@@ -229,6 +229,33 @@ body,
   height: 16px;
 }
 
+/* Per-entry copy-to-clipboard button on clipboard rows. */
+.result-copy {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-faint);
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.result-copy:hover {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.12);
+}
+
+.result-copy-icon {
+  width: 14px;
+  height: 14px;
+}
+
 /* Per-entry delete (trash) button on clipboard rows. */
 .result-delete {
   flex: none;

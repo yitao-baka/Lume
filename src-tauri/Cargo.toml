@@ -46,6 +46,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Environment", # envwatch: SetEnvironmentVariableW / ExpandEnvironmentStringsW
   "Win32_System_LibraryLoader", # envwatch: GetModuleHandleW (hidden window class)
   "Win32_UI_WindowsAndMessaging", # envwatch: message-only window + WM_SETTINGCHANGE pump
+  "Win32_UI_Input",            # clipboard paste: SendInput (Ctrl+V simulation)
 ] }
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",

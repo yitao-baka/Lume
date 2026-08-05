@@ -67,6 +67,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(apps::AppIndex::default())
         .manage(hotkey::ActiveHotkey::default())
+        .manage(window::FocusState::default())
         .plugin(hotkey::build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -163,6 +164,7 @@ pub fn run() {
             i18n::load_language_files,
             clipboard::search_clipboard,
             clipboard::copy_clipboard,
+            clipboard::paste_clipboard,
             clipboard::delete_clipboard,
             clipboard::pin_clipboard,
             clipboard::clear_clipboard,

@@ -298,9 +298,15 @@ function App() {
     );
   }
 
-  /** Copy a specific clipboard entry back and hide the launcher. */
-  function copyClip(item: ClipboardItem) {
+  /** Copy a specific clipboard item to the system clipboard and hide. */
+  function copyOnly(item: ClipboardItem) {
     void invoke("copy_clipboard", { id: item.id });
+    void resetAndHide();
+  }
+
+  /** Paste a clipboard entry into the previous foreground window and hide. */
+  function pasteClip(item: ClipboardItem) {
+    void invoke("paste_clipboard", { id: item.id });
     void resetAndHide();
   }
 
@@ -350,7 +356,8 @@ function App() {
     }
     const isPinned = m.item.pinned;
     return [
-      { label: t("copyBack"), icon: clipboardIcon, action: () => copyClip(m.item) },
+      { label: t("copyBack"), icon: clipboardIcon, action: () => copyOnly(m.item) },
+      { label: t("pasteBack"), icon: clipboardIcon, action: () => pasteClip(m.item) },
       {
         label: isPinned ? t("unpin") : t("pin"),
         icon: isPinned ? pinnedIcon : pinIcon,
@@ -501,8 +508,7 @@ function App() {
     } else {
       const item = clips()[selected()];
       if (!item) return;
-      void invoke("copy_clipboard", { id: item.id });
-      void resetAndHide();
+      pasteClip(item);
     }
   }
 
@@ -972,6 +978,29 @@ function App() {
                         <path d="M10 7v4l-2 3h8l-2-3V7" />
                       </svg>
                     </Show>
+                    <button
+                      class="result-copy"
+                      title={t("copyToClipboard")}
+                      aria-label={t("copyToClipboard")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copyOnly(item);
+                      }}
+                    >
+                      <svg
+                        class="result-copy-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    </button>
                     <button
                       class="result-delete"
                       title={t("delete")}

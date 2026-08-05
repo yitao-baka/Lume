@@ -25,6 +25,8 @@ use base64::Engine;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
+use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+use windows::Win32::Foundation::HWND;
 
 /// Maximum number of unpinned history rows kept in the database.
 const HISTORY_CAP: i64 = 300;
@@ -417,6 +419,107 @@ pub fn copy_clipboard(id: u32, state: State<ClipboardState>) -> Result<(), Strin
     let row = get_row(&conn, id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("clipboard item {id} not found"))?;
+    set_clipboard_from_row(&row)
+}
+
+/// Write the entry `id` to the clipboard and paste it (Ctrl+V via SendInput)
+/// into the window that had focus before the launcher appeared. If no target
+/// window is recorded or the window is gone, falls back to a plain clipboard
+/// copy. The original clipboard content is saved and restored after the paste
+/// so the user's clipboard is never polluted.
+#[tauri::command]
+pub fn paste_clipboard(
+    id: u32,
+    state: State<ClipboardState>,
+    focus: State<crate::window::FocusState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    let row = get_row(&conn, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("clipboard item {id} not found"))?;
+    drop(conn);
+
+    // Take ownership of the stored HWND (one-shot).
+    let maybe_hwnd = focus.last_hwnd.lock().unwrap().take();
+
+    let Some(hwnd_raw) = maybe_hwnd else {
+        // No target window recorded — fall back to a plain copy.
+        return set_clipboard_from_row(&row);
+    };
+
+    if !unsafe { IsWindow(Some(HWND(hwnd_raw as *mut std::ffi::c_void))) }.as_bool() {
+        // Window is gone — fall back to a plain copy.
+        return set_clipboard_from_row(&row);
+    }
+
+    // Save the current clipboard so we can restore it after the paste.
+    let saved = save_current_clipboard();
+
+    // Place the entry on the system clipboard.
+    set_clipboard_from_row(&row)?;
+
+    // Hide the launcher so focus can return to the target window.
+    let _ = crate::window::hide_launcher(app);
+    // Allow time for Windows to restore focus to the previous foreground window.
+    std::thread::sleep(Duration::from_millis(60));
+
+    // Send Ctrl+V to whatever window now has focus.
+    unsafe { send_ctrl_v() };
+
+    // Give the target application time to process the paste.
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Restore whatever was on the clipboard before our paste.
+    restore_saved_clipboard(saved);
+
+    Ok(())
+}
+
+/// Save whatever is currently on the system clipboard (text or image) so it
+/// can be restored after an auto-paste.
+enum SavedClipboard {
+    Empty,
+    Text(String),
+    Image(arboard::ImageData<'static>),
+}
+
+fn save_current_clipboard() -> SavedClipboard {
+    let Ok(mut cb) = arboard::Clipboard::new() else {
+        return SavedClipboard::Empty;
+    };
+    if let Ok(text) = cb.get_text() {
+        return SavedClipboard::Text(text);
+    }
+    if let Ok(img) = cb.get_image() {
+        // Convert to owned data.
+        let owned = arboard::ImageData {
+            width: img.width,
+            height: img.height,
+            bytes: Cow::Owned(img.bytes.to_vec()),
+        };
+        return SavedClipboard::Image(owned);
+    }
+    SavedClipboard::Empty
+}
+
+fn restore_saved_clipboard(saved: SavedClipboard) {
+    let Ok(mut cb) = arboard::Clipboard::new() else {
+        return;
+    };
+    match saved {
+        SavedClipboard::Empty => {}
+        SavedClipboard::Text(s) => {
+            let _ = cb.set_text(s);
+        }
+        SavedClipboard::Image(img) => {
+            let _ = cb.set_image(img);
+        }
+    }
+}
+
+/// Place a history row onto the system clipboard.
+fn set_clipboard_from_row(row: &Row) -> Result<(), String> {
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     if row.kind == "image" {
         let png = row.data.as_deref().ok_or("image item has no data")?;
@@ -428,8 +531,61 @@ pub fn copy_clipboard(id: u32, state: State<ClipboardState>) -> Result<(), Strin
         };
         cb.set_image(img).map_err(|e| e.to_string())
     } else {
-        cb.set_text(row.content).map_err(|e| e.to_string())
+        cb.set_text(&row.content).map_err(|e| e.to_string())
     }
+}
+
+/// Send Ctrl+V (key-down / key-down / key-up / key-up) via `SendInput` so the
+/// foreground application receives a paste command.
+unsafe fn send_ctrl_v() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VIRTUAL_KEY, VK_CONTROL,
+    };
+
+    let mut inputs: [INPUT; 4] = std::mem::zeroed();
+
+    // Ctrl down
+    inputs[0].r#type = INPUT_KEYBOARD;
+    inputs[0].Anonymous.ki = KEYBDINPUT {
+        wVk: VK_CONTROL,
+        wScan: 0,
+        dwFlags: KEYBD_EVENT_FLAGS(0),
+        time: 0,
+        dwExtraInfo: 0,
+    };
+
+    // V down
+    inputs[1].r#type = INPUT_KEYBOARD;
+    inputs[1].Anonymous.ki = KEYBDINPUT {
+        wVk: VIRTUAL_KEY(0x56),
+        wScan: 0,
+        dwFlags: KEYBD_EVENT_FLAGS(0),
+        time: 0,
+        dwExtraInfo: 0,
+    };
+
+    // V up
+    inputs[2].r#type = INPUT_KEYBOARD;
+    inputs[2].Anonymous.ki = KEYBDINPUT {
+        wVk: VIRTUAL_KEY(0x56),
+        wScan: 0,
+        dwFlags: KEYEVENTF_KEYUP,
+        time: 0,
+        dwExtraInfo: 0,
+    };
+
+    // Ctrl up
+    inputs[3].r#type = INPUT_KEYBOARD;
+    inputs[3].Anonymous.ki = KEYBDINPUT {
+        wVk: VK_CONTROL,
+        wScan: 0,
+        dwFlags: KEYEVENTF_KEYUP,
+        time: 0,
+        dwExtraInfo: 0,
+    };
+
+    let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
 }
 
 /// Delete a single history entry.

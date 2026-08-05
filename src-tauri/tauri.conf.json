@@ -11,34 +11,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Lume",
-        "width": 720,
-        "height": 480,
-        "center": true,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "shadow": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "visible": false
-      },
-      {
-        "label": "settings",
-        "title": "Lume",
-        "width": 720,
-        "height": 560,
-        "minWidth": 560,
-        "minHeight": 420,
-        "center": true,
-        "resizable": true,
-        "decorations": true,
-        "visible": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

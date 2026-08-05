@@ -7,13 +7,16 @@
   box-sizing: border-box;
 }
 
-:root {
+html {
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.4;
   background-color: transparent;
   -webkit-font-smoothing: antialiased;
   user-select: none;
+
+  /* Solid default so bars render at the right size before JS applies settings. */
+  --entry-size: 110px;
 
   /* Dark palette (default). */
   --bg: rgba(30, 30, 32, 0.75);            /* launcher panel over the Acrylic */
@@ -300,7 +303,7 @@ body,
   display: grid;
   /* Entry-box auto-adapts: columns are at least 条目框大小, then stretch to
      fill the window — no right-side gap. 小/中/大 is the reference size. */
-  grid-template-columns: repeat(auto-fill, minmax(var(--entry-size), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--entry-size, 110px), 1fr));
   gap: 8px;
   padding: 8px;
   align-content: start;
@@ -345,7 +348,7 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: calc(var(--entry-size) * 0.18);
+  font-size: calc(var(--entry-size, 110px) * 0.18);
   font-weight: 600;
   color: rgba(0, 0, 0, 0.82);
 }
@@ -410,7 +413,7 @@ body,
   display: grid;
   /* Same auto-adapting columns as the results grid, so "one row" means the
      same number of boxes the main grid would show at this width. */
-  grid-template-columns: repeat(auto-fill, minmax(var(--entry-size), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--entry-size, 110px), 1fr));
   gap: 8px;
   padding: 4px 10px 8px;
   align-content: start;

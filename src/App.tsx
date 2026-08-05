@@ -81,25 +81,36 @@ function App() {
   const [appsQuery, setAppsQuery] = createSignal("");
   const [clipQuery, setClipQuery] = createSignal("");
   const [mode, setMode] = createSignal<Mode>("apps");
+  // ── Synchronous initial config from Rust initialization_script ──
+  // Window starts hidden; the Rust setup() reads settings.toml and injects
+  // it as window.__LUME_CONFIG__ before the webview loads. If missing (very
+  // first run, dev), fall back to defaults matching Settings::default().
+  const _cfg = (window as any).__LUME_CONFIG__ as SettingsData | undefined;
+  const _a = _cfg?.appearance;
+
   /** Max launcher height for auto-sizing (settings → 窗口大小 → 高度). */
-  const [windowHeight, setWindowHeight] = createSignal(520);
+  const [windowHeight, setWindowHeight] = createSignal(_a?.window_height ?? 520);
   /** Launcher width, from settings — the source of truth for resizing (never
    * re-read from the window, which drifts on DPI rounding). */
-  const [windowWidth, setWindowWidth] = createSignal(720);
+  const [windowWidth, setWindowWidth] = createSignal(_a?.window_width ?? 720);
   /** Key that switches Navigate/Clipboard modes (settings → 系统 → 快捷键). */
-  const [switchKey, setSwitchKey] = createSignal("Tab");
+  const [switchKey, setSwitchKey] = createSignal(_cfg?.hotkeys?.switch_mode || "Tab");
   /** Settings-driven: show the 「最近使用」 bar (display-only toggle). */
-  const [showRecent, setShowRecent] = createSignal(true);
+  const [showRecent, setShowRecent] = createSignal(_a?.show_recent ?? true);
   /** Settings-driven: start the 「已固定」 bar expanded. */
-  const [expandPinned, setExpandPinned] = createSignal(false);
+  const [expandPinned, setExpandPinned] = createSignal(_a?.expand_pinned ?? false);
   /** Settings-driven: Shift+Enter launches with administrator privileges. */
-  const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(true);
+  const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(_a?.shift_enter_admin !== false);
   /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
    * so bar column measurement re-runs when it changes). */
-  const [entrySize, setEntrySize] = createSignal(110);
+  const [entrySize, setEntrySize] = createSignal(_a?.entry_size ?? 110);
   /** Settings-driven: custom search placeholder per mode ("" = default text). */
-  const [placeholderApps, setPlaceholderApps] = createSignal("");
-  const [placeholderClipboard, setPlaceholderClipboard] = createSignal("");
+  const [placeholderApps, setPlaceholderApps] = createSignal(_a?.search_placeholder_apps || "");
+  const [placeholderClipboard, setPlaceholderClipboard] = createSignal(_a?.search_placeholder_clipboard || "");
+
+  // Apply imperative config immediately (locale + theme are not signal-driven).
+  setLocale(resolveLocale(_a?.language ?? "system"));
+  applyColorMode(_a?.color_mode ?? "system");
   /** Measured column count of a bar grid — drives "one row" (collapsed slice)
    * and the 展开 button's visibility. */
   const [barCols, setBarCols] = createSignal(6);
@@ -697,19 +708,18 @@ function App() {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
     document.addEventListener("contextmenu", (e) => e.preventDefault());
 
-    // Load the Navigate bars (recent + pinned) so the empty-query main menu
-    // renders immediately — without this, the very first show can be blank if
-    // the window appears before the webview finishes loading and the focus
-    // event is missed (the listener below is async).
+    // Apply persisted settings FIRST — CSS variables and signals must be
+    // ready before the bars render, otherwise the initial paint shows wrong
+    // sizes / collapsed state / missing icons.
+    // Initial config is already in the signals (window.__LUME_CONFIG__).
+    // Runtime settings changes (from the settings window) arrive via the
+    // "settings-applied" event and `applyRuntimeSettings`.
+    clearSearch();
     void refreshRecent();
     void refreshPins();
-
-    // Focus the search input as soon as the launcher appears.
+    scheduleResize();
     document.getElementById("search-input")?.focus();
 
-    // Apply the persisted language + entry-box size, and re-apply whenever the
-    // settings window saves / applies (Rust emits `settings-applied`).
-    void applyRuntimeSettings();
     const unlistenSettings = await listen("settings-applied", () => {
       void applyRuntimeSettings();
     });
@@ -717,6 +727,7 @@ function App() {
 
     // The launcher stays hidden between toggles. On every re-show, reset to
     // the Navigate main menu, re-focus the input, and repopulate the grid.
+    // Focus the input now so the first show starts with the cursor in place.
     const unlisten = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
         clearSearch();
@@ -726,6 +737,13 @@ function App() {
       }
     });
     onCleanup(() => unlisten());
+  });
+
+  // Sync the entry-size CSS variable whenever the setting changes — decoupled
+  // from applyRuntimeSettings timing so the first render always picks up the
+  // persisted value.
+  createEffect(() => {
+    document.documentElement.style.setProperty("--entry-size", entrySize() + "px");
   });
 
   // Re-measure the bar column count whenever the layout-affecting settings
@@ -803,7 +821,9 @@ function App() {
             </button>
           </Show>
         </div>
-        <div class="bar-grid" classList={{ collapsed: !opts.expanded }}>
+        <div class="bar-grid" classList={{ collapsed: !opts.expanded }} onMouseLeave={() => {
+          if (selectionSource === "mouse") opts.onSelect(-1);
+        }}>
           <For each={shown}>
             {(app, i) =>
               appBox(app, opts.zoneActive && i() === opts.selected, {
@@ -936,7 +956,7 @@ function App() {
             </div>
           ) : (
             <Show when={apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
-              <div class="result-grid" role="grid">
+              <div class="result-grid" role="grid" onMouseLeave={() => { if (selectionSource === "mouse") setSelected(-1); }}>
                 {apps().map((app, i) =>
                   appBox(app, i === selected(), {
                     onActivate: activate,
@@ -956,7 +976,7 @@ function App() {
           )
         ) : (
           <Show when={clips().length > 0} fallback={<span class="hint">{clipQuery() ? t("noResults") : t("noClipboardHistory")}</span>}>
-            <div class="result-list" role="listbox">
+            <div class="result-list" role="listbox" onMouseLeave={() => { if (selectionSource === "mouse") setSelected(-1); }}>
               <For each={clips()}>
                 {(item, i) => (
                   <div

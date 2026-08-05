@@ -80,6 +80,52 @@ pub fn run() {
             // Settings: ensure settings/default.toml/settings.toml exist and
             // manage the effective settings state (docs/SETTINGS.md).
             settings::init(app);
+
+            // ── Inject settings into the frontend before the first render ──
+            // Serialize the effective settings and set window.__LUME_CONFIG__
+            // via an initialization script so SolidJS can read them synchronously
+            // from createSignal defaults — no async IPC race on first paint.
+            let current = app
+                .state::<settings::SettingsState>()
+                .current();
+            let config_json = serde_json::to_string(&current)
+                .unwrap_or_else(|_| "{}".into());
+            let init_script = format!("window.__LUME_CONFIG__ = {config_json};");
+
+            // Main launcher window (replaces tauri.conf.json windows[0]).
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("Lume")
+            .inner_size(720.0, 480.0)
+            .center()
+            .resizable(false)
+            .decorations(false)
+            .transparent(true)
+            .shadow(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .visible(false)
+            .initialization_script(&init_script)
+            .build()?;
+
+            // Settings window (replaces tauri.conf.json windows[1]).
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "settings",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("Lume")
+            .inner_size(720.0, 560.0)
+            .min_inner_size(560.0, 420.0)
+            .center()
+            .resizable(true)
+            .decorations(true)
+            .visible(false)
+            .initialization_script(&init_script)
+            .build()?;
             // Build the System32 preset DB once (background), then refresh the
             // user cache at startup and on the configured interval (minutes).
             // The GUI is the sole refresher — the LumeSVC service is a dormant

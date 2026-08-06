@@ -274,8 +274,10 @@ function App() {
 
     // Height cap: an expanded bar fills the screen (up to the work area, minus
     // a margin); a collapsed bar stays under the configured window_height.
+    // The bar-expand cap only applies on the Navigate page — the Clipboard page
+    // must not inherit a bar's expanded size when switching modes.
     let cap = windowHeight();
-    if (recentExpanded() || pinnedExpanded()) {
+    if (mode() === "apps" && (recentExpanded() || pinnedExpanded())) {
       await ensureWorkArea();
       const screen = workAreaH();
       if (screen) cap = Math.max(windowHeight(), screen - SCREEN_MARGIN);
@@ -679,15 +681,23 @@ function App() {
       return;
     }
     if (dr > 0) {
-      // Down: the next row that has an item at this column, wrapping to the top.
+      // Down: the next row that has an item at this column.
       let r = gridRow + 1;
       while (r < grid.length && !hasItem(r)) r++;
-      if (r >= grid.length) {
+      if (r < grid.length) {
+        commitGrid(r);
+      } else if (gridRow === grid.length - 1) {
+        // Already on the last row: loop back to the top of this column.
         r = 0;
         while (r < grid.length && !hasItem(r)) r++;
         if (r >= grid.length) return;
+        commitGrid(r);
+      } else {
+        // A lower row exists but doesn't reach this column (a partial last
+        // row): jump to the current bar's last item (the section end).
+        setIdx(bars[bi], reach(bars[bi]) - 1);
+        setZone(bars[bi]);
       }
-      commitGrid(r);
     } else {
       // Up: the previous row that has an item at this column, wrapping to the
       // bottom. Skips a partial last row that doesn't reach the column.
@@ -885,10 +895,26 @@ function App() {
       dragRef.overIndex = overIndex;
     });
 
+    // Clear drag styling from every box. Query the whole document rather than
+    // just the first .bar-grid: with both bars visible the draggable pinned
+    // items live in the *second* grid, and a scoped query would miss them,
+    // leaving the dragged item dimmed after a cancelled drag.
+    const clearDragStyling = () => {
+      document
+        .querySelectorAll(
+          ".result-box.result-dragging,.result-box.result-insert-before,.result-box.result-insert-after"
+        )
+        .forEach((c) =>
+          c.classList.remove("result-dragging", "result-insert-before", "result-insert-after")
+        );
+    };
+
+    // Safety net: a drop that ends without a dragend (WebView2 quirk) must
+    // still clear the styling.
+    document.addEventListener("drop", clearDragStyling);
+
     document.addEventListener("dragend", (e) => {
-      const grid = document.querySelector(".bar-grid") as HTMLElement | null;
-      grid?.querySelectorAll(".result-dragging,.result-insert-before,.result-insert-after")
-        .forEach((c) => c.classList.remove("result-dragging", "result-insert-before", "result-insert-after"));
+      clearDragStyling();
       const dr = dragRef;
       dragRef = null;
       if (!dr || (e as DragEvent).dataTransfer?.dropEffect === "none") return;

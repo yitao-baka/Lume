@@ -38,8 +38,11 @@ fn apply_geometry(window: &WebviewWindow) -> tauri::Result<()> {
         .current()
         .appearance;
     // Width from settings; the frontend keeps the height content-adaptive.
+    // Read the INNER (client) height and feed it back: outer_size() includes
+    // the frameless window's non-client margins, and round-tripping the outer
+    // through set_size would inflate the height by those margins every show.
     let sf = window.scale_factor()?;
-    let cur = window.outer_size()?.to_logical::<f64>(sf);
+    let cur = window.inner_size()?.to_logical::<f64>(sf);
     window.set_size(LogicalSize::new(appearance.window_width as f64, cur.height))?;
     if !appearance.remember_position {
         apply_initial_position(window, &appearance)?;
@@ -216,7 +219,7 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
     };
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
     let cur = window
-        .outer_size()
+        .inner_size()
         .map_err(|e| e.to_string())?
         .to_logical::<f64>(sf);
     window

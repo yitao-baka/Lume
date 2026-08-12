@@ -7,7 +7,7 @@
 
 use std::sync::Mutex;
 
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::cache::{self, AppEntry};
 use crate::settings::{Settings, SettingsState};
@@ -164,6 +164,19 @@ fn filter_files(apps: &[AppEntry], query: &str) -> Vec<AppEntry> {
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
+
+/// Manually refresh the index immediately (Desktop + user dirs + Start Menu).
+/// Runs on a background thread so the settings window never blocks.
+#[tauri::command]
+pub fn refresh_index(app: tauri::AppHandle) -> Result<(), String> {
+    crate::dirwatch::rebuild(&app);
+    std::thread::spawn(move || {
+        let index = app.state::<AppIndex>();
+        let settings = app.state::<SettingsState>().current();
+        index.refresh_user(&settings);
+    });
+    Ok(())
+}
 
 /// Search the enabled index directories for files matching `query`.
 #[tauri::command]

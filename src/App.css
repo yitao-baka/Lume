@@ -642,6 +642,36 @@ body.settings-window #root {
   color: var(--text);
 }
 
+/* Title row with an inline action button (e.g. 刷新索引). */
+.settings-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-title-row .settings-title {
+  margin-bottom: 12px;
+}
+
+/* Transient toast shown after a manual index refresh. */
+.settings-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  animation: lume-toast-in 0.18s ease-out;
+}
+@keyframes lume-toast-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
 .settings-row {
   display: flex;
   align-items: center;

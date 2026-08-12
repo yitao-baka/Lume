@@ -36,6 +36,8 @@ export interface SettingsData {
   index: {
     system_dirs: { path: string; enabled: boolean }[];
     user_dirs: string[];
+    /** User dirs where only .lnk/.exe are indexed (files filtered out). */
+    user_dirs_no_files: string[];
     /** Minutes between user-cache refreshes (startup always refreshes once). */
     cache_refresh_interval_minutes: number;
   };

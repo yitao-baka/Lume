@@ -116,6 +116,10 @@ pub struct Hotkeys {
 pub struct Index {
     pub system_dirs: Vec<SystemDir>,
     pub user_dirs: Vec<String>,
+    /// User dirs where only `.lnk`/`.exe` are indexed (other files filtered).
+    /// Empty = every user dir indexes all files (the default).
+    #[serde(default)]
+    pub user_dirs_no_files: Vec<String>,
     /// Minutes between user-cache refreshes (startup always refreshes once).
     #[serde(default = "default_refresh_interval")]
     pub cache_refresh_interval_minutes: u32,
@@ -170,6 +174,7 @@ impl Default for Settings {
                     },
                 ],
                 user_dirs: Vec::new(),
+                user_dirs_no_files: Vec::new(),
                 cache_refresh_interval_minutes: 60,
             },
         }
@@ -314,6 +319,8 @@ pub fn save_settings(new: Settings, app: AppHandle, state: State<SettingsState>)
         std::thread::spawn(move || {
             app2.state::<crate::apps::AppIndex>().refresh_user(&settings);
         });
+        // Also rebuild the directory watcher to follow the new index dirs.
+        crate::dirwatch::rebuild(&app);
     }
     // Notify the launcher webview (language + entry-box size it renders).
     app.emit("settings-applied", ()).map_err(|e| e.to_string())?;

@@ -106,7 +106,7 @@ fn pinyin_for(name: &str) -> (String, String) {
 /// unresolvable. `Desktop` covers **both** the user desktop and the public
 /// (all-users) desktop, matching Explorer's combined view. `System32` is a
 /// well-known location; user dirs are absolute paths.
-fn resolve_index_dirs(spec: &str) -> Vec<PathBuf> {
+pub(crate) fn resolve_index_dirs(spec: &str) -> Vec<PathBuf> {
     match spec {
         "Desktop" => desktop_dirs(),
         "System32" => std::env::var_os("SystemRoot")
@@ -271,20 +271,34 @@ pub fn load_sys32_entries() -> Result<Vec<AppEntry>, String> {
 
 /// The resolved, enabled live dirs (Desktop → user + public, plus user dirs).
 /// System32 is excluded — it comes from the preset DB.
-fn live_dirs(settings: &Settings) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
+/// Resolved index dirs with a per-dir "index all files" flag. `true` = index
+/// every file; `false` = only `.lnk`/`.exe` (the 索引目录中的文件 toggle off).
+fn live_dirs(settings: &Settings) -> Vec<(PathBuf, bool)> {
+    let mut dirs: Vec<(PathBuf, bool)> = Vec::new();
     if settings
         .index
         .system_dirs
         .iter()
         .any(|d| d.path == "Desktop" && d.enabled)
     {
-        dirs.extend(resolve_index_dirs("Desktop"));
+        dirs.extend(resolve_index_dirs("Desktop").into_iter().map(|d| (d, true)));
     }
     for spec in &settings.index.user_dirs {
-        dirs.extend(resolve_index_dirs(spec));
+        let index_files = !settings.index.user_dirs_no_files.iter().any(|f| f == spec);
+        dirs.extend(resolve_index_dirs(spec).into_iter().map(|d| (d, index_files)));
     }
     dirs
+}
+
+/// Whether a path is an "openable" file (`.lnk`/`.exe`/…) — the filter applied
+/// when a directory's 索引目录中的文件 toggle is off.
+fn is_openable(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    SYS32_EXTS.contains(&ext.as_str()) || ext == "lnk"
 }
 
 /// Whether the Start Menu system index is enabled.
@@ -297,7 +311,7 @@ fn start_menu_enabled(settings: &Settings) -> bool {
 }
 
 /// The Start Menu Programs roots (all-users + per-user) that exist.
-fn start_menu_dirs() -> Vec<PathBuf> {
+pub(crate) fn start_menu_dirs() -> Vec<PathBuf> {
     let programs = Path::new("Microsoft").join("Windows").join("Start Menu").join("Programs");
     let mut dirs = Vec::new();
     for env in ["ProgramData", "APPDATA"] {
@@ -346,8 +360,11 @@ pub fn refresh_user_db(settings: &Settings) -> Result<Vec<AppEntry>, String> {
     // Current on-disk files: (path, name), deduplicated across dirs.
     let mut seen: HashSet<String> = HashSet::new();
     let mut current: Vec<(String, String)> = Vec::new();
-    for dir in live_dirs(settings) {
+    for (dir, index_files) in live_dirs(settings) {
         for (name, path) in list_files(&dir) {
+            if !index_files && !is_openable(&path) {
+                continue; // 索引目录中的文件 off → only .lnk/.exe
+            }
             let key = path.to_string_lossy().into_owned();
             if seen.insert(key.clone()) {
                 current.push((key, name));

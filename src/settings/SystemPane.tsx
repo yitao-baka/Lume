@@ -9,6 +9,7 @@ import type { SettingsData } from "./types";
 import { Chip, Toggle } from "./InterfacePane";
 import folderPlusIcon from "../../res/icons/folder_plus.svg";
 import deleteIcon from "../../res/icons/delete.svg";
+import refreshIcon from "../../res/icons/refresh.svg";
 
 /** Status of the LumeSVC service as reported by the Rust `svc_status` command. */
 interface SvcStatus {
@@ -187,6 +188,23 @@ export default function SystemPane(props: {
     }
   }
 
+  // Manual index refresh (Desktop + user dirs + Start Menu).
+  const [toast, setToast] = createSignal<string | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  function showToast(text: string) {
+    setToast(text);
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => setToast(null), 2000);
+  }
+  async function refreshIndexNow() {
+    try {
+      await invoke("refresh_index");
+      showToast(t("settingsRefreshed"));
+    } catch (err) {
+      setSvcMsg({ ok: false, text: String(err) });
+    }
+  }
+
   onMount(() => {
     void (async () => {
       try {
@@ -274,6 +292,15 @@ export default function SystemPane(props: {
     props.onChangeIndex({ user_dirs: idx().user_dirs.filter((d) => d !== dir) });
   }
 
+  // Toggle "index files in this directory": OFF → add to the no-files list.
+  function toggleIndexFiles(dir: string) {
+    const noFiles = idx().user_dirs_no_files ?? [];
+    const present = noFiles.includes(dir);
+    props.onChangeIndex({
+      user_dirs_no_files: present ? noFiles.filter((d) => d !== dir) : [...noFiles, dir],
+    });
+  }
+
   function setSystemDir(dirPath: string, enabled: boolean) {
     props.onChangeIndex({
       system_dirs: idx().system_dirs.map((d) =>
@@ -346,7 +373,17 @@ export default function SystemPane(props: {
       </div>
 
       <div class="settings-group">
-        <h2 class="settings-title">{t("settingsIndexDirs")}</h2>
+        <div class="settings-title-row">
+          <h2 class="settings-title">{t("settingsIndexDirs")}</h2>
+          <button
+            class="settings-icon-btn"
+            title={t("settingsRefreshIndex")}
+            aria-label={t("settingsRefreshIndex")}
+            onClick={() => void refreshIndexNow()}
+          >
+            <img class="settings-icon-btn-icon" src={refreshIcon} alt="" draggable={false} />
+          </button>
+        </div>
         <div class="settings-sub">
           <span class="settings-sub-label">{t("settingsSystemIndex")}</span>
           <For each={idx().system_dirs}>
@@ -394,14 +431,22 @@ export default function SystemPane(props: {
             {(dir) => (
               <div class="settings-row settings-row-between">
                 <span class="settings-path">{dir}</span>
-                <button
-                  class="settings-icon-btn"
-                  title={t("delete")}
-                  aria-label={t("delete")}
-                  onClick={() => removeUserDir(dir)}
-                >
-                  <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
-                </button>
+                <div class="settings-row" style={{ gap: "4px" }}>
+                  <span title={t("settingsIndexFiles")}>
+                    <Toggle
+                      checked={!(idx().user_dirs_no_files ?? []).includes(dir)}
+                      onChange={() => toggleIndexFiles(dir)}
+                    />
+                  </span>
+                  <button
+                    class="settings-icon-btn"
+                    title={t("delete")}
+                    aria-label={t("delete")}
+                    onClick={() => removeUserDir(dir)}
+                  >
+                    <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
+                  </button>
+                </div>
               </div>
             )}
           </For>
@@ -490,6 +535,10 @@ export default function SystemPane(props: {
           </span>
         </Show>
       </div>
+
+      <Show when={toast()}>
+        <div class="settings-toast" role="status">{toast()}</div>
+      </Show>
     </>
   );
 }

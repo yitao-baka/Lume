@@ -1,6 +1,7 @@
 mod apps;
 pub mod cache;
 mod clipboard;
+mod dirwatch;
 mod envwatch;
 mod hotkey;
 mod i18n;
@@ -68,6 +69,7 @@ pub fn run() {
         .manage(apps::AppIndex::default())
         .manage(hotkey::ActiveHotkey::default())
         .manage(window::FocusState::default())
+        .manage(dirwatch::DirWatchState::default())
         .plugin(hotkey::build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -187,6 +189,9 @@ pub fn run() {
             // (WM_SETTINGCHANGE + registry notify) so launched apps inherit a
             // fresh PATH / variables. Event-driven, zero CPU when idle.
             envwatch::init();
+            // Watch the index dirs for file changes and refresh on change
+            // (FindFirstChangeNotification, event-driven — no polling).
+            dirwatch::start(&app.handle());
             // Clipboard history listener + SQLite store (docs/ARCHITECTURE.md).
             clipboard::init(app);
             // Pinned-apps store (Navigate main-menu bar).
@@ -205,6 +210,7 @@ pub fn run() {
             window::apply_position,
             window::get_work_area,
             apps::search_apps,
+            apps::refresh_index,
             apps::launch_app,
             apps::reveal_in_folder,
             hotkey::get_hotkey,

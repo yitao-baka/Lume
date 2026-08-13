@@ -130,8 +130,16 @@ fn reg_write_string(hkey: HKEY, subkey: &str, value: &str, data: &str) -> Result
     if rc != ZERO {
         return Err(format!("RegCreateKeyExW failed: {rc:?}"));
     }
+    // REG_SZ stores a NUL-terminated UTF-16LE string; RegSetValueExW does not
+    // transcode its byte buffer, so build the wide bytes ourselves (the wrapper
+    // passes cbData = slice.len(), which already includes the terminator).
+    let wide = wide(data);
+    let mut bytes = Vec::with_capacity(wide.len() * 2);
+    for unit in wide {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
     let rc = unsafe {
-        RegSetValueExW(key, PCWSTR(name.as_ptr()), None, REG_SZ, Some(data.as_bytes()))
+        RegSetValueExW(key, PCWSTR(name.as_ptr()), None, REG_SZ, Some(&bytes))
     };
     let _ = unsafe { RegCloseKey(key) };
     if rc != ZERO {

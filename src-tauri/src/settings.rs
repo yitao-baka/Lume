@@ -28,6 +28,7 @@ pub struct Settings {
     pub appearance: Appearance,
     pub hotkeys: Hotkeys,
     pub index: Index,
+    pub clipboard: Clipboard,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +136,65 @@ pub struct SystemDir {
     pub enabled: bool,
 }
 
+/// Clipboard-history behavior (docs/SETTINGS.md, 剪贴板 settings pane).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Clipboard {
+    /// Max history rows kept (pinned items are exempt from pruning).
+    #[serde(default = "default_history_cap")]
+    pub history_cap: i64,
+    /// Record image copies into history.
+    #[serde(default = "default_true")]
+    pub record_images: bool,
+    /// Record file/folder copies (CF_HDROP) into history.
+    #[serde(default = "default_true")]
+    pub record_files: bool,
+    /// Hide the launcher after a paste.
+    #[serde(default = "default_true")]
+    pub paste_close: bool,
+    /// Show the source app name in each entry's second line.
+    #[serde(default = "default_true")]
+    pub show_source_app: bool,
+    /// `"relative"` | `"absolute"` — how timestamps are displayed.
+    #[serde(default = "default_time_display")]
+    pub time_display: String,
+    /// App names (the foreground process display name, e.g. "Chrome") whose
+    /// copies are never recorded — password managers, private chats, etc.
+    #[serde(default)]
+    pub ignore_apps: Vec<String>,
+    /// Merge consecutive text copies (within the merge window) into one entry.
+    #[serde(default)]
+    pub merge_copy: bool,
+    /// Merge window in milliseconds (consecutive copies closer than this merge).
+    #[serde(default = "default_merge_window")]
+    pub merge_window_ms: u64,
+    /// Mouse hover selects entries (default off — when off, only a click
+    /// selects).
+    #[serde(default)]
+    pub hover_select: bool,
+    /// Sort favorited (pinned) entries to the top of the list.
+    #[serde(default)]
+    pub favorites_top: bool,
+}
+
+/// Default clipboard history cap (200 entries).
+fn default_history_cap() -> i64 {
+    200
+}
+
+/// Default auto-merge window: 1.5 seconds.
+fn default_merge_window() -> u64 {
+    1500
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Default time display: relative ("3 分钟前").
+fn default_time_display() -> String {
+    "relative".into()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -176,6 +236,19 @@ impl Default for Settings {
                 user_dirs: Vec::new(),
                 user_dirs_no_files: Vec::new(),
                 cache_refresh_interval_minutes: 60,
+            },
+            clipboard: Clipboard {
+                history_cap: 200,
+                record_images: true,
+                record_files: true,
+                paste_close: true,
+                show_source_app: true,
+                time_display: "relative".into(),
+                ignore_apps: Vec::new(),
+                merge_copy: false,
+                merge_window_ms: 1500,
+                hover_select: false,
+                favorites_top: false,
             },
         }
     }

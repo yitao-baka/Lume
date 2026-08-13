@@ -66,8 +66,15 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   single `launch_app` chokepoint (`src-tauri/src/apps.rs`,
   `src-tauri/src/recent.rs`, `src-tauri/src/pins.rs`, `src/App.tsx`)
 - Clipboard manager — background capture (250 ms seq poll) → SQLite history
-  of text **and images**, search + copy back; `Tab` switches Navigate /
-  Clipboard modes (`src-tauri/src/clipboard.rs`, `src/App.tsx`)
+  of text, images **and file/folder copies**, search + copy back; `Tab`
+  switches Navigate / Clipboard modes. The Clipboard mode is a full page:
+  category tabs (全部/文本/图片/文件/收藏), virtualized list, status bar with
+  clear+confirm **and a pause-recording toggle**, source-app tracking, rich
+  text (HTML) + 「复制为纯文本」, ignored-apps list, auto-merge (合并复制),
+  Space multi-select → Enter merged paste, delete with undo toast, a
+  「剪贴板」 settings pane, a right-side preview pane, and native OLE drag-out
+  of images/files to Explorer (`src-tauri/src/clipboard.rs`,
+  `src-tauri/src/dragdrop.rs`, `src/App.tsx`)
 - Clipboard auto-paste — Enter on a history entry writes it to the clipboard,
   hides the launcher and sends `Ctrl+V` into the window that had focus before
   the launcher appeared (`paste_clipboard`; the original clipboard is saved
@@ -119,14 +126,50 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**两栏连续导航 + 剪贴板存储重构 + 展开撑满窗口 (ROADMAP #12) — complete as
+**剪贴板管理器重构 — 阶段 1 + 2 + 3 (ROADMAP #13, complete) — as of 2026-08-13**:
+阶段 2 adds rich text (`html` column, copy/paste keeps formatting, 「复制为
+纯文本」 strips it), ignored apps (`ignore_apps` list, case-insensitive match on
+`source_app`, skipped copies don't touch last_*), pause recording (runtime
+status-bar toggle, not persisted), and auto-merge (`merge_copy` +
+`merge_window_ms`, consecutive in-window text copies fold into one row shown as
+「合并复制 N 条」; paste closes the merge; undo preserves html/merged_count).
+阶段 3 adds a right-side preview pane that opens for text rows and for file
+rows whose **content kind** (by extension) is text/audio/video/image —
+arbitrary binaries (`.dll` etc.) and image-kind rows never open it. Text files
+show their content (`get_file_text`), audio/video get an in-pane player
+(Tauri asset protocol + `convertFileSrc`), image files show the image
+(click to enlarge). **Image-kind rows preview in their own thumbnail** — click
+to enlarge — and never widen the window. The window resizes only when the
+preview opens/closes, and stays frozen while the context menu is open
+(right-clicking never resizes). 阶段 1 was: the
+clipboard mode is now a full page — category tabs (全部/文本/图片/文件/收藏),
+a virtualized list at a fixed window height (the apps mode still auto-sizes),
+a status bar (count + 清空 with 保留固定记录 confirm), a proper empty state,
+and richer rows (type tile: text T / file / image thumb / link icon / color
+swatch; two-line body `来源应用 · 时间`; hover copy/paste/delete; pin badge;
+multi-select brand tint). New behavior: source-app tracking
+(`source_app` column, captured via the foreground process), display-time
+URL/color detection (regex, no network), Space multi-select + Enter merged
+paste (`paste_clipboard_multi`, newline-joined), delete → 120ms fade → toast
+「已删除 1 条 / 撤销」3s → `restore_clipboard` (image PNGs are kept until the
+undo window passes, then swept by prune's gc — this differs from #12's
+delete-with-file), clear confirmation, bottom toasts + the animation spec
+(hover/focus/menu 100ms, delete 120ms, window 150/120ms, ease-out), and a
+hand-rolled virtual list (~30 DOM rows). Settings: new 剪贴板 pane
+(history cap 100/200/500/1000, record images/files, close-after-paste, show
+source app, relative/absolute time, ignored apps, merge copy + window); the
+recorder reads live settings. A right-side preview pane shows the selected
+row's content (window widens by 320 px on selection). Details + known edge
+cases in `docs/ROADMAP.md` #13. `cargo test` 54 passing.
+
+**Prior: 两栏连续导航 + 剪贴板存储重构 + 展开撑满窗口 (ROADMAP #12) — complete as
 of 2026-08-05**: the empty-query 最近使用/已固定 bars navigate as one
 continuous grid (`moveBarSelection`, column-kept across the boundary); the
 clipboard DB stores only references — images live in `data/PictureCache` as
 PNG files (legacy BLOBs migrated out), file/folder copies are captured as
 newline-joined path lists (CF_HDROP) and auto-paste by re-assembling an HDROP;
 expanding a bar grows the window to the monitor work area. Details + known
-edge cases in `docs/ROADMAP.md` #12. `cargo test` 39 passing.
+edge cases in `docs/ROADMAP.md` #12.
 
 **Prior: 剪贴板自动粘贴 + 复制按钮 + 界面体验项 (ROADMAP #11) — merged from
 remote as of 2026-08-05**: clipboard-mode Enter now auto-pastes into the window

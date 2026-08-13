@@ -21,11 +21,36 @@ const SETTINGS_WINDOW: &str = "settings";
 /// the clipboard auto-paste feature to send content back to the right window.
 pub struct FocusState {
     pub last_hwnd: Mutex<Option<isize>>,
+    /// When 粘贴后关闭 is off, a paste must not let the follow-up blur hide the
+    /// launcher. Holds the Instant until which the blur-hide is suppressed.
+    pub suppress_hide_until: Mutex<Option<std::time::Instant>>,
 }
 
 impl Default for FocusState {
     fn default() -> Self {
-        Self { last_hwnd: Mutex::new(None) }
+        Self {
+            last_hwnd: Mutex::new(None),
+            suppress_hide_until: Mutex::new(None),
+        }
+    }
+}
+
+/// Arm the blur-hide suppression for `for_ms` (keeps the launcher visible
+/// after a paste when 粘贴后关闭 is disabled).
+pub fn suppress_hide(focus: &FocusState, for_ms: u64) {
+    *focus.suppress_hide_until.lock().unwrap() =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(for_ms));
+}
+
+/// True while a blur-hide suppression is active (and not yet expired).
+pub fn is_hide_suppressed(focus: &FocusState) -> bool {
+    let mut guard = focus.suppress_hide_until.lock().unwrap();
+    match *guard {
+        Some(until) if std::time::Instant::now() < until => true,
+        _ => {
+            *guard = None; // expired — clear so the next blur hides normally
+            false
+        }
     }
 }
 

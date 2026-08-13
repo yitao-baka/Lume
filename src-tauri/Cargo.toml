@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
@@ -49,6 +49,7 @@ windows = { version = "0.61", features = [
   "Win32_UI_Input",            # clipboard paste: SendInput (Ctrl+V simulation)
   "Win32_System_DataExchange", # clipboard: OpenClipboard / GetClipboardData / CF_HDROP
   "Win32_System_Memory",       # clipboard: GlobalAlloc/Lock/Unlock (CF_HDROP rebuild)
+  "Win32_System_ProcessStatus", # clipboard: QueryFullProcessImageNameW (source app)
 ] }
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",

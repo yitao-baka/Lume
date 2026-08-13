@@ -509,3 +509,271 @@ CREATE TABLE clipboard (
 - **已知边界**：`get_work_area` 按窗口当前所在显示器取，跨屏移动后需重新展开
   才刷新缓存；文件条目自动粘贴若前台是资源管理器会就地复制文件（预期行为，
   已在规划拍板）。
+
+## 13. 剪贴板管理器重构（布局 + 行为，分三阶段）
+
+**状态：阶段 1 + 2 + 3 已实现（2026-08-13），ROADMAP #13 全部完成。**
+
+### 13.1 布局
+
+- **页面结构**：剪贴板模式 = 搜索栏 → 分类区（全部/文本/图片/文件/收藏，
+  按钮 32px、左右 padding 12px、圆角 8px，Active 用品牌色底不夸张）→ 列表区
+  → 底部状态栏（左「共 N 条」/多选时「已选 N 条」，右「清空」→ 确认对话框
+  +「保留固定记录」勾选）→ 空状态（剪贴板图标 +「暂无剪贴板记录」+「复制任意
+  内容后会自动记录」小字）。
+- **固定高度**：剪贴板模式窗口高度 = 设置窗口高度（不再随内容自适应），列表
+  视口内部滚动；apps 模式仍自适应。`resizeToContent` 分模式（剪贴板固定、
+  导航自适应），模式切换时强制重排。
+- **单条记录三栏**：左 36px 圆角 tile（文本 T / 文件 SVG / 图片缩略图；URL 行
+  → 链接图标；颜色行 → 色块）；中两行（第一行摘要单行省略、第二行
+  「来源应用 · 时间」，来源应用按设置显隐）；右悬停显复制/粘贴/删除按钮；
+  固定记录图钉标识；多选行品牌色底 + ✓ 角标。
+- **URL / 颜色识别 = 前端展示时分类**（正则：`#hex` 3/6/8 位 + `rgb()/rgba()`
+  + `hsl()/hsla()`；URL `http(s)://`/`www.`），不入库、不联网。
+
+### 13.2 行为
+
+- **来源应用**：捕获时取前台进程名（`GetForegroundWindow →
+  GetWindowThreadProcessId → OpenProcess → QueryFullProcessImageNameW`，
+  抽 `process_display_name` 纯函数），存 `source_app` 列；搜索范围 = 内容 +
+  来源应用名。
+- **分类过滤**：`search_history` 按 kind 过滤（text/image/file/favorites=pinned）
+  + 匹配 content/source_app；返回上限 = 设置的 `history_cap`（返回全部匹配）。
+- **多选 + 合并粘贴**：空格切换选中、Enter 对选中集调 `paste_clipboard_multi`
+  （文本行内容换行连接 → 既有保存/粘贴/恢复流程）；Esc 清多选。
+- **删除带动画 + 撤销**：删除行保留图片 PNG（孤儿由下次 prune 的 gc 清理）；
+  `delete_clipboard` 返回 `DeletedClip`，前端 Toast「已删除 N 条 / 撤销」3s →
+  `restore_clipboard`（text/file 按 (kind,content) 去重，恢复不 prune）。
+- **清空**：二次确认 +「保留固定记录」；`clear_clipboard(keep_pinned)` 返回删除
+  条数，保留固定项及其 PNG。
+- **Toast / 动画**：底部居中 Toast（150ms ease-out，1.6s/撤销 3s）；
+  hover/focus/menu 100ms、删除 120ms（淡出+上移）、窗口开/关 150/120ms。
+- **虚拟滚动**：手写窗口化渲染（行高 52px 固定，~30 个 DOM + 前后 overscan，
+  绝对定位切片）；键盘导航自动滚动保持选中可见；造 500 条 DOM 仍 < 60。
+- **设置面板**：「剪贴板」页（历史上限 100/200/500/1000、记录图片、记录文件、
+  粘贴后关闭、显示来源应用、时间显示方式 relative/absolute）；监听器实时读设置
+  （关记录图片/文件即刻生效）。粘贴后关闭 = false 时后端 `auto_paste` 不隐藏 +
+  短暂抑制失焦自动隐藏（`FocusState.suppress_hide_until`）。
+- **右键菜单**：复制/粘贴/固定/删除 + 链接行「打开链接」、文件行「打开文件
+  位置」（`launch_app` 打开 URL / `reveal_in_folder`）。
+
+### 实现说明（2026-08-13）
+
+- **schema**：`clipboard` 新增 `source_app TEXT`（`migrate()` ALTER，旧行留空）；
+  读列用 `Option<String>` 防 NULL。
+- **设置**：`settings.rs` 新增 `clipboard: Clipboard` 组，全部 `#[serde(default)]`
+  向后兼容；`src/settings/types.ts` 同步。
+- **删除语义变更**：`delete_row` 不再立即删 PNG（供撤销），孤儿由
+  `gc_picture_cache` 惰性清扫——与 ROADMAP #12「删条目同步删 PNG」不同。
+- **新建命令**：`paste_clipboard_multi`、`restore_clipboard`；`clear_clipboard`
+  加 `keep_pinned` 参数；`delete_clipboard` 改返回 `DeletedClip`；
+  `search_clipboard` 加 `kind` 参数。
+- **已砍（阶段 3）**：预览区、拖拽导出（WebView2 需原生 OLE 拖拽源，成本高）。
+- **已知边界**：来源应用名 = 捕获瞬间前台进程，若复制发生在 Lume 自身（复制
+  按钮）会被防自写跳过；多选合并只取文本行（含图片/文件的选择回退为第一项
+  单项粘贴）；相对时间显示在列表静态渲染时取当前时刻，长期停留不实时刷新。
+
+### 13.3 阶段 2：富文本 / 忽略应用 / 暂停记录 / 自动合并复制
+
+**状态：已实现（2026-08-13）。**
+
+- **富文本 / 纯文本**：文本复制时若有 CF_HTML（arboard `get().html()`）一并存
+  新 `html` 列（64KB 截断）；复制/粘贴默认带格式（`set_html(html, Some(text))`），
+  右键「复制为纯文本」只设纯文本（`copy_clipboard({ plain: true })`）。搜索/显示
+  仍用纯文本；`ClipboardItem` 只序列化 `has_html` 布尔（IPC 不传全文）。
+- **忽略应用**：`ignore_apps` 列表（剪贴板设置页输入添加 + 逐条删除），与
+  `source_app`（进程显示名）**不区分大小写精确匹配**，命中不记录——且不写
+  last_*，同内容从非忽略应用再复制仍入库（`is_ignored` 纯函数）。
+- **暂停记录**：状态栏「暂停记录 / 继续记录」运行时开关（`AtomicBool`，
+  不持久化、重启恢复），`capture` 顶部直接返回。
+- **自动合并复制**：`merge_copy`（默认关）+ `merge_window_ms`（默认 1500ms）。
+  插入顺序 = 整条去重 → 合并追加 → 新行。合并条件：最近一行是文本、`now −
+  last.created_at ≤ 窗口`、`last_paste_at < last.created_at`（粘贴关合并）、
+  新文本 ≠ 该行最后一段（重复则前移不追加）。追加 = `content || \n || 新文本`、
+  `merged_count + 1`。`merged_count >= 2` 时列表标题显示「合并复制 N 条」。
+- **schema**：`clipboard` 加 `html TEXT`、`merged_count INTEGER NOT NULL DEFAULT 0`
+  （`migrate()` ALTER + 0→1 规范化 legacy 行）；`DeletedClip`/`restore_row`
+  保留 html/merged_count 供撤销。
+
+### 实现说明（2026-08-13 阶段 2）
+
+- 合并窗口判断用**真实 `now_millis()`**（不能用 `next_created_at`——它恒比上一条
+  大 1ms，会恒在窗口内）。
+- `set_clipboard_from_row` 文本分支：有 html → `set_html`；否则 `set_text`。
+  「复制为纯文本」走 `set_clipboard_from_row_plain(row, true)` 强制 `set_text`。
+- `paste_clipboard`/`paste_clipboard_multi` 成功后写 `state.last_paste_at = now`
+  （有意使用某条即关合并）。
+- 测试：53 通过（新增 html 存取、is_ignored、合并五态（窗口内/超窗/重复末段/
+  粘贴关/开关关）、restore 保留 merged/html）。
+
+- **已知边界**：HTML 仅存有 CF_HTML 的文本复制；合并仅作用于最近一条文本行；
+  被忽略应用复制同内容后从非忽略应用再复制仍入库（不写 last_*）。
+
+### 13.4 阶段 3：预览区 + 拖拽导出
+
+**状态：已实现（2026-08-13），ROADMAP #13 收尾。**
+
+- **右侧预览区**：选中剪贴板行时窗口加宽 `window_width + 320`（`resizeToContent`
+  剪贴板分支按 `previewOpen` 计算 targetW，`lastWindowW`+`lastWindowH` 双守卫避免
+  每换一行都 resize；取消选中/隐藏缩回）。布局 `.clip-page > .clip-cats + .clip-main
+  (row: .clip-list + .clip-preview)`。预览按 kind：
+  - 文本：全文可滚动（`.clip-preview-text`）。
+  - 图片：`get_clipboard_image(id)` 读全尺寸 PNG → data URI（`.clip-preview-img`
+    contain 限高）；点击弹**放大浮层**（`.clip-enlarge` fixed overlay）。
+  - 文件：`get_file_info(paths)` → 每文件 名称 / 大小（`formatBytes`）/ 路径 /
+    修改时间。
+- **拖拽导出（原生 OLE）**：WebView2 HTML5 拖拽无法携带文件出 webview，改走
+  `DoDragDrop`——新 `src-tauri/src/dragdrop.rs`（`Win32_System_Ole` feature +
+  直接依赖 `windows-core`），`implement` 实现 `IDataObject`（CF_HDROP、
+  `build_hdrop_buffer` 复用）+ `IDropSource`（Esc 取消/按键松开放下/默认光标）+
+  最小 `IEnumFORMATETC`。命令在**专用线程** `OleInitialize → DoDragDrop →
+  OleUninitialize`。
+  - 图片行 `drag_out_image(id)`：拷贝 `PictureCache/<id>.png` 到临时 PNG →
+    CF_HDROP 拖出 → 结束清理。
+  - 文件行 `drag_out_files(paths)`：CF_HDROP 原路径，Explorer 就地复制到目标。
+  - 前端 `clipRow` 对 image/file 行加 `draggable` + `onDragStart`（preventDefault
+    阻断 HTML5 拖拽 → invoke 原生拖拽；`clip-row-dragging` 抓取态）。
+
+### 实现说明（2026-08-13 阶段 3）
+
+- **修 phase 1 遗留 bug**：图片取文件路径双重前缀——`set_clipboard_from_row` 与
+  `get_clipboard_image` 用 `picture_dir().join(rel)` 而 `rel` 已含 `PictureCache/`，
+  导致图片复制/预览一直取不到文件（os error 3）。改为 `data_dir().join(rel)`；
+  `picture_dir()` 删除。
+- **COM 实现要点**：`implement` 宏生成 `Foo_Impl` 包装（实现 `IUnknownImpl` +
+  Deref），trait 须实现在 `Foo_Impl` 上；`windows::core::Result` 与 `std::Result`
+  勿混用；`GlobalFree` 收 `Option<HGLOBAL>`；`STGMEDIUM.pUnkForRelease = None`
+  由 drop target 释放（HGLOBAL 交给目标后不再自己 free）。
+- 测试：54 通过（+1 `stat_file_reports_name_and_size`）。OLE 拖拽无法单测/CDP
+  模拟，靠手动验证。
+
+- **已知边界**：图片拖出生成临时名 PNG 副本（图片原始文件名未存，无法还原）；
+  文件拖出为复制（原文件不动）；预览跟随选中行，多选态不额外处理；
+  `EnumFormatEtc` 返回最小单格式枚举（个别非 Explorer 拖拽目标若要求更多格式
+  再扩展）。
+
+### 13.5 阶段 3 修正（2026-08-13，用户反馈）
+
+- **预览区门控（内容类型判定）**：仅当选中条目为**文本行**或**内容类型 =
+  文本 / 音频 / 视频 / 图片的文件行**时展开右侧预览区并加宽窗口；**其他二进制
+  （.dll/.exe/.zip 等，`fileContent` 判定为 `other`）不展开**，**图片 kind 行不
+  展开**（图片预览在条目框缩略图，点击弹放大浮层 `.clip-enlarge`）。窗口宽度随
+  `previewOpen` 状态切换收/放（effect 仅在开关翻转时 `scheduleResize`）。
+- **内容预览**：`ClipPreview` 按内容类型分支（`<Switch>/<Match>` 响应式——
+  分支判断必须在 JSX/响应式中，写在组件函数体里会因 SolidJS 不重跑函数体而
+  僵死在首挂载类型）：
+  - 文本行 / 文本文件（.txt/.md/.json/.py…）：`get_file_text(path)`（512KB
+    上限，`from_utf8_lossy`）→ 可滚动全文。
+  - 音频 / 视频文件：`<audio>/<video src={convertFileSrc(path)} controls>`——
+    启用 **asset protocol**（`tauri.conf.json` `app.security.assetProtocol`
+    scope `["**"]`，tauri 自动加 `protocol-asset` feature）。
+  - 图片文件（.png/.jpg/…）：`<img src={convertFileSrc(path)}>`，点击经
+    `onEnlarge` 弹 App 级放大浮层。
+  - `other` 二进制：不展开（被 `previewOpen` 排除）。
+- **文件 tile 区分内容类型**：`fileContent` 按扩展名给文本（T 图标）/音频
+  （音符）/视频（摄像）/图片（画框）/其他（通用文件）不同 tile。
+- **拖拽导出卡死修复**：`drag_out_image`/`drag_out_files` 改为 **async 命令**
+  ——`run_drag` 的 `thread::join()` 从主线程移出（tauri 异步命令跑在 tokio
+  worker 上），拖拽期间 UI 不再冻结。
+- **文件属性稳健化**：`stat_file` 对路径 `trim()` + 去尾部 NUL（部分 HDROP
+  源会残留）。
+- **鼠标进预览区不关闭**：`onMouseLeave`（mouse 来源时 `setSelected(-1)`）从
+  `.clip-list` 移到 `.clip-main`——鼠标从列表移进右侧预览区不再触发清除选中/
+  关闭预览；离开整个列表+预览区域才清除。预览区与文本预览隐藏滚动条
+  （`scrollbar-width:none` + webkit 0，滚轮滚动）。
+- **移除剪贴板拖拽导出**（2026-08-14，用户认为无用）：删除 `dragdrop.rs`、
+  `drag_out_image`/`drag_out_files` 命令、前端 `draggable`/`onDragStart` 与
+  `clip-row-dragging`；还原 `build_hdrop_buffer`/`get_row`/`Row` 可见性；移除
+  `windows-core` 依赖与 `Win32_System_Ole` feature。asset protocol（音视频预览）
+  保留。
+- **右键完全不改变窗口状态**：`onContextMenu` **不再 `setSelected(idx)`**（菜单
+  操作的是右键行的 `m.item`，不依赖 `selected`），右键任何行都不会改变选中/
+  预览/窗口宽度；配合 resize effect 的 `menu()` 守卫，右键前/菜单中/关闭后
+  窗口完全不变。
+- **分类重构（2026-08-14）**：分类改为 **全部 / 文本 / 文本文件 / 图片 / 视频 /
+  收藏**（原「文件」→「视频」，新增「文本文件」）。后端 `search_history` 支持
+  `textfile`/`video`（file 行按 `file_content_kind` 扩展名过滤）与 `image`
+  （image kind 行 **+** 图片内容 file 行）；前端 `ClipKind`/`CLIP_CATS` 同步。
+- **内容分类始终展开预览**：`previewOpen` 对 `textfile`/`image`/`video` 分类
+  无条件返回 true（窗口恒宽、预览恒在）；`ClipPreview` 新增 image-kind 行分支
+  （`get_clipboard_image` 大图 + 点击放大）。**右键期间预览保持**：`previewOpen`
+  在 `menu()` 打开时返回 true，右键不会再让预览消失。
+- **预览规则细化（2026-08-14）**：**文本 / 收藏 分类不打开预览区**（纯列表）；
+  **全部按需**（文本行与非二进制文件行才展开）；**文本文件 / 图片 / 视频 常驻**
+  预览。`previewOpen` 改 `switch(clipKind())` 分派（移除 `ALWAYS_PREVIEW_CATS`）。
+- **左右箭头切换分类**：剪贴板模式下空查询时 `←`/`→` 循环切换分类
+  （`switchCategory(delta)` 取模 CLIP_CATS）；有输入时仍是文本编辑。
+- **输入模态互斥（2026-08-14）**：键盘导航激活后**鼠标悬停不再改变选中**（一行
+  `onMouseMove` 里 `if (selectionSource === "keyboard") return`，apps 网格同）；
+  **鼠标点击恢复鼠标模式**（`onClick` 先设 mouse+选中再 activate），点击始终生效。
+- **文本行不触发预览**：`previewOpen` 的「全部」分支仅 file 行（内容≠other）展开，
+  移除文本行 `return true`；文本预览仅服务 文本文件 分类（.txt 内容）。
+- **固定即时生效**：`toggleClipPin` 对本地 `clips()` **乐观更新**（图钉立刻出现），
+  失败回滚，再重搜置顶。
+- **键盘滚动修复**：虚拟列表滚动 effect 加 8px 缓冲 + 视口尺寸变化重算；并**跳过
+  `scrollIntoView({block:"nearest"})`**（它会把滚动覆盖回无缓冲的精确贴边位置，
+  导致选中行底边差 0.1px 露在视口外）。
+- **移除文件属性预览（2026-08-14）**：删除 `.clip-preview-files`（名称/大小/路径/
+  修改时间）前端与后端 `get_file_info`/`stat_file`/`FileInfo` 命令；`ClipPreview`
+  只剩 文本文件/音频/视频/图片 内容分支。**移除 `previewOpen` 的 menu 守卫**——
+  右键不再强制打开预览（右键行若本不该预览则不出现预览区）。
+- **单击选中 / 再击粘贴**：`onClick` 若 `selected()===idx` 才 `activate()`（粘贴），
+  否则仅 `setSelected(idx)`（选中）；配合悬停选中，双击/第二次点击即粘贴。
+- **移除悬停加深**：删除 `.clip-row:hover { background }`；条目仅在选中态高亮，
+  悬停不再加深（操作按钮仍悬停显示）。
+- **悬停选中可开关（2026-08-14）**：设置/剪贴板新增「悬停选中条目」
+  （`clipboard.hover_select`，默认**关**）——关闭时鼠标选中条目的唯一条件是
+  **单击**（`onMouseMove` 门控 `!hoverSelect() || selectionSource==="keyboard"`），
+  开启时恢复悬停选中；apps 网格同门控。
+- **收藏/取消收藏**：右键菜单「固定/取消固定」改文案「收藏/取消收藏」
+  （`pin`/`unpin` i18n 值改，`pinned` 栏标题「已固定」不变）。
+- **收藏置顶可开关**：设置/剪贴板新增「收藏的条目置顶显示」
+  （`clipboard.favorites_top`，默认**关**）——关闭时按纯时间倒序（收藏仅保留
+  图钉徽标），开启时固定行 `ORDER BY pinned DESC` 置顶。`search_history` 加
+  `favorites_top` 参数（条件 ORDER BY），`search_clipboard` 读设置。
+
+- **已知边界（修正后）**：图片原始文件名未存，放大浮层标题仅显示「图片」；
+  音频/视频预览为文件属性（非媒体播放器）。
+
+## 14. PDF / Office / 压缩包预览（规划）
+
+**状态：规划完成（2026-08-14），等待下次会话实现。**
+
+当前 `fileContent` 把 `pdf`、Office、压缩包等格式归为「其他」——只有通用文件
+图标、不展开预览。本迭代补这三类格式的预览。
+
+### 14.1 范围与识别
+
+- `fileContent` / `file_content_kind`（前后端各一份，规则须一致）扩扩展名集：
+  - PDF：`pdf`
+  - Office：`doc docx xls xlsx ppt pptx`（旧二进制格式 `doc/xls/ppt` 解析难度高，可能只支持新 OOXML）
+  - 压缩包：`zip rar 7z tar gz gzip`（rar/7z 依赖第三方 crate，可能只支持 zip/tar.gz）
+- 行首图标：PDF（文档图标）、Office（表格/幻灯片图标）、压缩包（压缩包图标）。
+
+### 14.2 预览方案（技术选型下次会话敲定）
+
+- **PDF**：渲染首页/多页预览。候选：后端 PDFium（`pdfium-render`）抽页转 PNG；
+  或前端 PDF.js 渲染（需引入 web 依赖 + CSP 调整）；或后端纯文本抽取（轻量，
+  但无版面）。
+- **Office（OOXML = ZIP+XML）**：**抽取纯文本**预览——docx 读
+  `word/document.xml`、xlsx 读 `sharedStrings.xml`、pptx 读 `ppt/slides/*.xml`；
+  用 `zip` crate 解包 + XML 去标签。轻量、无 Office 依赖。旧二进制格式待定。
+- **压缩包**：**列出包内文件清单**（路径 + 大小）——`zip` crate 读目录；
+  rar/7z 若支持则同，否则只支持 zip。
+- 后端新增命令（`clipboard.rs` 或新模块）：`get_office_text(path)`、
+  `get_archive_list(path)`、`get_pdf_preview(path)`（或 `get_pdf_pages`）。
+- 前端 `ClipPreview` 加分支：PDF 显示页图（+翻页）；Office 显示抽取文本
+  （复用 `.clip-preview-text`）；压缩包显示文件清单列表。
+
+### 14.3 待用户确认（实现前）
+
+- 分类归属：是否新增「文档」「压缩包」分类，还是并入现有「文件」/「全部」
+  按需预览？PDF/Office 归「文本文件」还是新分类？
+- PDF 渲染深度：仅首页缩略 vs 多页可翻。
+- 资源约束：引入 `pdfium-render`/`zip` crate 需镜像源；PDF.js 引入前端依赖
+  需评估 CSP。
+
+### 测试
+
+- 单元：扩展名分类、docx/xlsx/pptx 文本抽取、zip 清单解析（用构造的样例文件）。
+- CDP：各格式预览内容正确渲染、分类过滤生效。

@@ -164,9 +164,17 @@ pub fn run() {
             // frameless window even though the cursor is still over it.
             if let Some(win) = app.get_webview_window("main") {
                 let hide_on_blur = win.clone();
+                let app_handle = app.handle().clone();
                 win.on_window_event(move |event| {
                     if let WindowEvent::Focused(false) = event {
-                        if !window::is_mid_drag(&hide_on_blur) {
+                        // Skip the auto-hide while dragging, or right after a
+                        // paste when 粘贴后关闭 is off (the launcher stays up).
+                        let suppressed = window::is_mid_drag(&hide_on_blur)
+                            || app_handle
+                                .try_state::<window::FocusState>()
+                                .map(|f| window::is_hide_suppressed(&f))
+                                .unwrap_or(false);
+                        if !suppressed {
                             let _ = hide_on_blur.hide();
                         }
                     }
@@ -219,9 +227,14 @@ pub fn run() {
             clipboard::search_clipboard,
             clipboard::copy_clipboard,
             clipboard::paste_clipboard,
+            clipboard::paste_clipboard_multi,
             clipboard::delete_clipboard,
+            clipboard::restore_clipboard,
             clipboard::pin_clipboard,
             clipboard::clear_clipboard,
+            clipboard::set_clipboard_paused,
+            clipboard::get_file_text,
+            clipboard::get_clipboard_image,
             icons::get_app_icons,
             pins::get_pinned_apps,
             pins::pin_app,

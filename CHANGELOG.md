@@ -4,6 +4,163 @@ All notable changes to Lume are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), versions follow
 [semantic versioning](https://semver.org/).
 
+## [0.2.17] — 2026-08-13
+
+Clipboard manager phase 3 — preview pane + native drag-out (ROADMAP item 13,
+phase 3; completes #13).
+
+### Added
+
+- **Preview pane** — selecting a clipboard row opens a right-side preview
+  (the window widens by 320 px, narrowing back when the selection clears).
+  Text rows show the full content (scrollable); image rows show the full-size
+  image and enlarge on click; file rows show name / size / path / modified
+  time per file (`get_clipboard_image` / `get_file_info` commands).
+- **Drag-out (native OLE)** — dragging an image or file row out of the launcher
+  starts a real `DoDragDrop` with a CF_HDROP data object, so WebView2's
+  in-webview-only HTML5 drag can carry files to Explorer. Images drop as a PNG
+  copy; files copy to the target folder. Runs on a dedicated thread.
+
+### Fixed
+
+- **Image file path double prefix** (regression from 0.2.14) — reading an image
+  row's PNG joined `PictureCache` twice, so copying or previewing an image
+  failed with a "file not found" error.
+- **Drag-out freeze** — the OLE `DoDragDrop` ran on the launcher's main thread,
+  freezing the UI for the whole drag; the drag commands are now async (the
+  drag runs on a background thread).
+- **Preview pane scope** — the preview now opens for text / file (incl.
+  audio/video) rows only; images preview in their own row thumbnail and
+  clicking the thumbnail enlarges (no right-side pane, no window widening).
+- **Content-type previews** — file rows preview by content kind: text files
+  show their text content, audio/video get an in-pane player (via Tauri's
+  asset protocol), image files show the image (click to enlarge), and
+  arbitrary binaries (`.dll`, `.exe`, …) no longer open the preview pane at
+  all. Tile icons distinguish text / audio / video / image / other.
+- **Preview reactivity fix** — the preview branch was decided in the component
+  body, so SolidJS never re-ran it on selection change (a video row could show
+  the previous image). Branches now use reactive `<Switch>/<Match>`.
+- **Mouse into preview doesn't close it** — the selection-clearing
+  `mouseleave` moved from the list to the whole list+preview container, so
+  moving the cursor from the list into the preview pane no longer collapses
+  it. Preview scrollbars are hidden (wheel-scroll only).
+- **Drag-out removed** — the native OLE drag-out of image/file rows was
+  dropped (unused); rows are no longer draggable and the OLE code, commands
+  and dependencies are gone.
+- **Right-click never changes the window state** — the clipboard context menu
+  no longer re-selects the row it opens on (the menu acts on that row's item
+  directly), so right-clicking keeps the selection, the preview pane and the
+  window width exactly as they were. The preview also stays visible for the
+  whole time the menu is open.
+- **Content categories** — the clipboard filter tabs are now 全部 / 文本 /
+  文本文件 / 图片 / 视频 / 收藏 (the old generic 文件 tab became 视频, and a
+  new 文本文件 tab was added). Each filters correctly by content kind (text
+  files, images — both image rows and image-file rows — and videos).
+- **Content categories keep the preview open** — in the 文本文件 / 图片 /
+  视频 tabs the preview pane is always expanded (image rows show their full
+  image with click-to-enlarge); the 文本 and 收藏 tabs never open it, and
+  全部 opens it on demand.
+- **Category switching with arrows** — in Clipboard mode, ← / → cycle the
+  category tabs when the search box is empty.
+- **Input modality is exclusive** — keyboard navigation disables mouse-hover
+  selection (a click re-enables mouse mode), so the two never fight.
+- **Text rows no longer open the preview** — the 全部 tab's preview is now
+  file rows only; the text-content preview serves the 文本文件 tab.
+- **Pin takes effect immediately** — right-clicking → 固定 updates the row's
+  badge right away (optimistic), then the re-search moves it to the top.
+- **Keyboard navigation auto-scrolls** — the virtual list keeps the selected
+  row fully in view when navigating with the arrows (buffered; no longer
+  overridden by `scrollIntoView`).
+- **File-attributes preview removed** — the name / size / path / modified-time
+  preview is gone (along with its `get_file_info` command); right-clicking no
+  longer opens the preview either.
+- **Click = select, click again = paste** — a first click on an entry selects
+  it; clicking the already-selected entry pastes it.
+- **No hover-darken on rows** — hovering an entry no longer changes its
+  background (the selected state still highlights).
+- **Hover-select is a setting** — 剪贴板 settings gains 「悬停选中条目」
+  (default off): with it off, a click is the only way to select with the mouse.
+- **Favorite / Unfavorite** — the context menu's 固定/取消固定 items are now
+  收藏/取消收藏.
+- **Favorites on top is a setting** — 「收藏的条目置顶显示」 (default off)
+  controls whether favorited entries sort to the top (off = pure recency).
+
+## [0.2.16] — 2026-08-13
+
+Clipboard manager phase 2 — rich text, ignored apps, pause, auto-merge
+(ROADMAP item 13, phase 2).
+
+### Added
+
+- **Rich text / plain-text copy** — text copies that carry CF_HTML store it
+  (`html` column, 64 KB cap); copy / paste keeps the formatting (HTML + plain
+  text), and a new 「复制为纯文本」 context-menu item copies without it.
+  Search and the list still use plain text only.
+- **Ignored apps** — a 剪贴板 settings list of app names (matched
+  case-insensitively against the source app, e.g. "Chrome"); copies from an
+  ignored app are never recorded — good for password managers and private
+  chats.
+- **Pause recording** — a runtime 「暂停记录 / 继续记录」 status-bar toggle
+  (not persisted); while paused the recorder skips every change.
+- **Auto-merge** — when 合并复制 is on, consecutive text copies within the
+  merge window (default 1.5 s) fold into one entry joined by newlines, shown
+  as 「合并复制 N 条」. A copy beyond the window, a non-text copy, or a paste
+  closes the merge; re-copying the last piece bumps recency instead. Window is
+  configurable (0.5–3 s) in the 剪贴板 settings pane.
+- **Undo preserves rich text & merge state** — restoring a deleted entry keeps
+  its HTML and merged-count.
+
+### Changed
+
+- Schema: `clipboard` gains `html` and `merged_count` columns (in-place
+  migration; legacy rows normalized to `merged_count = 1`).
+- `copy_clipboard` takes an optional `plain` flag; new
+  `set_clipboard_paused` command.
+
+## [0.2.15] — 2026-08-13
+
+Clipboard manager redesign — layout, categories, multi-select merge, undo,
+virtual scrolling (ROADMAP item 13, phase 1).
+
+### Added
+
+- **Clipboard page layout** — the clipboard mode is now a full page: category
+  tabs (全部 / 文本 / 图片 / 文件 / 收藏), a virtualized history list with
+  fixed window height, a status bar (条目计数 + 清空), and a proper empty
+  state. The window height is fixed in clipboard mode (the list scrolls
+  internally); the apps mode keeps auto-sizing.
+- **Richer single rows** — each entry shows a type tile (text T / file icon /
+  image thumbnail / link icon / color swatch), a two-line body
+  (`来源应用 · 时间`), and hover actions (copy / paste / delete). URLs and
+  color values are detected at display time (no network, no schema change).
+- **Source-app tracking** — captures the foreground process at copy time and
+  shows it on each row (`source_app` column); history is searchable by source
+  app too.
+- **Multi-select + merge paste** — Space toggles entries into a selection set;
+  Enter pastes them merged (text joined by newlines) into the previous app.
+- **Undo delete** — deleting plays a 120ms fade-out, shows
+  「已删除 1 条 / 撤销」 (3s), and restoring re-inserts the entry (image files
+  are kept until the undo window passes).
+- **Clear confirmation** — 清空 asks for confirmation and offers 「保留固定
+  记录」 (pinned rows and their images survive).
+- **Toast + animation spec** — bottom-center toasts (150ms ease-out; 1.6s, 3s
+  for undo); hover/focus/menu 100ms, delete 120ms, window open/close 150/120ms.
+- **Virtual scrolling** — hand-rolled windowed list (~30 DOM rows + overscan)
+  keeps 500+ history rows fluid.
+- **Clipboard settings pane** — history limit (100/200/500/1000), record
+  images / files, close-after-paste, show source app, relative/absolute time.
+  The recorder reads live settings, so toggles take effect immediately.
+- **Richer context menu** — link rows get 「打开链接」, file rows get
+  「打开文件位置」.
+
+### Changed
+
+- `search_clipboard` takes a `kind` filter; `delete_clipboard` returns the
+  deleted row (`DeletedClip`) for the undo buffer; `clear_clipboard` takes
+  `keep_pinned`; new `paste_clipboard_multi` and `restore_clipboard`.
+- Deleting a row no longer immediately deletes its picture file — orphans are
+  swept by the next prune's garbage collection (differs from 0.2.14).
+
 ## [0.2.14] — 2026-08-05
 
 Clipboard storage redesign + continuous bar navigation + expand-to-screen

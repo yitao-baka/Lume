@@ -101,6 +101,31 @@
     `HKLM\Software\Lume\DataDir` 交接，命名管道 `\\.\pipe\LumeSVC` 为后续
     功能预留。
 
+## 「剪贴板」页
+
+- **历史记录条数上限**（`clipboard.history_cap`）：100 / 200 / 500 / 1000。
+  达到上限自动删除最旧的非固定记录（固定项豁免）。
+- **记录图片**（`clipboard.record_images`）：关闭后复制图片不入历史。
+- **记录文件**（`clipboard.record_files`）：关闭后复制文件/文件夹不入历史
+  （文件复制被整体跳过，不会回落为图片）。
+- **粘贴后关闭窗口**（`clipboard.paste_close`）：关闭后粘贴动作自动隐藏
+  启动器；关闭此项则粘贴后保持启动器可见（短暂抑制失焦自动隐藏）。
+- **显示来源应用**（`clipboard.show_source_app`）：控制每条记录第二行是否
+  显示来源应用名（捕获时前台进程名）。
+- **时间显示方式**（`clipboard.time_display`）：`relative`（相对时间，如
+  "3 分钟前"）/ `absolute`（绝对时间）。
+- **忽略应用**（`clipboard.ignore_apps`）：应用名列表，与来源应用显示名
+  （如 "Chrome"）**不区分大小写精确匹配**，命中则不记录——适合密码管理器、
+  隐私聊天等。
+- **合并复制**（`clipboard.merge_copy`）+ **合并窗口**
+  （`clipboard.merge_window_ms`，默认 1500ms）：开启后间隔 ≤ 窗口的连续文本
+  复制合并进同一条（换行连接，显示「合并复制 N 条」）；超过窗口 / 非文本
+  复制 / 粘贴后关闭当前合并。
+- **悬停选中条目**（`clipboard.hover_select`，默认关）：关闭时鼠标移动不再
+  改变选中，鼠标选中的唯一条件是单击；开启后恢复悬停选中。
+- **收藏的条目置顶显示**（`clipboard.favorites_top`，默认关）：关闭时收藏
+  （固定）条目按纯时间倒序（保留图钉徽标但不置顶）；开启后固定行置顶。
+
 ## 「插件」页
 
 - 本轮留空。
@@ -162,6 +187,19 @@ system_dirs = [
   { path = "StartMenu", enabled = false },
 ]
 user_dirs = []                  # 用户索引路径列表
+
+[clipboard]
+history_cap = 200               # 历史记录条数上限（100/200/500/1000）
+record_images = true            # 记录图片
+record_files = true             # 记录文件/文件夹
+paste_close = true              # 粘贴后关闭窗口
+show_source_app = true          # 第二行显示来源应用名
+time_display = "relative"       # relative | absolute
+ignore_apps = []                # 忽略应用名列表（大小写不敏感精确匹配）
+merge_copy = false              # 合并连续复制
+merge_window_ms = 1500          # 合并窗口（毫秒）
+hover_select = false            # 悬停选中条目（关 = 仅单击选中）
+favorites_top = false           # 收藏的条目置顶显示
 ```
 
 ## 实施步骤
@@ -179,3 +217,9 @@ user_dirs = []                  # 用户索引路径列表
 6. **✓ 「关于」页（6.6，2026-08-03）**（`res/icons` 图标 + 项目介绍）。
 
 插件页本轮留空。**设置迭代 6.1–6.6 全部完成（2026-08-03）。**
+
+7. **✓ 「剪贴板」页（ROADMAP #13，2026-08-13）** — 历史上限 / 记录图片 /
+   记录文件 / 粘贴后关闭 / 显示来源应用 / 时间显示方式；保存/应用走既有
+   框架，监听器实时读取设置（关闭记录图片/文件即刻生效）。
+8. **✓ 忽略应用 + 合并复制（ROADMAP #13 阶段 2，2026-08-13）** — 忽略应用
+   列表（输入添加 + 逐条删除）、合并复制开关 + 合并窗口预设。

@@ -1,9 +1,9 @@
-import { createEffect, createSignal, onCleanup, onMount, Show, For } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { createEffect, createSignal, onCleanup, onMount, Show, For, Switch, Match } from "solid-js";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
-import { resolveLocale, setLocale, t } from "./i18n";
+import { resolveLocale, setLocale, t, type Messages } from "./i18n";
 import { applyColorMode } from "./theme";
 import type { SettingsData } from "./settings/types";
 import settingsIcon from "../res/icons/settings.svg";
@@ -36,12 +36,178 @@ interface ClipboardItem {
   pinned: boolean;
   created_at: number;
   thumb: string | null;
+  /** Display name of the app that owned the foreground window at capture. */
+  source_app: string;
+  /** True when the row carries rich-text HTML (offers 「复制为纯文本」). */
+  has_html: boolean;
+  /** Number of copy pieces merged into this row (1 = single copy). */
+  merged_count: number;
 }
+
+/** A deleted entry returned by `delete_clipboard`, kept for the undo buffer. */
+interface DeletedClip {
+  kind: string;
+  content: string;
+  path: string | null;
+  pinned: boolean;
+  created_at: number;
+  source_app: string;
+}
+
+/** A clipboard filter category (`favorites` = pinned only). 文本文件/图片/视频
+ * are content-kind filters over file rows (图片 also includes image rows). */
+type ClipKind = "all" | "text" | "textfile" | "image" | "video" | "favorites";
 
 /** Last path segment (handles both `/` and `\` separators). */
 function basename(p: string): string {
   const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
   return i >= 0 ? p.slice(i + 1) : p;
+}
+
+// ── Text subtype detection (URL / color) — display-time classification ──
+const HEX_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const RGB_RE =
+  /^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*[\d.]+)?\s*\)$/;
+const HSL_RE =
+  /^hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*[\d.]+)?\s*\)$/;
+
+function isUrl(text: string): boolean {
+  const t = text.trim();
+  return /^https?:\/\/\S+/i.test(t) || /^www\.\S+/i.test(t);
+}
+
+/** A color value when the whole (trimmed) text is a supported color. */
+function detectColor(text: string): string | null {
+  const t = text.trim();
+  if (HEX_RE.test(t) || RGB_RE.test(t) || HSL_RE.test(t)) return t;
+  return null;
+}
+
+/** First line of a clipboard row: image/file label, a merged-copy title, the
+ * color value, or text/URL. */
+function clipTitle(item: ClipboardItem): string {
+  if (item.kind === "image") return t("imageTitle");
+  if (item.kind === "file") {
+    const paths = item.content.split("\n").filter(Boolean);
+    if (paths.length === 1) return basename(paths[0]);
+    return t("fileCount", { count: String(paths.length) });
+  }
+  // 合并复制 N 条 — the full joined text stays available on hover / paste.
+  if (item.merged_count >= 2) {
+    return t("clipMergedCount", { count: String(item.merged_count) });
+  }
+  return item.content;
+}
+
+/** Relative ("3 min ago") or absolute timestamp, driven by settings. */
+function clipTime(ts: number, absolute: boolean): string {
+  if (absolute) return new Date(ts).toLocaleString();
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return t("timeJustNow");
+  if (min < 60) return t("timeMinutes", { n: String(min) });
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return t("timeHours", { n: String(hr) });
+  return t("timeDays", { n: String(Math.floor(hr / 24)) });
+}
+
+/** Second line of a clipboard row: source app · time (source toggleable). */
+function clipMeta(item: ClipboardItem, showSource: boolean, absolute: boolean): string {
+  const time = clipTime(item.created_at, absolute);
+  if (showSource && item.source_app) return `${item.source_app} · ${time}`;
+  return time;
+}
+
+/** A file's content kind (by extension) — drives the tile icon and whether
+ * the preview pane opens. `"other"` (binaries like .dll/.exe/.zip) never opens
+ * the preview pane. */
+type FileContent = "text" | "audio" | "video" | "image" | "other";
+const TEXT_EXTS = new Set([
+  "txt","md","log","json","rs","toml","ini","cfg","py","js","ts","html","css",
+  "xml","yaml","yml","csv","sh","bat","ps1","sql","c","cpp","h","java","go","lua",
+]);
+const AUDIO_EXTS = new Set(["mp3","wav","flac","ogg","m4a","aac","wma","opus","mid","midi"]);
+const VIDEO_EXTS = new Set(["mp4","mkv","webm","mov","avi","wmv","flv","m4v","mpg","mpeg"]);
+const IMAGE_EXTS = new Set(["png","jpg","jpeg","gif","bmp","webp","ico","svg","tif","tiff"]);
+
+function fileContent(name: string): FileContent {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (TEXT_EXTS.has(ext)) return "text";
+  if (AUDIO_EXTS.has(ext)) return "audio";
+  if (VIDEO_EXTS.has(ext)) return "video";
+  if (IMAGE_EXTS.has(ext)) return "image";
+  return "other";
+}
+
+/** Right-side preview pane, following the selected clipboard row. Text rows
+ * show their content; file rows preview by content kind — text files show
+ * their text, audio/video get a player, image files show the image (click to
+ * enlarge). `previewOpen` already excludes arbitrary binaries and image-kind
+ * rows, so those never reach here. */
+function ClipPreview(props: { item: ClipboardItem; onEnlarge: (uri: string) => void }) {
+  const firstPath = () => props.item.content.split("\n").find(Boolean) ?? "";
+  const content = () =>
+    props.item.kind === "file" ? fileContent(basename(firstPath())) : null;
+  const asset = () => (firstPath() ? convertFileSrc(firstPath()) : "");
+
+  const [text, setText] = createSignal<string | null>(null);
+  const [img, setImg] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    setText(null);
+    setImg(null);
+    const it = props.item;
+    if (it.kind === "image") {
+      // Image-kind row (shown in the 图片 category): full-size PNG data URI.
+      void invoke<string>("get_clipboard_image", { id: it.id })
+        .then((uri) => setImg(uri))
+        .catch((err) => console.error("get_clipboard_image failed", err));
+    } else if (it.kind === "file" && content() === "text") {
+      void invoke<string>("get_file_text", { path: firstPath() })
+        .then((s) => setText(s))
+        .catch((err) => console.error("get_file_text failed", err));
+    }
+  });
+
+  return (
+    <div class="clip-preview">
+      <Switch>
+        {/* Text row: the copied text itself. */}
+        <Match when={props.item.kind === "text"}>
+          <div class="clip-preview-text">{props.item.content}</div>
+        </Match>
+        {/* Image-kind row: full-size image, click to enlarge. */}
+        <Match when={props.item.kind === "image"}>
+          <div
+            class="clip-preview-image"
+            onClick={() => img() && props.onEnlarge(img()!)}
+          >
+            <Show when={img()} fallback={<span class="clip-preview-placeholder">…</span>}>
+              <img class="clip-preview-img" src={img()!} alt="" draggable={false} />
+            </Show>
+          </div>
+        </Match>
+        {/* Text file: read and show the file's content. */}
+        <Match when={content() === "text"}>
+          <Show when={text()} fallback={<span class="clip-preview-placeholder">…</span>}>
+            <div class="clip-preview-text">{text()}</div>
+          </Show>
+        </Match>
+        <Match when={content() === "audio"}>
+          <audio class="clip-preview-media" src={asset()} controls />
+        </Match>
+        <Match when={content() === "video"}>
+          <video class="clip-preview-media" src={asset()} controls />
+        </Match>
+        {/* Image file: show the image, click to enlarge. */}
+        <Match when={content() === "image"}>
+          <div class="clip-preview-image" onClick={() => props.onEnlarge(asset())}>
+            <img class="clip-preview-img" src={asset()} alt="" draggable={false} />
+          </div>
+        </Match>
+      </Switch>
+    </div>
+  );
 }
 
 /** Open custom context menu: app or clipboard item, positioned at the cursor.
@@ -51,20 +217,6 @@ type MenuState =
   | { kind: "app"; x: number; y: number; app: AppEntry; fromRecent?: boolean }
   | { kind: "clip"; x: number; y: number; item: ClipboardItem }
   | null;
-
-/** Display label for a clipboard entry: images get their capture time, file
- * lists show the single file name or a "N files" count. */
-function clipLabel(item: ClipboardItem): string {
-  if (item.kind === "image") {
-    return t("imageLabel", { time: new Date(item.created_at).toLocaleString() });
-  }
-  if (item.kind === "file") {
-    const paths = item.content.split("\n").filter(Boolean);
-    if (paths.length === 1) return basename(paths[0]);
-    return t("fileCount", { count: String(paths.length) });
-  }
-  return item.content;
-}
 
 /**
  * In-memory app-icon cache (path → base64 data URI). Mirrors the backend's
@@ -90,7 +242,29 @@ const MIN_WINDOW_H = 90; // empty-state minimum
 const WINDOW_PAD = 20;
 /** Breathing room kept around the window when an expanded bar fills the screen. */
 const SCREEN_MARGIN = 32;
+/** Fixed row height of a clipboard row (44–52px per the redesign spec). */
+const CLIP_ROW_H = 52;
+/** Extra rows rendered above/below the visible window in the virtual list. */
+const CLIP_OVERSCAN = 4;
+/** How long the delete-collapse animation runs before the row is removed. */
+const DELETE_ANIM_MS = 120;
+/** Width of the right-side clipboard preview pane (shown on selection). */
+const PREVIEW_W = 320;
+
+/** The clipboard filter tabs, in display order (labels are i18n keys). */
+const CLIP_CATS: { kind: ClipKind; label: string }[] = [
+  { kind: "all", label: "clipCategoryAll" },
+  { kind: "text", label: "clipCategoryText" },
+  { kind: "textfile", label: "clipCategoryTextFile" },
+  { kind: "image", label: "clipCategoryImage" },
+  { kind: "video", label: "clipCategoryVideo" },
+  { kind: "favorites", label: "clipCategoryFavorites" },
+];
+/** Default toast dwell (ms); undo toasts get a longer window. */
+const TOAST_MS = 1600;
+const TOAST_UNDO_MS = 3000;
 let lastWindowH = 0; // avoid resize/center loops
+let lastWindowW = 0; // same, for the clipboard preview's wider width
 
 function App() {
   const [appsQuery, setAppsQuery] = createSignal("");
@@ -151,6 +325,74 @@ function App() {
   const [pinnedExpanded, setPinnedExpanded] = createSignal(false);
   const [menu, setMenu] = createSignal<MenuState>(null);
 
+  // ── Clipboard-mode state (redesign: categories, multi-select, undo, toast) ──
+  const clipCfg = (window as any).__LUME_CONFIG__?.clipboard;
+  /** Active history filter category. */
+  const [clipKind, setClipKind] = createSignal<ClipKind>("all");
+  /** Ids toggled with Space — Enter merges-pastes exactly this set. */
+  const [multiIds, setMultiIds] = createSignal<Set<number>>(new Set());
+  /** Bottom toast; `undo` (delete) restores the last deletion. */
+  const [toast, setToast] = createSignal<{ text: string; undo?: () => void } | null>(null);
+  /** The last deleted entry, held for the undo button. */
+  const [undoBuf, setUndoBuf] = createSignal<DeletedClip | null>(null);
+  /** Id whose row is animating out (delete-in-progress). */
+  const [deletingId, setDeletingId] = createSignal<number | null>(null);
+  /** Clear-all confirm dialog visibility. */
+  const [clearOpen, setClearOpen] = createSignal(false);
+  /** 清空 → keep pinned rows (confirm-dialog checkbox). */
+  const [keepPinned, setKeepPinned] = createSignal(false);
+  /** Settings-driven: show the source app in the second line. */
+  const [showSourceApp, setShowSourceApp] = createSignal(clipCfg?.show_source_app ?? true);
+  /** Settings-driven: absolute timestamps instead of relative. */
+  const [timeDisplayAbs, setTimeDisplayAbs] = createSignal(clipCfg?.time_display === "absolute");
+  /** Settings-driven: hide the launcher after a paste. */
+  const [pasteClose, setPasteClose] = createSignal(clipCfg?.paste_close ?? true);
+  /** Settings-driven: mouse hover selects entries (default off — a click is
+   * the only way to select with the mouse when off). */
+  const [hoverSelect, setHoverSelect] = createSignal(clipCfg?.hover_select ?? false);
+  /** Runtime pause for clipboard recording (status-bar toggle, not persisted). */
+  const [clipPaused, setClipPaused] = createSignal(false);
+  /** Full-size data URI shown in the click-to-enlarge overlay (images only). */
+  const [enlargeImg, setEnlargeImg] = createSignal<string | null>(null);
+  let toastTimer: number | undefined;
+  /** Virtual-list scroll container + its scroll/viewport state. */
+  let clipScrollEl: HTMLDivElement | undefined;
+  const [clipScrollTop, setClipScrollTop] = createSignal(0);
+  const [clipViewportH, setClipViewportH] = createSignal(0);
+  /** First/last rendered row of the windowed clipboard list. */
+  const clipStart = () =>
+    Math.max(0, Math.floor(clipScrollTop() / CLIP_ROW_H) - CLIP_OVERSCAN);
+  const clipEnd = () =>
+    Math.min(
+      clips().length,
+      Math.ceil((clipScrollTop() + Math.max(clipViewportH(), 160)) / CLIP_ROW_H) +
+        CLIP_OVERSCAN
+    );
+  /** The preview pane opens:
+   *  - 文本 / 收藏 categories: never (just their lists).
+   *  - 文本文件 / 图片 / 视频 categories: always (常驻).
+   *  - 全部: on demand, per the selected row — non-binary file rows (text /
+   *    audio / video / image content) expand it; text rows and other binaries
+   *    never do. */
+  const previewOpen = () => {
+    if (mode() !== "clipboard" || clips().length === 0) return false;
+    switch (clipKind()) {
+      case "text":
+      case "favorites":
+        return false;
+      case "textfile":
+      case "image":
+      case "video":
+        return true;
+      default: // "all" — on demand, file rows only (text rows never preview)
+        if (selected() < 0) return false;
+        const item = clips()[selected()];
+        if (!item || item.kind !== "file") return false;
+        const first = item.content.split("\n").find(Boolean) ?? "";
+        return fileContent(basename(first)) !== "other";
+    }
+  };
+
   // ── Drag-and-drop for pinned bar reordering ──
   // Use a plain ref (not a SolidJS signal) so drag event handlers never
   // trigger reactive re-renders that would destroy the dragged DOM element.
@@ -179,6 +421,12 @@ function App() {
     setRecentExpanded(false); // don't persist the expanded state across shows
     setPinnedExpanded(expandPinned());
     setMenu(null);
+    setMultiIds(new Set<number>());
+    setDeletingId(null);
+    setClearOpen(false);
+    setEnlargeImg(null);
+    lastWindowH = 0; // force a re-measure on the next show (mode may have changed)
+    lastWindowW = 0;
   }
 
   /** Reload the pinned-apps bar from the store. */
@@ -244,6 +492,23 @@ function App() {
 
   /** Fit the launcher window height to the current content, then re-center. */
   async function resizeToContent() {
+    // Clipboard mode uses a fixed window height (设置 → 窗口大小 → 高度); the
+    // list viewport scrolls internally, so no content-based fitting applies.
+    // Selecting a text / file (incl. audio/video) row opens the right-side
+    // preview pane, which widens the window by PREVIEW_W; images preview in
+    // their own row instead, so they never widen the window.
+    if (mode() === "clipboard") {
+      const previewActive = previewOpen();
+      const targetW = windowWidth() + (previewActive ? PREVIEW_W : 0);
+      if (windowHeight() !== lastWindowH || targetW !== lastWindowW) {
+        lastWindowH = windowHeight();
+        lastWindowW = targetW;
+        await getCurrentWindow().setSize(new LogicalSize(targetW, windowHeight()));
+        await invoke("apply_position");
+      }
+      requestAnimationFrame(measureClipViewport);
+      return;
+    }
     const search = document.querySelector(".search") as HTMLElement | null;
     const footer = document.querySelector(".shortcut-hint") as HTMLElement | null;
     const container =
@@ -298,6 +563,14 @@ function App() {
   /** Defer a resize to the next frame so the DOM has rendered first. */
   function scheduleResize() {
     requestAnimationFrame(() => void resizeToContent());
+  }
+
+  /** Re-read the virtual list's viewport height (idempotent). */
+  function measureClipViewport() {
+    const el = clipScrollEl;
+    if (!el) return;
+    const h = el.clientHeight;
+    if (h !== clipViewportH()) setClipViewportH(h);
   }
 
   /** Pin/unpin an app for the Navigate bar (Ctrl+P). */
@@ -358,24 +631,145 @@ function App() {
     );
   }
 
-  /** Copy a specific clipboard item to the system clipboard and hide. */
+  /** Show a transient toast at the bottom of the launcher (auto-dismisses). */
+  function showToast(text: string, opts?: { undo?: () => void; duration?: number }) {
+    window.clearTimeout(toastTimer);
+    setToast({ text, undo: opts?.undo });
+    toastTimer = window.setTimeout(
+      () => setToast(null),
+      opts?.duration ?? (opts?.undo ? TOAST_UNDO_MS : TOAST_MS)
+    );
+  }
+
+  /** Copy a specific clipboard item to the system clipboard. The launcher
+   * stays open (copy ≠ paste), with a "Copied" toast. */
   function copyOnly(item: ClipboardItem) {
-    void invoke("copy_clipboard", { id: item.id });
-    void resetAndHide();
+    void invoke("copy_clipboard", { id: item.id })
+      .then(() => showToast(t("copied")))
+      .catch((err) => console.error("copy failed", err));
   }
 
-  /** Paste a clipboard entry into the previous foreground window and hide. */
+  /** Show an image row's full-size PNG in the enlarge overlay (images preview
+   * in their row thumbnail; clicking it enlarges). */
+  function enlargeImage(item: ClipboardItem) {
+    void invoke<string>("get_clipboard_image", { id: item.id })
+      .then((uri) => setEnlargeImg(uri))
+      .catch((err) => console.error("get_clipboard_image failed", err));
+  }
+
+  /** Copy a rich-text row as plain text only (strips HTML formatting). */
+  function copyPlain(item: ClipboardItem) {
+    void invoke("copy_clipboard", { id: item.id, plain: true })
+      .then(() => showToast(t("copied")))
+      .catch((err) => console.error("copy plain failed", err));
+  }
+
+  /** Paste a clipboard entry into the previous foreground window. Closes the
+   * launcher when 粘贴后关闭 is enabled (default). */
   function pasteClip(item: ClipboardItem) {
-    void invoke("paste_clipboard", { id: item.id });
+    void invoke("paste_clipboard", { id: item.id })
+      .then(() => {
+        if (pasteClose()) showToast(t("pasted"));
+      })
+      .catch((err) => {
+        console.error("paste failed", err);
+        showToast(t("pasteFailed"));
+      });
+    if (pasteClose()) void resetAndHide();
+  }
+
+  /** Merge-paste every Space-selected entry (Enter with a non-empty set). */
+  function pasteClipMulti() {
+    const ids = clips()
+      .filter((c) => multiIds().has(c.id))
+      .map((c) => c.id);
+    if (ids.length === 0) return;
+    void invoke("paste_clipboard_multi", { ids })
+      .then(() => {
+        if (pasteClose()) showToast(t("pasted"));
+      })
+      .catch((err) => {
+        console.error("merge paste failed", err);
+        showToast(t("pasteFailed"));
+      });
+    if (pasteClose()) void resetAndHide();
+  }
+
+  /** Toggle a row into/out of the multi-select set (Space). */
+  function toggleMulti(idx: number) {
+    const item = clips()[idx];
+    if (!item) return;
+    const next = new Set(multiIds());
+    if (next.has(item.id)) next.delete(item.id);
+    else next.add(item.id);
+    setMultiIds(next);
+  }
+
+  /** Open a link row in the default browser (ShellExecuteW via launch_app). */
+  function openClipLink(item: ClipboardItem) {
+    void invoke("launch_app", { path: item.content, name: item.content, elevated: false });
     void resetAndHide();
   }
 
-  /** Pin/unpin a specific clipboard entry (context-menu action). */
+  /** Reveal the first path of a file row in Explorer (launcher stays open). */
+  function revealClipFile(path: string) {
+    void invoke("reveal_in_folder", { path }).catch((err) =>
+      console.error("reveal failed", err)
+    );
+  }
+
+  /** Restore the last deletion from the undo buffer. */
+  function undoDelete() {
+    const d = undoBuf();
+    if (!d) return;
+    setUndoBuf(null);
+    void invoke("restore_clipboard", { item: d })
+      .catch((err) => console.error("restore failed", err))
+      .finally(() => void runSearch(query()));
+  }
+
+  /** Start the delete animation, then actually delete once it finishes. */
+  function requestDelete(id: number) {
+    if (deletingId() !== null) return;
+    setDeletingId(id);
+    window.setTimeout(() => {
+      setDeletingId(null);
+      void deleteItem(id);
+    }, DELETE_ANIM_MS);
+  }
+
+  /** Toggle the runtime recording pause (status-bar button). */
+  function toggleClipPause() {
+    const next = !clipPaused();
+    setClipPaused(next);
+    void invoke("set_clipboard_paused", { paused: next }).catch((err) =>
+      console.error("set_clipboard_paused failed", err)
+    );
+  }
+
+  /** Confirm dialog → clear the whole history (optionally keeping pinned). */
+  function doClear() {
+    setClearOpen(false);
+    void invoke("clear_clipboard", { keepPinned: keepPinned() })
+      .then(() => showToast(t("clipCleared")))
+      .catch((err) => console.error("clear failed", err));
+    setKeepPinned(false);
+    void runSearch(query());
+  }
+
+  /** Pin/unpin a specific clipboard entry (context-menu action). Updates the
+   * row optimistically so the pin badge appears immediately; the re-search
+   * then re-orders pinned rows to the top. */
   async function toggleClipPin(item: ClipboardItem) {
+    const pinned = !item.pinned;
+    setClips((cs) =>
+      cs.map((c) => (c.id === item.id ? { ...c, pinned } : c))
+    );
     try {
-      await invoke("pin_clipboard", { id: item.id, pinned: !item.pinned });
+      await invoke("pin_clipboard", { id: item.id, pinned });
     } catch (err) {
       console.error("pin failed", err);
+      setClips((cs) => cs.map((c) => (c.id === item.id ? { ...c, pinned: !pinned } : c)));
     }
     await runSearch(clipQuery());
   }
@@ -415,7 +809,7 @@ function App() {
       return items;
     }
     const isPinned = m.item.pinned;
-    return [
+    const items = [
       { label: t("copyBack"), icon: clipboardIcon, action: () => copyOnly(m.item) },
       { label: t("pasteBack"), icon: clipboardIcon, action: () => pasteClip(m.item) },
       {
@@ -423,8 +817,39 @@ function App() {
         icon: isPinned ? pinnedIcon : pinIcon,
         action: () => void toggleClipPin(m.item),
       },
-      { label: t("delete"), icon: deleteIcon, action: () => void deleteItem(m.item.id) },
     ];
+    // Rich-text rows offer a plain-text copy that strips the formatting.
+    if (m.item.kind === "text" && m.item.has_html) {
+      items.push({
+        label: t("copyPlainText"),
+        icon: clipboardIcon,
+        action: () => copyPlain(m.item),
+      });
+    }
+    // Link rows open in the browser; file rows reveal in Explorer.
+    if (m.item.kind === "text" && isUrl(m.item.content)) {
+      items.push({
+        label: t("openLink"),
+        icon: runIcon,
+        action: () => openClipLink(m.item),
+      });
+    }
+    if (m.item.kind === "file") {
+      const first = m.item.content.split("\n").find(Boolean);
+      if (first) {
+        items.push({
+          label: t("openFileLocation"),
+          icon: folderOpenIcon,
+          action: () => revealClipFile(first),
+        });
+      }
+    }
+    items.push({
+      label: t("delete"),
+      icon: deleteIcon,
+      action: () => requestDelete(m.item.id),
+    });
+    return items;
   }
 
   async function resetAndHide() {
@@ -451,12 +876,31 @@ function App() {
         scheduleResize();
       }
     } else {
-      const res = (await invoke("search_clipboard", { query: q })) as ClipboardItem[];
+      const res = (await invoke("search_clipboard", {
+        query: q,
+        kind: clipKind(),
+      })) as ClipboardItem[];
       if (id === requestSeq) {
         setClips(res);
+        setSelected(0);
+        setClipScrollTop(0);
         scheduleResize();
       }
     }
+  }
+
+  /** Switch the history category and re-search. */
+  function setClipKindAndSearch(k: ClipKind) {
+    setMultiIds(new Set<number>());
+    setClipKind(k);
+    void runSearch(query());
+  }
+
+  /** Move to the previous/next category (Left/Right arrows on an empty query). */
+  function switchCategory(delta: number) {
+    const idx = CLIP_CATS.findIndex((c) => c.kind === clipKind());
+    const next = CLIP_CATS[(idx + delta + CLIP_CATS.length) % CLIP_CATS.length];
+    setClipKindAndSearch(next.kind);
   }
 
   /** Cached icon for an app path; reactive via `iconTick`. */
@@ -521,6 +965,10 @@ function App() {
       setWindowHeight(s.appearance.window_height);
       setWindowWidth(s.appearance.window_width);
       setSwitchKey(s.hotkeys.switch_mode || "Tab");
+      setShowSourceApp(s.clipboard?.show_source_app ?? true);
+      setTimeDisplayAbs(s.clipboard?.time_display === "absolute");
+      setPasteClose(s.clipboard?.paste_close ?? true);
+      setHoverSelect(s.clipboard?.hover_select ?? false);
     } catch {
       // Keep defaults if settings can't be read.
     }
@@ -554,6 +1002,14 @@ function App() {
   async function switchMode(m: Mode) {
     if (m === mode()) return;
     setMode(m);
+    // Clipboard mode always starts on the All category with no multi-select.
+    if (m === "clipboard") {
+      setClipKind("all");
+      setMultiIds(new Set<number>());
+      setDeletingId(null);
+    }
+    lastWindowH = 0; // the fixed-height model differs per mode — force a resize
+    lastWindowW = 0;
     // Re-search the target mode with its own (independent) query.
     await runSearch(m === "apps" ? appsQuery() : clipQuery());
   }
@@ -578,6 +1034,11 @@ function App() {
       void invoke("launch_app", { path: item.path, name: item.name, elevated });
       void resetAndHide();
     } else {
+      // A non-empty multi-select merges; otherwise paste the single entry.
+      if (multiIds().size > 0) {
+        pasteClipMulti();
+        return;
+      }
       const item = clips()[selected()];
       if (!item) return;
       pasteClip(item);
@@ -592,20 +1053,22 @@ function App() {
     setSelected(Math.min(Math.max(selected() + delta, 0), len - 1));
   }
 
-  /** Delete a clipboard entry by id, then refresh results. */
+  /** Delete a clipboard entry by id, hold it for undo, then refresh results. */
   async function deleteItem(id: number) {
     try {
-      await invoke("delete_clipboard", { id });
+      const deleted = await invoke<DeletedClip>("delete_clipboard", { id });
+      setUndoBuf(deleted);
+      showToast(t("clipDeletedOne"), { undo: undoDelete, duration: TOAST_UNDO_MS });
     } catch (err) {
       console.error("delete failed", err);
     }
     await runSearch(query());
   }
 
-  /** Delete the selected clipboard entry (Del key). */
+  /** Delete the selected clipboard entry (Del key), with the collapse animation. */
   async function deleteSelected() {
     const item = clips()[selected()];
-    if (item) await deleteItem(item.id);
+    if (item) requestDelete(item.id);
   }
 
   /** Bars currently visible on the empty-query main menu, top to bottom. */
@@ -718,6 +1181,8 @@ function App() {
       e.preventDefault();
       if (menu()) {
         closeMenu();
+      } else if (mode() === "clipboard" && multiIds().size > 0) {
+        setMultiIds(new Set<number>()); // leave multi-select mode without hiding
       } else {
         void resetAndHide();
       }
@@ -788,11 +1253,23 @@ function App() {
         else activate();
       }
     } else {
-      // Clipboard list navigation.
-      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      // Clipboard list navigation. Space toggles multi-select (merge paste
+      // via Enter); ↓/↑ move; ←/→ switch categories (on an empty query, so
+      // text editing in the search box still works); Del deletes.
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        if (clipQuery() === "") {
+          e.preventDefault();
+          switchCategory(e.key === "ArrowLeft" ? -1 : 1);
+        }
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         if (hasResults) {
           e.preventDefault();
           moveSelection(e.key === "ArrowDown" ? 1 : -1);
+        }
+      } else if (e.key === " ") {
+        if (hasResults) {
+          e.preventDefault();
+          toggleMulti(selected());
         }
       } else if (e.key === "Delete") {
         e.preventDefault();
@@ -834,10 +1311,56 @@ function App() {
   // hovering would otherwise yank the scroll position).
   createEffect(() => {
     selected();
-    if (selectionSource === "keyboard") {
+    // The apps grid keeps the selected box in view natively; the clipboard
+    // list is virtualized and scrolls via its own effect below (scrollIntoView
+    // would override the buffered position there).
+    if (mode() !== "clipboard" && selectionSource === "keyboard") {
       document
         .querySelector(".result-selected")
         ?.scrollIntoView({ block: "nearest" });
+    }
+  });
+
+  // Re-measure the virtual list viewport whenever the mode or window height
+  // changes (the launcher isn't user-resizable, so the only size changes are
+  // ours). Idempotent — settles once the measured height matches.
+  createEffect(() => {
+    void mode();
+    void windowHeight();
+    requestAnimationFrame(measureClipViewport);
+  });
+
+  // Resize the window when the preview pane appears/disappears (selecting an
+  // image row closes it → narrows back; selecting a text/file row opens it →
+  // widens). Only fires on the toggle, not on every row change. While the
+  // context menu is open the size is frozen (right-clicking a row to open the
+  // menu must not resize / close the preview underneath it); it re-evaluates
+  // when the menu closes.
+  let prevPreviewOpen = false;
+  createEffect(() => {
+    if (menu()) return;
+    const open = previewOpen();
+    if (open !== prevPreviewOpen) {
+      prevPreviewOpen = open;
+      scheduleResize();
+    }
+  });
+
+  // Virtual list: keep the selected row in the rendered window while
+  // navigating with the keyboard (the row may not be in the DOM otherwise).
+  // A small buffer keeps the row clearly inside the viewport (aligning exactly
+  // to the bottom edge left it a fraction of a pixel out of view).
+  createEffect(() => {
+    if (mode() !== "clipboard") return;
+    selected();
+    void clipViewportH(); // re-scroll when the viewport is resized
+    const el = clipScrollEl;
+    if (!el || selectionSource !== "keyboard") return;
+    const top = selected() * CLIP_ROW_H;
+    const bottom = top + CLIP_ROW_H;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (bottom > el.scrollTop + el.clientHeight) {
+      el.scrollTop = bottom - el.clientHeight + 8;
     }
   });
 
@@ -974,6 +1497,258 @@ function App() {
     void entrySize();
     requestAnimationFrame(measureBarCols);
   });
+
+  /** Left tile of a clipboard row: image thumb is rendered by the caller; the
+   * file / link / color / plain-text fallbacks live here. */
+  function clipTile(item: ClipboardItem, color: string | null, link: boolean) {
+    if (item.kind === "file") {
+      const first = item.content.split("\n").find(Boolean) ?? "";
+      const content = fileContent(basename(first));
+      if (content === "audio") {
+        return (
+          <span class="clip-row-tile">
+            <svg class="clip-row-tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
+          </span>
+        );
+      }
+      if (content === "video") {
+        return (
+          <span class="clip-row-tile">
+            <svg class="clip-row-tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="23 7 16 12 23 17 23 7" />
+              <rect x="1" y="5" width="15" height="14" rx="2" />
+            </svg>
+          </span>
+        );
+      }
+      if (content === "image") {
+        return (
+          <span class="clip-row-tile">
+            <svg class="clip-row-tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          </span>
+        );
+      }
+      if (content === "text") {
+        return (
+          <span class="clip-row-tile">
+            <svg class="clip-row-tile-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="4 7 4 4 20 4 20 7" />
+              <line x1="9" y1="20" x2="15" y2="20" />
+              <line x1="12" y1="4" x2="12" y2="20" />
+            </svg>
+          </span>
+        );
+      }
+      return (
+        <span class="clip-row-tile">
+          <svg
+            class="clip-row-tile-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+        </span>
+      );
+    }
+    if (link) {
+      return (
+        <span class="clip-row-tile">
+          <svg
+            class="clip-row-tile-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+        </span>
+      );
+    }
+    if (color) {
+      return <span class="clip-row-tile clip-row-tile-color" style={{ background: color }} />;
+    }
+    return <span class="clip-row-tile clip-row-tile-text">T</span>;
+  }
+
+  /** A single clipboard history row: tile, two-line body, hover actions. */
+  function clipRow(item: ClipboardItem, idx: number) {
+    const isSelected = idx === selected();
+    const color = item.kind === "text" ? detectColor(item.content) : null;
+    const link = item.kind === "text" && isUrl(item.content);
+    return (
+      <div
+        class="clip-row"
+        classList={{
+          "result-selected": isSelected,
+          "clip-row-deleting": deletingId() === item.id,
+          "clip-row-multi": multiIds().has(item.id),
+        }}
+        role="option"
+        aria-selected={isSelected}
+        onMouseMove={() => {
+          // Hover-selection is a setting (default off — then only a click
+          // selects). It is also ignored while keyboard nav is active.
+          if (!hoverSelect() || selectionSource === "keyboard") return;
+          selectionSource = "mouse";
+          setSelected(idx);
+        }}
+        onClick={() => {
+          selectionSource = "mouse";
+          // First click selects the entry; a second click on the already
+          // selected row pastes it.
+          if (selected() === idx) {
+            activate();
+          } else {
+            setSelected(idx);
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          // Right-click must leave the window state (selection → preview pane
+          // → window width) unchanged: the menu acts on `item` directly, so we
+          // don't re-select the row here.
+          setMenu({ kind: "clip", x: e.clientX, y: e.clientY, item });
+        }}
+      >
+        <div
+          class="clip-row-tile-box"
+          classList={{ "clip-row-tile-zoom": item.kind === "image" }}
+          onClick={
+            item.kind === "image"
+              ? (e) => {
+                  e.stopPropagation();
+                  enlargeImage(item);
+                }
+              : undefined
+          }
+        >
+          <Show when={item.kind === "image" && item.thumb} fallback={clipTile(item, color, link)}>
+            <span class="clip-row-tile">
+              <img class="clip-row-img" src={item.thumb ?? undefined} alt="" draggable={false} />
+            </span>
+          </Show>
+        </div>
+        <div class="clip-row-body">
+          <div class="clip-row-title" title={item.content}>
+            {clipTitle(item)}
+          </div>
+          <div class="clip-row-meta">{clipMeta(item, showSourceApp(), timeDisplayAbs())}</div>
+        </div>
+        <Show when={item.pinned}>
+          <svg
+            class="clip-row-pin"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 17v5" />
+            <path d="M9 3h6l1 4H8l1-4z" />
+            <path d="M10 7v4l-2 3h8l-2-3V7" />
+          </svg>
+        </Show>
+        <div class="clip-row-actions">
+          <button
+            class="clip-act"
+            title={t("copyToClipboard")}
+            aria-label={t("copyToClipboard")}
+            onClick={(e) => {
+              e.stopPropagation();
+              copyOnly(item);
+            }}
+          >
+            <svg
+              class="clip-act-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
+          <button
+            class="clip-act"
+            title={t("paste")}
+            aria-label={t("paste")}
+            onClick={(e) => {
+              e.stopPropagation();
+              pasteClip(item);
+            }}
+          >
+            <svg
+              class="clip-act-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+              <rect x="8" y="2" width="8" height="4" rx="1" />
+            </svg>
+          </button>
+          <button
+            class="clip-act clip-act-danger"
+            title={t("delete")}
+            aria-label={t("delete")}
+            onClick={(e) => {
+              e.stopPropagation();
+              requestDelete(item.id);
+            }}
+          >
+            <svg
+              class="clip-act-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              <line x1="10" y1="11" x2="10" y2="17" />
+              <line x1="14" y1="11" x2="14" y2="17" />
+            </svg>
+          </button>
+        </div>
+        <Show when={multiIds().has(item.id)}>
+          <span class="clip-row-check">✓</span>
+        </Show>
+      </div>
+    );
+  }
 
   /** A single app box (grid or bar) with a cached icon + unknown-icon fallback. */
   function appBox(
@@ -1216,6 +1991,9 @@ function App() {
                   appBox(app, i === selected(), {
                     onActivate: activate,
                     onSelect: () => {
+                      // Hover-selection is a setting (default off); keyboard
+                      // nav also takes precedence until a click.
+                      if (!hoverSelect() || selectionSource === "keyboard") return;
                       selectionSource = "mouse";
                       setSelected(i);
                     },
@@ -1230,140 +2008,156 @@ function App() {
             </Show>
           )
         ) : (
-          <Show when={clips().length > 0} fallback={<span class="hint">{clipQuery() ? t("noResults") : t("noClipboardHistory")}</span>}>
-            <div class="result-list" role="listbox" onMouseLeave={() => { if (selectionSource === "mouse") setSelected(-1); }}>
-              <For each={clips()}>
-                {(item, i) => (
+          <div class="clip-page">
+            <div class="clip-cats" role="tablist" aria-label="Clipboard category">
+              {CLIP_CATS.map((c) => (
+                <button
+                  class="clip-cat"
+                  classList={{ active: clipKind() === c.kind }}
+                  role="tab"
+                  aria-selected={clipKind() === c.kind}
+                  onClick={() => setClipKindAndSearch(c.kind)}
+                >
+                  {t(c.label as keyof Messages)}
+                </button>
+              ))}
+            </div>
+            <div
+              class="clip-main"
+              onMouseLeave={() => {
+                // Clear the selection only when leaving the whole list+preview
+                // area — moving from the list into the preview pane must not
+                // close it (the pane lives beside the list inside .clip-main).
+                if (selectionSource === "mouse") setSelected(-1);
+              }}
+            >
+            <Show
+              when={clips().length > 0}
+              fallback={
+                <div class="clip-empty">
+                  <img
+                    class="clip-empty-icon"
+                    src={clipboardIcon}
+                    alt=""
+                    draggable={false}
+                  />
+                  <p class="clip-empty-title">
+                    {clipQuery() ? t("noResults") : t("noClipboardHistory")}
+                  </p>
+                  <Show when={!clipQuery()}>
+                    <p class="clip-empty-hint">{t("clipEmptyHint")}</p>
+                  </Show>
+                </div>
+              }
+            >
+              <div
+                class="clip-list"
+                ref={clipScrollEl}
+                role="listbox"
+                onScroll={(e) =>
+                  setClipScrollTop((e.currentTarget as HTMLDivElement).scrollTop)
+                }
+              >
+                <div
+                  class="clip-spacer"
+                  style={{
+                    height: `${clips().length * CLIP_ROW_H}px`,
+                    position: "relative",
+                  }}
+                >
                   <div
-                    class="result-item"
-                    classList={{ "result-selected": i() === selected() }}
-                    role="option"
-                    aria-selected={i() === selected()}
-                    onMouseMove={() => {
-                      selectionSource = "mouse";
-                      setSelected(i());
-                    }}
-                    onClick={activate}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setSelected(i());
-                      setMenu({ kind: "clip", x: e.clientX, y: e.clientY, item });
+                    class="clip-window"
+                    style={{
+                      position: "absolute",
+                      top: `${clipStart() * CLIP_ROW_H}px`,
+                      left: 0,
+                      right: 0,
                     }}
                   >
-                    <Show
-                      when={item.kind === "image" && item.thumb}
-                      fallback={
-                        <span class="result-tile result-tile-clip">
-                          {item.kind === "file" ? (
-                            <svg
-                              class="result-tile-icon"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              aria-hidden="true"
-                            >
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                              <polyline points="14 2 14 8 20 8" />
-                            </svg>
-                          ) : (
-                            <svg
-                              class="result-tile-icon"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              aria-hidden="true"
-                            >
-                              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                              <rect x="8" y="2" width="8" height="4" rx="1" />
-                            </svg>
-                          )}
-                        </span>
-                      }
-                    >
-                      <span class="result-tile result-tile-clip result-tile-image">
-                        <img class="result-tile-img" src={item.thumb ?? undefined} alt="" />
-                      </span>
-                    </Show>
-                    <span class="result-content">{clipLabel(item)}</span>
-                    <Show when={item.pinned}>
-                      <svg
-                        class="result-pin"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M12 17v5" />
-                        <path d="M9 3h6l1 4H8l1-4z" />
-                        <path d="M10 7v4l-2 3h8l-2-3V7" />
-                      </svg>
-                    </Show>
-                    <button
-                      class="result-copy"
-                      title={t("copyToClipboard")}
-                      aria-label={t("copyToClipboard")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyOnly(item);
-                      }}
-                    >
-                      <svg
-                        class="result-copy-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                      >
-                        <rect x="9" y="9" width="13" height="13" rx="2" />
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                      </svg>
-                    </button>
-                    <button
-                      class="result-delete"
-                      title={t("delete")}
-                      aria-label={t("delete")}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void deleteItem(item.id);
-                      }}
-                    >
-                      <svg
-                        class="result-delete-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
-                      >
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        <line x1="10" y1="11" x2="10" y2="17" />
-                        <line x1="14" y1="11" x2="14" y2="17" />
-                      </svg>
-                    </button>
+                    {clips()
+                      .slice(clipStart(), clipEnd())
+                      .map((item, i) => clipRow(item, clipStart() + i))}
                   </div>
-                )}
-              </For>
+                </div>
+              </div>
+            </Show>
+            <Show when={previewOpen()}>
+              <ClipPreview
+                item={clips()[selected()]}
+                onEnlarge={(uri) => setEnlargeImg(uri)}
+              />
+            </Show>
             </div>
-          </Show>
+            <div class="clip-statusbar">
+              <span class="clip-status-count">
+                {multiIds().size > 0
+                  ? t("clipSelected", { count: String(multiIds().size) })
+                  : t("clipTotal", { count: String(clips().length) })}
+              </span>
+              <div class="clip-status-actions">
+                <button
+                  class="clip-status-btn"
+                  classList={{ paused: clipPaused() }}
+                  title={clipPaused() ? t("clipResume") : t("clipPause")}
+                  onClick={toggleClipPause}
+                >
+                  {clipPaused() ? t("clipResume") : t("clipPause")}
+                </button>
+                <button class="clip-clear-btn" onClick={() => setClearOpen(true)}>
+                  {t("clipClear")}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
       <Show when={mode() === "clipboard"}>
-        <div class="shortcut-hint">{t("shortcutHint")}</div>
+        <div class="shortcut-hint">{t("clipShortcutHint")}</div>
+      </Show>
+      <Show when={toast()}>
+        <div class="toast" classList={{ "toast-undo": !!toast()?.undo }}>
+          <span class="toast-text">{toast()?.text}</span>
+          <Show when={toast()?.undo}>
+            <button
+              class="toast-undo-btn"
+              onClick={() => {
+                const undo = toast()?.undo;
+                setToast(null);
+                undo?.();
+              }}
+            >
+              {t("undo")}
+            </button>
+          </Show>
+        </div>
+      </Show>
+      <Show when={clearOpen()}>
+        <div class="clip-confirm">
+          <p class="clip-confirm-title">{t("clipClearConfirm")}</p>
+          <label class="clip-confirm-check">
+            <input
+              type="checkbox"
+              checked={keepPinned()}
+              onChange={(e) =>
+                setKeepPinned((e.currentTarget as HTMLInputElement).checked)
+              }
+            />
+            <span>{t("keepPinned")}</span>
+          </label>
+          <div class="clip-confirm-actions">
+            <button class="clip-confirm-cancel" onClick={() => setClearOpen(false)}>
+              {t("cancel")}
+            </button>
+            <button class="clip-confirm-ok" onClick={doClear}>
+              {t("clipClear")}
+            </button>
+          </div>
+        </div>
+      </Show>
+      <Show when={enlargeImg()}>
+        <div class="clip-enlarge" onClick={() => setEnlargeImg(null)}>
+          <img src={enlargeImg()!} alt="" draggable={false} />
+        </div>
       </Show>
       <Show when={menu()}>
         <>

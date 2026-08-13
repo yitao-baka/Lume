@@ -41,4 +41,29 @@ export interface SettingsData {
     /** Minutes between user-cache refreshes (startup always refreshes once). */
     cache_refresh_interval_minutes: number;
   };
+  clipboard: {
+    /** Max history rows kept (pinned items exempt from pruning). */
+    history_cap: number;
+    /** Record image copies into history. */
+    record_images: boolean;
+    /** Record file/folder copies into history. */
+    record_files: boolean;
+    /** Hide the launcher after a paste. */
+    paste_close: boolean;
+    /** Show the source app name in each entry's second line. */
+    show_source_app: boolean;
+    /** `"relative"` | `"absolute"` — how timestamps are displayed. */
+    time_display: string;
+    /** App names whose copies are never recorded (foreground process display
+     * name, case-insensitive). */
+    ignore_apps: string[];
+    /** Merge consecutive text copies (within the merge window) into one entry. */
+    merge_copy: boolean;
+    /** Merge window in milliseconds. */
+    merge_window_ms: number;
+    /** Mouse hover selects entries (default off — only a click selects). */
+    hover_select: boolean;
+    /** Sort favorited (pinned) entries to the top of the list. */
+    favorites_top: boolean;
+  };
 }

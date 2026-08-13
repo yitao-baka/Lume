@@ -10,20 +10,23 @@ import { resolveLocale, setLocale, t, type Messages } from "../i18n";
 import { applyColorMode } from "../theme";
 import InterfacePane from "./InterfacePane";
 import SystemPane from "./SystemPane";
+import ClipboardPane from "./ClipboardPane";
 import AboutPane from "./AboutPane";
 import interfaceIcon from "../../res/icons/interface.svg";
 import systemIcon from "../../res/icons/system.svg";
+import clipboardIcon from "../../res/icons/clipboard.svg";
 import pluginsIcon from "../../res/icons/plugins.svg";
 import aboutIcon from "../../res/icons/about.svg";
 import type { SettingsData } from "./types";
 
-type Section = "interface" | "system" | "plugins" | "about";
+type Section = "interface" | "system" | "clipboard" | "plugins" | "about";
 
-const SECTIONS: Section[] = ["interface", "system", "plugins", "about"];
+const SECTIONS: Section[] = ["interface", "system", "clipboard", "plugins", "about"];
 
 const SECTION_ICONS: Record<Section, string> = {
   interface: interfaceIcon,
   system: systemIcon,
+  clipboard: clipboardIcon,
   plugins: pluginsIcon,
   about: aboutIcon,
 };
@@ -70,6 +73,14 @@ export default function Settings() {
   /** Update the working copy of the index and mark the settings dirty. */
   function updateIndex(patch: Partial<SettingsData["index"]>) {
     setSettings((s) => (s ? { ...s, index: { ...s.index, ...patch } } : s));
+    setDirty(true);
+  }
+
+  /** Update the working copy of the clipboard settings and mark dirty. */
+  function updateClipboard(patch: Partial<SettingsData["clipboard"]>) {
+    setSettings((s) =>
+      s ? { ...s, clipboard: { ...s.clipboard, ...patch } } : s
+    );
     setDirty(true);
   }
 
@@ -129,6 +140,12 @@ export default function Settings() {
               onChangeHotkeys={updateHotkeys}
               onChangeIndex={updateIndex}
               onReload={reloadSettings}
+            />
+          </Show>
+          <Show when={section() === "clipboard" && settings()}>
+            <ClipboardPane
+              settings={settings()!}
+              onChange={updateClipboard}
             />
           </Show>
           <Show when={section() === "plugins"}>

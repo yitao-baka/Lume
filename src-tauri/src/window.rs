@@ -9,7 +9,7 @@
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Label of the launcher window defined in `tauri.conf.json`.
@@ -177,6 +177,11 @@ fn show(window: &WebviewWindow) -> tauri::Result<()> {
     apply_geometry(window)?;
     window.show()?;
     window.set_focus()?;
+    // Fresh-show signal for the frontend: it resets to the main menu exactly on
+    // this event, NOT on every focus regain. Dragging the frameless window
+    // briefly deactivates + refocuses it (see `is_mid_drag`), and a reset on
+    // that would wipe the current mode/search mid-drag.
+    let _ = window.emit("launcher-shown", ());
     Ok(())
 }
 

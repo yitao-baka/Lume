@@ -4,6 +4,60 @@ All notable changes to Lume are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), versions follow
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **Clipboard image preview / enlarge via asset protocol** — `get_clipboard_image`
+  returns the stored PNG's path instead of a base64 data URI; the frontend
+  renders it with `convertFileSrc`, so WebView2 decodes the full-size image
+  straight from disk (no base64 string through IPC, no second decode in JS).
+  This removes the enlarge-preview memory/CPU spike; row thumbnails stay base64.
+- **Preview pane shows thumbnails, not full-size images** — selecting an image
+  row (or image file) no longer decodes the full-size bitmap into the webview;
+  the preview shows the small 200px thumbnail (`item.thumb`, or a new
+  `get_file_thumb` command that downscales image files server-side). The
+  full-size image decodes only when the user clicks to enlarge. Fixes the
+  decoded-bitmap memory spike that lingered in the renderer's image cache after
+  closing the preview.
+
+### Added
+
+- **`scripts/measure-webview-mem.ps1`** — memory-measurement harness that
+  snapshots Lume's whole process tree (`lume.exe` + `msedgewebview2` children)
+  by process type, reporting private working set / working set / commit, with a
+  guided 4-stage run (baseline / clipboard / settings / big-image) and a
+  comparison table. No app code involved.
+
+### Fixed
+
+- **Drag no longer switches back to Navigate** — the launcher reset its state on
+  every `onFocusChanged(focused=true)`; dragging the frameless window briefly
+  deactivates and refocuses it, so a drag mid-clipboard would wipe the mode.
+  The reset now fires only on a real fresh show (a Rust `launcher-shown` event
+  emitted in `window::show`), so drags keep the current mode/search intact.
+- **Hotkey summon now auto-selects the first entry** — the empty-query main
+  menu rested on `zone = "grid"`, and the bar highlight requires `zoneActive`,
+  so nothing was highlighted on summon. After a show the zone now settles on
+  the recent bar (or pinned) so its first item is selected.
+- **Mouse selection persists after leaving the list** — the bars / apps grid /
+  clipboard list cleared the selection on `mouseleave` when `selectionSource`
+  was mouse, so a click-selected entry despawned the moment the cursor left the
+  list. The mouse-leave deselection is removed; a selection stays until another
+  one is made.
+- **Video/audio preview no longer buffers on selection** — the preview media
+  elements now use `preload="none"`, so picking a row doesn't fetch the file
+  into the renderer's media cache (which lingered after the preview closed);
+  the file loads only when the user presses play.
+
+### Notes
+
+- A lazy settings-window experiment (create on first open, destroy on close)
+  cut the idle baseline from 115.4 to 88.1 MB, but was reverted after an
+  `AppHangB1` (WebView2 GPU-compositing hang when creating a runtime webview)
+  left the app unresponsive. Revisit via WebView2 `additional_browser_args`
+  GPU flags when pursuing the idle-memory target again.
+
 ## [0.2.17] — 2026-08-13
 
 Clipboard manager phase 3 — preview pane + native drag-out (ROADMAP item 13,

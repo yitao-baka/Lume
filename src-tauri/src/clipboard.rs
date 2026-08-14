@@ -1053,8 +1053,25 @@ pub fn get_file_text(path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Full-size PNG of an image row as a data URI (for the preview pane; the
-/// stored PNG is already lossless PNG, so it is base64'd as-is).
+/// Downscale an image file to a small base64 thumbnail for the preview pane.
+/// The webview decodes only a ≤`THUMB_MAX`-px PNG here — never the full-size
+/// image — so a large screenshot doesn't leave a huge decoded bitmap sitting
+/// in the renderer's image cache after the preview closes (same pipeline the
+/// clipboard image rows use for their `thumb`).
+#[tauri::command]
+pub fn get_file_thumb(path: String) -> Result<String, String> {
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    if bytes.len() > 50 * 1024 * 1024 {
+        return Err("file too large to thumbnail".into());
+    }
+    make_thumb(&bytes).ok_or_else(|| "not a readable image".into())
+}
+
+/// Absolute path of an image row's stored PNG, for the preview pane and the
+/// enlarge overlay. The frontend renders it via `convertFileSrc` (asset://), so
+/// WebView2 decodes the full-size image straight from disk — no base64 string
+/// round-tripped through IPC and re-decoded in JS (a real memory/CPU spike for
+/// large screenshots).
 #[tauri::command]
 pub fn get_clipboard_image(id: u32, state: State<ClipboardState>) -> Result<String, String> {
     let conn = state.db.lock().unwrap();
@@ -1069,12 +1086,7 @@ pub fn get_clipboard_image(id: u32, state: State<ClipboardState>) -> Result<Stri
     };
     // `rel` already includes the `PictureCache/` prefix — resolve it against the
     // data dir (NOT picture_dir(), which would double the prefix).
-    let bytes =
-        fs::read(crate::paths::data_dir().join(rel)).map_err(|e| e.to_string())?;
-    Ok(format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
+    Ok(crate::paths::data_dir().join(rel).to_string_lossy().into_owned())
 }
 
 /// Paste flow shared by single- and multi-item paste: take ownership of the

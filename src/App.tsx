@@ -141,8 +141,11 @@ function fileContent(name: string): FileContent {
 
 /** Right-side preview pane, following the selected clipboard row. Text rows
  * show their content; file rows preview by content kind — text files show
- * their text, audio/video get a player, image files show the image (click to
- * enlarge). `previewOpen` already excludes arbitrary binaries and image-kind
+ * their text, audio/video get a player, and images (both clipboard image rows
+ * and image files) show only a small thumbnail here, with the full-size image
+ * decoding only when clicked (the enlarge overlay). This keeps a big decoded
+ * bitmap from lingering in the renderer's image cache after the preview
+ * closes. `previewOpen` already excludes arbitrary binaries and image-kind
  * rows, so those never reach here. */
 function ClipPreview(props: { item: ClipboardItem; onEnlarge: (uri: string) => void }) {
   const firstPath = () => props.item.content.split("\n").find(Boolean) ?? "";
@@ -151,23 +154,33 @@ function ClipPreview(props: { item: ClipboardItem; onEnlarge: (uri: string) => v
   const asset = () => (firstPath() ? convertFileSrc(firstPath()) : "");
 
   const [text, setText] = createSignal<string | null>(null);
-  const [img, setImg] = createSignal<string | null>(null);
+  const [fileThumb, setFileThumb] = createSignal<string | null>(null);
 
   createEffect(() => {
     setText(null);
-    setImg(null);
+    setFileThumb(null);
     const it = props.item;
-    if (it.kind === "image") {
-      // Image-kind row (shown in the 图片 category): full-size PNG data URI.
-      void invoke<string>("get_clipboard_image", { id: it.id })
-        .then((uri) => setImg(uri))
-        .catch((err) => console.error("get_clipboard_image failed", err));
-    } else if (it.kind === "file" && content() === "text") {
+    if (it.kind === "file" && content() === "text") {
       void invoke<string>("get_file_text", { path: firstPath() })
         .then((s) => setText(s))
         .catch((err) => console.error("get_file_text failed", err));
+    } else if (it.kind === "file" && content() === "image") {
+      // Image file: the preview pane shows only a downscaled thumbnail; the
+      // full image decodes only when the user clicks to enlarge.
+      void invoke<string>("get_file_thumb", { path: firstPath() })
+        .then((t) => setFileThumb(t))
+        .catch((err) => console.error("get_file_thumb failed", err));
     }
   });
+
+  /** Load an image-kind row's full-size PNG into the enlarge overlay (deferred
+   * to the click so the preview pane only ever decodes the small thumbnail —
+   * never the full image, whose decoded bitmap would linger in the renderer). */
+  function enlargeImageKind(item: ClipboardItem) {
+    void invoke<string>("get_clipboard_image", { id: item.id })
+      .then((path) => props.onEnlarge(convertFileSrc(path)))
+      .catch((err) => console.error("get_clipboard_image failed", err));
+  }
 
   return (
     <div class="clip-preview">
@@ -176,14 +189,12 @@ function ClipPreview(props: { item: ClipboardItem; onEnlarge: (uri: string) => v
         <Match when={props.item.kind === "text"}>
           <div class="clip-preview-text">{props.item.content}</div>
         </Match>
-        {/* Image-kind row: full-size image, click to enlarge. */}
+        {/* Image-kind row: thumbnail in the preview pane (no full decode); the
+            click loads the full-size image into the enlarge overlay. */}
         <Match when={props.item.kind === "image"}>
-          <div
-            class="clip-preview-image"
-            onClick={() => img() && props.onEnlarge(img()!)}
-          >
-            <Show when={img()} fallback={<span class="clip-preview-placeholder">…</span>}>
-              <img class="clip-preview-img" src={img()!} alt="" draggable={false} />
+          <div class="clip-preview-image" onClick={() => enlargeImageKind(props.item)}>
+            <Show when={props.item.thumb} fallback={<span class="clip-preview-placeholder">…</span>}>
+              <img class="clip-preview-img" src={props.item.thumb ?? undefined} alt="" draggable={false} />
             </Show>
           </div>
         </Match>
@@ -193,16 +204,22 @@ function ClipPreview(props: { item: ClipboardItem; onEnlarge: (uri: string) => v
             <div class="clip-preview-text">{text()}</div>
           </Show>
         </Match>
+        {/* preload="none": selecting a media row must not fetch/buffer the
+            file into the renderer (buffered media lingers after the preview
+            closes). The file loads only when the user presses play. */}
         <Match when={content() === "audio"}>
-          <audio class="clip-preview-media" src={asset()} controls />
+          <audio class="clip-preview-media" src={asset()} controls preload="none" />
         </Match>
         <Match when={content() === "video"}>
-          <video class="clip-preview-media" src={asset()} controls />
+          <video class="clip-preview-media" src={asset()} controls preload="none" />
         </Match>
-        {/* Image file: show the image, click to enlarge. */}
+        {/* Image file: thumbnail in the preview pane; the click enlarges the
+            full image via the asset protocol. */}
         <Match when={content() === "image"}>
           <div class="clip-preview-image" onClick={() => props.onEnlarge(asset())}>
-            <img class="clip-preview-img" src={asset()} alt="" draggable={false} />
+            <Show when={fileThumb()} fallback={<span class="clip-preview-placeholder">…</span>}>
+              <img class="clip-preview-img" src={fileThumb()!} alt="" draggable={false} />
+            </Show>
           </div>
         </Match>
       </Switch>
@@ -650,10 +667,12 @@ function App() {
   }
 
   /** Show an image row's full-size PNG in the enlarge overlay (images preview
-   * in their row thumbnail; clicking it enlarges). */
+   * in their row thumbnail; clicking it enlarges). Rendered via the asset
+   * protocol (path → asset:// URL) so WebView2 decodes from disk — no base64
+   * string through IPC. */
   function enlargeImage(item: ClipboardItem) {
     void invoke<string>("get_clipboard_image", { id: item.id })
-      .then((uri) => setEnlargeImg(uri))
+      .then((path) => setEnlargeImg(convertFileSrc(path)))
       .catch((err) => console.error("get_clipboard_image failed", err));
   }
 
@@ -1468,16 +1487,24 @@ function App() {
     });
     onCleanup(() => unlistenSettings());
 
-    // The launcher stays hidden between toggles. On every re-show, reset to
-    // the Navigate main menu, re-focus the input, and repopulate the grid.
-    // Focus the input now so the first show starts with the cursor in place.
-    const unlisten = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (focused) {
-        clearSearch();
-        void refreshRecent();
-        void refreshPins();
-        queueMicrotask(() => document.getElementById("search-input")?.focus());
+    // The launcher stays hidden between toggles. On every fresh show (hotkey /
+    // tray toggle) reset to the Navigate main menu, re-focus the input, and
+    // repopulate the grid. This listens to the Rust `launcher-shown` event, not
+    // `onFocusChanged`: dragging the frameless window briefly deactivates and
+    // refocuses it (Rust `is_mid_drag` suppresses the hide on that side), and a
+    // reset there would wipe the current mode/search mid-drag.
+    const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
+      clearSearch();
+      await Promise.all([refreshRecent(), refreshPins()]);
+      // Auto-select the first entry of the empty-query main menu: the recent
+      // bar's first item when it has any, else the pinned bar's. (The bars'
+      // highlight requires `zoneActive`, so a resting zone of "grid" would
+      // leave nothing selected on summon.)
+      if (mode() === "apps" && appsQuery() === "" && zone() === "grid") {
+        if (showRecent() && recentApps().length > 0) setZone("recent");
+        else if (pinnedApps().length > 0) setZone("pinned");
       }
+      queueMicrotask(() => document.getElementById("search-input")?.focus());
     });
     onCleanup(() => unlisten());
   });
@@ -1825,11 +1852,7 @@ function App() {
             </button>
           </Show>
         </div>
-        <div class="bar-grid" classList={{ collapsed: !opts.expanded }}
-          onMouseLeave={() => {
-            if (selectionSource === "mouse") opts.onSelect(-1);
-          }}
-        >
+        <div class="bar-grid" classList={{ collapsed: !opts.expanded }}>
           <For each={shown}>
             {(app, i) =>
               appBox(app, opts.zoneActive && i() === opts.selected, {
@@ -1986,7 +2009,7 @@ function App() {
             </div>
           ) : (
             <Show when={apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
-              <div class="result-grid" role="grid" onMouseLeave={() => { if (selectionSource === "mouse") setSelected(-1); }}>
+              <div class="result-grid" role="grid">
                 {apps().map((app, i) =>
                   appBox(app, i === selected(), {
                     onActivate: activate,
@@ -2022,15 +2045,7 @@ function App() {
                 </button>
               ))}
             </div>
-            <div
-              class="clip-main"
-              onMouseLeave={() => {
-                // Clear the selection only when leaving the whole list+preview
-                // area — moving from the list into the preview pane must not
-                // close it (the pane lives beside the list inside .clip-main).
-                if (selectionSource === "mouse") setSelected(-1);
-              }}
-            >
+            <div class="clip-main">
             <Show
               when={clips().length > 0}
               fallback={

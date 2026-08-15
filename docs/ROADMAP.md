@@ -735,12 +735,13 @@ CREATE TABLE clipboard (
 - **已知边界（修正后）**：图片原始文件名未存，放大浮层标题仅显示「图片」；
   音频/视频预览为文件属性（非媒体播放器）。
 
-## 14. PDF / Office / 压缩包预览（规划）
+## 14. PDF / Office / 压缩包预览（规划，已被 #16 取代）
 
-**状态：规划完成（2026-08-14），等待下次会话实现。**
+**状态：已并入 #16（2026-08-15）。经 grill-me 定稿：Office 与 压缩包 均放弃，
+仅 PDF 预览实现（走前端 PDF.js），技术细节见 #16。**
 
-当前 `fileContent` 把 `pdf`、Office、压缩包等格式归为「其他」——只有通用文件
-图标、不展开预览。本迭代补这三类格式的预览。
+原规划：当前 `fileContent` 把 `pdf`、Office、压缩包等格式归为「其他」——只有
+通用文件图标、不展开预览。本迭代补这三类格式的预览。
 
 ### 14.1 范围与识别
 
@@ -870,3 +871,73 @@ Chromium 的设计：DOM 元素移除后，解码的图片位图和媒体缓冲�
   priv-WS（预期关闭后回落 ~15MB 基线）。
 - CDP/手动：文本/文本文件/图片/音频/视频预览、磁吸跟随、拖主窗跟随、溢出贴左、
   Esc/点击关闭、失焦一起隐藏、快速滚动防抖不闪。
+
+## 16. PDF 预览 + 源码/歌词归文本 + 音乐分类 + 预览开关 + 左磁吸重叠修复（已实现）
+
+**状态：已实现（2026-08-15）。grill-me 定稿：压缩包/Office 放弃，仅 PDF；PDF 走
+前端 PDF.js（懒加载）；预览开关默认开、只关卫星窗；左右都放不下时隐藏卫星窗。**
+
+承接 #15（独立磁吸预览窗口）。本迭代四个改动：
+
+### 16.1 PDF 预览（PDF.js，多页可翻）
+
+- **技术选型**：前端 `pdfjs-dist`（v6，npm 走镜像 `--registry=https://registry.npmmirror.com`），
+  放弃后端 PDFium——PDFium 的 DLL 需构建时从 GitHub 下载（违背「始终用镜像源」铁律），
+  且主进程常驻 +25~40MB 不可回收；PDF.js 懒加载后 ~5MB 常驻**卫星 renderer**（契合
+  #15 已接受的回收模型，主 renderer 零影响）。CSP 为 `null`、asset 范围 `**`，无阻碍。
+- **懒加载**：`await import("pdfjs-dist")`（Vite 分包 `pdf-*.js` 479KB + worker
+  1.26MB），首次预览 PDF 才进卫星 renderer；worker 用
+  `new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url)`。
+- **手写迷你查看器**（不用整套 viewer UI，320px 卫星窗够用）：`.preview-pdf-scroll`
+  滚动区 + canvas + 工具栏 `‹ › 页码 ‹/ › ＋ − 缩放`。**只渲染当前可见页**，
+  `pdfRenderToken` + `pdfRenderTask.cancel()` 保证快速翻页不交错；离屏页 `page.cleanup()`，
+  切换文件 `loadingTask.destroy()`。
+- **文件读取**：`getDocument({ url: convertFileSrc(path) })`——asset:// 经
+  `http://asset.localhost`（CORS 由 Tauri asset 协议放行），无需新后端命令。
+- **未配置 cMap / wasm / standard_fonts**：非内嵌 CJK/标准字体与 JBIG2/JPEG2000 的
+  极端 PDF 会降级（控制台警告、个别字形缺失）——v1 接受，后续可在 `getDocument`
+  选项里补目录 URL。放大仍受 320px 宽限制（缩放解决），卫星窗为 PDF 单独加宽留作后续。
+
+### 16.2 源码/歌词归文本
+
+`TEXT_EXTS` / `file_content_kind`（前后端两份，保持一致）扩扩展名：新增常见编程语言
+`kt swift php rb dart scala cs fs fsx r pl hs zig nim ex exs erl clj vue svelte jsx tsx
+mjs cjs groovy gradle proto gql tex`，歌词 `.lrc`，字幕 `.srt .vtt .ass`。文本行已有
+T tile + 卫星文本预览，无 UI 改动。
+
+### 16.3 「音乐」分类 + 预览开关 + 左磁吸重叠修复
+
+- **音乐分类**：`ClipKind` 加 `"music"`，插到 图片 和 视频 之间；后端 `search_history`
+  `"music" => file_content_kind == "audio"`（SQL 走 `kind='file'` + Rust 后过滤）；
+  i18n `clipCategoryMusic` ×3。音频行本就有音符 tile（沿用）。
+- **预览开关**：`clipboard.preview`（默认**开**），设置/剪贴板顶部新增「开启预览」
+  Toggle（i18n ×3 + 提示文案）。关闭时前端 `previewEnabled` 信号门控卫星同步
+  （`req = null` → `close_preview`），后端 `show_preview` 也门控（teardown 兜底）。
+  **只关卫星窗**——列表内图片行内缩略图保留。
+- **左磁吸重叠修复**（#16 修 #15 的一个 bug，用户复测发现未根治，**两层根因**）：
+  **①钳制**——`dock_position` 左分支原来把位置 `max()` 钳进工作区左缘，主窗贴
+  左缘且右侧放不下时（高 DPI / 窄工作区最常见）卫星窗与主窗重叠。修：左停靠 =
+  `main_pos.x - preview_width`（贴紧），`dock_position` 改返回 `Option<Position>`，
+  两侧都放不下 → `None`，`redock` 隐藏卫星窗（页面保留、不导航 about:blank，
+  移回后可立即再贴）。**②不可见非客户区**——用户复测仍重叠 ~8px。加 Rust 临时
+  `eprintln` 实测地面真值（`scripts/cdp_dock_measure.mjs` + stderr 捕获）：
+  `main_pos=(1469,2)`、`dock=(989,2)`、`set_position` 后 `outer=(989,2)` 但
+  `inner=(1000,4)`——**预览窗虽 `decorations(false)` 仍带 ~11px 左 / ~2px 顶
+  不可见边框**（150% DPI）。`set_position` 设的是**外框**，而磁吸数学算的是
+  **客户区**：左停靠时预览客户区右缘 = 989+11+480 = 1480 > 主窗客户区左缘 1469
+  → 重叠 11px；右侧同理有 11px 隐藏间隙（#15 曾误判为 ~1px）。修：在 `redock`
+  用同样的 `GetClientRect`+`ClientToScreen`（预览自身 HWND）量出 client→outer
+  inset，`set_position(client_target - inset)`——**两侧客户区都真正贴紧 0 间距**
+  （CDP 实测左 overlap=0.0、右 gap=0.0 CSS px）。**附注**：磁吸数学本身没错，
+  bug 全在「外框 vs 客户区」的坐标系错位。另将 `custom-protocol` 加进
+  Cargo.toml tauri features——否则裸 `cargo build --release` 出 dev 版
+  （`cfg(dev) = !custom_protocol`，加载 localhost:1420 而非内嵌前端）。
+
+### 测试
+
+- 单元（62 通过）：`file_content_kind_extends_source_lyrics_and_pdf`（新扩展名/
+  .lrc/.srt/.ass/pdf）、`search_filters_by_kind_and_source_app`（+ music 分支）、
+  `dock_left_flush_matches_right_gap` / `dock_left_hidden_when_no_room_on_either_side`
+  （`dock_position` 改 Option 后贴紧 + None 兜底）、settings `preview` 默认 true。
+- CDP（`scripts/cdp_feature_smoke.mjs`）：PDF 卫星渲染 canvas、音乐分类介于图片/
+  视频之间且过滤音频行、.lrc 进文本预览、开关关闭卫星不弹、设置页剪贴板栏渲染开关。

@@ -115,6 +115,7 @@
   "clipCategoryText": "文字",
   "clipCategoryTextFile": "文字檔案",
   "clipCategoryImage": "圖片",
+  "clipCategoryMusic": "音樂",
   "clipCategoryVideo": "影片",
   "clipCategoryFavorites": "收藏",
   "clipTotal": "共 {count} 條",
@@ -156,5 +157,7 @@
   "clipMergeWindow": "合併視窗",
   "clipMergedCount": "合併複製 {count} 條",
   "clipHoverSelect": "懸停選取條目",
-  "clipFavoritesTop": "收藏的條目置頂顯示"
+  "clipFavoritesTop": "收藏的條目置頂顯示",
+  "settingsClipPreview": "開啟預覽",
+  "settingsClipPreviewHint": "關閉後選取條目不再彈出預覽視窗（清單內縮圖保留）"
 }

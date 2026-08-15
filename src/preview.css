@@ -90,3 +90,68 @@ audio {
   color: #f08;
   padding: 12px;
 }
+
+/* PDF (PDF.js): a scrollable page area + a compact flip/zoom toolbar. */
+.preview-pdf {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-pdf-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  scrollbar-width: none;
+}
+
+.preview-pdf-canvas {
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+  flex: none;
+}
+
+.preview-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: rgba(242, 242, 242, 0.75);
+  user-select: none;
+}
+
+.preview-pdf-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f2f2;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.preview-pdf-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.preview-pdf-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.preview-pdf-sep {
+  flex: 1;
+}
+
+.preview-pdf-page {
+  white-space: nowrap;
+}

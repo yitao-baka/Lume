@@ -23,6 +23,9 @@ const SETTINGS_WINDOW: &str = "settings";
 const PREVIEW_WINDOW: &str = "preview";
 /// Fixed logical width of the satellite preview window (the old `PREVIEW_W`).
 const PREVIEW_W_LOGICAL: f64 = 320.0;
+/// Logical px of breathing room between the launcher and the satellite preview
+/// (applied to the client areas on BOTH sides — a left dock keeps the same gap).
+const PREVIEW_GAP_LOGICAL: f64 = 4.0;
 
 /// Last foreground window HWND captured before the launcher is shown — used by
 /// the clipboard auto-paste feature to send content back to the right window.
@@ -325,11 +328,11 @@ pub struct PreviewState(pub Mutex<Option<PreviewRequest>>);
 /// What the satellite preview window renders.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PreviewRequest {
-    /// `"text" | "textfile" | "image" | "audio" | "video"`.
+    /// `"text" | "textfile" | "image" | "audio" | "video" | "pdf"`.
     pub kind: String,
     /// The copied text itself (`kind == "text"`).
     pub content: Option<String>,
-    /// A file path (`textfile` / `audio` / `video`, and image-*file* rows).
+    /// A file path (`textfile` / `audio` / `video` / `pdf`, and image-*file* rows).
     pub path: Option<String>,
     /// A clipboard row id (image-*kind* rows: resolved via `get_clipboard_image`).
     pub id: Option<u32>,
@@ -344,6 +347,17 @@ pub struct PreviewRequest {
 /// blur-to-hide rule would otherwise fire).
 #[tauri::command]
 pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
+    // 设置/剪贴板 → 开启预览: when off, the satellite never shows. Idempotent
+    // teardown also reclaims any preview a toggle-off left on screen.
+    if !app
+        .state::<crate::settings::SettingsState>()
+        .current()
+        .clipboard
+        .preview
+    {
+        teardown_preview(&app);
+        return Ok(());
+    }
     let preview = app
         .get_webview_window(PREVIEW_WINDOW)
         .ok_or_else(|| "preview window not found".to_string())?;
@@ -363,7 +377,10 @@ pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
         preview.navigate(preview_page_url(&app)).map_err(|e| e.to_string())?;
     }
     // Dock + size before reveal; works while hidden too.
-    redock(&app).map_err(|e| e.to_string())?;
+    if !redock(&app).map_err(|e| e.to_string())? {
+        // No room on either side — the window stays hidden (see `dock_position`).
+        return Ok(());
+    }
     if !preview.is_visible().map_err(|e| e.to_string())? {
         // Show WITHOUT activating — `preview.show()` (SW_SHOW) can still make
         // the launcher lose focus and trigger its blur-to-hide, even though the
@@ -434,12 +451,14 @@ pub fn preview_has_cursor(app: &AppHandle) -> bool {
 /// Size (320 logical wide, the main window's current logical height) and dock
 /// the preview flush to the main window. Re-run on every `show_preview` and on
 /// the main window's Moved/Resized. No-op when either window is missing.
-pub fn redock(app: &AppHandle) -> tauri::Result<()> {
+/// Returns `true` when the preview was placed, `false` when no side has room
+/// (the window is hidden instead of overlapping the main window).
+pub fn redock(app: &AppHandle) -> tauri::Result<bool> {
     let Some(main) = app.get_webview_window(MAIN_WINDOW) else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(preview) = app.get_webview_window(PREVIEW_WINDOW) else {
-        return Ok(());
+        return Ok(false);
     };
     let sf = main.scale_factor()?;
     // Dock to the main window's on-screen CLIENT area — the visible launcher
@@ -467,32 +486,72 @@ pub fn redock(app: &AppHandle) -> tauri::Result<()> {
     preview.set_size(logical)?;
     let preview_phys = logical.to_physical::<u32>(sf);
     let Some(monitor) = main.current_monitor()? else {
-        return Ok(());
+        return Ok(false);
     };
-    let pos = dock_position(main_pos, main_size, preview_phys, monitor.work_area());
-    preview.set_position(pos)?;
-    Ok(())
+    // `dock_position` returns the desired preview CLIENT origin. But the preview
+    // window keeps a small non-client frame even though it is `decorations(false)`
+    // (a ~11px left / ~2px top border at 150% DPI, measured via the same
+    // GetClientRect + ClientToScreen probe used for the main window), and
+    // `set_position` places the OUTER origin. Docking on the client origin
+    // directly would overlap the main window by that left margin on a LEFT dock
+    // (and leave a matching hidden gap on a RIGHT dock). Offset the outer target
+    // back by the measured client→outer inset so both sides are truly flush.
+    let gap = (PREVIEW_GAP_LOGICAL * sf).round() as i32;
+    let client_target = match dock_position(main_pos, main_size, preview_phys, gap, monitor.work_area()) {
+            Some(pos) => pos,
+            // Neither side fits flush (see `dock_position`) — the preview cannot be
+            // docked without overlapping the main window, so hide it. The page stays
+            // loaded so a later re-dock (window moved back, next selection change)
+            // shows instantly.
+            None => {
+                if let Ok(hwnd) = preview.hwnd() {
+                    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+                    unsafe {
+                        let _ = ShowWindow(hwnd, SW_HIDE);
+                    }
+                }
+                return Ok(false);
+            }
+        };
+    let pv_hwnd = preview.hwnd()?;
+    let mut pv_rect = RECT::default();
+    let mut pv_origin = POINT::default();
+    unsafe {
+        let _ = GetClientRect(pv_hwnd, &mut pv_rect);
+        let _ = ClientToScreen(pv_hwnd, &mut pv_origin);
+    }
+    let pv_outer = preview.outer_position()?;
+    let inset_x = pv_origin.x - pv_outer.x;
+    let inset_y = pv_origin.y - pv_outer.y;
+    preview.set_position(PhysicalPosition::new(
+        client_target.x - inset_x,
+        client_target.y - inset_y,
+    ))?;
+    Ok(true)
 }
 
-/// Pure dock math (unit-testable): flush to the main window's outer right
-/// edge, top-aligned. If that would overflow the monitor work area's right
-/// edge, dock to the main window's LEFT edge instead (clamped into the area).
+/// Pure dock math (unit-testable): the desired preview **CLIENT** origin — the
+/// main window's client right edge plus `gap`, top-aligned, or (when that
+/// overflows the work area) the main window's client LEFT edge minus `gap` —
+/// the same `gap` on both sides. When the main window sits so close to the work
+/// area's left edge that a left dock (gap included) would run off-screen
+/// (overlapping the main window), there is no room on either side — return
+/// `None` so the caller hides the preview.
 fn dock_position(
     main_pos: PhysicalPosition<i32>,
     main_size: PhysicalSize<u32>,
     preview_size: PhysicalSize<u32>,
+    gap: i32,
     work_area: &PhysicalRect<i32, u32>,
-) -> PhysicalPosition<i32> {
+) -> Option<PhysicalPosition<i32>> {
     let right = main_pos.x + main_size.width as i32;
     let work_right = work_area.position.x + work_area.size.width as i32;
-    let fits_right = right + preview_size.width as i32 <= work_right;
+    let fits_right = right + gap + preview_size.width as i32 <= work_right;
     if fits_right {
-        PhysicalPosition::new(right, main_pos.y)
+        Some(PhysicalPosition::new(right + gap, main_pos.y))
     } else {
-        PhysicalPosition::new(
-            (main_pos.x - preview_size.width as i32).max(work_area.position.x),
-            main_pos.y,
-        )
+        let left = main_pos.x - gap - preview_size.width as i32;
+        (left >= work_area.position.x).then(|| PhysicalPosition::new(left, main_pos.y))
     }
 }
 
@@ -529,9 +588,10 @@ mod tests {
             PhysicalPosition::new(100, 50),
             PhysicalSize::new(720, 480),
             PhysicalSize::new(320, 480),
+            0,
             &wa(),
         );
-        assert_eq!(pos, PhysicalPosition::new(820, 50));
+        assert_eq!(pos, Some(PhysicalPosition::new(820, 50)));
     }
 
     #[test]
@@ -540,9 +600,10 @@ mod tests {
             PhysicalPosition::new(100, 50),
             PhysicalSize::new(300, 480),
             PhysicalSize::new(320, 480),
+            0,
             &wa(), // 400 + 320 == 1920? no — work area right = 1920, so 720 fits
         );
-        assert_eq!(pos, PhysicalPosition::new(400, 50));
+        assert_eq!(pos, Some(PhysicalPosition::new(400, 50)));
     }
 
     #[test]
@@ -551,23 +612,91 @@ mod tests {
             PhysicalPosition::new(1400, 50),
             PhysicalSize::new(720, 480),
             PhysicalSize::new(320, 480),
+            0,
             &wa(), // 1400 + 720 + 320 = 2440 > 1920 → left at 1080
         );
-        assert_eq!(pos, PhysicalPosition::new(1080, 50));
+        assert_eq!(pos, Some(PhysicalPosition::new(1080, 50)));
     }
 
     #[test]
-    fn dock_left_clamped_into_work_area() {
+    fn dock_left_flush_matches_right_gap() {
+        // The left dock carries the same gap as the right side: the preview's
+        // right edge sits `gap` px to the left of the main window's left edge.
+        let pos = dock_position(
+            PhysicalPosition::new(900, 50),
+            PhysicalSize::new(1000, 480), // right = 1900 + 320 > 1920 → left
+            PhysicalSize::new(320, 480),
+            0,
+            &wa(), // left = 900 - 320 = 580, within the work area
+        );
+        assert_eq!(pos, Some(PhysicalPosition::new(580, 50)));
+    }
+
+    #[test]
+    fn dock_applies_gap_on_both_sides() {
+        // A nonzero gap moves the preview away from the main on EACH side.
+        let right = dock_position(
+            PhysicalPosition::new(100, 50),
+            PhysicalSize::new(720, 480),
+            PhysicalSize::new(320, 480),
+            6,
+            &wa(),
+        );
+        assert_eq!(right, Some(PhysicalPosition::new(826, 50)));
+        let left = dock_position(
+            PhysicalPosition::new(1400, 50),
+            PhysicalSize::new(720, 480),
+            PhysicalSize::new(320, 480),
+            6,
+            &wa(), // right = 1400+720+6+320 > 1920 → left = 1400-6-320 = 1074
+        );
+        assert_eq!(left, Some(PhysicalPosition::new(1074, 50)));
+    }
+
+    #[test]
+    fn dock_gap_takes_the_last_slot() {
+        // The gap counts toward the work-area budget: with main at x=426 a
+        // 6px gap just fits on the left (426-6-320 = 100 = work left), while a
+        // 7px gap leaves no room on either side → None (preview hidden).
+        let wa = PhysicalRect {
+            position: PhysicalPosition::new(100, 0),
+            size: PhysicalSize::new(800, 600), // right = 900
+        };
+        let fits = dock_position(
+            PhysicalPosition::new(426, 50),
+            PhysicalSize::new(400, 480), // right = 426+400+6+320 = 1152 > 900
+            PhysicalSize::new(320, 480),
+            6,
+            &wa, // left = 426-6-320 = 100 ≥ 100
+        );
+        assert_eq!(fits, Some(PhysicalPosition::new(100, 50)));
+        let none = dock_position(
+            PhysicalPosition::new(426, 50),
+            PhysicalSize::new(400, 480),
+            PhysicalSize::new(320, 480),
+            7,
+            &wa, // left = 426-7-320 = 99 < 100 → no room
+        );
+        assert_eq!(none, None);
+    }
+
+    #[test]
+    fn dock_left_hidden_when_no_room_on_either_side() {
+        // Main window close to the left edge AND the right side overflowing
+        // (high DPI / narrow work area): a left dock would run off the work
+        // area and overlap the main window — return None so the caller hides
+        // the preview instead.
         let wa = PhysicalRect {
             position: PhysicalPosition::new(100, 0),
             size: PhysicalSize::new(800, 600),
         };
         let pos = dock_position(
             PhysicalPosition::new(200, 50),
-            PhysicalSize::new(400, 480),
+            PhysicalSize::new(400, 480), // right = 200+400+320 = 920 > 900
             PhysicalSize::new(320, 480),
-            &wa, // left = 200-320 = -120 → clamp to work_area.x = 100
+            0,
+            &wa, // left = 200-320 = -120 < work_area.x = 100 → no room
         );
-        assert_eq!(pos, PhysicalPosition::new(100, 50));
+        assert_eq!(pos, None);
     }
 }

@@ -65,5 +65,8 @@ export interface SettingsData {
     hover_select: boolean;
     /** Sort favorited (pinned) entries to the top of the list. */
     favorites_top: boolean;
+    /** Show the satellite preview window (设置/剪贴板 → 开启预览). Off = the
+     * preview window never appears; inline row thumbnails stay. */
+    preview: boolean;
   };
 }

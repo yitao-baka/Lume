@@ -446,7 +446,7 @@ fn search_history(
     match kind {
         "text" => sql.push_str(" AND kind = 'text'"),
         // File-content categories query file rows, then post-filter in Rust.
-        "textfile" | "video" => sql.push_str(" AND kind = 'file'"),
+        "textfile" | "music" | "video" => sql.push_str(" AND kind = 'file'"),
         "image" => sql.push_str(" AND kind IN ('image', 'file')"),
         "favorites" => sql.push_str(" AND pinned = 1"),
         _ => {} // "all" — no extra filter
@@ -479,6 +479,10 @@ fn search_history(
         "textfile" => rows
             .into_iter()
             .filter(|r| first_path(r).map(file_content_kind) == Some("text"))
+            .collect(),
+        "music" => rows
+            .into_iter()
+            .filter(|r| first_path(r).map(file_content_kind) == Some("audio"))
             .collect(),
         "video" => rows
             .into_iter()
@@ -762,8 +766,8 @@ fn is_ignored(ignore: &[String], source: &str) -> bool {
 }
 
 /// Content kind of a file path by extension: `"text"` | `"audio"` | `"video"`
-/// | `"image"` | `"other"` (drives the 文本文件 / 图片 / 视频 categories and
-/// mirrors `src/App.tsx` `fileContent`). Pure — unit-tested.
+/// | `"image"` | `"pdf"` | `"other"` (drives the 文本文件 / 图片 / 音乐 / 视频
+/// categories and mirrors `src/App.tsx` `fileContent`). Pure — unit-tested.
 fn file_content_kind(path: &str) -> &'static str {
     let ext = Path::new(path)
         .extension()
@@ -772,9 +776,16 @@ fn file_content_kind(path: &str) -> &'static str {
         .to_lowercase();
     if matches!(
         ext.as_str(),
-        "txt" | "md" | "log" | "json" | "rs" | "toml" | "ini" | "cfg" | "py" | "js"
-            | "ts" | "html" | "css" | "xml" | "yaml" | "yml" | "csv" | "sh" | "bat"
-            | "ps1" | "sql" | "c" | "cpp" | "h" | "java" | "go" | "lua"
+        // Markup / data
+        "txt" | "md" | "log" | "json" | "toml" | "ini" | "cfg" | "yaml" | "yml" | "csv"
+            | "html" | "css" | "xml" | "sh" | "bat" | "ps1" | "sql" | "tex"
+            // Source code (common programming languages)
+            | "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "mjs" | "cjs" | "c" | "cpp" | "h"
+            | "java" | "go" | "lua" | "kt" | "swift" | "php" | "rb" | "dart" | "scala"
+            | "cs" | "fs" | "fsx" | "r" | "pl" | "hs" | "zig" | "nim" | "ex" | "exs"
+            | "erl" | "clj" | "vue" | "svelte" | "groovy" | "gradle" | "proto" | "gql"
+            // Lyrics & subtitles
+            | "lrc" | "srt" | "vtt" | "ass"
     ) {
         "text"
     } else if matches!(
@@ -792,6 +803,8 @@ fn file_content_kind(path: &str) -> &'static str {
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "svg" | "tif" | "tiff"
     ) {
         "image"
+    } else if ext == "pdf" {
+        "pdf"
     } else {
         "other"
     }
@@ -2198,12 +2211,15 @@ mod tests {
         insert_file_history(&conn, &["C:/a.txt".into()], "Explorer", TEST_CAP, &base).unwrap();
         insert_file_history(&conn, &["C:/b.mkv".into()], "Explorer", TEST_CAP, &base).unwrap();
         insert_file_history(&conn, &["C:/c.png".into()], "Explorer", TEST_CAP, &base).unwrap();
+        insert_file_history(&conn, &["C:/d.mp3".into()], "Explorer", TEST_CAP, &base).unwrap();
         insert_image_history(&conn, &sample_png(), "Snipping", TEST_CAP, &base).unwrap();
         assert_eq!(search_history(&conn, "", "text", 20, &base, false).unwrap().len(), 1);
-        // Content-kind categories: 文本文件 / 图片 / 视频 filter file rows by
-        // extension (图片 also includes image rows).
+        // Content-kind categories: 文本文件 / 音乐 / 图片 / 视频 filter file
+        // rows by extension (图片 also includes image rows).
         assert_eq!(search_history(&conn, "", "textfile", 20, &base, false).unwrap().len(), 1);
         assert_eq!(search_history(&conn, "", "textfile", 20, &base, false).unwrap()[0].content, "C:/a.txt");
+        assert_eq!(search_history(&conn, "", "music", 20, &base, false).unwrap().len(), 1);
+        assert_eq!(search_history(&conn, "", "music", 20, &base, false).unwrap()[0].content, "C:/d.mp3");
         assert_eq!(search_history(&conn, "", "video", 20, &base, false).unwrap().len(), 1);
         assert_eq!(search_history(&conn, "", "video", 20, &base, false).unwrap()[0].content, "C:/b.mkv");
         assert_eq!(search_history(&conn, "", "image", 20, &base, false).unwrap().len(), 2, "image rows + image-content file rows");
@@ -2218,6 +2234,35 @@ mod tests {
         assert_eq!(favs.len(), 1);
         assert_eq!(favs[0].kind, "image");
         fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn file_content_kind_extends_source_lyrics_and_pdf() {
+        // Existing text extensions stay text.
+        assert_eq!(file_content_kind("C:/x.rs"), "text");
+        assert_eq!(file_content_kind("C:/x.ts"), "text");
+        // Newly added source-code languages.
+        for ext in [
+            "kt", "swift", "php", "rb", "dart", "scala", "cs", "fs", "fsx", "r", "pl", "hs",
+            "zig", "nim", "ex", "exs", "erl", "clj", "vue", "svelte", "jsx", "tsx", "mjs",
+            "cjs", "groovy", "gradle", "proto", "gql", "tex",
+        ] {
+            assert_eq!(file_content_kind(&format!("C:/song.{ext}")), "text", "{ext}");
+        }
+        // Lyrics and subtitles are text.
+        assert_eq!(file_content_kind("C:/lyrics.lrc"), "text");
+        assert_eq!(file_content_kind("C:/sub.srt"), "text");
+        assert_eq!(file_content_kind("C:/sub.vtt"), "text");
+        assert_eq!(file_content_kind("C:/sub.ass"), "text");
+        // PDF is its own kind (drives the satellite PDF preview).
+        assert_eq!(file_content_kind("C:/doc.pdf"), "pdf");
+        assert_eq!(file_content_kind("C:/doc.PDF"), "pdf", "case-insensitive");
+        // Audio / video / image unchanged.
+        assert_eq!(file_content_kind("C:/song.mp3"), "audio");
+        assert_eq!(file_content_kind("C:/movie.mkv"), "video");
+        assert_eq!(file_content_kind("C:/pic.png"), "image");
+        assert_eq!(file_content_kind("C:/arch.zip"), "other");
+        assert_eq!(file_content_kind("C:/noext"), "other");
     }
 
     #[test]

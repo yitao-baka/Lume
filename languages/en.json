@@ -13,6 +13,7 @@
   "clipCategoryText": "Text",
   "clipCategoryTextFile": "Text files",
   "clipCategoryImage": "Images",
+  "clipCategoryMusic": "Music",
   "clipCategoryVideo": "Videos",
   "clipCategoryFavorites": "Favorites",
   "clipTotal": "{count} items",
@@ -156,5 +157,7 @@
   "clipMergeWindow": "Merge window",
   "clipMergedCount": "{count} merged copies",
   "clipHoverSelect": "Select entries on hover",
-  "clipFavoritesTop": "Show favorited entries on top"
+  "clipFavoritesTop": "Show favorited entries on top",
+  "settingsClipPreview": "Preview",
+  "settingsClipPreviewHint": "Off = no preview window pops for selected entries (inline thumbnails stay)"
 }

@@ -174,6 +174,11 @@ pub struct Clipboard {
     /// Sort favorited (pinned) entries to the top of the list.
     #[serde(default)]
     pub favorites_top: bool,
+    /// Show the satellite preview window for text / files / images / audio /
+    /// video / PDF rows (设置/剪贴板 → 开启预览). Off = the satellite never
+    /// appears; inline row thumbnails stay.
+    #[serde(default = "default_true")]
+    pub preview: bool,
 }
 
 /// Default clipboard history cap (200 entries).
@@ -249,6 +254,7 @@ impl Default for Settings {
                 merge_window_ms: 1500,
                 hover_select: false,
                 favorites_top: false,
+                preview: true,
             },
         }
     }

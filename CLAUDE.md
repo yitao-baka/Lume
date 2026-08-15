@@ -128,7 +128,35 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**独立磁吸预览窗口 (ROADMAP #15, complete) — as of 2026-08-15**: all clipboard
+**PDF 预览 + 源码/歌词归文本 + 音乐分类 + 预览开关 + 左磁吸重叠修复 (ROADMAP #16,
+complete) — as of 2026-08-15**: PDF preview via frontend PDF.js (`pdfjs-dist` v6,
+lazy-`import` so the ~480KB chunk + 1.26MB worker only load into the satellite
+renderer on first PDF; hand-rolled mini viewer renders **only the visible page**,
+page-flip/zoom toolbar, asset:// fetch, worker via `new URL(...pdf.worker.min.mjs,
+import.meta.url)`); Office + 压缩包 preview dropped by decision (grill-me). Text
+extensions extended (`TEXT_EXTS` + `file_content_kind` keep both copies in sync):
+common source langs (`kt swift php rb dart scala cs fs fsx r pl hs zig nim ex exs
+erl clj vue svelte jsx tsx mjs cjs groovy gradle proto gql tex`), lyrics `.lrc`,
+subtitles `.srt .vtt .ass`. New 音乐 category between 图片 and 视频
+(`ClipKind "music"` → `search_history` filters `file_content_kind == "audio"`;
+audio rows already had the music-note tile). New 开启预览 toggle
+(`clipboard.preview`, default **on**, in 设置/剪贴板) — frontend `previewEnabled`
+gates the satellite sync and backend `show_preview` gates too (teardown); only the
+satellite is disabled, inline row thumbnails stay. Left-dock overlap bug fixed —
+**two root causes**: ① `dock_position`'s left branch clamped into the work area
+(overlapped when main sat near the left edge + right overflowed); now returns the
+desired **client** origin and `Option<Position>` (None → `redock` hides), and
+② even `decorations(false)` the preview keeps a ~11px invisible non-client frame
+(measured via `GetClientRect`+`ClientToScreen` on the preview HWND) while
+`set_position` sets the **outer** origin — `redock` now measures the
+client→outer inset and calls `set_position(client_target - inset)`, so BOTH sides
+are truly flush (CDP-verified 0.0px gap/overlap). Also added `custom-protocol` to
+the tauri crate features — without it a bare `cargo build --release` builds a DEV
+binary (`cfg(dev) = !custom_protocol`, loads localhost:1420 instead of the
+embedded frontend); with it cargo builds are production. Details + trade-offs in
+`docs/ROADMAP.md` #16.
+
+**Prior: 独立磁吸预览窗口 (ROADMAP #15, complete) — as of 2026-08-15**: all clipboard
 previews (text / text files / images / audio / video) moved out of the main
 renderer into a separate satellite window (`preview`, created at startup,
 frameless, `WS_EX_NOACTIVATE` non-activating, docked flush to the launcher's

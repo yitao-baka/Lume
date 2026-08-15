@@ -54,14 +54,14 @@ interface DeletedClip {
   source_app: string;
 }
 
-/** A clipboard filter category (`favorites` = pinned only). 文本文件/图片/视频
+/** A clipboard filter category (`favorites` = pinned only). 文本文件/音乐/图片/视频
  * are content-kind filters over file rows (图片 also includes image rows). */
-type ClipKind = "all" | "text" | "textfile" | "image" | "video" | "favorites";
+type ClipKind = "all" | "text" | "textfile" | "image" | "music" | "video" | "favorites";
 
 /** Payload pushed to the satellite preview window (mirrors the Rust
  * `PreviewRequest` in window.rs). */
 interface PreviewReq {
-  kind: "text" | "textfile" | "image" | "audio" | "video";
+  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf";
   content: string | null;
   path: string | null;
   id: number | null;
@@ -130,14 +130,22 @@ function clipMeta(item: ClipboardItem, showSource: boolean, absolute: boolean): 
 /** A file's content kind (by extension) — drives the tile icon and whether
  * the preview pane opens. `"other"` (binaries like .dll/.exe/.zip) never opens
  * the preview pane. */
-type FileContent = "text" | "audio" | "video" | "image" | "other";
+type FileContent = "text" | "audio" | "video" | "image" | "pdf" | "other";
 const TEXT_EXTS = new Set([
-  "txt","md","log","json","rs","toml","ini","cfg","py","js","ts","html","css",
-  "xml","yaml","yml","csv","sh","bat","ps1","sql","c","cpp","h","java","go","lua",
+  // Markup / data
+  "txt","md","log","json","toml","ini","cfg","yaml","yml","csv",
+  "html","css","xml","sh","bat","ps1","sql","tex",
+  // Source code (common programming languages)
+  "rs","py","js","ts","jsx","tsx","mjs","cjs","c","cpp","h","java","go","lua",
+  "kt","swift","php","rb","dart","scala","cs","fs","fsx","r","pl","hs","zig","nim",
+  "ex","exs","erl","clj","vue","svelte","groovy","gradle","proto","gql",
+  // Lyrics & subtitles
+  "lrc","srt","vtt","ass",
 ]);
 const AUDIO_EXTS = new Set(["mp3","wav","flac","ogg","m4a","aac","wma","opus","mid","midi"]);
 const VIDEO_EXTS = new Set(["mp4","mkv","webm","mov","avi","wmv","flv","m4v","mpg","mpeg"]);
 const IMAGE_EXTS = new Set(["png","jpg","jpeg","gif","bmp","webp","ico","svg","tif","tiff"]);
+const PDF_EXTS = new Set(["pdf"]);
 
 function fileContent(name: string): FileContent {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -145,6 +153,7 @@ function fileContent(name: string): FileContent {
   if (AUDIO_EXTS.has(ext)) return "audio";
   if (VIDEO_EXTS.has(ext)) return "video";
   if (IMAGE_EXTS.has(ext)) return "image";
+  if (PDF_EXTS.has(ext)) return "pdf";
   return "other";
 }
 
@@ -165,6 +174,7 @@ function previewTarget(item: ClipboardItem | undefined): PreviewReq | null {
   if (fc === "audio") return { kind: "audio", content: null, path: first, id: null };
   if (fc === "video") return { kind: "video", content: null, path: first, id: null };
   if (fc === "image") return { kind: "image", content: null, path: first, id: null };
+  if (fc === "pdf") return { kind: "pdf", content: null, path: first, id: null };
   return null; // "other" — binary; no preview
 }
 
@@ -213,6 +223,7 @@ const CLIP_CATS: { kind: ClipKind; label: string }[] = [
   { kind: "text", label: "clipCategoryText" },
   { kind: "textfile", label: "clipCategoryTextFile" },
   { kind: "image", label: "clipCategoryImage" },
+  { kind: "music", label: "clipCategoryMusic" },
   { kind: "video", label: "clipCategoryVideo" },
   { kind: "favorites", label: "clipCategoryFavorites" },
 ];
@@ -307,6 +318,9 @@ function App() {
   const [hoverSelect, setHoverSelect] = createSignal(clipCfg?.hover_select ?? false);
   /** Runtime pause for clipboard recording (status-bar toggle, not persisted). */
   const [clipPaused, setClipPaused] = createSignal(false);
+  /** Settings-driven: show the satellite preview window (设置/剪贴板 → 开启预览).
+   * Off = no preview ever pops; inline row thumbnails stay. */
+  const [previewEnabled, setPreviewEnabled] = createSignal(clipCfg?.preview ?? true);
   let toastTimer: number | undefined;
   /** Virtual-list scroll container + its scroll/viewport state. */
   let clipScrollEl: HTMLDivElement | undefined;
@@ -882,6 +896,7 @@ function App() {
       setTimeDisplayAbs(s.clipboard?.time_display === "absolute");
       setPasteClose(s.clipboard?.paste_close ?? true);
       setHoverSelect(s.clipboard?.hover_select ?? false);
+      setPreviewEnabled(s.clipboard?.preview ?? true);
     } catch {
       // Keep defaults if settings can't be read.
     }
@@ -1261,8 +1276,10 @@ function App() {
     void clipKind();
     void clips();
     void selected();
+    void previewEnabled();
     const item = mode() === "clipboard" ? clips()[selected()] : undefined;
-    const req = item ? previewTarget(item) : null;
+    // 开启预览 off → never open the satellite (close_preview handles teardown).
+    const req = item && previewEnabled() ? previewTarget(item) : null;
     setCurrentPreview(req);
     clearTimeout(previewTimer);
     previewTimer = window.setTimeout(() => {

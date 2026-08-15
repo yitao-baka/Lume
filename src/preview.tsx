@@ -13,16 +13,22 @@
  * (selection changes don't reload the page — no flicker). Esc / close handling
  * lives in the MAIN window (a non-activating window never receives keys); the
  * × button here is the in-window close affordance.
+ *
+ * PDF preview (ROADMAP #14, PDF.js): `pdfjs-dist` is imported lazily so the
+ * ~MB library only loads into this renderer on the first PDF preview. Only the
+ * visible page is rendered (canvas re-drawn on page/zoom change) and previous
+ * docs are destroyed, so a giant PDF never pins the whole document in memory.
  */
 import { render } from "solid-js/web";
-import { createSignal, onMount, Show, Switch, Match } from "solid-js";
+import { createSignal, createEffect, onMount, Show, Switch, Match } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import "./preview.css";
 
 /** Mirrors the Rust `PreviewRequest` (window.rs). */
 interface PreviewRequest {
-  kind: "text" | "textfile" | "image" | "audio" | "video";
+  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf";
   content: string | null;
   path: string | null;
   id: number | null;
@@ -37,7 +43,76 @@ function PreviewApp() {
   /** "contain" fits the image; clicking toggles to "one-one" (natural size). */
   const [fit, setFit] = createSignal<"contain" | "one-one">("contain");
 
-  /** Render a request: resolve per-kind asset URLs (textfile/image/video are async). */
+  // ── PDF (PDF.js) state ───────────────────────────────────────────────────
+  const [pdfDoc, setPdfDoc] = createSignal<PDFDocumentProxy | null>(null);
+  const [pdfPage, setPdfPage] = createSignal(1);
+  /** Zoom multiplier; 1 = fit the page width to the window. */
+  const [pdfScale, setPdfScale] = createSignal(1);
+  const [pdfError, setPdfError] = createSignal<string | null>(null);
+  let pdfCanvas: HTMLCanvasElement | undefined;
+  let pdfRenderToken = 0;
+  let pdfRenderTask: { cancel(): void } | null = null;
+
+  /** Render the current page into the canvas. Only the visible page exists as
+   * a raster; switching pages / zooming re-renders. Stale async renders are
+   * cancelled + dropped via `pdfRenderToken` so rapid paging stays coherent. */
+  async function drawPdfPage() {
+    const doc = pdfDoc();
+    const pageNo = pdfPage();
+    if (!doc || !pdfCanvas) return;
+    const token = ++pdfRenderToken;
+    if (pdfRenderTask) {
+      pdfRenderTask.cancel();
+      pdfRenderTask = null;
+    }
+    const page = await doc.getPage(pageNo).catch(() => null);
+    if (!page || token !== pdfRenderToken) return;
+    const dpr = window.devicePixelRatio || 1;
+    const vp1 = page.getViewport({ scale: 1 });
+    const fitScale = (pdfCanvas.parentElement?.clientWidth ?? 320) / vp1.width;
+    const vp = page.getViewport({ scale: fitScale * pdfScale() });
+    const w = Math.floor(vp.width);
+    const h = Math.floor(vp.height);
+    pdfCanvas.width = Math.floor(w * dpr);
+    pdfCanvas.height = Math.floor(h * dpr);
+    pdfCanvas.style.width = `${w}px`;
+    pdfCanvas.style.height = `${h}px`;
+    const ctx = pdfCanvas.getContext("2d");
+    if (!ctx) return;
+    const task = page.render({
+      canvas: pdfCanvas,
+      canvasContext: ctx,
+      viewport: vp,
+      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+    });
+    pdfRenderTask = task;
+    await task.promise.catch(() => {}); // cancelled by a newer page — fine
+    pdfRenderTask = null;
+    page.cleanup();
+  }
+
+  /** Lazily load pdfjs-dist and open the document from the asset protocol. */
+  async function loadPdf(path: string) {
+    setPdfError(null);
+    try {
+      const pdfjs = await import("pdfjs-dist");
+      if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+        // Vite resolves this to the bundled worker asset (dev + prod).
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+          "pdfjs-dist/build/pdf.worker.min.mjs",
+          import.meta.url,
+        ).toString();
+      }
+      const doc = await pdfjs.getDocument({ url: convertFileSrc(path) }).promise;
+      setPdfDoc(doc);
+      setPdfPage(1);
+      setPdfScale(1);
+    } catch (e) {
+      setPdfError(String(e));
+    }
+  }
+
+  /** Render a request: resolve per-kind asset URLs (textfile/image/video/pdf are async). */
   async function load(r: PreviewRequest) {
     setReq(r);
     setText(null);
@@ -45,6 +120,13 @@ function PreviewApp() {
     setPoster(null);
     setError(null);
     setFit("contain");
+    // Tear down any previous PDF — the raster pages + parsed doc leave memory
+    // only while a PDF is actually shown (close also tears the whole page down).
+    const prev = pdfDoc();
+    if (prev) {
+      prev.loadingTask.destroy().catch(() => {});
+      setPdfDoc(null);
+    }
     if (r.kind === "textfile" && r.path) {
       try {
         setText(await invoke<string>("get_file_text", { path: r.path }));
@@ -65,6 +147,8 @@ function PreviewApp() {
       void invoke<string>("get_video_thumb", { path: r.path })
         .then(setPoster)
         .catch(() => setPoster(null));
+    } else if (r.kind === "pdf" && r.path) {
+      void loadPdf(r.path);
     }
   }
 
@@ -77,6 +161,14 @@ function PreviewApp() {
     // load (the stored request is read after the fact).
     const initial = await invoke<PreviewRequest | null>("get_preview_request");
     if (initial) void load(initial);
+  });
+
+  // Re-render the PDF page whenever the doc / page / zoom changes.
+  createEffect(() => {
+    void pdfDoc();
+    void pdfPage();
+    void pdfScale();
+    void drawPdfPage();
   });
 
   const mediaSrc = () => (req() && req()!.path ? convertFileSrc(req()!.path!) : "");
@@ -112,6 +204,61 @@ function PreviewApp() {
                   is preload="none" so the file itself only loads on play). */}
               <Match when={req()!.kind === "video"}>
                 <video src={mediaSrc()} poster={poster() ?? undefined} controls preload="none" />
+              </Match>
+              {/* PDF (PDF.js): visible page only, page flip + zoom in the toolbar. */}
+              <Match when={req()!.kind === "pdf"}>
+                <Show when={!pdfError()} fallback={<div class="preview-error">{pdfError()}</div>}>
+                  <Show when={pdfDoc()} fallback={<span class="preview-placeholder">…</span>}>
+                    <div class="preview-pdf">
+                      <div class="preview-pdf-scroll">
+                        <canvas
+                          class="preview-pdf-canvas"
+                          ref={(el) => {
+                            pdfCanvas = el;
+                            void drawPdfPage();
+                          }}
+                        />
+                      </div>
+                      <div class="preview-pdf-toolbar">
+                        <button
+                          class="preview-pdf-btn"
+                          title="上一页"
+                          aria-label="上一页"
+                          disabled={pdfPage() <= 1}
+                          onClick={() => setPdfPage((p) => Math.max(1, p - 1))}
+                        >‹</button>
+                        <span class="preview-pdf-page">
+                          {pdfPage()} / {pdfDoc()?.numPages ?? 1}
+                        </span>
+                        <button
+                          class="preview-pdf-btn"
+                          title="下一页"
+                          aria-label="下一页"
+                          disabled={pdfPage() >= (pdfDoc()?.numPages ?? 1)}
+                          onClick={() =>
+                            setPdfPage((p) => Math.min(pdfDoc()?.numPages ?? 1, p + 1))
+                          }
+                        >›</button>
+                        <span class="preview-pdf-sep" />
+                        <button
+                          class="preview-pdf-btn"
+                          title="缩小"
+                          aria-label="缩小"
+                          disabled={pdfScale() <= 0.25}
+                          onClick={() => setPdfScale((s) => Math.max(0.25, s / 1.25))}
+                        >−</button>
+                        <span class="preview-pdf-page">{Math.round(pdfScale() * 100)}%</span>
+                        <button
+                          class="preview-pdf-btn"
+                          title="放大"
+                          aria-label="放大"
+                          disabled={pdfScale() >= 4}
+                          onClick={() => setPdfScale((s) => Math.min(4, s * 1.25))}
+                        >＋</button>
+                      </div>
+                    </div>
+                  </Show>
+                </Show>
               </Match>
             </Switch>
           </Show>

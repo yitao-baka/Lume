@@ -23,6 +23,21 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **PDF 预览（ROADMAP #16，PDF.js）** — `pdfjs-dist` v6 懒加载（Vite 分包，仅首次
+  预览 PDF 时进卫星 renderer），手写迷你查看器：翻页 `‹ ›` + 页码 + 缩放 `＋ −`，
+  **只渲染当前可见页**（离屏回收，巨型 PDF 不会撑爆卫星窗）；文件经 asset:// 读取，
+  无新后端命令。Office 与 压缩包 预览按决策放弃。见 `docs/ROADMAP.md` #16。
+- **源码/歌词/字幕归文本** — `fileContent`/`file_content_kind`（前后端两份）新增
+  常见编程语言扩展名（`kt swift php rb dart scala cs fs fsx r pl hs zig nim ex exs
+  erl clj vue svelte jsx tsx mjs cjs groovy gradle proto gql tex`）、歌词 `.lrc`、
+  字幕 `.srt .vtt .ass` —— 归类文本文件并进文本预览。
+- **「音乐」分类** — 剪贴板分类区在 图片 和 视频 之间新增「音乐」（音频内容文件过滤）；
+  音频行沿用已有的音符 tile。
+- **「开启预览」开关（`clipboard.preview`，默认开）** — 设置/剪贴板顶部 Toggle；
+  关闭后卫星预览窗从不弹出（前端信号 + 后端 `show_preview` 双门控），列表内缩略图保留。
+- **`scripts/cdp_feature_smoke.mjs` / `scripts/cdp_dock_measure.mjs`** — CDP 冒烟
+  （PDF 渲染/音乐分类/.lrc 预览/开关门控/设置页开关）与双侧磁吸间距测量工具。
+
 - **截图像素图捕获补齐（照搬 ZTools/Chromium readImage 模式）** — 图片捕获在
   `arboard::get_image()`（只读 CF_DIB/CF_DIBV5）失败时，依次回退：①
   `read_custom_png_image`（枚举剪贴板注册格式，读名字含 png/image/png 的自定义格式，
@@ -54,6 +69,16 @@ All notable changes to Lume are documented here. Format based on
   comparison table. No app code involved.
 
 ### Fixed
+
+- **Left-dock preview overlap（ROADMAP #16）** — 卫星窗贴主窗左侧时重叠 ~11px
+  （150% DPI）。两层根因：① `dock_position` 左分支把位置钳进工作区左缘；② 预览窗
+  虽 `decorations(false)` 仍带 ~11px 左不可见边框，而 `set_position` 设外框位置、
+  磁吸数学算客户区。`dock_position` 改返回客户区目标 + `Option`（两侧都放不下 →
+  隐藏），`redock` 量出 client→outer inset 后偏移，**两侧都贴紧**；随后加
+  `PREVIEW_GAP_LOGICAL`（4 逻辑 px）两侧统一留间距。CDP 实测左/右 gap 均 4.0 CSS px。
+- **`custom-protocol` feature** — tauri 的 `cfg(dev) = !custom_protocol`，裸
+  `cargo build --release` 一直出 dev 版（加载 localhost:1420）；已加入 Cargo.toml
+  features，cargo 构建即生产版。
 
 - **Clicking the satellite preview keeps the launcher up AND focused** —
   interacting with the preview (video play, image, text) blurred the launcher

@@ -25,7 +25,7 @@ const PREVIEW_WINDOW: &str = "preview";
 const PREVIEW_W_LOGICAL: f64 = 320.0;
 /// Logical px of breathing room between the launcher and the satellite preview
 /// (applied to the client areas on BOTH sides — a left dock keeps the same gap).
-const PREVIEW_GAP_LOGICAL: f64 = 4.0;
+const PREVIEW_GAP_LOGICAL: f64 = 8.0;
 
 /// Last foreground window HWND captured before the launcher is shown — used by
 /// the clipboard auto-paste feature to send content back to the right window.
@@ -355,6 +355,21 @@ pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
         .clipboard
         .preview
     {
+        teardown_preview(&app);
+        return Ok(());
+    }
+    // The satellite lives and dies with the launcher: never reveal a preview
+    // while the launcher itself is hidden. This matters when 开启预览 is toggled
+    // back on in settings — the settings window steals focus and hides the
+    // launcher, so the frontend's preview sync fires `show_preview` while the
+    // launcher is gone; without this gate a lone satellite window would pop up.
+    // It also guards the same latent case of new clipboard rows arriving while
+    // hidden.
+    let launcher_visible = app
+        .get_webview_window(MAIN_WINDOW)
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false);
+    if !launcher_visible {
         teardown_preview(&app);
         return Ok(());
     }

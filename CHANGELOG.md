@@ -74,8 +74,12 @@ All notable changes to Lume are documented here. Format based on
   （150% DPI）。两层根因：① `dock_position` 左分支把位置钳进工作区左缘；② 预览窗
   虽 `decorations(false)` 仍带 ~11px 左不可见边框，而 `set_position` 设外框位置、
   磁吸数学算客户区。`dock_position` 改返回客户区目标 + `Option`（两侧都放不下 →
-  隐藏），`redock` 量出 client→outer inset 后偏移，**两侧都贴紧**；随后加
-  `PREVIEW_GAP_LOGICAL`（4 逻辑 px）两侧统一留间距。CDP 实测左/右 gap 均 4.0 CSS px。
+  隐藏），`redock` 量出 client→outer inset 后偏移，两侧真正对齐；随后加
+  `PREVIEW_GAP_LOGICAL`（8 逻辑 px）两侧统一留间距。CDP 实测左/右 gap 均 8.0 CSS px。
+- **No stray preview when re-enabling 开启预览 in settings** — 设置窗打开时启动器
+  失焦隐藏；在设置里重新开启预览并保存后，前端 sync 会在启动器隐藏时调
+  `show_preview`，飘出孤立预览窗。`show_preview` 现在先查主窗可见性，不可见则
+  teardown 不显示（也挡住隐藏时新剪贴板行触发 preview 的同款潜在 bug）。
 - **`custom-protocol` feature** — tauri 的 `cfg(dev) = !custom_protocol`，裸
   `cargo build --release` 一直出 dev 版（加载 localhost:1420）；已加入 Cargo.toml
   features，cargo 构建即生产版。

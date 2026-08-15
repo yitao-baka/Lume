@@ -150,7 +150,10 @@ desired **client** origin and `Option<Position>` (None → `redock` hides), and
 (measured via `GetClientRect`+`ClientToScreen` on the preview HWND) while
 `set_position` sets the **outer** origin — `redock` now measures the
 client→outer inset and calls `set_position(client_target - inset)`, so BOTH sides
-are truly flush (CDP-verified 0.0px gap/overlap). Also added `custom-protocol` to
+align; a `PREVIEW_GAP_LOGICAL` (8 logical px) breathing room is kept on both
+sides (CDP-verified 8.0 CSS px). `show_preview` now also gates on the main
+window being visible — re-enabling 开启预览 in settings (which blurs/hides the
+launcher) no longer pops a lone satellite window. Also added `custom-protocol` to
 the tauri crate features — without it a bare `cargo build --release` builds a DEV
 binary (`cfg(dev) = !custom_protocol`, loads localhost:1420 instead of the
 embedded frontend); with it cargo builds are production. Details + trade-offs in

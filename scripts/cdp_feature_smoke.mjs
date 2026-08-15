@@ -68,6 +68,11 @@ if (!main) throw new Error("launcher (main) page not found");
 if (!preview) throw new Error("preview window target not found");
 console.log("[smoke] windows — main:", main.url, "| settings:", settings?.url ?? "?", "| preview:", preview.url);
 
+// The launcher starts hidden; the satellite preview only shows while the
+// launcher is visible (`show_preview` gates on main.is_visible), so bring it up.
+await main.evalJs(`window.__TAURI_INTERNALS__.invoke("toggle_launcher"); "shown"`);
+await sleep(900);
+
 const seedFile = async (name) => {
   execSync(`powershell -NoProfile -Command "Set-Clipboard -Path '${TEST}\\${name}'"`);
   await sleep(900);

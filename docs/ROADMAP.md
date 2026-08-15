@@ -927,11 +927,16 @@ T tile + 卫星文本预览，无 UI 改动。
   **客户区**：左停靠时预览客户区右缘 = 989+11+480 = 1480 > 主窗客户区左缘 1469
   → 重叠 11px；右侧同理有 11px 隐藏间隙（#15 曾误判为 ~1px）。修：在 `redock`
   用同样的 `GetClientRect`+`ClientToScreen`（预览自身 HWND）量出 client→outer
-  inset，`set_position(client_target - inset)`——**两侧客户区都真正贴紧 0 间距**
-  （CDP 实测左 overlap=0.0、右 gap=0.0 CSS px）。**附注**：磁吸数学本身没错，
-  bug 全在「外框 vs 客户区」的坐标系错位。另将 `custom-protocol` 加进
-  Cargo.toml tauri features——否则裸 `cargo build --release` 出 dev 版
-  （`cfg(dev) = !custom_protocol`，加载 localhost:1420 而非内嵌前端）。
+  inset，`set_position(client_target - inset)`——**两侧客户区真正对齐**；随后按
+  用户要求加 `PREVIEW_GAP_LOGICAL`（4→8 逻辑 px）两侧统一留间距（CDP 实测左/右
+  gap 均 8.0 CSS px）。**附注**：磁吸数学本身没错，bug 全在「外框 vs 客户区」的
+  坐标系错位。**show_preview 可见性门控**——「开启预览」在设置里重新打开时，设置窗
+  抢焦点使启动器失焦隐藏，前端 preview sync 会在启动器隐藏时调 `show_preview` →
+  飘出孤立预览窗。修：`show_preview` 先查 `main.is_visible()`，启动器不可见则
+  `teardown_preview` 不显示（也顺带挡住「隐藏时新剪贴板行触发 effect」的同款潜在
+  bug）。另将 `custom-protocol` 加进 Cargo.toml tauri features——否则裸
+  `cargo build --release` 出 dev 版（`cfg(dev) = !custom_protocol`，加载
+  localhost:1420 而非内嵌前端）。
 
 ### 测试
 

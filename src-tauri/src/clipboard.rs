@@ -33,11 +33,12 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 use windows::core::BOOL;
-use windows::Win32::Foundation::{GlobalFree, HANDLE, HWND, POINT};
+use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND, POINT};
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
+    CloseClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW,
+    IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
 };
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::Shell::{DragQueryFileW, DROPFILES, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
@@ -868,24 +869,110 @@ fn capture(state: &ClipboardState, clip: &crate::settings::Clipboard) {
         }
         return;
     }
-    // 3. Bitmap image (screenshot / copied from a web page).
+    // 3. Bitmap image (screenshot / copied from a web page). The standard path
+    // is `arboard::get_image()` reading CF_DIB; screenshot tools (PixPin,
+    // WeChat, …) sometimes put only a custom PNG format on the clipboard, so we
+    // fall back to reading that directly.
     if clip.record_images {
-        if let Ok(mut cb) = arboard::Clipboard::new() {
-            if let Ok(img) = cb.get_image() {
-                if let Some(png) = encode_png(&img) {
-                    let hash = hash_bytes(&png);
-                    let mut last_hash = state.last_image_hash.lock().unwrap();
-                    if hash != *last_hash {
-                        let conn = state.db.lock().unwrap();
-                        if insert_image_history(&conn, &png, &source, clip.history_cap, &base).is_err()
-                        {
-                            eprintln!("[clipboard] failed to store image history");
+        let png = if let Ok(mut cb) = arboard::Clipboard::new() {
+            cb.get_image().ok().and_then(|img| encode_png(&img))
+        } else {
+            None
+        }
+        .or_else(read_custom_png_image)
+        .or_else(read_cf_bitmap_image);
+        if let Some(png) = png {
+            let hash = hash_bytes(&png);
+            let mut last_hash = state.last_image_hash.lock().unwrap();
+            if hash != *last_hash {
+                let conn = state.db.lock().unwrap();
+                if insert_image_history(&conn, &png, &source, clip.history_cap, &base).is_err() {
+                    eprintln!("[clipboard] failed to store image history");
+                }
+                *last_hash = hash;
+            }
+        }
+    }
+}
+
+/// Read a CF_BITMAP (device-dependent bitmap, format 2) off the clipboard.
+/// `arboard::get_image()` reads only CF_DIB/CF_DIBV5, but many screenshot tools
+/// (PixPin, WeChat, Snipaste…) put a plain CF_BITMAP on their "copy" button —
+/// the same format Chromium's `clipboard.readImage()` accepts. The HBITMAP is
+/// converted to PNG via the shared `bitmap_to_png`.
+fn read_cf_bitmap_image() -> Option<Vec<u8>> {
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return None;
+        }
+        let handle = GetClipboardData(2 /* CF_BITMAP */).ok()?;
+        let hbitmap = windows::Win32::Graphics::Gdi::HBITMAP(handle.0);
+        let png = crate::icons::bitmap_to_png(hbitmap);
+        let _ = CloseClipboard();
+        png
+    }
+}
+
+/// Try to read an image from a non-CF_DIB clipboard format. Screenshot tools
+/// (PixPin, WeChat, …) often put a custom-registered PNG format on the
+/// clipboard without the standard `CF_DIB` that `arboard::get_image()` reads,
+/// so the bitmap branch would miss them. Enumerates the open clipboard's
+/// formats, reads the first whose registered name looks like a PNG image
+/// format, and returns its bytes (used as-is if already PNG, else re-encoded).
+fn read_custom_png_image() -> Option<Vec<u8>> {
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return None;
+        }
+        let mut found: Option<Vec<u8>> = None;
+        let mut fmt: u32 = 0;
+        loop {
+            fmt = EnumClipboardFormats(fmt);
+            if fmt == 0 {
+                break;
+            }
+            if fmt == CF_HDROP {
+                continue; // handled by the file branch
+            }
+            let mut name = [0u16; 80];
+            let n = GetClipboardFormatNameW(fmt, &mut name);
+            if n <= 0 {
+                continue; // system format without a name — not a custom image
+            }
+            let nm = String::from_utf16_lossy(&name[..n as usize]).to_lowercase();
+            if !(nm.contains("png") || nm.contains("image/png")) {
+                continue;
+            }
+            if let Ok(handle) = GetClipboardData(fmt) {
+                let ptr = GlobalLock(HGLOBAL(handle.0));
+                if !ptr.is_null() {
+                    let size = GlobalSize(HGLOBAL(handle.0));
+                    if size > 0 {
+                        let bytes = std::slice::from_raw_parts(ptr as *const u8, size).to_vec();
+                        if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+                            found = Some(bytes);
+                        } else if let Ok(img) = image::load_from_memory(&bytes) {
+                            let mut buf = Vec::new();
+                            if img
+                                .write_to(
+                                    &mut std::io::Cursor::new(&mut buf),
+                                    image::ImageFormat::Png,
+                                )
+                                .is_ok()
+                            {
+                                found = Some(buf);
+                            }
                         }
-                        *last_hash = hash;
                     }
+                    let _ = GlobalUnlock(HGLOBAL(handle.0));
+                }
+                if found.is_some() {
+                    break;
                 }
             }
         }
+        let _ = CloseClipboard();
+        found
     }
 }
 
@@ -1065,6 +1152,31 @@ pub fn get_file_thumb(path: String) -> Result<String, String> {
         return Err("file too large to thumbnail".into());
     }
     make_thumb(&bytes).ok_or_else(|| "not a readable image".into())
+}
+
+/// Extract a video thumbnail (a frame) via the Windows shell, for the preview
+/// player's `<video poster>` — shown until the user presses play (the player is
+/// `preload="none"`, so without this the video area is just black). Returns a
+/// base64 PNG data URI, or an error when the shell has no thumbnail provider
+/// for the file (the frontend then shows a placeholder).
+#[tauri::command]
+pub async fn get_video_thumb(path: String) -> Result<String, String> {
+    // Run the shell extraction off the main thread: sync commands run on the
+    // main (STA) thread where `CoInitializeEx(COINIT_MULTITHREADED)` fails with
+    // RPC_E_CHANGED_MODE; the blocking pool is a fresh COM context, and the
+    // extraction can also take a moment for large files.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::icons::extract_video_thumb_png(&path)
+            .map(|png| {
+                format!(
+                    "data:image/png;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(&png)
+                )
+            })
+            .ok_or_else(|| "no shell thumbnail for video".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Absolute path of an image row's stored PNG, for the preview pane and the
@@ -1485,6 +1597,94 @@ mod tests {
     const TEST_CAP: i64 = 200;
     /// Source app label used by the insert helpers in tests.
     const TEST_SRC: &str = "TestApp";
+
+    /// Serializes the tests that write to the shared Windows clipboard (they
+    /// would race each other under `cargo test`'s parallel runner).
+    static CLIPBOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// The custom-format fallback reads a PNG placed under ONLY a registered
+    /// "PNG" format (no CF_DIB) — the PixPin-style in-app copy case.
+    /// The CF_BITMAP fallback reads a device-dependent bitmap off the clipboard
+    /// (the GDI format screenshot tools' "copy" buttons use).
+    #[test]
+    fn read_cf_bitmap_returns_png() {
+        let _guard = CLIPBOARD_LOCK.lock().unwrap();
+        use windows::Win32::Graphics::Gdi::{
+            CreateDIBSection, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
+            HBITMAP,
+        };
+        use windows::Win32::System::DataExchange::{
+            CloseClipboard, EmptyClipboard, SetClipboardData,
+        };
+        let hdc = unsafe { GetDC(None) };
+        assert!(!hdc.is_invalid());
+        let mut bi = BITMAPINFO::default();
+        bi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bi.bmiHeader.biWidth = 64;
+        bi.bmiHeader.biHeight = -64; // top-down
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = windows::Win32::Graphics::Gdi::BI_RGB.0;
+        let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
+        let hbmp = unsafe { CreateDIBSection(Some(hdc), &bi, DIB_RGB_COLORS, &mut bits, None, 0) }
+            .expect("CreateDIBSection");
+        let _ = unsafe { ReleaseDC(None, hdc) };
+        assert!(!hbmp.0.is_null());
+        // Fill with an opaque red so the PNG is a real image.
+        unsafe {
+            let px = std::slice::from_raw_parts_mut(bits as *mut u8, 64 * 64 * 4);
+            for p in px.chunks_exact_mut(4) {
+                p[0] = 0;
+                p[1] = 0;
+                p[2] = 255; // BGRA → red
+                p[3] = 255;
+            }
+        }
+        unsafe {
+            assert!(OpenClipboard(None).is_ok());
+            assert!(EmptyClipboard().is_ok());
+            let res = SetClipboardData(2 /* CF_BITMAP */, Some(HANDLE(hbmp.0)));
+            assert!(res.is_ok(), "SetClipboardData CF_BITMAP: {res:?}");
+            let _ = CloseClipboard();
+        }
+        let got = read_cf_bitmap_image();
+        assert!(got.is_some(), "CF_BITMAP fallback should return PNG bytes");
+        assert!(got.unwrap().starts_with(&[0x89, b'P', b'N', b'G']));
+    }
+
+    #[test]
+    fn read_custom_png_finds_png_format() {
+        let _guard = CLIPBOARD_LOCK.lock().unwrap();
+        use windows::Win32::System::DataExchange::{
+            CloseClipboard, EmptyClipboard, RegisterClipboardFormatW, SetClipboardData,
+        };
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+        unsafe {
+            let data = std::fs::read(r"E:\SoftwareDevelopment\Projects\LumeLauncher\test\PixPin_2026-08-06_22-03-20.png")
+                .expect("test image present");
+            let fmt = RegisterClipboardFormatW(windows::core::w!("PNG"));
+            assert!(fmt != 0, "register PNG format");
+            if OpenClipboard(None).is_err() {
+                eprintln!("clipboard busy — skipping");
+                return;
+            }
+            assert!(EmptyClipboard().is_ok());
+            let h = GlobalAlloc(GMEM_MOVEABLE, data.len()).unwrap();
+            let ptr = GlobalLock(h);
+            assert!(!ptr.is_null());
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, data.len());
+            let _ = GlobalUnlock(h);
+            let res = SetClipboardData(fmt, Some(HANDLE(h.0 as _)));
+            assert!(res.is_ok(), "SetClipboardData: {res:?}");
+            let _ = CloseClipboard();
+            if res.is_err() {
+                let _ = GlobalFree(Some(h));
+            }
+        }
+        let got = read_custom_png_image();
+        assert!(got.is_some(), "fallback should read the custom PNG format");
+        assert!(got.unwrap().starts_with(&[0x89, b'P', b'N', b'G']));
+    }
 
     /// A disabled merge config — most tests don't exercise auto-merge.
     fn no_merge() -> MergeConfig {

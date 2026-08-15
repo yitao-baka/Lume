@@ -70,6 +70,7 @@ pub fn run() {
         .manage(hotkey::ActiveHotkey::default())
         .manage(window::FocusState::default())
         .manage(dirwatch::DirWatchState::default())
+        .manage(window::PreviewState::default())
         .plugin(hotkey::build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -129,6 +130,33 @@ pub fn run() {
             .visible(false)
             .initialization_script(&init_script)
             .build()?;
+
+            // Satellite preview window (ROADMAP #15): all clipboard previews
+            // (text / text files / images / audio / video) render here, docked
+            // flush to the launcher's right edge. Created at startup (hidden)
+            // like the settings window to avoid runtime window creation;
+            // non-activating (`WS_EX_NOACTIVATE` via set_focusable) so clicking
+            // it never steals focus from the launcher.
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "preview",
+                tauri::WebviewUrl::App("preview.html".into()),
+            )
+            .title("Lume Preview")
+            .inner_size(320.0, 480.0) // real size set on every dock
+            .resizable(false)
+            .decorations(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .visible(false)
+            .background_color(tauri::window::Color(30, 30, 32, 255))
+            .disable_drag_drop_handler()
+            .build()?;
+            if let Some(pv) = app.get_webview_window("preview") {
+                // tao maps focusable(false) → WS_EX_NOACTIVATE on Windows.
+                let _ = pv.set_focusable(false);
+            }
+
             // Build the System32 preset DB once (background), then refresh the
             // user cache at startup and on the configured interval (minutes).
             // The GUI is the sole refresher — the LumeSVC service is a dormant
@@ -169,13 +197,46 @@ pub fn run() {
                     if let WindowEvent::Focused(false) = event {
                         // Skip the auto-hide while dragging, or right after a
                         // paste when 粘贴后关闭 is off (the launcher stays up).
+                        let preview_click = window::preview_has_cursor(&app_handle);
                         let suppressed = window::is_mid_drag(&hide_on_blur)
                             || app_handle
                                 .try_state::<window::FocusState>()
                                 .map(|f| window::is_hide_suppressed(&f))
-                                .unwrap_or(false);
+                                .unwrap_or(false)
+                            // Clicking the satellite preview blurs the launcher
+                            // too; the cursor being over the preview means the
+                            // click was meant for it, not for another app.
+                            || preview_click;
                         if !suppressed {
                             let _ = hide_on_blur.hide();
+                            // The satellite preview dies with the launcher: a
+                            // merely hidden window could keep playing media and
+                            // never reclaim its decoded memory.
+                            window::teardown_preview(&app_handle);
+                        } else if preview_click {
+                            // The blur came from clicking the satellite — hand
+                            // focus BACK to the launcher. Otherwise the preview's
+                            // webview keeps the keyboard (list arrows stop working)
+                            // and the launcher is left unfocused-but-visible, so
+                            // a later click-away never re-fires its blur-to-hide.
+                            let _ = hide_on_blur.set_focus();
+                        }
+                    }
+                });
+            }
+            // Keep the satellite preview docked: whenever the launcher moves or
+            // resizes (drag, preset, content-height change), re-dock it. Gated
+            // on visibility so idle Moved/Resized noise is a no-op.
+            if let Some(win) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                win.on_window_event(move |event| {
+                    if let WindowEvent::Moved(_) | WindowEvent::Resized(_) = event {
+                        let preview_visible = app_handle
+                            .get_webview_window("preview")
+                            .and_then(|w| w.is_visible().ok())
+                            .unwrap_or(false);
+                        if preview_visible {
+                            let _ = window::redock(&app_handle);
                         }
                     }
                 });
@@ -217,6 +278,9 @@ pub fn run() {
             window::close_settings,
             window::apply_position,
             window::get_work_area,
+            window::show_preview,
+            window::close_preview,
+            window::get_preview_request,
             apps::search_apps,
             apps::refresh_index,
             apps::launch_app,
@@ -235,6 +299,7 @@ pub fn run() {
             clipboard::set_clipboard_paused,
             clipboard::get_file_text,
             clipboard::get_file_thumb,
+            clipboard::get_video_thumb,
             clipboard::get_clipboard_image,
             icons::get_app_icons,
             pins::get_pinned_apps,

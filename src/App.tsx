@@ -1,5 +1,5 @@
-import { createEffect, createSignal, onCleanup, onMount, Show, For, Switch, Match } from "solid-js";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { createEffect, createSignal, onCleanup, onMount, Show, For } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
@@ -57,6 +57,15 @@ interface DeletedClip {
 /** A clipboard filter category (`favorites` = pinned only). 文本文件/图片/视频
  * are content-kind filters over file rows (图片 also includes image rows). */
 type ClipKind = "all" | "text" | "textfile" | "image" | "video" | "favorites";
+
+/** Payload pushed to the satellite preview window (mirrors the Rust
+ * `PreviewRequest` in window.rs). */
+interface PreviewReq {
+  kind: "text" | "textfile" | "image" | "audio" | "video";
+  content: string | null;
+  path: string | null;
+  id: number | null;
+}
 
 /** Last path segment (handles both `/` and `\` separators). */
 function basename(p: string): string {
@@ -139,92 +148,24 @@ function fileContent(name: string): FileContent {
   return "other";
 }
 
-/** Right-side preview pane, following the selected clipboard row. Text rows
- * show their content; file rows preview by content kind — text files show
- * their text, audio/video get a player, and images (both clipboard image rows
- * and image files) show only a small thumbnail here, with the full-size image
- * decoding only when clicked (the enlarge overlay). This keeps a big decoded
- * bitmap from lingering in the renderer's image cache after the preview
- * closes. `previewOpen` already excludes arbitrary binaries and image-kind
- * rows, so those never reach here. */
-function ClipPreview(props: { item: ClipboardItem; onEnlarge: (uri: string) => void }) {
-  const firstPath = () => props.item.content.split("\n").find(Boolean) ?? "";
-  const content = () =>
-    props.item.kind === "file" ? fileContent(basename(firstPath())) : null;
-  const asset = () => (firstPath() ? convertFileSrc(firstPath()) : "");
-
-  const [text, setText] = createSignal<string | null>(null);
-  const [fileThumb, setFileThumb] = createSignal<string | null>(null);
-
-  createEffect(() => {
-    setText(null);
-    setFileThumb(null);
-    const it = props.item;
-    if (it.kind === "file" && content() === "text") {
-      void invoke<string>("get_file_text", { path: firstPath() })
-        .then((s) => setText(s))
-        .catch((err) => console.error("get_file_text failed", err));
-    } else if (it.kind === "file" && content() === "image") {
-      // Image file: the preview pane shows only a downscaled thumbnail; the
-      // full image decodes only when the user clicks to enlarge.
-      void invoke<string>("get_file_thumb", { path: firstPath() })
-        .then((t) => setFileThumb(t))
-        .catch((err) => console.error("get_file_thumb failed", err));
-    }
-  });
-
-  /** Load an image-kind row's full-size PNG into the enlarge overlay (deferred
-   * to the click so the preview pane only ever decodes the small thumbnail —
-   * never the full image, whose decoded bitmap would linger in the renderer). */
-  function enlargeImageKind(item: ClipboardItem) {
-    void invoke<string>("get_clipboard_image", { id: item.id })
-      .then((path) => props.onEnlarge(convertFileSrc(path)))
-      .catch((err) => console.error("get_clipboard_image failed", err));
-  }
-
-  return (
-    <div class="clip-preview">
-      <Switch>
-        {/* Text row: the copied text itself. */}
-        <Match when={props.item.kind === "text"}>
-          <div class="clip-preview-text">{props.item.content}</div>
-        </Match>
-        {/* Image-kind row: thumbnail in the preview pane (no full decode); the
-            click loads the full-size image into the enlarge overlay. */}
-        <Match when={props.item.kind === "image"}>
-          <div class="clip-preview-image" onClick={() => enlargeImageKind(props.item)}>
-            <Show when={props.item.thumb} fallback={<span class="clip-preview-placeholder">…</span>}>
-              <img class="clip-preview-img" src={props.item.thumb ?? undefined} alt="" draggable={false} />
-            </Show>
-          </div>
-        </Match>
-        {/* Text file: read and show the file's content. */}
-        <Match when={content() === "text"}>
-          <Show when={text()} fallback={<span class="clip-preview-placeholder">…</span>}>
-            <div class="clip-preview-text">{text()}</div>
-          </Show>
-        </Match>
-        {/* preload="none": selecting a media row must not fetch/buffer the
-            file into the renderer (buffered media lingers after the preview
-            closes). The file loads only when the user presses play. */}
-        <Match when={content() === "audio"}>
-          <audio class="clip-preview-media" src={asset()} controls preload="none" />
-        </Match>
-        <Match when={content() === "video"}>
-          <video class="clip-preview-media" src={asset()} controls preload="none" />
-        </Match>
-        {/* Image file: thumbnail in the preview pane; the click enlarges the
-            full image via the asset protocol. */}
-        <Match when={content() === "image"}>
-          <div class="clip-preview-image" onClick={() => props.onEnlarge(asset())}>
-            <Show when={fileThumb()} fallback={<span class="clip-preview-placeholder">…</span>}>
-              <img class="clip-preview-img" src={fileThumb()!} alt="" draggable={false} />
-            </Show>
-          </div>
-        </Match>
-      </Switch>
-    </div>
-  );
+/** Build the satellite-preview payload for a row, or null when no preview
+ * should show (the window then hides). Only *content* previews: file rows whose
+ * content kind (by extension) is text/audio/video/image, plus clipboard image
+ * rows (`kind === "image"` — a captured screenshot) which preview in every
+ * category. Plain copied text (kind `"text"`) never opens the satellite, and
+ * "other" binaries (.dll/.exe/.zip…) never do. Image-kind rows carry an `id`
+ * resolved via `get_clipboard_image`; image-file rows a `path`. */
+function previewTarget(item: ClipboardItem | undefined): PreviewReq | null {
+  if (!item) return null;
+  if (item.kind === "text") return null; // plain copied text — never previews
+  if (item.kind === "image") return { kind: "image", content: null, path: null, id: item.id };
+  const first = item.content.split("\n").find(Boolean) ?? "";
+  const fc = fileContent(basename(first));
+  if (fc === "text") return { kind: "textfile", content: null, path: first, id: null };
+  if (fc === "audio") return { kind: "audio", content: null, path: first, id: null };
+  if (fc === "video") return { kind: "video", content: null, path: first, id: null };
+  if (fc === "image") return { kind: "image", content: null, path: first, id: null };
+  return null; // "other" — binary; no preview
 }
 
 /** Open custom context menu: app or clipboard item, positioned at the cursor.
@@ -265,8 +206,6 @@ const CLIP_ROW_H = 52;
 const CLIP_OVERSCAN = 4;
 /** How long the delete-collapse animation runs before the row is removed. */
 const DELETE_ANIM_MS = 120;
-/** Width of the right-side clipboard preview pane (shown on selection). */
-const PREVIEW_W = 320;
 
 /** The clipboard filter tabs, in display order (labels are i18n keys). */
 const CLIP_CATS: { kind: ClipKind; label: string }[] = [
@@ -281,7 +220,6 @@ const CLIP_CATS: { kind: ClipKind; label: string }[] = [
 const TOAST_MS = 1600;
 const TOAST_UNDO_MS = 3000;
 let lastWindowH = 0; // avoid resize/center loops
-let lastWindowW = 0; // same, for the clipboard preview's wider width
 
 function App() {
   const [appsQuery, setAppsQuery] = createSignal("");
@@ -369,8 +307,6 @@ function App() {
   const [hoverSelect, setHoverSelect] = createSignal(clipCfg?.hover_select ?? false);
   /** Runtime pause for clipboard recording (status-bar toggle, not persisted). */
   const [clipPaused, setClipPaused] = createSignal(false);
-  /** Full-size data URI shown in the click-to-enlarge overlay (images only). */
-  const [enlargeImg, setEnlargeImg] = createSignal<string | null>(null);
   let toastTimer: number | undefined;
   /** Virtual-list scroll container + its scroll/viewport state. */
   let clipScrollEl: HTMLDivElement | undefined;
@@ -385,31 +321,6 @@ function App() {
       Math.ceil((clipScrollTop() + Math.max(clipViewportH(), 160)) / CLIP_ROW_H) +
         CLIP_OVERSCAN
     );
-  /** The preview pane opens:
-   *  - 文本 / 收藏 categories: never (just their lists).
-   *  - 文本文件 / 图片 / 视频 categories: always (常驻).
-   *  - 全部: on demand, per the selected row — non-binary file rows (text /
-   *    audio / video / image content) expand it; text rows and other binaries
-   *    never do. */
-  const previewOpen = () => {
-    if (mode() !== "clipboard" || clips().length === 0) return false;
-    switch (clipKind()) {
-      case "text":
-      case "favorites":
-        return false;
-      case "textfile":
-      case "image":
-      case "video":
-        return true;
-      default: // "all" — on demand, file rows only (text rows never preview)
-        if (selected() < 0) return false;
-        const item = clips()[selected()];
-        if (!item || item.kind !== "file") return false;
-        const first = item.content.split("\n").find(Boolean) ?? "";
-        return fileContent(basename(first)) !== "other";
-    }
-  };
-
   // ── Drag-and-drop for pinned bar reordering ──
   // Use a plain ref (not a SolidJS signal) so drag event handlers never
   // trigger reactive re-renders that would destroy the dragged DOM element.
@@ -441,9 +352,7 @@ function App() {
     setMultiIds(new Set<number>());
     setDeletingId(null);
     setClearOpen(false);
-    setEnlargeImg(null);
     lastWindowH = 0; // force a re-measure on the next show (mode may have changed)
-    lastWindowW = 0;
   }
 
   /** Reload the pinned-apps bar from the store. */
@@ -511,16 +420,11 @@ function App() {
   async function resizeToContent() {
     // Clipboard mode uses a fixed window height (设置 → 窗口大小 → 高度); the
     // list viewport scrolls internally, so no content-based fitting applies.
-    // Selecting a text / file (incl. audio/video) row opens the right-side
-    // preview pane, which widens the window by PREVIEW_W; images preview in
-    // their own row instead, so they never widen the window.
+    // Previews live in the satellite window now, so the launcher never widens.
     if (mode() === "clipboard") {
-      const previewActive = previewOpen();
-      const targetW = windowWidth() + (previewActive ? PREVIEW_W : 0);
-      if (windowHeight() !== lastWindowH || targetW !== lastWindowW) {
+      if (windowHeight() !== lastWindowH) {
         lastWindowH = windowHeight();
-        lastWindowW = targetW;
-        await getCurrentWindow().setSize(new LogicalSize(targetW, windowHeight()));
+        await getCurrentWindow().setSize(new LogicalSize(windowWidth(), windowHeight()));
         await invoke("apply_position");
       }
       requestAnimationFrame(measureClipViewport);
@@ -664,16 +568,6 @@ function App() {
     void invoke("copy_clipboard", { id: item.id })
       .then(() => showToast(t("copied")))
       .catch((err) => console.error("copy failed", err));
-  }
-
-  /** Show an image row's full-size PNG in the enlarge overlay (images preview
-   * in their row thumbnail; clicking it enlarges). Rendered via the asset
-   * protocol (path → asset:// URL) so WebView2 decodes from disk — no base64
-   * string through IPC. */
-  function enlargeImage(item: ClipboardItem) {
-    void invoke<string>("get_clipboard_image", { id: item.id })
-      .then((path) => setEnlargeImg(convertFileSrc(path)))
-      .catch((err) => console.error("get_clipboard_image failed", err));
   }
 
   /** Copy a rich-text row as plain text only (strips HTML formatting). */
@@ -1028,7 +922,6 @@ function App() {
       setDeletingId(null);
     }
     lastWindowH = 0; // the fixed-height model differs per mode — force a resize
-    lastWindowW = 0;
     // Re-search the target mode with its own (independent) query.
     await runSearch(m === "apps" ? appsQuery() : clipQuery());
   }
@@ -1202,6 +1095,12 @@ function App() {
         closeMenu();
       } else if (mode() === "clipboard" && multiIds().size > 0) {
         setMultiIds(new Set<number>()); // leave multi-select mode without hiding
+      } else if (currentPreview()) {
+        // Close the satellite preview without hiding the launcher. The preview
+        // window is WS_EX_NOACTIVATE and can never receive the key itself, so
+        // Esc is routed here in the main window.
+        setCurrentPreview(null);
+        void invoke("close_preview");
       } else {
         void resetAndHide();
       }
@@ -1349,21 +1248,29 @@ function App() {
     requestAnimationFrame(measureClipViewport);
   });
 
-  // Resize the window when the preview pane appears/disappears (selecting an
-  // image row closes it → narrows back; selecting a text/file row opens it →
-  // widens). Only fires on the toggle, not on every row change. While the
-  // context menu is open the size is frozen (right-clicking a row to open the
-  // menu must not resize / close the preview underneath it); it re-evaluates
-  // when the menu closes.
-  let prevPreviewOpen = false;
+  // Satellite preview sync (ROADMAP #15): every selection / category / mode
+  // change re-evaluates what the preview window should show, but the actual
+  // show/hide is debounced (~100ms) so fast keyboard scrolling through rows
+  // (esp. "other" binaries between previewable ones) doesn't thrash the window.
+  // `currentPreview` tracks the pending request synchronously so Esc knows to
+  // close the preview before hiding the launcher.
+  const [currentPreview, setCurrentPreview] = createSignal<PreviewReq | null>(null);
+  let previewTimer: number | undefined;
   createEffect(() => {
-    if (menu()) return;
-    const open = previewOpen();
-    if (open !== prevPreviewOpen) {
-      prevPreviewOpen = open;
-      scheduleResize();
-    }
+    void mode();
+    void clipKind();
+    void clips();
+    void selected();
+    const item = mode() === "clipboard" ? clips()[selected()] : undefined;
+    const req = item ? previewTarget(item) : null;
+    setCurrentPreview(req);
+    clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(() => {
+      if (req) void invoke("show_preview", { req });
+      else void invoke("close_preview");
+    }, 100);
   });
+  onCleanup(() => clearTimeout(previewTimer));
 
   // Virtual list: keep the selected row in the rendered window while
   // navigating with the keyboard (the row may not be in the DOM otherwise).
@@ -1507,6 +1414,14 @@ function App() {
       queueMicrotask(() => document.getElementById("search-input")?.focus());
     });
     onCleanup(() => unlisten());
+
+    // The satellite preview's × button (or any Rust-side teardown) clears our
+    // Esc-priority state — without this, Esc would think the preview is still
+    // open and close a window that is already gone.
+    const unlistenPreviewClosed = await getCurrentWindow().listen("preview-closed", () => {
+      setCurrentPreview(null);
+    });
+    onCleanup(() => unlistenPreviewClosed());
   });
 
   // Sync the entry-size CSS variable whenever the setting changes — decoupled
@@ -1657,18 +1572,7 @@ function App() {
           setMenu({ kind: "clip", x: e.clientX, y: e.clientY, item });
         }}
       >
-        <div
-          class="clip-row-tile-box"
-          classList={{ "clip-row-tile-zoom": item.kind === "image" }}
-          onClick={
-            item.kind === "image"
-              ? (e) => {
-                  e.stopPropagation();
-                  enlargeImage(item);
-                }
-              : undefined
-          }
-        >
+        <div class="clip-row-tile-box">
           <Show when={item.kind === "image" && item.thumb} fallback={clipTile(item, color, link)}>
             <span class="clip-row-tile">
               <img class="clip-row-img" src={item.thumb ?? undefined} alt="" draggable={false} />
@@ -2096,12 +2000,6 @@ function App() {
                 </div>
               </div>
             </Show>
-            <Show when={previewOpen()}>
-              <ClipPreview
-                item={clips()[selected()]}
-                onEnlarge={(uri) => setEnlargeImg(uri)}
-              />
-            </Show>
             </div>
             <div class="clip-statusbar">
               <span class="clip-status-count">
@@ -2167,11 +2065,6 @@ function App() {
               {t("clipClear")}
             </button>
           </div>
-        </div>
-      </Show>
-      <Show when={enlargeImg()}>
-        <div class="clip-enlarge" onClick={() => setEnlargeImg(null)}>
-          <img src={enlargeImg()!} alt="" draggable={false} />
         </div>
       </Show>
       <Show when={menu()}>

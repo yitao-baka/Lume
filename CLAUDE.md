@@ -72,9 +72,11 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   clear+confirm **and a pause-recording toggle**, source-app tracking, rich
   text (HTML) + 「复制为纯文本」, ignored-apps list, auto-merge (合并复制),
   Space multi-select → Enter merged paste, delete with undo toast, a
-  「剪贴板」 settings pane, a right-side preview pane, and native OLE drag-out
-  of images/files to Explorer (`src-tauri/src/clipboard.rs`,
-  `src-tauri/src/dragdrop.rs`, `src/App.tsx`)
+  「剪贴板」 settings pane, and a **satellite preview window** (ROADMAP #15 —
+  text / text-file / image / audio / video previews render in a separate
+  non-activating window docked to the launcher's right edge, so the main
+  renderer never holds decoded bitmaps / media buffers)
+  (`src-tauri/src/clipboard.rs`, `src-tauri/src/window.rs`, `src/App.tsx`)
 - Clipboard auto-paste — Enter on a history entry writes it to the clipboard,
   hides the launcher and sends `Ctrl+V` into the window that had focus before
   the launcher appeared (`paste_clipboard`; the original clipboard is saved
@@ -126,7 +128,24 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**剪贴板管理器重构 — 阶段 1 + 2 + 3 (ROADMAP #13, complete) — as of 2026-08-13**:
+**独立磁吸预览窗口 (ROADMAP #15, complete) — as of 2026-08-15**: all clipboard
+previews (text / text files / images / audio / video) moved out of the main
+renderer into a separate satellite window (`preview`, created at startup,
+frameless, `WS_EX_NOACTIVATE` non-activating, docked flush to the launcher's
+right edge — width 320, height follows main via `GetClientRect`+`ClientToScreen`,
+re-docks on `Moved`/`Resized`, flips left on right-edge overflow). Selection →
+satellite shows; no selection / "other" binaries → hide + navigate `about:blank`
+(page unload; renderer stays resident ~15MB — measured as **partial reclaim**,
+~7MB lingers in the preview renderer, accepted). Main window never widens for
+previews anymore. Close via main-window Esc (the satellite can't take keys) or
+the × button. The old inline `ClipPreview` pane, `PREVIEW_W` widening, and
+`.clip-enlarge` overlay are deleted; `preview.html` is a new vite multi-entry
+page (`src/preview.tsx`). New commands `show_preview`/`close_preview`/
+`get_preview_request`; capabilities/preview.json; dock_position unit-tested.
+CDP-verified: renderer×3, flush dock, main-not-widened, image via asset://,
+Esc teardown. Details + measurement in `docs/ROADMAP.md` #15.
+
+**Prior: 剪贴板管理器重构 — 阶段 1 + 2 + 3 (ROADMAP #13, complete) — as of 2026-08-13**:
 阶段 2 adds rich text (`html` column, copy/paste keeps formatting, 「复制为
 纯文本」 strips it), ignored apps (`ignore_apps` list, case-insensitive match on
 `source_app`, skipped copies don't touch last_*), pause recording (runtime

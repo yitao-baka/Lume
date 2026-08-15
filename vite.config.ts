@@ -29,4 +29,14 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  // Multi-page build: the satellite preview window loads its own tiny page
+  // (preview.html → src/preview.tsx), so the prod bundle must emit both.
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        preview: "preview.html",
+      },
+    },
+  },
 }));

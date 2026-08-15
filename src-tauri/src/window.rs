@@ -9,13 +9,20 @@
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, State,
+    WebviewWindow,
+};
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Label of the launcher window defined in `tauri.conf.json`.
 const MAIN_WINDOW: &str = "main";
 /// Label of the settings window defined in `tauri.conf.json`.
 const SETTINGS_WINDOW: &str = "settings";
+/// Label of the satellite preview window (created in `lib.rs::setup`).
+const PREVIEW_WINDOW: &str = "preview";
+/// Fixed logical width of the satellite preview window (the old `PREVIEW_W`).
+const PREVIEW_W_LOGICAL: f64 = 320.0;
 
 /// Last foreground window HWND captured before the launcher is shown — used by
 /// the clipboard auto-paste feature to send content back to the right window.
@@ -197,6 +204,8 @@ pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "main window not found".to_string())?;
     if window.is_visible().map_err(|e| e.to_string())? {
         window.hide().map_err(|e| e.to_string())?;
+        // The satellite preview lives and dies with the launcher.
+        teardown_preview(&app);
     } else {
         // Record which window had focus before the launcher appeared.
         if let Some(focus) = app.try_state::<FocusState>() {
@@ -215,6 +224,8 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
         .get_webview_window(MAIN_WINDOW)
         .ok_or_else(|| "main window not found".to_string())?;
     window.hide().map_err(|e| e.to_string())?;
+    // The satellite preview lives and dies with the launcher.
+    teardown_preview(&app);
     Ok(())
 }
 
@@ -295,4 +306,268 @@ pub fn get_work_area(app: AppHandle) -> Result<f64, String> {
     };
     let wa = monitor.work_area();
     Ok(wa.size.height as f64 / monitor.scale_factor())
+}
+
+// ── Satellite preview window (ROADMAP #15) ───────────────────────────────────
+// All clipboard previews (text / text files / images / audio / video) render in
+// this separate, non-activating window docked flush to the main window's right
+// edge. It is created at startup (like the settings window) to avoid the
+// runtime-window-creation GPU-hang risk, and on close it navigates to
+// `about:blank` so the decoded bitmaps / media buffers leave the page while the
+// renderer process stays resident for reuse. See `docs/ROADMAP.md` #15.
+
+/// The frontend's last pushed preview request. The page reads it on mount
+/// (`get_preview_request`) — which also self-corrects a `preview-update` event
+/// that raced a page load — and it is cleared on close.
+#[derive(Default)]
+pub struct PreviewState(pub Mutex<Option<PreviewRequest>>);
+
+/// What the satellite preview window renders.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PreviewRequest {
+    /// `"text" | "textfile" | "image" | "audio" | "video"`.
+    pub kind: String,
+    /// The copied text itself (`kind == "text"`).
+    pub content: Option<String>,
+    /// A file path (`textfile` / `audio` / `video`, and image-*file* rows).
+    pub path: Option<String>,
+    /// A clipboard row id (image-*kind* rows: resolved via `get_clipboard_image`).
+    pub id: Option<u32>,
+}
+
+/// Show or update the satellite preview. The request is stored first, then the
+/// page is either poked with a `preview-update` event (when already resident —
+/// selection changes don't reload, no flicker) or navigated back to
+/// `preview.html` (when the page was torn down to `about:blank` on a previous
+/// close). Re-docks on every call and shows without focusing (the window is
+/// `WS_EX_NOACTIVATE` — it must never steal focus from the launcher, whose
+/// blur-to-hide rule would otherwise fire).
+#[tauri::command]
+pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
+    let preview = app
+        .get_webview_window(PREVIEW_WINDOW)
+        .ok_or_else(|| "preview window not found".to_string())?;
+    if let Some(state) = app.try_state::<PreviewState>() {
+        *state.0.lock().unwrap() = Some(req.clone());
+    }
+    // Resident check is by URL, not visibility: the very first show may find
+    // the window already loaded-hidden at startup, so we can skip a redundant
+    // reload. A page torn down to `about:blank` needs re-navigating.
+    let at_preview = preview
+        .url()
+        .map(|u| u.scheme() != "about")
+        .unwrap_or(false);
+    if at_preview {
+        let _ = preview.emit("preview-update", &req);
+    } else {
+        preview.navigate(preview_page_url(&app)).map_err(|e| e.to_string())?;
+    }
+    // Dock + size before reveal; works while hidden too.
+    redock(&app).map_err(|e| e.to_string())?;
+    if !preview.is_visible().map_err(|e| e.to_string())? {
+        // Show WITHOUT activating — `preview.show()` (SW_SHOW) can still make
+        // the launcher lose focus and trigger its blur-to-hide, even though the
+        // window carries WS_EX_NOACTIVATE. SW_SHOWNOACTIVATE never touches the
+        // foreground window.
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+        let hwnd = preview.hwnd().map_err(|e| e.to_string())?;
+        let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+    }
+    Ok(())
+}
+
+/// Hide the satellite preview and tear its page down to `about:blank` — this
+/// releases decoded bitmaps / media buffers (the renderer process stays
+/// resident ~15MB for reuse).
+#[tauri::command]
+pub fn close_preview(app: AppHandle) -> Result<(), String> {
+    teardown_preview(&app);
+    // Let the launcher drop its Esc-priority state even when the X button (not
+    // Esc) closed it.
+    let _ = app.emit_to(MAIN_WINDOW, "preview-closed", ());
+    Ok(())
+}
+
+/// Read the pending preview request — the page calls this once on mount.
+/// Returns `None` when there is nothing to show.
+#[tauri::command]
+pub fn get_preview_request(
+    state: State<'_, PreviewState>,
+) -> Result<Option<PreviewRequest>, String> {
+    Ok(state.0.lock().unwrap().clone())
+}
+
+/// Hide the preview and navigate it to `about:blank`. Used by `close_preview`
+/// AND by every launcher-hide path (blur-to-hide, hotkey toggle, Esc) — a
+/// merely hidden window could keep playing media and would never reclaim
+/// memory. Idempotent.
+pub fn teardown_preview(app: &AppHandle) {
+    let Some(preview) = app.get_webview_window(PREVIEW_WINDOW) else {
+        return;
+    };
+    // Tear the page down first, then hide synchronously via Win32. Tauri's
+    // `hide()` is queued on the thread executor and can race the navigation —
+    // the page unload can re-show the window, leaving it visible after teardown.
+    let _ = preview.navigate(tauri::Url::parse("about:blank").unwrap());
+    if let Ok(hwnd) = preview.hwnd() {
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+    if let Some(state) = app.try_state::<PreviewState>() {
+        *state.0.lock().unwrap() = None;
+    }
+}
+
+/// True when the mouse cursor sits over the *visible* satellite preview — used
+/// by the launcher's blur-to-hide rule to stay up when the user clicks the
+/// preview (WS_EX_NOACTIVATE stops the preview activating, but the launcher can
+/// still blur; a cursor over the preview means the click was meant for it).
+pub fn preview_has_cursor(app: &AppHandle) -> bool {
+    let Some(preview) = app.get_webview_window(PREVIEW_WINDOW) else {
+        return false;
+    };
+    preview.is_visible().unwrap_or(false) && cursor_is_over(&preview)
+}
+
+/// Size (320 logical wide, the main window's current logical height) and dock
+/// the preview flush to the main window. Re-run on every `show_preview` and on
+/// the main window's Moved/Resized. No-op when either window is missing.
+pub fn redock(app: &AppHandle) -> tauri::Result<()> {
+    let Some(main) = app.get_webview_window(MAIN_WINDOW) else {
+        return Ok(());
+    };
+    let Some(preview) = app.get_webview_window(PREVIEW_WINDOW) else {
+        return Ok(());
+    };
+    let sf = main.scale_factor()?;
+    // Dock to the main window's on-screen CLIENT area — the visible launcher
+    // surface. `outer_*` includes the frameless window's non-client margins and
+    // `inner_position()` is not the client origin on screen; both leave a gap
+    // (22×13 physical px at 150% DPI). GetClientRect + ClientToScreen give the
+    // authoritative client rect on screen, flush at any DPI.
+    let hwnd = main.hwnd()?;
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+    let mut rect = RECT::default();
+    let mut origin = POINT::default();
+    unsafe {
+        let _ = GetClientRect(hwnd, &mut rect);
+        let _ = ClientToScreen(hwnd, &mut origin);
+    }
+    let main_pos = PhysicalPosition::new(origin.x, origin.y);
+    let main_size = PhysicalSize::new(rect.right as u32, rect.bottom as u32);
+    // Height follows the main client height. Compute the physical size from the
+    // intended logical size — reading a size right after `set_size()` is async
+    // on Windows and can round-trip.
+    let main_h_logical = main_size.to_logical::<f64>(sf).height;
+    let logical = LogicalSize::new(PREVIEW_W_LOGICAL, main_h_logical);
+    preview.set_size(logical)?;
+    let preview_phys = logical.to_physical::<u32>(sf);
+    let Some(monitor) = main.current_monitor()? else {
+        return Ok(());
+    };
+    let pos = dock_position(main_pos, main_size, preview_phys, monitor.work_area());
+    preview.set_position(pos)?;
+    Ok(())
+}
+
+/// Pure dock math (unit-testable): flush to the main window's outer right
+/// edge, top-aligned. If that would overflow the monitor work area's right
+/// edge, dock to the main window's LEFT edge instead (clamped into the area).
+fn dock_position(
+    main_pos: PhysicalPosition<i32>,
+    main_size: PhysicalSize<u32>,
+    preview_size: PhysicalSize<u32>,
+    work_area: &PhysicalRect<i32, u32>,
+) -> PhysicalPosition<i32> {
+    let right = main_pos.x + main_size.width as i32;
+    let work_right = work_area.position.x + work_area.size.width as i32;
+    let fits_right = right + preview_size.width as i32 <= work_right;
+    if fits_right {
+        PhysicalPosition::new(right, main_pos.y)
+    } else {
+        PhysicalPosition::new(
+            (main_pos.x - preview_size.width as i32).max(work_area.position.x),
+            main_pos.y,
+        )
+    }
+}
+
+/// The URL of the satellite page: the vite dev server in dev, the bundled app
+/// protocol in production. Kept in one place — verify against the running
+/// app's `window.location.origin` once (docs/ROADMAP.md #15).
+fn preview_page_url(app: &AppHandle) -> tauri::Url {
+    let base = if cfg!(dev) {
+        app.config()
+            .build
+            .dev_url
+            .clone()
+            .unwrap_or_else(|| tauri::Url::parse("http://localhost:1420").unwrap())
+    } else {
+        tauri::Url::parse("http://tauri.localhost").unwrap()
+    };
+    base.join("preview.html").unwrap_or(base)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wa() -> PhysicalRect<i32, u32> {
+        PhysicalRect {
+            position: PhysicalPosition::new(0, 0),
+            size: PhysicalSize::new(1920, 1080),
+        }
+    }
+
+    #[test]
+    fn dock_flush_right_when_room() {
+        let pos = dock_position(
+            PhysicalPosition::new(100, 50),
+            PhysicalSize::new(720, 480),
+            PhysicalSize::new(320, 480),
+            &wa(),
+        );
+        assert_eq!(pos, PhysicalPosition::new(820, 50));
+    }
+
+    #[test]
+    fn dock_right_at_exact_boundary() {
+        let pos = dock_position(
+            PhysicalPosition::new(100, 50),
+            PhysicalSize::new(300, 480),
+            PhysicalSize::new(320, 480),
+            &wa(), // 400 + 320 == 1920? no — work area right = 1920, so 720 fits
+        );
+        assert_eq!(pos, PhysicalPosition::new(400, 50));
+    }
+
+    #[test]
+    fn dock_left_when_right_overflows() {
+        let pos = dock_position(
+            PhysicalPosition::new(1400, 50),
+            PhysicalSize::new(720, 480),
+            PhysicalSize::new(320, 480),
+            &wa(), // 1400 + 720 + 320 = 2440 > 1920 → left at 1080
+        );
+        assert_eq!(pos, PhysicalPosition::new(1080, 50));
+    }
+
+    #[test]
+    fn dock_left_clamped_into_work_area() {
+        let wa = PhysicalRect {
+            position: PhysicalPosition::new(100, 0),
+            size: PhysicalSize::new(800, 600),
+        };
+        let pos = dock_position(
+            PhysicalPosition::new(200, 50),
+            PhysicalSize::new(400, 480),
+            PhysicalSize::new(320, 480),
+            &wa, // left = 200-320 = -120 → clamp to work_area.x = 100
+        );
+        assert_eq!(pos, PhysicalPosition::new(100, 50));
+    }
 }

@@ -778,9 +778,20 @@ CREATE TABLE clipboard (
 - 单元：扩展名分类、docx/xlsx/pptx 文本抽取、zip 清单解析（用构造的样例文件）。
 - CDP：各格式预览内容正确渲染、分类过滤生效。
 
-## 15. 预览内存回收：常驻隐藏预览窗口（规划）
+## 15. 预览内存回收：独立磁吸预览窗口（已实现）
 
-**状态：方向草案已定（2026-08-15，用户认可「方案二」），实现细节下次会话敲定。**
+**状态：已实现（2026-08-15）。磁吸/焦点/回收策略经 grill-me 定稿，CDP 实测通过，
+内存回收为「部分回收」（见下「实测结论」），用户接受。**
+
+### 实测结论（2026-08-15，`scripts/measure-webview-mem.ps1` + `cdp_preview_memtest.mjs`）
+
+- **renderer ×3 确认**：main + settings + preview 各一 renderer。
+- **主 renderer 隔离成立**：图片预览打开时 main 的 renderer 仅 +1.5MB（其余为剪贴板
+  页自身），解码峰值不进主窗——卫星窗口的核心价值达成。
+- **about:blank 只做部分回收**：4000×3000 大图预览时 renderer 52.9→60.3MB；Esc 关闭
+  （about:blank）后 **60.3MB 未回落**——Chromium renderer 进程的工作集不主动归还 OS
+  （分配器保留），~7MB 滞留在预览 renderer，封顶不增长、下次预览复用。**用户接受
+  部分回收**，未采用乙方案（关闭时销毁窗口，运行时建窗有 AppHangB1 GPU 挂起风险）。
 
 ### 背景与问题
 
@@ -797,47 +808,65 @@ Chromium 的设计：DOM 元素移除后，解码的图片位图和媒体缓冲�
 - 预览区图片改为缩略图（`item.thumb` / 新增 `get_file_thumb`），选中记录不再
   解码全图。
 - 媒体元素加 `preload="none"`，选中不缓冲，点击播放才加载。
-- 但放大/播放产生的峰值仍在主 renderer 里、关闭后不回收。
+- 但放大/播放产生的峰值仍在主 renderer 里、关闭后不回收——#15 解决这个。
 
-### 15.1 方案选型（草案）
+### 方案（grill-me 定稿，2026-08-15）
 
-**选定方向（用户认可）：常驻隐藏预览窗口 + 关闭后导航 about:blank**
+**所有预览内容移出主 renderer，进一个独立的、固定挂靠主窗口右缘的卫星预览窗口。**
+主窗口恒为基础宽度，永不为预览变化。四项决策：
 
-- 启动时建一个隐藏的 `preview` 窗口（加载极简页 `preview.html`），复用——和
-  设置窗口同款模式（启动建窗，规避运行时建窗的 AppHang 风险，见 2026-08-15
-  事件）。
-- 图片放大/视频播放：`show()` + 导航到对应资源（asset:// URL 传入）。
-- 关闭：`hide()` 并导航到 `about:blank`——释放页面内存（解码位图/媒体缓冲），
-  renderer 进程保留（下次复用）。
-- 代价：常驻一个 ~15MB 空白 renderer，空闲基线回升。
-- 视频需移出侧边栏播放（UX 变化）。
+1. **焦点语义**：卫星窗口 `WS_EX_NOACTIVATE` 非激活（`show` 不 `set_focus`）——点
+   预览不抢焦点，主窗口始终持焦、不触发失焦隐藏。**代价**：文本预览不可选中/
+   复制（copy-back 走主列表行按钮）；视频仅鼠标控件可用（空格/方向键/全屏快捷键
+   失效）；滚轮可滚、拖滚动条不灵。
+2. **回收机制**：隐藏时导航 `about:blank`——页面销毁、解码位图/媒体缓冲释放，
+   renderer 进程保留 ~15MB 待复用。窗口在启动时创建（同 settings 模式），规避
+   运行时建窗 AppHang 风险。
+3. **预览范围**：文本/文本文件/图片/音频/视频**全部**走卫星。主窗口内嵌预览 UI
+   （`.clip-preview` 侧栏、`PREVIEW_W` 加宽、`.clip-enlarge` 放大浮层、
+   `previewOpen` 分类 switch）全部删除。列表行内 tile 缩略图保留。
+4. **磁吸**：固定挂靠（非可拖离）。卫星左缘 = 主窗口右缘（宽 320 = 旧 `PREVIEW_W`，
+   高跟随主窗口，磁吸成一整块）；`WindowEvent::Moved`/`Resized` 跟随重定位；右缘
+   溢出兜底贴左缘。生命周期与主窗口绑定：主窗口隐藏 → 卫星隐藏（视频只能
+   「启动器开着时」看）。
 
-**备选方案（未选，留档）：**
+**防抖**：show 和 hide 都 ~100ms（滚动经过 other 行时不闪）。
 
-1. **按需创建/销毁独立窗口**——关闭即销毁 renderer，100% 回收、空闲零成本；
-   但运行时建窗有（低概率）WebView2 GPU 挂起风险（与 AppHangB1 相关的历史）。
-2. **限制存储图片分辨率（≤2000px）**——放大解码峰值从 33MB+ 压到 ~16MB；
-   但**不真回收**（残留变小不归零），且**对视频无效**（视频是引用用户文件）。
+### 实现要点
 
-### 15.2 实现要点（下次会话细化）
+- **新页面 `preview.html`**（vite 多入口 + 极小 `src/preview.tsx`）：按 kind 渲染
+  文本/文本文件 `<pre>` / `<img>`（object-fit contain，点按切 1:1）/ `<audio>` /
+  `<video>`；深色背景、拖拽区（`data-tauri-drag-region`）、Esc/点击关闭（invoke
+  `close_preview`）；加载后 invoke `get_preview_request` 取 `(kind, path)`——避免
+  asset:// URL 传参编码坑。
+- **Rust**：启动时建 `preview` 窗口（`lib.rs`/`window.rs`：无边框、透明深色背景、
+  置顶、skip_taskbar、非激活、`visible(false)`）；命令 `show_preview(kind, path)`
+  （存 Mutex → navigate `preview.html` → show + 贴右定位）、`close_preview()`
+  （hide + navigate `about:blank` + 清 Mutex）、`get_preview_request()`；
+  `main` 窗口 `WindowEvent::Moved`/`Resized` 时重定位卫星；主窗口隐藏时连带隐藏
+  卫星。
+- **前端**：删除全部内嵌预览 UI 与窗口加宽逻辑（`lastWindowW`/`prevPreviewOpen`/
+  `PREVIEW_W`/`enlargeImg` 等）；选中变化防抖后调 `show_preview`/`close_preview`，
+  规则 = 除 other 二进制（.dll/.exe 等）外所有行都预览，无选中/other → 隐藏。
 
-- 新前端页 `preview.html`：`<img>` / `<video>` + 拖拽区 + Esc/点击关闭；asset URL
-  经初始化脚本或事件传入。
-- Rust：启动时建 `preview` 窗口（`lib.rs`/`window.rs`）；命令
-  `show_preview(kind, path)` 导航并显示、`close_preview()` 隐藏 + `about:blank`。
-- 前端 `ClipPreview`/放大覆盖层改调 `show_preview`；视频播放改独立窗口。
-- `about:blank` 导航后是否真正释放解码缓存（WebView2 行为）需实测验证。
+### 验证顺序（实现第一步）
 
-### 15.3 待确认（实现前）
+1. 确认 `preview` 窗口独立 renderer（进程数对照，预期 renderer×3）。
+2. `scripts/measure-webview-mem.ps1` 实测 about:blank 后回落 ~15MB 基线；
+   **若不回落 → 回退乙方案（隐藏时销毁窗口，代价 = 重建延迟 + 运行时建窗风险）**。
+3. `WS_EX_NOACTIVATE` 下视频控件鼠标可用性、文本不可选中接受度、磁吸跟随/溢出贴左、
+   生命周期绑定——CDP/手动验证。
 
-- 视频是否接受独立窗口播放（侧边栏只留「▶ 播放」占位）。
-- `preview.html` 是独立页面还是复用 `index.html` 按窗口 label 分支。
-- 常驻 ~15MB 与「降低空闲基线」目标的取舍是否接受。
-- about:blank 释放是否彻底（需实测 renderer 内存回落）。
-- 是否顺带做「限制存储图片分辨率」作为放大残留的兜底。
+### 已知取舍
+
+- **首屏延迟**：选中稳定后 ~150~250ms 才出预览（防抖 100ms + 页面加载/内容读取）。
+- **视频是「预览」不是播放器**：只能鼠标控制、生命周期随启动器。
+- **空闲基线**：main + settings + preview 三个 renderer ≈ 115→130MB（+15~20MB
+  常驻），换来峰值不滞留。
 
 ### 测试
 
-- 内存：`scripts/measure-webview-mem.ps1` 对比打开/关闭放大预览前后的 renderer
-  priv-WS（预期关闭后回落）。
-- CDP/手动：放大、视频播放、拖拽窗口、Esc/点击外关闭的完整流程。
+- 内存：`scripts/measure-webview-mem.ps1` 对比打开/关闭预览前后的 renderer
+  priv-WS（预期关闭后回落 ~15MB 基线）。
+- CDP/手动：文本/文本文件/图片/音频/视频预览、磁吸跟随、拖主窗跟随、溢出贴左、
+  Esc/点击关闭、失焦一起隐藏、快速滚动防抖不闪。

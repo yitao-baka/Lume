@@ -409,12 +409,6 @@ body,
   height: 36px;
 }
 
-/* Image rows preview in their own thumbnail — clicking it enlarges. */
-.clip-row-tile-box.clip-row-tile-zoom {
-  cursor: zoom-in;
-  border-radius: 9px;
-}
-
 .clip-row-tile {
   width: 36px;
   height: 36px;
@@ -537,98 +531,11 @@ body,
   color: var(--text-muted);
 }
 
-/* Right-side preview pane (shown while a clipboard row is selected). */
+/* Clipboard list container (previews live in the satellite window now). */
 .clip-main {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: row;
-  gap: 8px;
-}
-
-.clip-preview {
-  flex: none;
-  width: 320px;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: none;
-  display: flex;
-  flex-direction: column;
-  padding: 10px 12px;
-  border-left: 1px solid var(--border);
-}
-
-.clip-preview::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
-/* Text preview: the full content, scrollable (scrollbar hidden — scroll on
- * wheel/trackpad only, matching the list). */
-.clip-preview-text {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: none;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
-  user-select: text;
-}
-
-.clip-preview-text::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-}
-
-/* Image preview: the full-size image, click to enlarge. */
-.clip-preview-image {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: zoom-in;
-}
-
-.clip-preview-img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-}
-
-.clip-preview-placeholder {
-  color: var(--text-faint);
-  font-size: 13px;
-}
-
-/* Audio / video preview players (asset:// URLs via convertFileSrc). */
-.clip-preview-media {
-  width: 100%;
-  max-height: 100%;
-  border-radius: 8px;
-  background: #000;
-  outline: none;
-}
-
-/* Click-to-enlarge overlay for image previews. */
-.clip-enlarge {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.72);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 80;
-  cursor: zoom-out;
-}
-
-.clip-enlarge img {
-  max-width: 92vw;
-  max-height: 92vh;
-  object-fit: contain;
 }
 
 .clip-clear-btn {

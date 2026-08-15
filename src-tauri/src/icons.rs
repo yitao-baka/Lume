@@ -15,13 +15,16 @@ use windows::Win32::Graphics::Gdi::{
     GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
     HGDIOBJ, BI_RGB,
 };
-use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED};
 use windows::Win32::UI::Shell::{
-    IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_ICONONLY, SIIGBF_SCALEUP,
+    IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_ICONONLY,
+    SIIGBF_SCALEUP, SIIGBF_THUMBNAILONLY,
 };
 
 /// Icon extraction size (px). 64px stays crisp on HiDPI grids.
 const ICON_SIZE: i32 = 64;
+/// Video poster size (px) — wide enough to fill the 320px preview pane.
+const VIDEO_THUMB_SIZE: i32 = 320;
 
 /// An extracted icon, as sent to the frontend.
 #[derive(Debug, Clone, Serialize)]
@@ -42,37 +45,67 @@ fn stable_hash(data: &[u8]) -> String {
     format!("{h:016x}")
 }
 
-/// Extract a PNG for a `.lnk` path via the shell.
-fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
-    // The shell APIs need COM initialized on this thread.
-    if unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_err() {
+/// Extract a PNG image for a file path via the shell at the given size.
+/// `flags` picks icon (`SIIGBF_ICONONLY`) vs. a real thumbnail
+/// (`SIIGBF_THUMBNAILONLY` — video frames included). The shell APIs need COM
+/// initialized on the calling thread in the given apartment, so this is done
+/// per call.
+fn extract_shell_png(path: &str, size: i32, flags: SIIGBF, com: COINIT) -> Option<Vec<u8>> {
+    if unsafe { CoInitializeEx(None, com) }.is_err() {
         return None;
     }
     let result = (|| {
         let item: IShellItem =
             unsafe { SHCreateItemFromParsingName(&HSTRING::from(path), None) }.ok()?;
         let factory: IShellItemImageFactory = item.cast().ok()?;
-        let bitmap = unsafe {
-            factory.GetImage(
-                SIZE {
-                    cx: ICON_SIZE,
-                    cy: ICON_SIZE,
-                },
-                SIIGBF_ICONONLY | SIIGBF_SCALEUP,
-            )
-        }
-        .ok()?;
+        let bitmap = unsafe { factory.GetImage(SIZE { cx: size, cy: size }, flags) }.ok()?;
         bitmap_to_png(bitmap)
     })();
     unsafe { CoUninitialize() };
+    result
+}
+
+/// Extract a PNG for a `.lnk` path via the shell (the file-type icon). Icons
+/// work from MTA, so this runs on the caller's thread (async command workers).
+fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
+    let result = extract_shell_png(
+        path,
+        ICON_SIZE,
+        SIIGBF_ICONONLY | SIIGBF_SCALEUP,
+        COINIT_MULTITHREADED,
+    );
     if result.is_none() {
         eprintln!("[icons] failed to extract icon for {path}");
     }
     result
 }
 
+/// Extract a video thumbnail (a frame) via the shell, for the preview player's
+/// `<video poster>`. `SIIGBF_THUMBNAILONLY` requests the real thumbnail and
+/// does not fall back to the file-type icon when the shell has no provider.
+/// Thumbnail providers commonly require **STA** (icons tolerate MTA but video
+/// thumbnails often fail there), so this runs on a dedicated STA thread.
+pub fn extract_video_thumb_png(path: &str) -> Option<Vec<u8>> {
+    let owned = path.to_string();
+    let result = std::thread::spawn(move || {
+        extract_shell_png(
+            &owned,
+            VIDEO_THUMB_SIZE,
+            SIIGBF_THUMBNAILONLY | SIIGBF_SCALEUP,
+            COINIT_APARTMENTTHREADED,
+        )
+    })
+    .join()
+    .ok()
+    .flatten();
+    if result.is_none() {
+        eprintln!("[icons] no shell thumbnail for {path}");
+    }
+    result
+}
+
 /// Convert an `HBITMAP` to PNG bytes (32-bit BGRA → RGBA → PNG).
-fn bitmap_to_png(bitmap: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<Vec<u8>> {
+pub(crate) fn bitmap_to_png(bitmap: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<Vec<u8>> {
     unsafe {
         let mut bm: BITMAP = std::mem::zeroed();
         if GetObjectW(

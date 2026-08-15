@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "preview",
+  "description": "Capability for the satellite preview window (clipboard previews). Custom commands (get_preview_request / close_preview / get_file_text / get_clipboard_image) are ungated; core:default supplies the window getter + event listen for preview-update.",
+  "windows": ["preview"],
+  "permissions": [
+    "core:default"
+  ]
+}

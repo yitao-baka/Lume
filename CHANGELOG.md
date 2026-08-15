@@ -23,6 +23,30 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **截图像素图捕获补齐（照搬 ZTools/Chromium readImage 模式）** — 图片捕获在
+  `arboard::get_image()`（只读 CF_DIB/CF_DIBV5）失败时，依次回退：①
+  `read_custom_png_image`（枚举剪贴板注册格式，读名字含 png/image/png 的自定义格式，
+  已 PNG 直接用、否则重编码）；② `read_cf_bitmap_image`（读 CF_BITMAP 设备相关位图，
+  复用 `icons::bitmap_to_png` 转 PNG）——ZTools 剪贴板插件用 Electron `readImage()`
+  （Chromium）捕获，它同时接受 DIB/BITMAP/PNG，而 PixPin 等截图工具的「复制」按钮
+  常只放 CF_BITMAP，arboard 会漏掉。文本优先于图片的判断（Office 复制带 TIFF 渲染）
+  与 ZTools 一致（Lume 本就是文本优先）。单测 `read_custom_png_finds_png_format` +
+  `read_cf_bitmap_returns_png` 验证两条回退。**待用户用真实 PixPin 复制实测**（自动化
+  种子受剪贴板所有权竞态限制，无法完全模拟）。
+- **视频预览封面（poster）** — 预览窗里的 `<video>`（`preload="none"`，播放前原本是
+  纯黑）现在显示一帧封面：新命令 `get_video_thumb` 用 `IShellItemImageFactory` +
+  `SIIGBF_THUMBNAILONLY` 从 Windows shell 提取视频帧（就是资源管理器显示的缩略图），
+  在专用 STA 线程上跑（缩略图提供程序要求 STA；图标走 MTA 不变），返回 base64 PNG，
+  前端设成 `<video poster>`。格式无 shell 提供程序时退回占位。CDP 实测 PNG/MKV 均
+  返回有效帧。
+- **卫星预览窗口（ROADMAP #15）** — 所有剪贴板预览（文本/文本文件/图片/音频/视频）
+  移出主 renderer，进一个启动时创建的独立、无边框、非激活（WS_EX_NOACTIVATE）窗口，
+  固定挂靠主窗口右缘（宽 320 / 高跟随，`GetClientRect`+`ClientToScreen` 贴齐客户区，
+  `Moved`/`Resized` 跟随，右缘溢出贴左）。选中预览行 → 卫星出现；无选中/other 二进制
+  → 隐藏并导航 `about:blank`（页面卸载；renderer 进程保留待复用，实测为部分回收）。
+  主窗口从此恒为基础宽度、永不为预览变化。关闭经主窗 Esc 或卫星窗 × 按钮。CDP 实测：
+  renderer×3、磁吸贴齐、主窗不加宽、图片 asset:// 渲染、Esc 回收全通过。见
+  `docs/ROADMAP.md` #15。
 - **`scripts/measure-webview-mem.ps1`** — memory-measurement harness that
   snapshots Lume's whole process tree (`lume.exe` + `msedgewebview2` children)
   by process type, reporting private working set / working set / commit, with a
@@ -31,6 +55,33 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **Clicking the satellite preview keeps the launcher up AND focused** —
+  interacting with the preview (video play, image, text) blurred the launcher
+  and tripped its blur-to-hide. The blur-hide rule now checks whether the cursor
+  is over the visible preview (`preview_has_cursor`): if so, it keeps the
+  launcher up and hands focus back to it, so (a) keyboard navigation of the
+  list keeps working while the preview is used, and (b) the launcher is left
+  properly focused — a later click-away on a different app re-fires the
+  blur-to-hide and closes both windows.
+- **Preview window closes with the launcher again** — `teardown_preview` used
+  Tauri's async `hide()`, which raced the `about:blank` navigation and could
+  leave the window on screen. It now hides synchronously via Win32
+  `ShowWindow(SW_HIDE)` after tearing the page down.
+- **No close × on the preview window** — the satellite has no in-window close
+  button; it closes via the launcher's Esc or when the launcher hides.
+- **Preview only opens for content** — plain copied text rows never open the
+  satellite; file rows with text/audio/video/image content preview everywhere,
+  and clipboard image rows (captured screenshots) now preview in every category
+  too (previously only inside the 图片 category).
+- **Satellite preview font matches the launcher** — `font-size`, `line-height`
+  and `-webkit-font-smoothing: antialiased` were missing, so CJK rendered
+  differently; now inherited from the same stack as the main window.
+- **Satellite preview no longer hides the launcher when shown** — showing the
+  preview window with `preview.show()` (SW_SHOW) made the launcher lose focus
+  and trip its blur-to-hide, so entering Clipboard mode with a previewable row
+  selected made the whole window vanish. The preview is now revealed with Win32
+  `ShowWindow(SW_SHOWNOACTIVATE)` — never activates, so the launcher keeps
+  focus (it already carries `WS_EX_NOACTIVATE` for clicks).
 - **Drag no longer switches back to Navigate** — the launcher reset its state on
   every `onFocusChanged(focused=true)`; dragging the frameless window briefly
   deactivates and refocuses it, so a drag mid-clipboard would wipe the mode.

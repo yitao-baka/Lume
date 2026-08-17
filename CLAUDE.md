@@ -142,7 +142,10 @@ kind）+ 复选框 + 逐文件存在性（`check_file_exists`），复制/粘贴
 **记住上次所在页面**（`appearance.remember_last_page`，默认关）：记住模式+分类
 （`save_last_page` 轻量写盘不碰 backup），搜索词仅会话内。⑥ 混合类型多文件行 →
 `multifiles.svg`。⑦ 删剪贴板底部快捷键提示。`cargo test` 71 通过。Details in
-`docs/ROADMAP.md` #17。
+`docs/ROADMAP.md` #17。**Follow-up（同日，未开新 ROADMAP）**：开启该开关时关闭
+Lume（托盘「关闭」/「重启」）会清除已记住页面 —— `RunEvent::ExitRequested` →
+`settings::clear_last_page`（轻量写盘、不碰 backup），重启回到初始页，记忆仅会话内
+生效；单实例第二进程在进入 Tauri 生命周期前即退出，不会误清。`cargo test` 73 通过。
 
 **Prior: PDF 预览 + 源码/歌词归文本 + 音乐分类 + 预览开关 + 左磁吸重叠修复 (ROADMAP #16,
 complete) — as of 2026-08-15**: PDF preview via frontend PDF.js (`pdfjs-dist` v6,

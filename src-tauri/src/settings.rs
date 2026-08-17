@@ -525,6 +525,29 @@ pub fn save_last_page(
     Ok(())
 }
 
+/// 记住上次所在页面: clear the persisted page bookmark on app exit, so the next
+/// launch starts on the initial page. The in-session remember (hide/show cycle)
+/// is untouched — this only resets the disk value a fresh process would read.
+/// Gated on the toggle: when it's off `save_last_page` never writes, so there is
+/// nothing to clear. Written WITHOUT touching `backup.toml` (light write).
+pub fn clear_last_page(state: &SettingsState) -> Result<(), String> {
+    clear_last_page_at(&paths::base_dir(), state)
+}
+
+/// Same as [`clear_last_page`] but with an explicit base dir (unit-testable
+/// without touching the real settings file).
+fn clear_last_page_at(base: &Path, state: &SettingsState) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    if guard.appearance.remember_last_page {
+        let mut next = guard.clone();
+        next.appearance.last_page = "apps".into();
+        next.appearance.last_page_kind = "all".into();
+        write_settings_light(base, &next)?;
+        *guard = next;
+    }
+    Ok(())
+}
+
 /// 记住勾选 (preview-area toggle): persist whether each multi-file entry's
 /// checked files are remembered across sessions. Written without touching
 /// `backup.toml`; emits `settings-applied` so the launcher re-reads the value.
@@ -629,6 +652,52 @@ mod tests {
         let on_disk = fs::read_to_string(settings_path(&base)).unwrap();
         let re_imported: Settings = toml::from_str(&on_disk).unwrap();
         assert_eq!(re_imported.index.user_dirs, vec!["D:/Projects"]);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn clear_last_page_resets_when_toggle_on() {
+        let base = temp_base("clear-on");
+        ensure_settings_files(&base).unwrap();
+        let state = SettingsState(Mutex::new(read_settings(&base)));
+        // Simulate the user having landed on the Clipboard/images page.
+        {
+            let mut g = state.0.lock().unwrap();
+            g.appearance.remember_last_page = true;
+            g.appearance.last_page = "clipboard".into();
+            g.appearance.last_page_kind = "images".into();
+        }
+        clear_last_page_at(&base, &state).unwrap();
+        let s = read_settings(&base);
+        assert_eq!(s.appearance.last_page, "apps", "disk bookmark reset to initial");
+        assert_eq!(s.appearance.last_page_kind, "all");
+        assert_eq!(
+            state.0.lock().unwrap().appearance.last_page,
+            "apps",
+            "in-memory state reset too"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn clear_last_page_noop_when_toggle_off() {
+        let base = temp_base("clear-off");
+        ensure_settings_files(&base).unwrap();
+        let state = SettingsState(Mutex::new(read_settings(&base)));
+        // A stale bookmark on disk that the toggle-off state never wrote via
+        // save_last_page — clearing must leave it untouched.
+        {
+            let mut g = state.0.lock().unwrap();
+            g.appearance.remember_last_page = false;
+            g.appearance.last_page = "clipboard".into();
+            g.appearance.last_page_kind = "all".into();
+        }
+        let stale = state.0.lock().unwrap().clone();
+        write_settings_light(&base, &stale).unwrap();
+        clear_last_page_at(&base, &state).unwrap();
+        let s = read_settings(&base);
+        assert_eq!(s.appearance.last_page, "clipboard", "toggle off: nothing cleared");
+        assert_eq!(s.appearance.last_page_kind, "all");
         fs::remove_dir_all(&base).ok();
     }
 }

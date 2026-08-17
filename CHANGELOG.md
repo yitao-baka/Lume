@@ -22,6 +22,11 @@ All notable changes to Lume are documented here. Format based on
   不还原剪贴板）。
 - **移除剪贴板底部快捷键提示** — 删除 `.shortcut-hint`（App.tsx / App.css / `clipShortcutHint`
   三语文案）；`resizeToContent` 不再测量该 footer。
+- **「记住上次所在页面」重启回到初始页** — 开启该开关时，关闭 Lume（托盘「关闭」或「重启」）
+  会清除已记住的页面（`last_page`/`last_page_kind` 重置为 `apps`/`all`），下次启动回到初始
+  页——记忆只在会话内生效（隐藏/再次呼出保留），跨重启不恢复。后端在 `RunEvent::ExitRequested`
+  清理（`settings::clear_last_page`，轻量写盘不碰 backup.toml）；单实例第二进程在进入 Tauri
+  生命周期前即退出，不会误清。单测 +2 → `cargo test` **73 通过**。
 
 - **Clipboard image preview / enlarge via asset protocol** — `get_clipboard_image`
   returns the stored PNG's path instead of a base64 data URI; the frontend

@@ -440,6 +440,11 @@ function App() {
     if (!rememberLastPage()) return;
     const m = mode();
     const kind = m === "clipboard" ? clipKind() : "all";
+    // Update frontend signals so clearSearch() reads the correct values on the
+    // next launcher show (the Rust backend writes to file + in-memory, but
+    // does not emit settings-applied — so the signals would stay stale).
+    setLastPageMode(m);
+    setLastPageKind(kind as ClipKind);
     window.clearTimeout(lastPageTimer);
     lastPageTimer = window.setTimeout(() => {
       void invoke("save_last_page", { mode: m, kind }).catch(() => {});

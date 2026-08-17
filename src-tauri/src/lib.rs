@@ -324,6 +324,18 @@ pub fn run() {
             svc::autostart_get,
             svc::autostart_set,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Lume");
+        .build(tauri::generate_context!())
+        .expect("error while running Lume")
+        .run(|app, event| {
+            // 记住上次所在页面: clearing the bookmark when Lume closes means the
+            // next launch starts on the initial page — the memory is in-session
+            // only (hide/show keeps it; a full exit resets it). Both the tray
+            // Exit and Restart fire ExitRequested. Safe from the single-instance
+            // duplicate process (it returns before the Tauri app is built).
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(state) = app.try_state::<settings::SettingsState>() {
+                    let _ = settings::clear_last_page(&state);
+                }
+            }
+        });
 }

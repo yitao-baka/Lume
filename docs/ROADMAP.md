@@ -946,3 +946,97 @@ T tile + 卫星文本预览，无 UI 改动。
   （`dock_position` 改 Option 后贴紧 + None 兜底）、settings `preview` 默认 true。
 - CDP（`scripts/cdp_feature_smoke.mjs`）：PDF 卫星渲染 canvas、音乐分类介于图片/
   视频之间且过滤音频行、.lrc 进文本预览、开关关闭卫星不弹、设置页剪贴板栏渲染开关。
+
+## 17. 多文件勾选 + 失效判定 + 去重开关 + 记住页面（已实现）
+
+**状态：已实现（2026-08-17）。grill-me 定稿七项，全部落地。`cargo test` 71 通过。**
+
+承接 #15/#16 的卫星预览窗。一个 grilling 会话定稿的七项改动：
+
+### 17.1 严重问题修复：旧条目复制/粘贴"无反应"（静默失败 → 全部可见）
+
+**根因**（代码核实）：复制/粘贴按钮本身正常；「无反应」全是**静默失败**——`copyOnly`
+失败分支只 `console.error` 无 toast（图片 PNG 丢失时 `copy_clipboard` 返回 Err，字面无
+反应）；文件行路径失效时 `set_files_to_clipboard` 不查存在性、返回 Ok，复制"成功"但粘进
+目标没东西。
+
+**修复**：`copyOnly`/`copyPlain` 失败也弹 toast（新 `copyFailed`）；所有复制/粘贴错误经
+`clipErrorToast` 映射——`CLIP_INVALID` →「内容已失效」、`CLIP_NO_FILES` →「未勾选任何
+文件」，其余 → 通用失败。失效拦截见 17.2。
+
+### 17.2 失效条目划线变灰（file 全缺失 / image PNG 丢失）
+
+- **判定**：`row_invalid`/`ClipboardItem.valid`——文本永不失效；图片行 PNG 不存在；
+  文件行**全部**路径不存在（部分缺失仍可用）。`search_history` 每次搜索现算（`Path::exists`，
+  与图片 thumb 现有逐次读取一致；历史大时可加短 TTL 缓存）。
+- **表现**：`.clip-row-invalid`（标题划线 + 整行变灰，App.css）；`previewTarget` 对失效行
+  返回 null（不展开预览）；前端复制/粘贴直接拦 + toast，后端 `usable_paths` 返回 `CLIP_INVALID`
+  兜底。
+
+### 17.3 多文件条目 → 文件列表预览 + 勾选（项2）
+
+- **≥2 文件**行卫星窗显示**文件列表**（取代"预览第一个文件"），**含全 other 二进制行**
+  （推翻"other 不预览"规则——列表本身有用）。单文件行维持按类型预览。
+- **卫星 `filelist` 模式**（`preview.tsx`）：每文件复选框 + 逐文件存在性（新命令
+  `check_file_exists`，缺失项划线变灰 + 禁用勾选）；头部 `fileCount` + **「记住勾选」
+  开关**（`clipboard.remember_checks`，默认开）。
+- **复制/粘贴只对勾选子集生效**：`effective_file_paths` = 存储勾选 ∩ 现存文件（记住开且
+  有覆盖时）否则全部现存文件；`usable_paths` 拒绝失效行 / 全不勾选行（`CLIP_NO_FILES`）。
+  `set_clipboard_from_row_paths` 用过滤子集重建 HDROP。命令无需前端传路径——`copy_clipboard`/
+  `paste_clipboard` 读 DB 最新 `checked`，消除卫星与主窗的同步问题。
+- **持久化**：`clipboard` 表新增 `checked TEXT`（JSON 索引数组；迁移 ALTER）；勾选经新命令
+  `set_clipboard_checked` 写入（记住开才调）；`DeletedClip`/`restore_row` 携带，撤销不丢。
+- **默认勾选 = 仅存在的文件**；记住关 → 每次会话重置为该默认。
+
+### 17.4 内容去重开关（`clipboard.dedup`，默认开）
+
+- 开 = 现状（文本/文件整条一致 → 前移不重复；图片只防连续重复）；**关 = 相同内容也新增
+  一条**。文本部分唯一索引 `idx_clipboard_text_unique` 按开关 DROP/重建（启动 + `save_settings`
+  时 `set_dedup_enabled`）；`insert_text_history`/`insert_file_history`/`restore_row` 去重分支门控。
+- 已知边界：`capture()` 的 `last_*` 连续防自写保留——连续两次相同复制在关状态下仍折叠，
+  仅"隔次"重复新增。
+
+### 17.5 记住上次所在页面（`appearance.remember_last_page`，默认关）
+
+- 记住**模式 + 剪贴板分类**（`last_page`/`last_page_kind` 落盘，新命令 `save_last_page`
+  轻量写盘、**不碰 backup.toml**）；**搜索词仅本会话内**记住（`clearSearch` 不再清两模式
+  query，热键重呼出恢复、重启清空，避免明文搜索词写盘）。
+- `clearSearch`/`launcher-shown`/`onMount` 按记忆恢复模式并 runSearch；`switchMode`/
+  `setClipKindAndSearch` 防抖 400ms 持久化。命名与窗口位置「记住位置」区分。
+
+### 17.6 多文件行混合类型 tile（项6）
+
+`clipTile`：≥2 文件且类型**混合**（`Set` of `fileContent` > 1）→ 新 `res/icons/multifiles.svg`；
+全部同类型 → 仍显示该类型 tile。分类过滤（音乐/视频/图片/文本文件）仍按首路径。
+
+### 17.7 移除剪贴板底部快捷键提示（项3）
+
+删 `.shortcut-hint`（App.tsx / App.css / `clipShortcutHint` 三语）+ `resizeToContent` footer 测量。
+
+### 测试
+
+- 单元（71 通过，+7）：`file_row_valid_reflects_surviving_paths`、`image_row_invalid_when_png_missing`、
+  `effective_paths_respects_checked_and_existing`、`usable_paths_rejects_invalid_and_empty_checks`、
+  `dedup_off_records_duplicate_text_rows`、`dedup_toggle_gates_file_list_dedup`、
+  `checked_state_survives_delete_and_undo`。
+- 前端：`tsc --noEmit` + `npm run build` 通过。
+- CDP/手动（待验证）：多文件行列表预览与勾选、记住开关、缺失划线、失效行灰色拦截、
+  去重开关重启生效、记住页面跨呼出/重启、混合类型 multifiles 图标。
+
+### 17.8 修正（2026-08-17，用户复测"旧条目复制/粘贴只对最新文件有效"，真正根因）
+
+**定位**：隔离副本 + 用户真实数据自动化验证——`copy_clipboard`/`paste_clipboard` 对任意
+旧 id 均精确设置该行内容（FileDropList 逐 id 比对全对），渲染/选中/按钮全对，但用户坚持
+复现。按用户提示对照 ZTools 剪贴板插件（`E:\Softwares\ZTools\resources\app.asar`，
+主进程 `ClipboardMonitor.setClipboardFiles` 走原生 addon 建 CF_HDROP）。
+**真正根因**：`set_files_to_clipboard` **不调 `EmptyClipboard()`**。Explorer 复制文件时剪贴板
+同时有 `CF_HDROP` + `CF_UNICODETEXT`（最新文件路径文本）；Lume 只 `SetClipboardData(CF_HDROP)`
+替换文件列表，**残留的 CF_UNICODETEXT 仍是最新文件路径**。`Get-Clipboard` 默认读文本 →
+永远显示最新文件；HDROP 里其实已是旧文件。文本条目用 arboard `set_text`（内部先清空剪贴板）
+所以正常。**复现**：设文本哨兵 → `copy_clipboard(旧id)` → `Get-Clipboard` 文本仍=哨兵（残留）。
+
+**修改**：①`set_files_to_clipboard` 在 `OpenClipboard` 后加 `EmptyClipboard()`（照搬 ZTools
+原生做法）——剪贴板只含该文件列表，无残留文本格式。修复后 `Get-Clipboard` 文本=空、
+FileDropList=旧文件。②（用户选「保留粘贴的内容」，同 ZTools）移除 `auto_paste` 的保存/还原
+（删 `SavedClipboard`/`save_current_clipboard`/`restore_saved_clipboard`）——粘贴后剪贴板
+保留粘贴内容。两者互补。文档（README/CLAUDE/CHANGELOG）同步更新。`cargo test` 仍 71 通过。

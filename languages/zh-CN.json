@@ -138,7 +138,6 @@
   "timeMinutes": "{n} 分钟前",
   "timeHours": "{n} 小时前",
   "timeDays": "{n} 天前",
-  "clipShortcutHint": "↑↓ 移动 · 空格 多选 · Enter 粘贴 · Del 删除",
   "clipHistoryCap": "历史记录条数上限",
   "clipRecordImages": "记录图片",
   "clipRecordFiles": "记录文件",
@@ -159,5 +158,13 @@
   "clipHoverSelect": "悬停选中条目",
   "clipFavoritesTop": "收藏的条目置顶显示",
   "settingsClipPreview": "开启预览",
-  "settingsClipPreviewHint": "关闭后选中条目不再弹出预览窗口（列表内缩略图保留）"
+  "settingsClipPreviewHint": "关闭后选中条目不再弹出预览窗口（列表内缩略图保留）",
+  "clipDedup": "内容去重",
+  "clipDedupHint": "开启后完全相同的复制不再新增记录（仅整条一致；图片只防连续重复）",
+  "rememberChecks": "记住勾选",
+  "clipInvalid": "该条内容已失效",
+  "clipNoFilesChecked": "未勾选任何文件",
+  "copyFailed": "复制失败",
+  "rememberLastPage": "记住上次所在页面",
+  "rememberLastPageHint": "开启后再次呼出停留在上次的模式与分类（搜索词仅本次会话记住）"
 }

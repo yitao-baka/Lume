@@ -36,7 +36,6 @@
   "timeMinutes": "{n} min ago",
   "timeHours": "{n} h ago",
   "timeDays": "{n} d ago",
-  "clipShortcutHint": "↑↓ move · Space multi-select · Enter paste · Del delete",
   "settings": "Settings",
   "imageLabel": "Image · {time}",
   "delete": "Delete",
@@ -159,5 +158,13 @@
   "clipHoverSelect": "Select entries on hover",
   "clipFavoritesTop": "Show favorited entries on top",
   "settingsClipPreview": "Preview",
-  "settingsClipPreviewHint": "Off = no preview window pops for selected entries (inline thumbnails stay)"
+  "settingsClipPreviewHint": "Off = no preview window pops for selected entries (inline thumbnails stay)",
+  "clipDedup": "Deduplicate copies",
+  "clipDedupHint": "When on, an identical copy refreshes the existing entry instead of adding a new row (whole-content match; images keep only the consecutive-repeat guard)",
+  "rememberChecks": "Remember selection",
+  "clipInvalid": "This item's content is no longer available",
+  "clipNoFilesChecked": "No files selected",
+  "copyFailed": "Copy failed",
+  "rememberLastPage": "Remember last page",
+  "rememberLastPageHint": "Reopen on the last page (mode + category); the search text is remembered for this session only"
 }

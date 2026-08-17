@@ -35,8 +35,8 @@ use tauri::{AppHandle, Manager, State};
 use windows::core::BOOL;
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND, POINT};
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW,
-    IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
+    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
+    GetClipboardFormatNameW, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
 };
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::Shell::{DragQueryFileW, DROPFILES, HDROP};
@@ -85,6 +85,14 @@ pub struct ClipboardItem {
     /// Number of copy pieces merged into this row (1 = a normal single copy;
     /// ≥2 = a merged 「合并复制 N 条」 entry).
     pub merged_count: i64,
+    /// False when the entry's content is gone (image PNG missing, or every
+    /// file of a file row missing) — drives the strikethrough+gray row state
+    /// and blocks copy/paste (ROADMAP #17).
+    pub valid: bool,
+    /// Indices (into the newline-joined `content`) of the files the user has
+    /// checked in the multi-file preview; `None` = no override (default: every
+    /// existing file is checked). Persisted via the `checked` column.
+    pub checked: Option<Vec<u32>>,
 }
 
 /// A row as stored in SQLite.
@@ -105,6 +113,8 @@ struct Row {
     html: Option<String>,
     /// Number of merged copy pieces (1 = single copy).
     merged_count: i64,
+    /// Raw JSON array of checked-file indices (file rows); `None` = no override.
+    checked: Option<String>,
 }
 
 /// Shared clipboard state, managed by Tauri.
@@ -142,7 +152,8 @@ fn init_db(conn: &Connection) -> rusqlite::Result<()> {
             created_at   INTEGER NOT NULL,
             source_app   TEXT,
             html         TEXT,
-            merged_count INTEGER NOT NULL DEFAULT 0
+            merged_count INTEGER NOT NULL DEFAULT 0,
+            checked      TEXT
         );",
     )?;
     migrate(conn)?;
@@ -151,6 +162,33 @@ fn init_db(conn: &Connection) -> rusqlite::Result<()> {
             ON clipboard(content) WHERE kind = 'text';",
     )?;
     Ok(())
+}
+
+/// Drop or recreate the text-dedup partial unique index. 内容去重 on → the index
+/// enforces "one row per identical text" at the DB level; off → it must be
+/// dropped, or a re-copy of an existing text would hit a constraint violation
+/// when 去重 off tries to insert a fresh row.
+fn set_dedup_index(conn: &Connection, enabled: bool) -> rusqlite::Result<()> {
+    if enabled {
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_text_unique
+                ON clipboard(content) WHERE kind = 'text';",
+        )
+    } else {
+        conn.execute_batch("DROP INDEX IF EXISTS idx_clipboard_text_unique;")
+    }
+}
+
+/// Apply the 内容去重 setting to the shared DB connection (startup + setting
+/// toggle). Safe to call when the clipboard state is not yet managed.
+pub fn set_dedup_enabled(app: &tauri::AppHandle, enabled: bool) {
+    if let Some(state) = app.try_state::<ClipboardState>() {
+        if let Ok(conn) = state.db.lock() {
+            if let Err(e) = set_dedup_index(&conn, enabled) {
+                eprintln!("[clipboard] failed to sync dedup index: {e}");
+            }
+        }
+    }
 }
 
 /// Column names of the `clipboard` table.
@@ -181,7 +219,8 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
                 created_at   INTEGER NOT NULL,
                 source_app   TEXT,
                 html         TEXT,
-                merged_count INTEGER NOT NULL DEFAULT 0
+                merged_count INTEGER NOT NULL DEFAULT 0,
+                checked      TEXT
             );
             INSERT INTO clipboard(kind, content, data, path, pinned, created_at)
                 SELECT 'text', content, NULL, NULL, 0, created_at FROM clipboard_old;
@@ -197,6 +236,7 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             "merged_count",
             "ALTER TABLE clipboard ADD COLUMN merged_count INTEGER NOT NULL DEFAULT 0",
         ),
+        ("checked", "ALTER TABLE clipboard ADD COLUMN checked TEXT"),
     ] {
         let cols = table_cols(conn)?;
         if !cols.iter().any(|c| c == col) {
@@ -227,7 +267,8 @@ fn next_created_at(conn: &Connection) -> rusqlite::Result<i64> {
 }
 
 /// Upsert a text row. Precedence:
-/// 1. Whole-content dedup (identical copy) → bump recency, refresh html/source.
+/// 1. Whole-content dedup (identical copy, 内容去重 on) → bump recency, refresh
+///    html/source.
 /// 2. Auto-merge (合并复制 on + within window + no paste since) → append to the
 ///    most recent text row (newline-joined, `merged_count` + 1).
 /// 3. Otherwise insert a fresh row (`merged_count = 1`).
@@ -240,16 +281,20 @@ fn insert_text_history(
     cap: i64,
     base: &Path,
     merge: &MergeConfig,
+    dedup: bool,
 ) -> rusqlite::Result<()> {
     let created_at = next_created_at(conn)?;
-    // 1. Whole-content dedup.
-    conn.execute(
-        "UPDATE clipboard SET created_at = ?1, source_app = ?2, html = ?3
-         WHERE kind = 'text' AND content = ?4",
-        params![created_at, source_app, html, text],
-    )?;
-    if conn.changes() > 0 {
-        return prune(conn, cap, base);
+    // 1. Whole-content dedup (only when 内容去重 on). Off = an identical copy
+    // falls through to a fresh insert (the unique index is dropped by then).
+    if dedup {
+        conn.execute(
+            "UPDATE clipboard SET created_at = ?1, source_app = ?2, html = ?3
+             WHERE kind = 'text' AND content = ?4",
+            params![created_at, source_app, html, text],
+        )?;
+        if conn.changes() > 0 {
+            return prune(conn, cap, base);
+        }
     }
     // 2. Auto-merge: the most recent text row is a merge candidate when it is
     // within the window and no paste happened after it. A re-copy of that
@@ -335,14 +380,22 @@ fn insert_file_history(
     source_app: &str,
     cap: i64,
     base: &Path,
+    dedup: bool,
 ) -> rusqlite::Result<()> {
     let content = paths.join("\n");
     let created_at = next_created_at(conn)?;
-    conn.execute(
-        "UPDATE clipboard SET created_at = ?1 WHERE kind = 'file' AND content = ?2",
-        params![created_at, content],
-    )?;
-    if conn.changes() == 0 {
+    // 内容去重: an identical list bumps recency instead of duplicating. Off →
+    // every copy inserts a fresh row (even the same list).
+    let dup = if dedup {
+        conn.execute(
+            "UPDATE clipboard SET created_at = ?1 WHERE kind = 'file' AND content = ?2",
+            params![created_at, content],
+        )?;
+        conn.changes() > 0
+    } else {
+        false
+    };
+    if !dup {
         conn.execute(
             "INSERT INTO clipboard(kind, content, data, path, pinned, created_at, source_app, html, merged_count)
              VALUES ('file', ?1, NULL, NULL, 0, ?2, ?3, NULL, 0)",
@@ -440,7 +493,7 @@ fn search_history(
     favorites_top: bool,
 ) -> rusqlite::Result<Vec<ClipboardItem>> {
     let mut sql = String::from(
-        "SELECT id, kind, content, data, path, pinned, created_at, source_app, html, merged_count FROM clipboard
+        "SELECT id, kind, content, data, path, pinned, created_at, source_app, html, merged_count, checked FROM clipboard
          WHERE (content LIKE '%' || ?1 || '%' OR source_app LIKE '%' || ?1 || '%')",
     );
     match kind {
@@ -472,6 +525,7 @@ fn search_history(
                 source_app: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
                 html: row.get(8)?,
                 merged_count: row.get::<_, i64>(9)?,
+                checked: row.get(10)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -517,6 +571,18 @@ fn row_to_item(row: Row, base: &Path) -> ClipboardItem {
     } else {
         None
     };
+    // A row is valid when its content is still usable: text always is; an image
+    // needs its PNG; a file row needs at least one surviving path.
+    let valid = match row.kind.as_str() {
+        "text" => true,
+        "image" => row.path.as_deref().map_or(false, |p| base.join(p).exists()),
+        "file" => row
+            .content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .any(|p| Path::new(p).exists()),
+        _ => true,
+    };
     ClipboardItem {
         id: row.id,
         kind: row.kind,
@@ -527,12 +593,85 @@ fn row_to_item(row: Row, base: &Path) -> ClipboardItem {
         source_app: row.source_app,
         has_html: row.html.is_some(),
         merged_count: row.merged_count,
+        valid,
+        checked: row.checked.as_deref().and_then(parse_checked_json),
     }
+}
+
+/// Parse a stored `checked` JSON array of indices (the DB column). Unparseable
+/// or legacy values are treated as "no override".
+fn parse_checked_json(s: &str) -> Option<Vec<u32>> {
+    serde_json::from_str(s).ok()
+}
+
+/// Whether a row's content is gone and copy/paste must be blocked: a text row
+/// never is; an image row is when its stored PNG is missing; a file row is when
+/// EVERY recorded path is missing (partial loss keeps the row usable).
+fn row_invalid(row: &Row, base: &Path) -> bool {
+    match row.kind.as_str() {
+        "text" => false,
+        "image" => row.path.as_deref().map_or(true, |p| !base.join(p).exists()),
+        "file" => {
+            let mut any = false;
+            for p in row.content.lines().filter(|l| !l.trim().is_empty()) {
+                if Path::new(p).exists() {
+                    any = true;
+                    break;
+                }
+            }
+            !any
+        }
+        _ => false,
+    }
+}
+
+/// The file paths a row actually copies/pastes. Multi-file rows use the stored
+/// checked subset ∩ existing files (when 记住勾选 is on and an override exists),
+/// otherwise every existing file; single-file rows use their one path. Only
+/// existing files are ever included (missing ones are excluded by the checked /
+/// default semantics). Text/image rows return empty.
+fn effective_file_paths(row: &Row, remember_checks: bool) -> Vec<String> {
+    if row.kind != "file" {
+        return Vec::new();
+    }
+    let all: Vec<String> = row.content.lines().map(str::to_owned).collect();
+    if all.is_empty() {
+        return Vec::new();
+    }
+    let chosen: Vec<String> = if all.len() >= 2 && remember_checks {
+        match row.checked.as_deref().and_then(parse_checked_json) {
+            Some(indices) => indices
+                .iter()
+                .filter_map(|&i| all.get(i as usize).cloned())
+                .collect(),
+            None => all.clone(),
+        }
+    } else {
+        all.clone()
+    };
+    chosen
+        .into_iter()
+        .filter(|p| Path::new(p).exists())
+        .collect()
+}
+
+/// The paths to actually place on the clipboard for a row, rejecting rows whose
+/// content is gone and multi-file rows where nothing is checked (both sentinel
+/// errors the frontend maps to a toast).
+fn usable_paths(row: &Row, remember_checks: bool, base: &Path) -> Result<Vec<String>, String> {
+    if row_invalid(row, base) {
+        return Err("CLIP_INVALID".into());
+    }
+    let paths = effective_file_paths(row, remember_checks);
+    if row.kind == "file" && paths.is_empty() {
+        return Err("CLIP_NO_FILES".into());
+    }
+    Ok(paths)
 }
 
 fn get_row(conn: &Connection, id: u32) -> rusqlite::Result<Option<Row>> {
     let mut stmt = conn.prepare(
-        "SELECT id, kind, content, data, path, pinned, created_at, source_app, html, merged_count FROM clipboard WHERE id = ?1",
+        "SELECT id, kind, content, data, path, pinned, created_at, source_app, html, merged_count, checked FROM clipboard WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map(params![id], |row| {
         Ok(Row {
@@ -546,6 +685,7 @@ fn get_row(conn: &Connection, id: u32) -> rusqlite::Result<Option<Row>> {
             source_app: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
             html: row.get(8)?,
             merged_count: row.get::<_, i64>(9)?,
+            checked: row.get(10)?,
         })
     })?;
     rows.next().transpose()
@@ -574,6 +714,9 @@ pub struct DeletedClip {
     pub html: Option<String>,
     /// Number of merged copy pieces (1 = single copy).
     pub merged_count: i64,
+    /// Raw JSON of checked-file indices (preserved so undo restores the
+    /// multi-file checkbox state too).
+    pub checked: Option<String>,
 }
 
 impl From<&Row> for DeletedClip {
@@ -587,16 +730,22 @@ impl From<&Row> for DeletedClip {
             source_app: row.source_app.clone(),
             html: row.html.clone(),
             merged_count: row.merged_count,
+            checked: row.checked.clone(),
         }
     }
 }
 
 /// Re-insert a previously-deleted entry. Text/file rows are deduped by
-/// (kind, content): restoring one after the same text was re-copied bumps its
-/// recency instead of duplicating. Image rows (never deduped) are re-inserted
-/// pointing back at their still-present PNG.
-fn restore_row(conn: &Connection, d: &DeletedClip, base: &Path) -> rusqlite::Result<()> {
-    if d.kind == "text" || d.kind == "file" {
+/// (kind, content) when 内容去重 is on: restoring one after the same text was
+/// re-copied bumps its recency instead of duplicating. Image rows (never
+/// deduped) are re-inserted pointing back at their still-present PNG.
+fn restore_row(
+    conn: &Connection,
+    d: &DeletedClip,
+    base: &Path,
+    dedup: bool,
+) -> rusqlite::Result<()> {
+    if dedup && (d.kind == "text" || d.kind == "file") {
         let updated = conn.execute(
             "UPDATE clipboard SET created_at = ?1, pinned = ?2, source_app = ?3
              WHERE kind = ?4 AND content = ?5",
@@ -607,8 +756,8 @@ fn restore_row(conn: &Connection, d: &DeletedClip, base: &Path) -> rusqlite::Res
         }
     }
     conn.execute(
-        "INSERT INTO clipboard(kind, content, data, path, pinned, created_at, source_app, html, merged_count)
-         VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO clipboard(kind, content, data, path, pinned, created_at, source_app, html, merged_count, checked)
+         VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             d.kind,
             d.content,
@@ -617,7 +766,8 @@ fn restore_row(conn: &Connection, d: &DeletedClip, base: &Path) -> rusqlite::Res
             d.created_at,
             d.source_app,
             d.html,
-            d.merged_count
+            d.merged_count,
+            d.checked
         ],
     )?;
     // Restore never prunes (it restores exactly what was deleted); just sweep
@@ -850,7 +1000,7 @@ fn capture(state: &ClipboardState, clip: &crate::settings::Clipboard) {
                 if text != *last_text {
                     let conn = state.db.lock().unwrap();
                     if insert_text_history(
-                        &conn, &text, &source, html, clip.history_cap, &base, &merge,
+                        &conn, &text, &source, html, clip.history_cap, &base, &merge, clip.dedup,
                     )
                     .is_err()
                     {
@@ -874,7 +1024,9 @@ fn capture(state: &ClipboardState, clip: &crate::settings::Clipboard) {
             let mut last_files = state.last_files.lock().unwrap();
             if joined != *last_files {
                 let conn = state.db.lock().unwrap();
-                if insert_file_history(&conn, &paths, &source, clip.history_cap, &base).is_err() {
+                if insert_file_history(&conn, &paths, &source, clip.history_cap, &base, clip.dedup)
+                    .is_err()
+                {
                     eprintln!("[clipboard] failed to store file history");
                 }
                 *last_files = joined;
@@ -1061,6 +1213,16 @@ pub fn init(app: &tauri::App) {
             conn
         }
     };
+    // 内容去重 off → the text-dedup unique index must not exist (it would
+    // reject the duplicate inserts the off state records).
+    let dedup = app
+        .state::<crate::settings::SettingsState>()
+        .current()
+        .clipboard
+        .dedup;
+    if let Err(e) = set_dedup_index(&conn, dedup) {
+        eprintln!("[clipboard] failed to apply dedup index: {e}");
+    }
     app.manage(ClipboardState {
         db: Mutex::new(conn),
         last_seq: AtomicU32::new(0),
@@ -1119,18 +1281,24 @@ pub fn search_clipboard(
 }
 
 /// Write the entry `id` back to the system clipboard (text or image). `plain`
-/// forces plain text for rows that carry rich-text HTML.
+/// forces plain text for rows that carry rich-text HTML. A file row copies the
+/// checked ∩ existing subset (多文件勾选); an invalid row is rejected with a
+/// sentinel the frontend maps to a toast.
 #[tauri::command]
 pub fn copy_clipboard(
     id: u32,
     plain: Option<bool>,
     state: State<ClipboardState>,
+    settings: State<crate::settings::SettingsState>,
 ) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     let row = get_row(&conn, id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("clipboard item {id} not found"))?;
-    set_clipboard_from_row_plain(&row, plain.unwrap_or(false))
+    let remember = settings.current().clipboard.remember_checks;
+    let base = crate::paths::data_dir();
+    let paths = usable_paths(&row, remember, &base)?;
+    set_clipboard_from_row_paths(&row, &paths, plain.unwrap_or(false))
 }
 
 /// Pause / resume clipboard recording (runtime-only — not persisted). Returns
@@ -1215,10 +1383,12 @@ pub fn get_clipboard_image(id: u32, state: State<ClipboardState>) -> Result<Stri
 }
 
 /// Paste flow shared by single- and multi-item paste: take ownership of the
-/// stored target HWND, save the current clipboard, let `set` put the entry
-/// onto the clipboard, hide the launcher, send Ctrl+V, then restore the
-/// clipboard. If no target window is recorded or the window is gone, falls
-/// back to a plain clipboard copy (`set` alone) — the launcher stays open.
+/// stored target HWND, let `set` put the entry onto the clipboard, hide the
+/// launcher, send Ctrl+V — and LEAVE the entry on the clipboard (the pasted
+/// content is what the user just used, so it stays; checking the system
+/// clipboard afterwards shows the pasted item, not the previous one). If no
+/// target window is recorded or the window is gone, falls back to a plain
+/// clipboard copy (`set` alone) — the launcher stays open.
 fn auto_paste(
     app: &AppHandle,
     focus: &crate::window::FocusState,
@@ -1237,10 +1407,7 @@ fn auto_paste(
         return set();
     }
 
-    // Save the current clipboard so we can restore it after the paste.
-    let saved = save_current_clipboard();
-
-    // Place the entry on the system clipboard.
+    // Place the entry on the system clipboard (it stays there after the paste).
     set()?;
 
     // 粘贴后关闭: hide the launcher so focus can return to the target window.
@@ -1265,17 +1432,13 @@ fn auto_paste(
     // Give the target application time to process the paste.
     std::thread::sleep(Duration::from_millis(100));
 
-    // Restore whatever was on the clipboard before our paste.
-    restore_saved_clipboard(saved);
-
     Ok(())
 }
 
 /// Write the entry `id` to the clipboard and paste it (Ctrl+V via SendInput)
 /// into the window that had focus before the launcher appeared. Falls back to
-/// a plain clipboard copy when no target window is recorded. The original
-/// clipboard content is saved and restored after the paste so the user's
-/// clipboard is never polluted.
+/// a plain clipboard copy when no target window is recorded. The entry stays
+/// on the system clipboard after the paste (it is what was just used).
 #[tauri::command]
 pub fn paste_clipboard(
     id: u32,
@@ -1288,7 +1451,16 @@ pub fn paste_clipboard(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("clipboard item {id} not found"))?;
     drop(conn);
-    let res = auto_paste(&app, &focus, || set_clipboard_from_row(&row));
+    let remember = app
+        .state::<crate::settings::SettingsState>()
+        .current()
+        .clipboard
+        .remember_checks;
+    let base = crate::paths::data_dir();
+    let res = auto_paste(&app, &focus, || {
+        let paths = usable_paths(&row, remember, &base)?;
+        set_clipboard_from_row_paths(&row, &paths, false)
+    });
     // A paste closes the current auto-merge window (deliberate use of an entry).
     *state.last_paste_at.lock().unwrap() = Some(now_millis());
     res
@@ -1327,8 +1499,17 @@ pub fn paste_clipboard_multi(
             cb.set_text(&joined).map_err(|e| e.to_string())
         })
     } else {
+        let remember = app
+            .state::<crate::settings::SettingsState>()
+            .current()
+            .clipboard
+            .remember_checks;
+        let base = crate::paths::data_dir();
         match first {
-            Some(row) => auto_paste(&app, &focus, || set_clipboard_from_row(&row)),
+            Some(row) => auto_paste(&app, &focus, || {
+                let paths = usable_paths(&row, remember, &base)?;
+                set_clipboard_from_row_paths(&row, &paths, false)
+            }),
             None => Err("no clipboard items found".into()),
         }
     };
@@ -1337,63 +1518,15 @@ pub fn paste_clipboard_multi(
     res
 }
 
-/// Save whatever is currently on the system clipboard (text, file list or
-/// image) so it can be restored after an auto-paste.
-enum SavedClipboard {
-    Empty,
-    Text(String),
-    Files(Vec<String>),
-    Image(arboard::ImageData<'static>),
-}
-
-fn save_current_clipboard() -> SavedClipboard {
-    // Text wins; then a file list; then an image. Each arboard handle is
-    // scoped so the clipboard is released before the CF_HDROP check.
-    if let Ok(mut cb) = arboard::Clipboard::new() {
-        if let Ok(text) = cb.get_text() {
-            return SavedClipboard::Text(text);
-        }
-    }
-    if let Some(files) = read_file_list() {
-        return SavedClipboard::Files(files);
-    }
-    if let Ok(mut cb) = arboard::Clipboard::new() {
-        if let Ok(img) = cb.get_image() {
-            // Convert to owned data.
-            let owned = arboard::ImageData {
-                width: img.width,
-                height: img.height,
-                bytes: Cow::Owned(img.bytes.to_vec()),
-            };
-            return SavedClipboard::Image(owned);
-        }
-    }
-    SavedClipboard::Empty
-}
-
-fn restore_saved_clipboard(saved: SavedClipboard) {
-    match saved {
-        SavedClipboard::Empty => {}
-        SavedClipboard::Text(s) => {
-            if let Ok(mut cb) = arboard::Clipboard::new() {
-                let _ = cb.set_text(s);
-            }
-        }
-        SavedClipboard::Files(files) => {
-            let _ = set_files_to_clipboard(&files);
-        }
-        SavedClipboard::Image(img) => {
-            if let Ok(mut cb) = arboard::Clipboard::new() {
-                let _ = cb.set_image(img);
-            }
-        }
-    }
-}
-
 /// Place a history row onto the system clipboard: text inline, image read
-/// back from its picture-cache file, file rows re-assembled as a CF_HDROP
-/// path list.
-fn set_clipboard_from_row(row: &Row) -> Result<(), String> {
+/// back from its picture-cache file, file rows re-assembled as a CF_HDROP path
+/// list. `paths` is the pre-filtered subset for file rows (checked ∩ existing);
+/// empty means "use the row's own list verbatim" (callers that don't filter).
+fn set_clipboard_from_row_paths(row: &Row, paths: &[String], plain: bool) -> Result<(), String> {
+    if plain && row.kind == "text" && row.html.is_some() {
+        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        return cb.set_text(&row.content).map_err(|e| e.to_string());
+    }
     match row.kind.as_str() {
         "image" => {
             let Some(rel) = row.path.as_deref() else {
@@ -1414,8 +1547,12 @@ fn set_clipboard_from_row(row: &Row) -> Result<(), String> {
             cb.set_image(img).map_err(|e| e.to_string())
         }
         "file" => {
-            let paths: Vec<String> = row.content.lines().map(str::to_owned).collect();
-            set_files_to_clipboard(&paths)
+            if paths.is_empty() {
+                let all: Vec<String> = row.content.lines().map(str::to_owned).collect();
+                set_files_to_clipboard(&all)
+            } else {
+                set_files_to_clipboard(paths)
+            }
         }
         _ => {
             // Rich text: when the row captured HTML, put HTML + plain text back
@@ -1429,16 +1566,6 @@ fn set_clipboard_from_row(row: &Row) -> Result<(), String> {
             }
         }
     }
-}
-
-/// Put a row on the clipboard. `plain` forces plain text even for text rows
-/// that carry rich-text HTML (the 「复制为纯文本」 option strips formatting).
-fn set_clipboard_from_row_plain(row: &Row, plain: bool) -> Result<(), String> {
-    if plain && row.kind == "text" && row.html.is_some() {
-        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-        return cb.set_text(&row.content).map_err(|e| e.to_string());
-    }
-    set_clipboard_from_row(row)
 }
 
 /// Build the byte layout of a CF_HDROP block: a `DROPFILES` header followed by
@@ -1469,7 +1596,12 @@ fn build_hdrop_buffer(paths: &[String]) -> Vec<u8> {
     buf
 }
 
-/// Put a file path list back on the system clipboard as CF_HDROP.
+/// Put a file path list back on the system clipboard as CF_HDROP. The clipboard
+/// is EMPTIED first (like ZTools' native addon and arboard's set_text): without
+/// `EmptyClipboard`, Explorer's leftover `CF_UNICODETEXT` (the previously copied
+/// file's path) survives, so a text-based clipboard read/paste shows that stale
+/// "newest" path instead of this file list — the root cause of "copying an old
+/// file entry always yields the newest file".
 fn set_files_to_clipboard(paths: &[String]) -> Result<(), String> {
     let buf = build_hdrop_buffer(paths);
     let hglobal = unsafe { GlobalAlloc(GMEM_MOVEABLE, buf.len()) }.map_err(|e| e.to_string())?;
@@ -1486,6 +1618,8 @@ fn set_files_to_clipboard(paths: &[String]) -> Result<(), String> {
         unsafe { GlobalFree(Some(hglobal)) }.ok();
         return Err("OpenClipboard failed".into());
     }
+    // Clear every stale format so the clipboard holds ONLY this HDROP.
+    unsafe { EmptyClipboard().ok() };
     // SetClipboardData takes ownership of the block on success.
     let res = unsafe { SetClipboardData(CF_HDROP, Some(HANDLE(hglobal.0))) };
     let _ = unsafe { CloseClipboard() };
@@ -1570,9 +1704,44 @@ pub fn delete_clipboard(id: u32, state: State<ClipboardState>) -> Result<Deleted
 pub fn restore_clipboard(
     item: DeletedClip,
     state: State<ClipboardState>,
+    settings: State<crate::settings::SettingsState>,
 ) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
-    restore_row(&conn, &item, &crate::paths::data_dir()).map_err(|e| e.to_string())
+    restore_row(
+        &conn,
+        &item,
+        &crate::paths::data_dir(),
+        settings.current().clipboard.dedup,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Per-path existence check for the multi-file list preview (missing files are
+/// struck through and their checkbox disabled).
+#[tauri::command]
+pub fn check_file_exists(paths: Vec<String>) -> Vec<bool> {
+    paths
+        .iter()
+        .map(|p| Path::new(p).exists())
+        .collect()
+}
+
+/// Persist a multi-file entry's checked-file indices (`None` clears the
+/// override → the entry falls back to "every existing file checked").
+#[tauri::command]
+pub fn set_clipboard_checked(
+    id: u32,
+    checked: Option<Vec<u32>>,
+    state: State<ClipboardState>,
+) -> Result<(), String> {
+    let json = checked.map(|v| serde_json::to_string(&v).unwrap_or_default());
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "UPDATE clipboard SET checked = ?1 WHERE id = ?2",
+        params![json, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Pin or unpin a history entry.
@@ -1774,8 +1943,8 @@ mod tests {
     fn insert_and_substring_search() {
         let conn = memory_db();
         let base = temp_base("sub");
-        insert_text_history(&conn, "hello world", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "hello lume", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "hello world", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "hello lume", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         let hits = search_history(&conn, "hello", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 2);
         assert!(hits[0].created_at >= hits[1].created_at);
@@ -1786,8 +1955,8 @@ mod tests {
     fn source_app_is_persisted() {
         let conn = memory_db();
         let base = temp_base("srcapp");
-        insert_text_history(&conn, "hello world", "Chrome", None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_file_history(&conn, &["C:/a.txt".into()], "Explorer", TEST_CAP, &base).unwrap();
+        insert_text_history(&conn, "hello world", "Chrome", None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_file_history(&conn, &["C:/a.txt".into()], "Explorer", TEST_CAP, &base, true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits[0].kind, "file");
         assert_eq!(hits[0].source_app, "Explorer");
@@ -1800,8 +1969,8 @@ mod tests {
     fn empty_query_returns_most_recent_first() {
         let conn = memory_db();
         let base = temp_base("empty");
-        insert_text_history(&conn, "first", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "second", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "first", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "second", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits[0].content, "second");
         assert_eq!(hits[1].content, "first");
@@ -1812,9 +1981,9 @@ mod tests {
     fn duplicate_text_bumps_recency_without_duplicating() {
         let conn = memory_db();
         let base = temp_base("dedup");
-        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap(); // re-copied → moves to top
+        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap(); // re-copied → moves to top
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].content, "alpha");
@@ -1826,9 +1995,9 @@ mod tests {
     fn prune_keeps_newest() {
         let conn = memory_db();
         let base = temp_base("prune");
-        insert_text_history(&conn, "a", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "b", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "c", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "a", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "b", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "c", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         prune(&conn, 2, &base).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 2);
@@ -1841,7 +2010,7 @@ mod tests {
     fn search_is_case_insensitive() {
         let conn = memory_db();
         let base = temp_base("case");
-        insert_text_history(&conn, "Visual Studio", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "Visual Studio", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         assert_eq!(search_history(&conn, "visual", "all", 20, &base, false).unwrap().len(), 1);
         assert_eq!(search_history(&conn, "STUDIO", "all", 20, &base, false).unwrap().len(), 1);
         fs::remove_dir_all(&base).ok();
@@ -1852,7 +2021,7 @@ mod tests {
         let conn = memory_db();
         let base = temp_base("cap");
         for i in 0..(TEST_CAP as usize + 10) {
-            insert_text_history(&conn, &format!("entry {i}"), TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+            insert_text_history(&conn, &format!("entry {i}"), TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         }
         let hits = search_history(&conn, "", "all", 10_000, &base, false).unwrap();
         assert_eq!(hits.len(), TEST_CAP as usize);
@@ -1863,10 +2032,10 @@ mod tests {
     fn pinned_sorts_first_when_favorites_top_and_survives_prune() {
         let conn = memory_db();
         let base = temp_base("pinned");
-        insert_text_history(&conn, "unpinned-a", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "pinned-b", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "unpinned-a", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "pinned-b", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         set_pinned(&conn, search_history(&conn, "pinned-b", "all", 1, &base, false).unwrap()[0].id, true).unwrap();
-        insert_text_history(&conn, "unpinned-c", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "unpinned-c", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, true).unwrap();
         assert_eq!(hits[0].content, "pinned-b", "with favorites_top, pinned must sort first");
         prune(&conn, 1, &base).unwrap();
@@ -1880,9 +2049,9 @@ mod tests {
     fn favorites_top_off_keeps_pure_recency() {
         let conn = memory_db();
         let base = temp_base("pin-off");
-        insert_text_history(&conn, "first", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "second", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "third", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "first", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "second", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "third", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         // Favorite the oldest row; with favorites_top=false it must NOT jump first.
         let id = search_history(&conn, "first", "all", 1, &base, false).unwrap()[0].id;
         set_pinned(&conn, id, true).unwrap();
@@ -1940,10 +2109,10 @@ mod tests {
     fn file_list_is_one_row_deduped_by_content() {
         let conn = memory_db();
         let base = temp_base("files");
-        insert_file_history(&conn, &["C:/a.txt".into(), "C:/b.txt".into()], TEST_SRC, TEST_CAP, &base).unwrap();
+        insert_file_history(&conn, &["C:/a.txt".into(), "C:/b.txt".into()], TEST_SRC, TEST_CAP, &base, true).unwrap();
         // Re-copying the same list bumps recency instead of duplicating.
-        insert_file_history(&conn, &["C:/a.txt".into(), "C:/b.txt".into()], TEST_SRC, TEST_CAP, &base).unwrap();
-        insert_file_history(&conn, &["C:/c.txt".into()], TEST_SRC, TEST_CAP, &base).unwrap();
+        insert_file_history(&conn, &["C:/a.txt".into(), "C:/b.txt".into()], TEST_SRC, TEST_CAP, &base, true).unwrap();
+        insert_file_history(&conn, &["C:/c.txt".into()], TEST_SRC, TEST_CAP, &base, true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].kind, "file");
@@ -1995,7 +2164,7 @@ mod tests {
     fn restore_reinserts_a_deleted_row() {
         let conn = memory_db();
         let base = temp_base("restore");
-        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         insert_image_history(&conn, &sample_png(), TEST_SRC, TEST_CAP, &base).unwrap();
         // Delete the image row and capture what was removed.
         let image_id = search_history(&conn, "Image", "all", 20, &base, false).unwrap()[0].id;
@@ -2004,7 +2173,7 @@ mod tests {
         delete_row(&conn, image_id, &base).unwrap();
         assert_eq!(search_history(&conn, "", "all", 20, &base, false).unwrap().len(), 1);
         // Restore it — the row and its picture file come back.
-        restore_row(&conn, &deleted, &base).unwrap();
+        restore_row(&conn, &deleted, &base, true).unwrap();
         let hits = search_history(&conn, "Image", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].kind, "image");
@@ -2025,6 +2194,7 @@ mod tests {
             TEST_CAP,
             &base,
             &no_merge(),
+            true,
         )
         .unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
@@ -2041,6 +2211,7 @@ mod tests {
             TEST_CAP,
             &base,
             &no_merge(),
+            true,
         )
         .unwrap();
         let hits = search_history(&conn, "plain", "all", 20, &base, false).unwrap();
@@ -2067,8 +2238,8 @@ mod tests {
             window_ms: 1500,
             last_paste_at: None,
         };
-        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
-        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
+        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
+        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 1, "two copies within the window merge into one row");
         assert_eq!(hits[0].content, "alpha\nbeta");
@@ -2085,14 +2256,14 @@ mod tests {
             window_ms: 1500,
             last_paste_at: None,
         };
-        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
+        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
         // Force the last row's timestamp far enough back that the window lapses.
         conn.execute(
             "UPDATE clipboard SET created_at = created_at - 100000 WHERE kind = 'text'",
             [],
         )
         .unwrap();
-        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
+        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 2, "a copy beyond the window starts a new row");
         assert_eq!(hits[0].content, "beta");
@@ -2109,10 +2280,10 @@ mod tests {
             window_ms: 1500,
             last_paste_at: None,
         };
-        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
-        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
+        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
+        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
         // Re-copying the last piece is a duplicate — it must not append a third.
-        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
+        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, "alpha\nbeta", "no third line appended");
@@ -2129,8 +2300,8 @@ mod tests {
             window_ms: 1500,
             last_paste_at: Some(now_millis() + 1_000_000),
         };
-        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
-        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
+        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
+        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 2, "a paste after the row closes the merge window");
         fs::remove_dir_all(&base).ok();
@@ -2140,8 +2311,8 @@ mod tests {
     fn merge_disabled_inserts_separate_rows() {
         let conn = memory_db();
         let base = temp_base("merge-off");
-        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].merged_count, 1);
@@ -2157,13 +2328,13 @@ mod tests {
             window_ms: 1500,
             last_paste_at: None,
         };
-        insert_text_history(&conn, "alpha", TEST_SRC, Some("<b>alpha</b>".into()), TEST_CAP, &base, &merge).unwrap();
-        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge).unwrap();
+        insert_text_history(&conn, "alpha", TEST_SRC, Some("<b>alpha</b>".into()), TEST_CAP, &base, &merge, true).unwrap();
+        insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
         let id = search_history(&conn, "", "all", 20, &base, false).unwrap()[0].id;
         let row = get_row(&conn, id).unwrap().unwrap();
         let deleted = DeletedClip::from(&row);
         delete_row(&conn, id, &base).unwrap();
-        restore_row(&conn, &deleted, &base).unwrap();
+        restore_row(&conn, &deleted, &base, true).unwrap();
         let hits = search_history(&conn, "alpha", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, "alpha\nbeta");
@@ -2178,7 +2349,7 @@ mod tests {
     fn clear_empties_table_and_picture_cache() {
         let conn = memory_db();
         let base = temp_base("clear");
-        insert_text_history(&conn, "a", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "a", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         insert_image_history(&conn, &sample_png(), TEST_SRC, TEST_CAP, &base).unwrap();
         clear_history(&conn, &base, false).unwrap();
         assert_eq!(search_history(&conn, "", "all", 20, &base, false).unwrap().len(), 0);
@@ -2190,7 +2361,7 @@ mod tests {
     fn clear_keep_pinned_retains_pinned_rows_and_their_images() {
         let conn = memory_db();
         let base = temp_base("clear-pinned");
-        insert_text_history(&conn, "unpinned-a", TEST_SRC, None, TEST_CAP, &base, &no_merge()).unwrap();
+        insert_text_history(&conn, "unpinned-a", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
         insert_image_history(&conn, &sample_png(), TEST_SRC, TEST_CAP, &base).unwrap();
         let pinned_id = search_history(&conn, "Image", "all", 20, &base, false).unwrap()[0].id;
         set_pinned(&conn, pinned_id, true).unwrap();
@@ -2207,11 +2378,11 @@ mod tests {
     fn search_filters_by_kind_and_source_app() {
         let conn = memory_db();
         let base = temp_base("kind");
-        insert_text_history(&conn, "hello world", "Chrome", None, TEST_CAP, &base, &no_merge()).unwrap();
-        insert_file_history(&conn, &["C:/a.txt".into()], "Explorer", TEST_CAP, &base).unwrap();
-        insert_file_history(&conn, &["C:/b.mkv".into()], "Explorer", TEST_CAP, &base).unwrap();
-        insert_file_history(&conn, &["C:/c.png".into()], "Explorer", TEST_CAP, &base).unwrap();
-        insert_file_history(&conn, &["C:/d.mp3".into()], "Explorer", TEST_CAP, &base).unwrap();
+        insert_text_history(&conn, "hello world", "Chrome", None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_file_history(&conn, &["C:/a.txt".into()], "Explorer", TEST_CAP, &base, true).unwrap();
+        insert_file_history(&conn, &["C:/b.mkv".into()], "Explorer", TEST_CAP, &base, true).unwrap();
+        insert_file_history(&conn, &["C:/c.png".into()], "Explorer", TEST_CAP, &base, true).unwrap();
+        insert_file_history(&conn, &["C:/d.mp3".into()], "Explorer", TEST_CAP, &base, true).unwrap();
         insert_image_history(&conn, &sample_png(), "Snipping", TEST_CAP, &base).unwrap();
         assert_eq!(search_history(&conn, "", "text", 20, &base, false).unwrap().len(), 1);
         // Content-kind categories: 文本文件 / 音乐 / 图片 / 视频 filter file
@@ -2328,6 +2499,152 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].kind, "image");
         assert_eq!(hits[0].source_app, "", "legacy rows default to an empty source app");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    // ── ROADMAP #17: 失效判定 / 勾选子集 / 去重开关 ─────────────────────────
+
+    #[test]
+    fn file_row_valid_reflects_surviving_paths() {
+        let conn = memory_db();
+        let base = temp_base("valid");
+        let f1 = base.join("a.txt");
+        let f2 = base.join("b.txt");
+        std::fs::write(&f1, "a").unwrap();
+        std::fs::write(&f2, "b").unwrap();
+        let p1 = f1.to_string_lossy().into_owned();
+        let p2 = f2.to_string_lossy().into_owned();
+        let missing = base.join("gone.txt").to_string_lossy().into_owned();
+        insert_file_history(&conn, &[p1.clone(), p2.clone()], TEST_SRC, TEST_CAP, &base, true).unwrap();
+        assert!(search_history(&conn, "", "all", 20, &base, false).unwrap()[0].valid, "all paths present → valid");
+        insert_file_history(&conn, &[p1.clone(), missing.clone()], TEST_SRC, TEST_CAP, &base, true).unwrap();
+        assert!(search_history(&conn, "", "all", 20, &base, false).unwrap()[0].valid, "a surviving path keeps the row usable");
+        insert_file_history(&conn, &[missing.clone()], TEST_SRC, TEST_CAP, &base, true).unwrap();
+        assert!(!search_history(&conn, "", "all", 20, &base, false).unwrap()[0].valid, "no surviving path → row invalid");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn image_row_invalid_when_png_missing() {
+        let conn = memory_db();
+        let base = temp_base("img-valid");
+        insert_image_history(&conn, &sample_png(), TEST_SRC, TEST_CAP, &base).unwrap();
+        let id = search_history(&conn, "", "all", 20, &base, false).unwrap()[0].id;
+        let row = get_row(&conn, id).unwrap().unwrap();
+        assert!(!row_invalid(&row, &base), "present PNG → valid");
+        std::fs::remove_file(base.join("PictureCache").join(format!("{id}.png"))).unwrap();
+        assert!(row_invalid(&get_row(&conn, id).unwrap().unwrap(), &base), "missing PNG → invalid");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn effective_paths_respects_checked_and_existing() {
+        let conn = memory_db();
+        let base = temp_base("paths");
+        let f1 = base.join("a.txt");
+        let f2 = base.join("b.txt");
+        std::fs::write(&f1, "a").unwrap();
+        std::fs::write(&f2, "b").unwrap();
+        let p1 = f1.to_string_lossy().into_owned();
+        let p2 = f2.to_string_lossy().into_owned();
+        let missing = base.join("gone.txt").to_string_lossy().into_owned();
+        insert_file_history(&conn, &[p1.clone(), p2.clone(), missing.clone()], TEST_SRC, TEST_CAP, &base, true).unwrap();
+        let id = search_history(&conn, "", "all", 20, &base, false).unwrap()[0].id;
+        let row = get_row(&conn, id).unwrap().unwrap();
+        // No override → every EXISTING file (missing excluded).
+        assert_eq!(effective_file_paths(&row, true), vec![p1.clone(), p2.clone()]);
+        // With an override (only the first file checked) → that subset.
+        conn.execute(
+            "UPDATE clipboard SET checked = ?1 WHERE id = ?2",
+            params![Some("[0]".to_string()), id],
+        )
+        .unwrap();
+        let row = get_row(&conn, id).unwrap().unwrap();
+        assert_eq!(effective_file_paths(&row, true), vec![p1.clone()]);
+        // 记住勾选 off → the override is ignored, all existing again.
+        assert_eq!(effective_file_paths(&row, false), vec![p1.clone(), p2.clone()]);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn usable_paths_rejects_invalid_and_empty_checks() {
+        let conn = memory_db();
+        let base = temp_base("usable");
+        // All-missing row → invalid.
+        let missing = base.join("gone.txt").to_string_lossy().into_owned();
+        insert_file_history(&conn, &[missing], TEST_SRC, TEST_CAP, &base, true).unwrap();
+        let id = search_history(&conn, "", "all", 20, &base, false).unwrap()[0].id;
+        assert_eq!(usable_paths(&get_row(&conn, id).unwrap().unwrap(), true, &base), Err("CLIP_INVALID".into()));
+        // Two existing files, empty override (user unchecked everything) → nothing usable.
+        let f1 = base.join("a.txt");
+        let f2 = base.join("b.txt");
+        std::fs::write(&f1, "a").unwrap();
+        std::fs::write(&f2, "b").unwrap();
+        insert_file_history(
+            &conn,
+            &[f1.to_string_lossy().into_owned(), f2.to_string_lossy().into_owned()],
+            TEST_SRC,
+            TEST_CAP,
+            &base,
+            true,
+        )
+        .unwrap();
+        let id = search_history(&conn, "", "all", 20, &base, false).unwrap()[0].id;
+        conn.execute(
+            "UPDATE clipboard SET checked = ?1 WHERE id = ?2",
+            params![Some("[]".to_string()), id],
+        )
+        .unwrap();
+        assert_eq!(usable_paths(&get_row(&conn, id).unwrap().unwrap(), true, &base), Err("CLIP_NO_FILES".into()));
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn dedup_off_records_duplicate_text_rows() {
+        let conn = memory_db();
+        // The 内容去重 off state drops the unique index (see set_dedup_index).
+        conn.execute_batch("DROP INDEX IF EXISTS idx_clipboard_text_unique;").unwrap();
+        let base = temp_base("dedup-off");
+        insert_text_history(&conn, "same", TEST_SRC, None, TEST_CAP, &base, &no_merge(), false).unwrap();
+        insert_text_history(&conn, "same", TEST_SRC, None, TEST_CAP, &base, &no_merge(), false).unwrap();
+        let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
+        assert_eq!(hits.len(), 2, "dedup off records an identical copy as a fresh row");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn dedup_toggle_gates_file_list_dedup() {
+        let conn = memory_db();
+        let base = temp_base("dedup-file");
+        let paths = ["C:/a.txt".into(), "C:/b.txt".into()];
+        insert_file_history(&conn, &paths, TEST_SRC, TEST_CAP, &base, true).unwrap();
+        insert_file_history(&conn, &paths, TEST_SRC, TEST_CAP, &base, true).unwrap();
+        assert_eq!(search_history(&conn, "", "all", 20, &base, false).unwrap().len(), 1, "dedup on collapses the identical list");
+        insert_file_history(&conn, &paths, TEST_SRC, TEST_CAP, &base, false).unwrap();
+        assert_eq!(search_history(&conn, "", "all", 20, &base, false).unwrap().len(), 2, "dedup off records the same list again");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn checked_state_survives_delete_and_undo() {
+        let conn = memory_db();
+        let base = temp_base("checked");
+        let paths = ["C:/a.txt".into(), "C:/b.txt".into()];
+        insert_file_history(&conn, &paths, TEST_SRC, TEST_CAP, &base, true).unwrap();
+        let id = search_history(&conn, "", "all", 20, &base, false).unwrap()[0].id;
+        conn.execute(
+            "UPDATE clipboard SET checked = ?1 WHERE id = ?2",
+            params![Some("[1]".to_string()), id],
+        )
+        .unwrap();
+        let deleted = DeletedClip::from(&get_row(&conn, id).unwrap().unwrap());
+        assert_eq!(deleted.checked.as_deref(), Some("[1]"), "DeletedClip carries checked");
+        delete_row(&conn, id, &base).unwrap();
+        restore_row(&conn, &deleted, &base, true).unwrap();
+        let restored = get_row(&conn, search_history(&conn, "", "all", 20, &base, false).unwrap()[0].id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.checked.as_deref(), Some("[1]"), "checked survives delete + undo");
         fs::remove_dir_all(&base).ok();
     }
 }

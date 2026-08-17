@@ -286,14 +286,6 @@ body,
   height: 14px;
 }
 
-/* Keyboard shortcut footer shown in clipboard mode. */
-.shortcut-hint {
-  padding: 6px 16px 8px;
-  color: var(--text-faint);
-  font-size: 12px;
-  border-top: 1px solid var(--border);
-}
-
 /* ── Clipboard mode page: category row / virtual list / status bar ── */
 .clip-page {
   flex: 1;
@@ -384,6 +376,16 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 失效条目 (ROADMAP #17): 内容已不存在 → 整行变灰、标题划线，复制/粘贴被拦截。 */
+.clip-row.clip-row-invalid {
+  opacity: 0.62;
+}
+
+.clip-row.clip-row-invalid .clip-row-title {
+  text-decoration: line-through;
+  color: var(--text-faint);
 }
 
 /* Delete fade-out: 120ms ease-out, then the row is removed. */

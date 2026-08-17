@@ -16,6 +16,7 @@ import pinIcon from "../res/icons/pin.svg";
 import pinnedIcon from "../res/icons/pinned.svg";
 import deleteIcon from "../res/icons/delete.svg";
 import unknownIcon from "../res/icons/unknow_universal.svg";
+import multifilesIcon from "../res/icons/multifiles.svg";
 import "./App.css";
 
 /** Search modes, toggled with Tab or the pills in the search row. */
@@ -42,6 +43,13 @@ interface ClipboardItem {
   has_html: boolean;
   /** Number of copy pieces merged into this row (1 = single copy). */
   merged_count: number;
+  /** False when the content is gone (image PNG missing, or every file of a
+   * multi-file row missing) — the row shows strikethrough+gray and copy/paste
+   * is blocked. */
+  valid: boolean;
+  /** Indices (into the newline-joined `content`) of the files checked in the
+   * multi-file preview; `null` = no override (every existing file checked). */
+  checked: number[] | null;
 }
 
 /** A deleted entry returned by `delete_clipboard`, kept for the undo buffer. */
@@ -52,6 +60,8 @@ interface DeletedClip {
   pinned: boolean;
   created_at: number;
   source_app: string;
+  /** Raw JSON of the multi-file checked indices (restored with the row). */
+  checked: string | null;
 }
 
 /** A clipboard filter category (`favorites` = pinned only). 文本文件/音乐/图片/视频
@@ -61,10 +71,16 @@ type ClipKind = "all" | "text" | "textfile" | "image" | "music" | "video" | "fav
 /** Payload pushed to the satellite preview window (mirrors the Rust
  * `PreviewRequest` in window.rs). */
 interface PreviewReq {
-  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf";
+  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist";
   content: string | null;
   path: string | null;
   id: number | null;
+  /** Multi-file rows (`filelist`): every recorded path. */
+  paths?: string[];
+  /** Stored checked-file indices for the list (null = no override). */
+  checked?: number[] | null;
+  /** 记住勾选 at request time — the satellite shows the toggle state. */
+  remember_checks?: boolean;
 }
 
 /** Last path segment (handles both `/` and `\` separators). */
@@ -163,12 +179,35 @@ function fileContent(name: string): FileContent {
  * rows (`kind === "image"` — a captured screenshot) which preview in every
  * category. Plain copied text (kind `"text"`) never opens the satellite, and
  * "other" binaries (.dll/.exe/.zip…) never do. Image-kind rows carry an `id`
- * resolved via `get_clipboard_image`; image-file rows a `path`. */
-function previewTarget(item: ClipboardItem | undefined): PreviewReq | null {
+ * resolved via `get_clipboard_image`; image-file rows a `path`.
+ *
+ * Two additions (ROADMAP #17): ① an **invalid** row (content gone) never opens
+ * the preview; ② a **multi-file** row (≥2 paths) always shows the file LIST —
+ * with checkboxes and per-file existence — instead of previewing one of its
+ * files. */
+function previewTarget(
+  item: ClipboardItem | undefined,
+  rememberChecks: boolean
+): PreviewReq | null {
   if (!item) return null;
+  // 失效条目 (item 7): the content is gone → never expand the preview.
+  if (item.valid === false) return null;
   if (item.kind === "text") return null; // plain copied text — never previews
   if (item.kind === "image") return { kind: "image", content: null, path: null, id: item.id };
-  const first = item.content.split("\n").find(Boolean) ?? "";
+  const paths = item.content.split("\n").filter(Boolean);
+  // 多文件条目 (item 2): always the file list, never a single-file preview.
+  if (paths.length >= 2) {
+    return {
+      kind: "filelist",
+      content: null,
+      path: null,
+      id: item.id,
+      paths,
+      checked: item.checked ?? null,
+      remember_checks: rememberChecks,
+    };
+  }
+  const first = paths[0] ?? "";
   const fc = fileContent(basename(first));
   if (fc === "text") return { kind: "textfile", content: null, path: first, id: null };
   if (fc === "audio") return { kind: "audio", content: null, path: first, id: null };
@@ -265,6 +304,17 @@ function App() {
   /** Settings-driven: custom search placeholder per mode ("" = default text). */
   const [placeholderApps, setPlaceholderApps] = createSignal(_a?.search_placeholder_apps || "");
   const [placeholderClipboard, setPlaceholderClipboard] = createSignal(_a?.search_placeholder_clipboard || "");
+  /** Settings-driven: 记住上次所在页面 — restore the last page (mode + clipboard
+   * category) on the next summon instead of always starting on Navigate. */
+  const [rememberLastPage, setRememberLastPage] = createSignal(_a?.remember_last_page ?? false);
+  /** Last shown mode ("apps" | "clipboard"), restored when 记住上次所在页面 is on. */
+  const [lastPageMode, setLastPageMode] = createSignal<Mode>(
+    _a?.last_page === "clipboard" ? "clipboard" : "apps"
+  );
+  /** Last clipboard category when the last page was Clipboard. */
+  const [lastPageKind, setLastPageKind] = createSignal<ClipKind>(
+    (_a?.last_page_kind as ClipKind) ?? "all"
+  );
 
   // Apply imperative config immediately (locale + theme are not signal-driven).
   setLocale(resolveLocale(_a?.language ?? "system"));
@@ -321,6 +371,9 @@ function App() {
   /** Settings-driven: show the satellite preview window (设置/剪贴板 → 开启预览).
    * Off = no preview ever pops; inline row thumbnails stay. */
   const [previewEnabled, setPreviewEnabled] = createSignal(clipCfg?.preview ?? true);
+  /** Settings-driven: 记住勾选 — persist each multi-file entry's checked files
+   * across sessions (toggled in the file-list preview area). */
+  const [rememberChecks, setRememberChecks] = createSignal(clipCfg?.remember_checks ?? true);
   let toastTimer: number | undefined;
   /** Virtual-list scroll container + its scroll/viewport state. */
   let clipScrollEl: HTMLDivElement | undefined;
@@ -351,12 +404,22 @@ function App() {
     mode() === "apps" ? apps() : clips();
 
   function clearSearch() {
-    setAppsQuery("");
-    setClipQuery("");
+    // 记住上次所在页面: keep the remembered mode/category and both modes' query
+    // (the query is session-only — it survives re-summons but not a restart).
+    // Otherwise reset to the Navigate main menu with clean inputs.
+    if (rememberLastPage()) {
+      const next: Mode = lastPageMode() === "clipboard" ? "clipboard" : "apps";
+      setMode(next);
+      if (next === "clipboard") setClipKind(lastPageKind() as ClipKind);
+    } else {
+      setAppsQuery("");
+      setClipQuery("");
+      setMode("apps");
+      setClipKind("all");
+    }
     setApps([]);
     setClips([]);
     setSelected(0);
-    setMode("apps");
     setZone("grid");
     setPinnedSelected(0);
     setRecentSelected(0);
@@ -367,6 +430,20 @@ function App() {
     setDeletingId(null);
     setClearOpen(false);
     lastWindowH = 0; // force a re-measure on the next show (mode may have changed)
+  }
+
+  /** 记住上次所在页面: debounce-persist the current page (mode + clipboard
+   * category). Only fires when the toggle is on; a light settings write that
+   * never touches backup.toml. */
+  let lastPageTimer: number | undefined;
+  function persistLastPage() {
+    if (!rememberLastPage()) return;
+    const m = mode();
+    const kind = m === "clipboard" ? clipKind() : "all";
+    window.clearTimeout(lastPageTimer);
+    lastPageTimer = window.setTimeout(() => {
+      void invoke("save_last_page", { mode: m, kind }).catch(() => {});
+    }, 400);
   }
 
   /** Reload the pinned-apps bar from the store. */
@@ -445,7 +522,6 @@ function App() {
       return;
     }
     const search = document.querySelector(".search") as HTMLElement | null;
-    const footer = document.querySelector(".shortcut-hint") as HTMLElement | null;
     const container =
       (document.querySelector(".result-grid") as HTMLElement | null) ??
       (document.querySelector(".result-list") as HTMLElement | null) ??
@@ -455,7 +531,6 @@ function App() {
     measureBarCols();
 
     const searchH = search?.offsetHeight ?? 0;
-    const footerH = footer?.offsetHeight ?? 0;
 
     // Measure the content's natural height from the last child (scrollHeight
     // would clamp to the current viewport for short lists). Correct for any
@@ -484,7 +559,7 @@ function App() {
     }
     const targetH = Math.max(
       MIN_WINDOW_H,
-      Math.min(searchH + contentH + footerH + WINDOW_PAD, cap),
+      Math.min(searchH + contentH + WINDOW_PAD, cap),
     );
     if (targetH === lastWindowH) return;
     lastWindowH = targetH;
@@ -576,31 +651,60 @@ function App() {
     );
   }
 
+  /** Map a copy/paste backend error to a user-facing toast: the sentinels for
+   * an invalid row / an unchecked-everything multi-file row get specific text;
+   * anything else falls back to the generic copy/paste failure message. */
+  function clipErrorToast(err: string, fallback: string): string {
+    if (err.includes("CLIP_INVALID")) return t("clipInvalid");
+    if (err.includes("CLIP_NO_FILES")) return t("clipNoFilesChecked");
+    return fallback;
+  }
+
   /** Copy a specific clipboard item to the system clipboard. The launcher
-   * stays open (copy ≠ paste), with a "Copied" toast. */
+   * stays open (copy ≠ paste), with a "Copied" toast. An invalid row (content
+   * gone) is blocked with a clear toast — never a silent failure. */
   function copyOnly(item: ClipboardItem) {
+    if (item.valid === false) {
+      showToast(t("clipInvalid"));
+      return;
+    }
     void invoke("copy_clipboard", { id: item.id })
       .then(() => showToast(t("copied")))
-      .catch((err) => console.error("copy failed", err));
+      .catch((err) => {
+        console.error("copy failed", err);
+        showToast(clipErrorToast(String(err), t("copyFailed")));
+      });
   }
 
   /** Copy a rich-text row as plain text only (strips HTML formatting). */
   function copyPlain(item: ClipboardItem) {
+    if (item.valid === false) {
+      showToast(t("clipInvalid"));
+      return;
+    }
     void invoke("copy_clipboard", { id: item.id, plain: true })
       .then(() => showToast(t("copied")))
-      .catch((err) => console.error("copy plain failed", err));
+      .catch((err) => {
+        console.error("copy plain failed", err);
+        showToast(clipErrorToast(String(err), t("copyFailed")));
+      });
   }
 
   /** Paste a clipboard entry into the previous foreground window. Closes the
-   * launcher when 粘贴后关闭 is enabled (default). */
+   * launcher when 粘贴后关闭 is enabled (default). Invalid rows are blocked with
+   * a toast and keep the launcher open. */
   function pasteClip(item: ClipboardItem) {
+    if (item.valid === false) {
+      showToast(t("clipInvalid"));
+      return;
+    }
     void invoke("paste_clipboard", { id: item.id })
       .then(() => {
         if (pasteClose()) showToast(t("pasted"));
       })
       .catch((err) => {
         console.error("paste failed", err);
-        showToast(t("pasteFailed"));
+        showToast(clipErrorToast(String(err), t("pasteFailed")));
       });
     if (pasteClose()) void resetAndHide();
   }
@@ -821,6 +925,7 @@ function App() {
     setMultiIds(new Set<number>());
     setClipKind(k);
     void runSearch(query());
+    persistLastPage();
   }
 
   /** Move to the previous/next category (Left/Right arrows on an empty query). */
@@ -897,6 +1002,10 @@ function App() {
       setPasteClose(s.clipboard?.paste_close ?? true);
       setHoverSelect(s.clipboard?.hover_select ?? false);
       setPreviewEnabled(s.clipboard?.preview ?? true);
+      setRememberChecks(s.clipboard?.remember_checks ?? true);
+      setRememberLastPage(s.appearance.remember_last_page ?? false);
+      setLastPageMode(s.appearance.last_page === "clipboard" ? "clipboard" : "apps");
+      setLastPageKind((s.appearance.last_page_kind as ClipKind) ?? "all");
     } catch {
       // Keep defaults if settings can't be read.
     }
@@ -937,6 +1046,7 @@ function App() {
       setDeletingId(null);
     }
     lastWindowH = 0; // the fixed-height model differs per mode — force a resize
+    persistLastPage();
     // Re-search the target mode with its own (independent) query.
     await runSearch(m === "apps" ? appsQuery() : clipQuery());
   }
@@ -1277,9 +1387,10 @@ function App() {
     void clips();
     void selected();
     void previewEnabled();
+    void rememberChecks();
     const item = mode() === "clipboard" ? clips()[selected()] : undefined;
     // 开启预览 off → never open the satellite (close_preview handles teardown).
-    const req = item && previewEnabled() ? previewTarget(item) : null;
+    const req = item && previewEnabled() ? previewTarget(item, rememberChecks()) : null;
     setCurrentPreview(req);
     clearTimeout(previewTimer);
     previewTimer = window.setTimeout(() => {
@@ -1288,6 +1399,7 @@ function App() {
     }, 100);
   });
   onCleanup(() => clearTimeout(previewTimer));
+  onCleanup(() => clearTimeout(lastPageTimer));
 
   // Virtual list: keep the selected row in the rendered window while
   // navigating with the keyboard (the row may not be in the DOM otherwise).
@@ -1403,6 +1515,9 @@ function App() {
     clearSearch();
     void refreshRecent();
     void refreshPins();
+    // 记住上次所在页面: a remembered Clipboard page must load history on mount
+    // too (the window starts hidden and the first show may restore Clipboard).
+    void runSearch(mode() === "apps" ? appsQuery() : clipQuery());
     scheduleResize();
     document.getElementById("search-input")?.focus();
 
@@ -1420,6 +1535,9 @@ function App() {
     const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
       clearSearch();
       await Promise.all([refreshRecent(), refreshPins()]);
+      // 记住上次所在页面: a restored Clipboard page must load its history; an
+      // apps page re-runs its (session) query or shows the bars.
+      await runSearch(mode() === "apps" ? appsQuery() : clipQuery());
       // Auto-select the first entry of the empty-query main menu: the recent
       // bar's first item when it has any, else the pinned bar's. (The bars'
       // highlight requires `zoneActive`, so a resting zone of "grid" would
@@ -1461,7 +1579,20 @@ function App() {
    * file / link / color / plain-text fallbacks live here. */
   function clipTile(item: ClipboardItem, color: string | null, link: boolean) {
     if (item.kind === "file") {
-      const first = item.content.split("\n").find(Boolean) ?? "";
+      const paths = item.content.split("\n").filter(Boolean);
+      // 混合类型的多文件行 (item 6): 无论首文件类型，统一用 multifiles 图标；
+      // 全部同类型时仍按该类型显示（音频音符 / 视频摄像 / 图片 / 文本 / 通用）。
+      if (paths.length >= 2) {
+        const kinds = new Set(paths.map((p) => fileContent(basename(p))));
+        if (kinds.size > 1) {
+          return (
+            <span class="clip-row-tile">
+              <img class="clip-row-tile-icon" src={multifilesIcon} alt="" draggable={false} />
+            </span>
+          );
+        }
+      }
+      const first = paths[0] ?? "";
       const content = fileContent(basename(first));
       if (content === "audio") {
         return (
@@ -1561,6 +1692,8 @@ function App() {
           "result-selected": isSelected,
           "clip-row-deleting": deletingId() === item.id,
           "clip-row-multi": multiIds().has(item.id),
+          // 失效条目 (item 7): 内容已不存在 → 划线变灰，复制/粘贴被拦截。
+          "clip-row-invalid": item.valid === false,
         }}
         role="option"
         aria-selected={isSelected}
@@ -2041,9 +2174,6 @@ function App() {
           </div>
         )}
       </div>
-      <Show when={mode() === "clipboard"}>
-        <div class="shortcut-hint">{t("clipShortcutHint")}</div>
-      </Show>
       <Show when={toast()}>
         <div class="toast" classList={{ "toast-undo": !!toast()?.undo }}>
           <span class="toast-text">{toast()?.text}</span>

@@ -328,14 +328,22 @@ pub struct PreviewState(pub Mutex<Option<PreviewRequest>>);
 /// What the satellite preview window renders.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PreviewRequest {
-    /// `"text" | "textfile" | "image" | "audio" | "video" | "pdf"`.
+    /// `"text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist"`.
     pub kind: String,
     /// The copied text itself (`kind == "text"`).
     pub content: Option<String>,
     /// A file path (`textfile` / `audio` / `video` / `pdf`, and image-*file* rows).
     pub path: Option<String>,
-    /// A clipboard row id (image-*kind* rows: resolved via `get_clipboard_image`).
+    /// A clipboard row id (image-*kind* rows: resolved via `get_clipboard_image`;
+    /// `filelist` rows: the target for `set_clipboard_checked`).
     pub id: Option<u32>,
+    /// Multi-file rows (`kind == "filelist"`): every recorded path.
+    pub paths: Option<Vec<String>>,
+    /// Stored checked-file indices for the multi-file list (`None` = no override
+    /// → every existing file is checked by default).
+    pub checked: Option<Vec<u32>>,
+    /// 记住勾选 at request time — the satellite shows the toggle state.
+    pub remember_checks: Option<bool>,
 }
 
 /// Show or update the satellite preview. The request is stored first, then the

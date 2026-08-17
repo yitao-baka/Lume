@@ -124,8 +124,8 @@ Business logic belongs to Rust.
   tracking, and display-time URL / color detection; `Tab` switches between
   Navigate and Clipboard modes
 - Clipboard auto-paste — Enter pastes an entry into the window that had focus
-  before the launcher (the original clipboard is saved and restored); a
-  per-row copy button copies without pasting
+  before the launcher (the pasted entry stays on the system clipboard, like a
+  normal copy); a per-row copy button copies without pasting
 - Clipboard interactions — Space multi-select → Enter merged paste, delete
   with an undo toast (3s), clear-all with 保留固定记录 confirmation, hover
   copy / paste / delete buttons, pin badges

@@ -8,6 +8,21 @@ All notable changes to Lume are documented here. Format based on
 
 ### Changed
 
+- **修复"复制/粘贴旧文件条目，系统剪贴板仍是最新文件"（真正根因，用户复测 + 参考 ZTools）** —
+  `set_files_to_clipboard` 只 `SetClipboardData(CF_HDROP)`、**不调 `EmptyClipboard`**。Explorer
+  复制文件时剪贴板同时有 `CF_HDROP` + `CF_UNICODETEXT`（最新文件路径文本）；Lume 替换了
+  HDROP 但**残留的文本格式仍指向最新文件**，任何文本读取/粘贴（`Get-Clipboard` 默认读文本、
+  记事本 Ctrl+V）都看到最新文件——而 HDROP 里其实已是旧文件。文本条目因 arboard `set_text`
+  先清空剪贴板而正常。修：`set_files_to_clipboard` 在 `OpenClipboard` 后加 `EmptyClipboard()`
+  （照搬 ZTools 原生 `setClipboardFiles` 的做法），剪贴板现在只含该文件列表。隔离副本自动化
+  复现：设文本哨兵 → 复制旧文件行 → 修复前 `Get-Clipboard`=哨兵、修复后=空且 FileDropList=旧文件。
+- **粘贴后剪贴板保留粘贴内容（用户选「保留」，同 ZTools）** — 移除 `auto_paste` 的"保存→还原"
+  （`SavedClipboard`/`save_current_clipboard`/`restore_saved_clipboard` 删除）；粘贴什么剪贴板
+  就留着什么，旧条目粘贴后内容可见、可反复粘贴。此改动与 EmptyClipboard 修复互补（ZTools 同样
+  不还原剪贴板）。
+- **移除剪贴板底部快捷键提示** — 删除 `.shortcut-hint`（App.tsx / App.css / `clipShortcutHint`
+  三语文案）；`resizeToContent` 不再测量该 footer。
+
 - **Clipboard image preview / enlarge via asset protocol** — `get_clipboard_image`
   returns the stored PNG's path instead of a base64 data URI; the frontend
   renders it with `convertFileSrc`, so WebView2 decodes the full-size image
@@ -22,6 +37,27 @@ All notable changes to Lume are documented here. Format based on
   closing the preview.
 
 ### Added
+
+- **多文件条目列表预览 + 勾选（ROADMAP #17）** — ≥2 文件的剪贴板条目在卫星窗显示
+  **文件列表**（复选框 + 逐文件存在性，缺失项划线变灰并禁用勾选），取代"预览第一个
+  文件"；复制/粘贴只对**勾选的子集**生效（HDROP 按勾选路径过滤）。「记住勾选」全局开关
+  （预览区顶部，默认开）：开 → 勾选持久化到新 `checked` 列（删除/撤销也不丢），关 →
+  每次会话重置为"仅勾选存在的文件"。新命令 `check_file_exists` / `set_clipboard_checked`。
+- **失效条目划线变灰（ROADMAP #17）** — 文件条目**全部**路径丢失、或图片 PNG 被清理
+  后，整行划线变灰、不再展开预览、复制/粘贴拦截并 toast「内容已失效」（后端 `valid`
+  字段 + `usable_paths` 双保险）；**所有**复制/粘贴错误现在都弹 toast（修 #17 报告的
+  "旧条目复制/粘贴无反应"——此前复制失败只 `console.error`）。
+- **「内容去重」开关（`clipboard.dedup`，默认开）** — 关闭后完全相同的内容（文本/文件
+  列表）也新增一条；开启保留现状（整条一致时前移不重复）。文本部分唯一索引
+  `idx_clipboard_text_unique` 按开关在启动与保存时 DROP/重建。
+- **「记住上次所在页面」开关（`appearance.remember_last_page`，默认关）** — 开启后再次
+  呼出停留在上次的**模式 + 剪贴板分类**（搜索词仅本会话内记住，不落盘）；命名与已有
+  窗口位置的「记住位置」区分。新命令 `save_last_page`（轻量写盘、不碰 backup.toml）。
+- **多文件行混合类型 tile** — ≥2 文件且类型**混合**的行显示新 `res/icons/multifiles.svg`；
+  全部同类型仍显示该类型图标（音频音符/视频/图片/文本/通用）。
+- 新设置：`clipboard.remember_checks`（默认开）、`clipboard.dedup`、`appearance.remember_last_page`
+  / `last_page` / `last_page_kind`。剪贴板页加「内容去重」、界面页加「记住上次所在页面」。
+- 单测 +7（失效判定、勾选子集、去重开关、checked 存取与撤销携带）→ `cargo test` **71 通过**。
 
 - **PDF 预览（ROADMAP #16，PDF.js）** — `pdfjs-dist` v6 懒加载（Vite 分包，仅首次
   预览 PDF 时进卫星 renderer），手写迷你查看器：翻页 `‹ ›` + 页码 + 缩放 `＋ −`，
@@ -331,10 +367,11 @@ Clipboard auto-paste + copy button, follow-mouse position, interface extras
 - **Clipboard auto-paste** — Enter on a clipboard entry (or 粘贴回 in the
   context menu) now writes the entry to the system clipboard, hides the
   launcher and sends `Ctrl+V` into the window that had focus **before** the
-  launcher appeared (`paste_clipboard`). The previous clipboard content is
-  saved first and restored after the paste, so the user's clipboard is never
-  polluted. The target window is recorded on every show and validated before
-  pasting; with no target it degrades to a plain copy.
+  launcher appeared (`paste_clipboard`). The pasted entry stays on the system
+  clipboard afterwards (like a normal copy — 粘贴什么剪贴板就留着什么, so a
+  just-pasted old entry is not masked by the previous content). The target
+  window is recorded on every show and validated before pasting; with no target
+  it degrades to a plain copy.
 - **Per-row copy button** — each clipboard row gains a copy button (next to the
   trash button) that writes the entry back without pasting.
 - **Follow-mouse position** — a new window-position preset 「跟随鼠标」 centers

@@ -31,6 +31,13 @@ export interface SettingsData {
     search_placeholder_apps: string;
     /** Custom search placeholder for clipboard mode ("" = localized default). */
     search_placeholder_clipboard: string;
+    /** 记住上次所在页面 — restore the last page (mode + clipboard category) on
+     * the next summon instead of always starting on Navigate. */
+    remember_last_page: boolean;
+    /** Last shown mode ("apps" | "clipboard"). */
+    last_page: string;
+    /** Last clipboard category when last_page === "clipboard". */
+    last_page_kind: string;
   };
   hotkeys: { toggle: string; switch_mode: string };
   index: {
@@ -68,5 +75,10 @@ export interface SettingsData {
     /** Show the satellite preview window (设置/剪贴板 → 开启预览). Off = the
      * preview window never appears; inline row thumbnails stay. */
     preview: boolean;
+    /** 内容去重 — identical text/file copies don't add a new row (images keep
+     * only the consecutive-repeat guard). */
+    dedup: boolean;
+    /** 记住勾选 — persist each multi-file entry's checked files across sessions. */
+    remember_checks: boolean;
   };
 }

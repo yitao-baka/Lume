@@ -47,6 +47,17 @@ export default function ClipboardPane(props: {
       </div>
 
       <div class="settings-group">
+        <div class="settings-sub settings-sub-between">
+          <span class="settings-sub-label">{t("clipDedup")}</span>
+          <Toggle
+            checked={c().dedup}
+            onChange={(v) => props.onChange({ dedup: v })}
+          />
+        </div>
+        <span class="settings-hint">{t("clipDedupHint")}</span>
+      </div>
+
+      <div class="settings-group">
         <h2 class="settings-title">{t("clipHistoryCap")}</h2>
         <div class="settings-row">
           <For each={CAPS}>

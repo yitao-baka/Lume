@@ -155,3 +155,90 @@ audio {
 .preview-pdf-page {
   white-space: nowrap;
 }
+
+/* Multi-file list (ROADMAP #17): header (count + 记住勾选) + checkbox rows. */
+.preview-files {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-files-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: rgba(242, 242, 242, 0.7);
+  user-select: none;
+}
+
+.preview-remember {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  color: rgba(242, 242, 242, 0.85);
+}
+
+.preview-remember input {
+  accent-color: #5ac8fa;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
+.preview-files-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.preview-files-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.preview-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 13px;
+  color: #f2f2f2;
+}
+
+.preview-file input {
+  flex: none;
+  accent-color: #5ac8fa;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.preview-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A missing file: struck through + dimmed, its checkbox disabled. */
+.preview-file.gone .preview-file-name {
+  text-decoration: line-through;
+  color: rgba(242, 242, 242, 0.35);
+}
+
+.preview-file.gone input {
+  cursor: default;
+}

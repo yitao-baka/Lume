@@ -79,9 +79,10 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   (`src-tauri/src/clipboard.rs`, `src-tauri/src/window.rs`, `src/App.tsx`)
 - Clipboard auto-paste — Enter on a history entry writes it to the clipboard,
   hides the launcher and sends `Ctrl+V` into the window that had focus before
-  the launcher appeared (`paste_clipboard`; the original clipboard is saved
-  and restored, so it's never polluted); a per-row copy button copies without
-  pasting (`src-tauri/src/clipboard.rs`, `src-tauri/src/window.rs` `FocusState`)
+  the launcher appeared (`paste_clipboard`; the pasted entry **stays** on the
+  system clipboard afterwards, like a normal copy); a per-row copy button
+  copies without pasting (`src-tauri/src/clipboard.rs`,
+  `src-tauri/src/window.rs` `FocusState`)
 - Clipboard storage — the DB stores only *references*, never the copied data's
   original form: images write a PNG into `data/PictureCache/<id>.png` and store
   the relative `path`; file/folder copies from Explorer (CF_HDROP) are captured
@@ -128,7 +129,22 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**PDF 预览 + 源码/歌词归文本 + 音乐分类 + 预览开关 + 左磁吸重叠修复 (ROADMAP #16,
+**多文件勾选 + 失效判定 + 去重开关 + 记住页面 (ROADMAP #17, complete) — as of
+2026-08-17**: grill-me 定稿七项全落地。① 修复「旧条目复制/粘贴无反应」——根因是
+`copyOnly` 失败只 `console.error`（图片 PNG 丢失）与文件行失效但 HDROP 不查存在性；
+现在**所有**复制/粘贴错误都弹 toast（`CLIP_INVALID`/`CLIP_NO_FILES` 有专属文案）。②
+**失效条目**（file 全缺失 / image PNG 丢失）→ `ClipboardItem.valid` 划线变灰、不展开
+预览、复制/粘贴拦截。③ **多文件列表预览**：≥2 文件条目卫星窗显示文件列表（`filelist`
+kind）+ 复选框 + 逐文件存在性（`check_file_exists`），复制/粘贴只对**勾选子集**生效
+（`effective_file_paths`，后端读 DB 最新 `checked`）；「记住勾选」开关（
+`clipboard.remember_checks`）持久化到新 `checked` 列（撤销携带）。④ **内容去重开关**
+（`clipboard.dedup`，默认开）：关 = 相同内容也新增（文本唯一索引 DROP/重建）。⑤
+**记住上次所在页面**（`appearance.remember_last_page`，默认关）：记住模式+分类
+（`save_last_page` 轻量写盘不碰 backup），搜索词仅会话内。⑥ 混合类型多文件行 →
+`multifiles.svg`。⑦ 删剪贴板底部快捷键提示。`cargo test` 71 通过。Details in
+`docs/ROADMAP.md` #17。
+
+**Prior: PDF 预览 + 源码/歌词归文本 + 音乐分类 + 预览开关 + 左磁吸重叠修复 (ROADMAP #16,
 complete) — as of 2026-08-15**: PDF preview via frontend PDF.js (`pdfjs-dist` v6,
 lazy-`import` so the ~480KB chunk + 1.26MB worker only load into the satellite
 renderer on first PDF; hand-rolled mini viewer renders **only the visible page**,

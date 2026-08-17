@@ -20,18 +20,39 @@
  * docs are destroyed, so a giant PDF never pins the whole document in memory.
  */
 import { render } from "solid-js/web";
-import { createSignal, createEffect, onMount, Show, Switch, Match } from "solid-js";
+import { createSignal, createEffect, onMount, Show, Switch, Match, For } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { t, setLocale, resolveLocale } from "./i18n";
 import "./preview.css";
 
 /** Mirrors the Rust `PreviewRequest` (window.rs). */
 interface PreviewRequest {
-  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf";
+  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist";
   content: string | null;
   path: string | null;
   id: number | null;
+  /** Multi-file rows (`filelist`): every recorded path. */
+  paths?: string[] | null;
+  /** Stored checked-file indices (`filelist`); null = no override. */
+  checked?: number[] | null;
+  /** 记住勾选 at request time — the toggle state shown in the list header. */
+  remember_checks?: boolean;
+}
+
+/** Last path segment (handles both `/` and `\` separators). */
+function basename(p: string): string {
+  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return i >= 0 ? p.slice(i + 1) : p;
+}
+
+/** A rendered multi-file list: paths + per-path existence + checked indices. */
+interface FileListState {
+  paths: string[];
+  exists: boolean[];
+  checked: Set<number>;
+  remember: boolean;
 }
 
 function PreviewApp() {
@@ -42,6 +63,37 @@ function PreviewApp() {
   const [error, setError] = createSignal<string | null>(null);
   /** "contain" fits the image; clicking toggles to "one-one" (natural size). */
   const [fit, setFit] = createSignal<"contain" | "one-one">("contain");
+  /** Multi-file list (ROADMAP #17): paths + existence + checked indices. */
+  const [filelist, setFilelist] = createSignal<FileListState | null>(null);
+
+  /** Toggle a file's checkbox. Persists only while 记住勾选 is on. */
+  function toggleFile(idx: number, on: boolean) {
+    const fl = filelist();
+    if (!fl) return;
+    const checked = new Set(fl.checked);
+    if (on) checked.add(idx);
+    else checked.delete(idx);
+    setFilelist({ ...fl, checked });
+    if (fl.remember) {
+      void invoke("set_clipboard_checked", {
+        id: req()?.id,
+        checked: [...checked],
+      }).catch(() => {});
+    }
+  }
+
+  /** Flip the 记住勾选 toggle; turning it off resets checks to "every existing
+   * file" (the next session starts fresh there). */
+  function toggleRemember(on: boolean) {
+    const fl = filelist();
+    if (!fl) return;
+    setFilelist({ ...fl, remember: on });
+    void invoke("set_remember_checks", { enabled: on }).catch(() => {});
+    if (!on) {
+      const checked = new Set(fl.paths.map((_, i) => i).filter((i) => fl.exists[i]));
+      setFilelist((f) => (f ? { ...f, checked } : f));
+    }
+  }
 
   // ── PDF (PDF.js) state ───────────────────────────────────────────────────
   const [pdfDoc, setPdfDoc] = createSignal<PDFDocumentProxy | null>(null);
@@ -120,6 +172,7 @@ function PreviewApp() {
     setPoster(null);
     setError(null);
     setFit("contain");
+    setFilelist(null);
     // Tear down any previous PDF — the raster pages + parsed doc leave memory
     // only while a PDF is actually shown (close also tears the whole page down).
     const prev = pdfDoc();
@@ -149,10 +202,29 @@ function PreviewApp() {
         .catch(() => setPoster(null));
     } else if (r.kind === "pdf" && r.path) {
       void loadPdf(r.path);
+    } else if (r.kind === "filelist" && r.paths) {
+      // Multi-file entry: the list, each path's existence, and the checked set
+      // (stored override ∩ existing when 记住勾选 on; else every existing file).
+      const paths = r.paths.filter(Boolean);
+      const exists = await invoke<boolean[]>("check_file_exists", { paths });
+      const remember = r.remember_checks ?? true;
+      const saved = remember && r.checked ? new Set(r.checked) : null;
+      const checked = new Set(
+        paths.map((_, i) => i).filter((i) => exists[i] && (!saved || saved.has(i)))
+      );
+      setFilelist({ paths, exists, checked, remember });
     }
   }
 
   onMount(async () => {
+    // This renderer has its own i18next instance — sync it to the persisted
+    // language so the file-list labels match the launcher/settings.
+    try {
+      const s = await invoke<{ appearance: { language: string } }>("get_settings");
+      setLocale(resolveLocale(s.appearance.language));
+    } catch {
+      // Keep the system-language default.
+    }
     // Live updates while the window stays visible (no reload flicker).
     await getCurrentWindow().listen("preview-update", (e) => {
       void load(e.payload as PreviewRequest);
@@ -204,6 +276,53 @@ function PreviewApp() {
                   is preload="none" so the file itself only loads on play). */}
               <Match when={req()!.kind === "video"}>
                 <video src={mediaSrc()} poster={poster() ?? undefined} controls preload="none" />
+              </Match>
+              {/* Multi-file list (ROADMAP #17): every recorded file with a
+                  checkbox; missing files are struck through + disabled. Copy /
+                  paste in the launcher only uses the checked files. */}
+              <Match when={req()!.kind === "filelist"}>
+                <Show when={filelist()} fallback={<span class="preview-placeholder">…</span>}>
+                  <div class="preview-files">
+                    <div class="preview-files-head">
+                      <span class="preview-files-count">
+                        {t("fileCount", { count: String(filelist()!.paths.length) })}
+                      </span>
+                      <label class="preview-remember">
+                        <input
+                          type="checkbox"
+                          checked={filelist()!.remember}
+                          onChange={(e) =>
+                            toggleRemember((e.currentTarget as HTMLInputElement).checked)
+                          }
+                        />
+                        <span>{t("rememberChecks")}</span>
+                      </label>
+                    </div>
+                    <ul class="preview-files-list">
+                      <For each={filelist()!.paths}>
+                        {(p, i) => {
+                          const idx = i();
+                          const gone = !filelist()!.exists[idx];
+                          return (
+                            <li classList={{ "preview-file": true, gone }}>
+                              <input
+                                type="checkbox"
+                                checked={filelist()!.checked.has(idx)}
+                                disabled={gone}
+                                onChange={(e) =>
+                                  toggleFile(idx, (e.currentTarget as HTMLInputElement).checked)
+                                }
+                              />
+                              <span class="preview-file-name" title={p}>
+                                {basename(p)}
+                              </span>
+                            </li>
+                          );
+                        }}
+                      </For>
+                    </ul>
+                  </div>
+                </Show>
               </Match>
               {/* PDF (PDF.js): visible page only, page flip + zoom in the toolbar. */}
               <Match when={req()!.kind === "pdf"}>

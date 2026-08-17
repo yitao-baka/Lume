@@ -243,6 +243,17 @@ export default function InterfacePane(props: {
       </div>
 
       <div class="settings-group">
+        <div class="settings-sub settings-sub-between">
+          <span class="settings-sub-label">{t("rememberLastPage")}</span>
+          <Toggle
+            checked={a().remember_last_page}
+            onChange={(v) => props.onChange({ remember_last_page: v })}
+          />
+        </div>
+        <span class="settings-hint">{t("rememberLastPageHint")}</span>
+      </div>
+
+      <div class="settings-group">
         <h2 class="settings-title">{t("searchPlaceholder")}</h2>
         <div class="settings-sub">
           <span class="settings-sub-label">{t("placeholderApps")}</span>

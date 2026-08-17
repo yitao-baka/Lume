@@ -76,6 +76,28 @@ pub struct Appearance {
     /// Custom search placeholder for the clipboard mode (empty = localized default).
     #[serde(default)]
     pub search_placeholder_clipboard: String,
+    /// 记住上次所在页面 — restore the last shown page (mode + clipboard
+    /// category) on the next summon instead of always starting on Navigate.
+    #[serde(default)]
+    pub remember_last_page: bool,
+    /// Last shown mode (`"apps"` | `"clipboard"`), recorded when 记住上次所在页面
+    /// is on. The search *query* is remembered in-memory only, never persisted
+    /// (it is transient input, not a setting).
+    #[serde(default = "default_last_page")]
+    pub last_page: String,
+    /// Last clipboard category when `last_page == "clipboard"` (`"all"` | …).
+    #[serde(default = "default_last_page_kind")]
+    pub last_page_kind: String,
+}
+
+/// Default last page: the Navigate main menu.
+fn default_last_page() -> String {
+    "apps".into()
+}
+
+/// Default clipboard category: 全部.
+fn default_last_page_kind() -> String {
+    "all".into()
 }
 
 /// Default entry-box edge (matches a ~110px box in the current 6-col grid).
@@ -179,6 +201,16 @@ pub struct Clipboard {
     /// appears; inline row thumbnails stay.
     #[serde(default = "default_true")]
     pub preview: bool,
+    /// 内容去重 — don't record an identical copy as a new row (text/file rows
+    /// by exact whole content; images keep only the consecutive-repeat guard).
+    /// Off = every copy records a fresh row even when identical.
+    #[serde(default = "default_true")]
+    pub dedup: bool,
+    /// 记住勾选 — persist each multi-file entry's checked files across
+    /// sessions (toggled in the file-list preview area). Off = checks reset to
+    /// "all existing files" on every summon.
+    #[serde(default = "default_true")]
+    pub remember_checks: bool,
 }
 
 /// Default clipboard history cap (200 entries).
@@ -218,6 +250,9 @@ impl Default for Settings {
                 recent_count: 20,
                 search_placeholder_apps: String::new(),
                 search_placeholder_clipboard: String::new(),
+                remember_last_page: false,
+                last_page: "apps".into(),
+                last_page_kind: "all".into(),
             },
             hotkeys: Hotkeys {
                 toggle: "Alt+Space".into(),
@@ -255,6 +290,8 @@ impl Default for Settings {
                 hover_select: false,
                 favorites_top: false,
                 preview: true,
+                dedup: true,
+                remember_checks: true,
             },
         }
     }
@@ -331,6 +368,15 @@ fn write_settings(base: &Path, s: &Settings, fallback: &Settings) -> Result<(), 
     fs::write(settings_path(base), text).map_err(|e| e.to_string())
 }
 
+/// Write `s` straight to `settings.toml` WITHOUT touching `backup.toml`. Used
+/// by runtime bookmarks (last page, remember-checks) whose frequent writes must
+/// not clobber the "previous settings" backup that 恢复备份设置 relies on.
+fn write_settings_light(base: &Path, s: &Settings) -> Result<(), String> {
+    fs::create_dir_all(settings_dir(base)).map_err(|e| e.to_string())?;
+    let text = toml::to_string_pretty(s).map_err(|e| e.to_string())?;
+    fs::write(settings_path(base), text).map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
@@ -381,9 +427,15 @@ pub fn save_settings(new: Settings, app: AppHandle, state: State<SettingsState>)
     let mut guard = state.0.lock().unwrap();
     let old_toggle = guard.hotkeys.toggle.clone();
     let old_index = guard.index.clone();
+    let old_dedup = guard.clipboard.dedup;
     write_settings(&paths::base_dir(), &new, &guard)?;
     *guard = new.clone();
     drop(guard);
+    // 内容去重 toggled → drop/recreate the text-dedup SQL unique index so the
+    // "off" state can record duplicate rows (the index would reject them).
+    if new.clipboard.dedup != old_dedup {
+        crate::clipboard::set_dedup_enabled(&app, new.clipboard.dedup);
+    }
     // Apply the launcher width now; position is applied on its next show.
     crate::window::apply_settings(&app, &new)?;
     // Re-register the toggle hotkey when the user changed it.
@@ -449,6 +501,46 @@ pub fn restore_backup(state: State<SettingsState>) -> Result<(), String> {
     fs::write(settings_path(&base), text).map_err(|e| e.to_string())?;
     let mut guard = state.0.lock().unwrap();
     *guard = restored;
+    Ok(())
+}
+
+/// 记住上次所在页面: persist the launcher's current page (mode + clipboard
+/// category) so the next summon restores it. Written WITHOUT touching
+/// `backup.toml` — this is a runtime bookmark, not a settings edit. No
+/// `settings-applied` event (nothing in the UI reads these live).
+#[tauri::command]
+pub fn save_last_page(
+    mode: String,
+    kind: String,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    if guard.appearance.remember_last_page {
+        let mut next = guard.clone();
+        next.appearance.last_page = mode;
+        next.appearance.last_page_kind = kind;
+        write_settings_light(&paths::base_dir(), &next)?;
+        *guard = next;
+    }
+    Ok(())
+}
+
+/// 记住勾选 (preview-area toggle): persist whether each multi-file entry's
+/// checked files are remembered across sessions. Written without touching
+/// `backup.toml`; emits `settings-applied` so the launcher re-reads the value.
+#[tauri::command]
+pub fn set_remember_checks(
+    enabled: bool,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.clipboard.remember_checks = enabled;
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
     Ok(())
 }
 

@@ -1793,7 +1793,6 @@ mod tests {
         let _guard = CLIPBOARD_LOCK.lock().unwrap();
         use windows::Win32::Graphics::Gdi::{
             CreateDIBSection, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
-            HBITMAP,
         };
         use windows::Win32::System::DataExchange::{
             CloseClipboard, EmptyClipboard, SetClipboardData,
@@ -1842,8 +1841,7 @@ mod tests {
         };
         use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
         unsafe {
-            let data = std::fs::read(r"E:\SoftwareDevelopment\Projects\LumeLauncher\test\PixPin_2026-08-06_22-03-20.png")
-                .expect("test image present");
+            let data = sample_png();
             let fmt = RegisterClipboardFormatW(windows::core::w!("PNG"));
             assert!(fmt != 0, "register PNG format");
             if OpenClipboard(None).is_err() {
@@ -2235,7 +2233,7 @@ mod tests {
         let base = temp_base("merge-in");
         let merge = MergeConfig {
             enabled: true,
-            window_ms: 1500,
+            window_ms: 60_000,
             last_paste_at: None,
         };
         insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
@@ -2277,7 +2275,7 @@ mod tests {
         let base = temp_base("merge-dup");
         let merge = MergeConfig {
             enabled: true,
-            window_ms: 1500,
+            window_ms: 60_000,
             last_paste_at: None,
         };
         insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();

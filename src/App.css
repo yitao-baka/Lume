@@ -773,6 +773,14 @@ body,
   border-color: rgba(90, 200, 250, 0.7);
 }
 
+/* 鼠标悬停在空白处（无条目）时隐藏导航高亮：选择索引保留，回到条目或按方向
+   键即从隐藏时的相对位置恢复（`.nav-hidden` 由 App.tsx 的 mousemove 切换）。 */
+.launcher.nav-hidden .result-selected {
+  background: transparent;
+  box-shadow: none;
+  border-color: transparent;
+}
+
 /* Drag-and-drop reorder: the item being dragged gets a dimmed placeholder. */
 .result-box.result-dragging {
   opacity: 0.25;

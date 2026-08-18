@@ -340,6 +340,12 @@ function App() {
   const [recentExpanded, setRecentExpanded] = createSignal(false);
   const [pinnedExpanded, setPinnedExpanded] = createSignal(false);
   const [menu, setMenu] = createSignal<MenuState>(null);
+  /** True while the cursor rests on empty space (a place with no entry) — the
+   * selection highlight is hidden, but the selection index is retained. Moving
+   * back over an entry or pressing an arrow key reveals it again (arrow nav
+   * reappears from the position it was hidden at). Applies to the Navigate
+   * main menu / results grid only. */
+  const [navHidden, setNavHidden] = createSignal(false);
 
   // ── Clipboard-mode state (redesign: categories, multi-select, undo, toast) ──
   const clipCfg = (window as any).__LUME_CONFIG__?.clipboard;
@@ -429,6 +435,7 @@ function App() {
     setMultiIds(new Set<number>());
     setDeletingId(null);
     setClearOpen(false);
+    setNavHidden(false); // fresh show always starts with the nav box visible
     lastWindowH = 0; // force a re-measure on the next show (mode may have changed)
   }
 
@@ -1092,6 +1099,7 @@ function App() {
     const len = currentResults().length;
     if (len === 0) return;
     selectionSource = "keyboard";
+    setNavHidden(false); // arrow nav reveals the highlight from its hidden position
     setSelected(Math.min(Math.max(selected() + delta, 0), len - 1));
   }
 
@@ -1130,6 +1138,7 @@ function App() {
   function moveBarSelection(dc: number, dr: number) {
     const bars = visibleBars();
     if (bars.length === 0) return;
+    setNavHidden(false); // arrow nav reveals the highlight from its hidden position
     const cols = Math.max(barCols(), 1);
 
     const len = (k: "recent" | "pinned") =>
@@ -1427,6 +1436,22 @@ function App() {
   onMount(async () => {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
     document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    // Hide the selection highlight while the cursor rests on empty space (a
+    // place with no entry) — mouse navigation is "suspended" until the cursor
+    // touches an entry again or an arrow key resumes keyboard navigation. The
+    // selection index is retained, so arrow nav reappears from the position it
+    // was hidden at (see moveSelection / moveBarSelection). Navigate mode only:
+    // the clipboard page keeps its row highlight + satellite preview in sync
+    // with the actual selection instead.
+    document.addEventListener("mousemove", (e) => {
+      if (mode() !== "apps") {
+        setNavHidden(false);
+        return;
+      }
+      const overItem = !!(e.target as HTMLElement).closest?.(".result-box");
+      setNavHidden(!overItem);
+    });
 
     // ── Native drag-and-drop for pinned-bar reordering ──
     // SolidJS event delegation can interfere with drag events; use raw DOM
@@ -1929,7 +1954,7 @@ function App() {
   }
 
   return (
-    <div class="launcher">
+    <div class="launcher" classList={{ "nav-hidden": navHidden() }}>
       {/* The frameless window is draggable from the search row's empty space
           (direct clicks only — the input/pills/gear are clickable and block
           it, per Tauri's data-tauri-drag-region semantics). */}

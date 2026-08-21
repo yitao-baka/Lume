@@ -237,13 +237,27 @@ pub fn launch_app(
     } else {
         verb.as_ptr()
     };
+    // Default the launched process's working directory to the user's profile
+    // (`%USERPROFILE%`). `lpDirectory = null` would inherit Lume's cwd — the exe
+    // directory — so a terminal opened from search lands in the build folder
+    // rather than the user's home. The user profile is writable, and `.lnk`
+    // targets keep their own "Start in" (ShellExecuteW ignores lpDirectory for
+    // them), so this default is safe for every launch.
+    let dir_wide: Vec<u16> = std::env::var("USERPROFILE")
+        .map(|h| h.encode_utf16().chain(std::iter::once(0)).collect())
+        .unwrap_or_default();
+    let dir_ptr = if dir_wide.is_empty() {
+        std::ptr::null()
+    } else {
+        dir_wide.as_ptr()
+    };
     let result = unsafe {
         ShellExecuteW(
             std::ptr::null_mut() as HWND, // hwnd
             verb_ptr,                     // lpOperation
             wide.as_ptr(),                // lpFile
             std::ptr::null(),             // lpParameters
-            std::ptr::null(),             // lpDirectory
+            dir_ptr,                      // lpDirectory → user profile (not the exe dir)
             SW_SHOWNORMAL,                // nShowCmd
         )
     };

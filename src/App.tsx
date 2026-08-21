@@ -423,20 +423,44 @@ function App() {
   const currentResults = (): (AppEntry | ClipboardItem)[] =>
     mode() === "apps" ? apps() : clips();
 
+  // 搜索状态记忆: 一次「未打开条目」的搜索会保留到下次呼出 (热键重呼出恢复);
+  // 但 5 分钟未再次呼出, 或打开过条目, 则清空查询。记住上次所在页面 (mode/category)
+  // 不受 TTL 限制, 只在「打开条目」时被强制覆盖为导航页。查询仅内存, 重启即空。
+  const SEARCH_RECALL_MS = 5 * 60 * 1000; // 5 分钟
+  let searchRecallAt = 0; // 上次「决定搜索状态」的时间戳 (锚点, 供下呼出算 TTL)
+  let entryOpened = false; // 本所示期内是否打开过条目 (打开即清空搜索记忆)
+
   function clearSearch() {
-    // 记住上次所在页面: keep the remembered mode/category and both modes' query
-    // (the query is session-only — it survives re-summons but not a restart).
-    // Otherwise reset to the Navigate main menu with clean inputs.
-    if (rememberLastPage()) {
-      const next: Mode = lastPageMode() === "clipboard" ? "clipboard" : "apps";
-      setMode(next);
-      if (next === "clipboard") setClipKind(lastPageKind() as ClipKind);
-    } else {
+    const now = Date.now();
+    const opened = entryOpened;
+    const fresh = now - searchRecallAt <= SEARCH_RECALL_MS;
+    entryOpened = false;
+    searchRecallAt = now; // 锚定 TTL, 供下次呼出计算 5 分钟间隔
+    // 用恢复前的 mode 判定本模式是否有活跃搜索 (决定是否保留查询)。
+    const recall = !opened && fresh && query().trim() !== "";
+
+    if (!recall) {
+      // 未保留搜索 (打开过条目 / 超过 5 分钟 / 无活跃搜索) → 重置页面与查询。
+      if (opened) {
+        // 打开条目 → 回到导航页 (apps 空查询)。记住上次所在页面在此被覆盖。
+        setMode("apps");
+        setClipKind("all");
+      } else if (rememberLastPage()) {
+        // 记住上次所在页面 → 恢复它记住的 mode/category (页面偏好, 不受 TTL 限制)。
+        const next: Mode = lastPageMode() === "clipboard" ? "clipboard" : "apps";
+        setMode(next);
+        if (next === "clipboard") setClipKind(lastPageKind() as ClipKind);
+      } else {
+        // 未记住页面 → 导航页。
+        setMode("apps");
+        setClipKind("all");
+      }
+      // 查询一律清空, 落在该页面的默认空态。
       setAppsQuery("");
       setClipQuery("");
-      setMode("apps");
-      setClipKind("all");
     }
+    // recall: 保留当前 mode/kind/query 不动, 热键重呼出即恢复这次搜索结果。
+
     setApps([]);
     setClips([]);
     setSelected(0);
@@ -684,6 +708,7 @@ function App() {
   /** Launch a specific app and hide the launcher. When elevated, waits for the
    * UAC prompt so a cancellation keeps the launcher open instead of hiding. */
   function launchApp(app: AppEntry, elevated = false) {
+    entryOpened = true; // 打开条目 → 清空搜索记忆, 下次呼出回导航页
     if (elevated) {
       void (async () => {
         try {
@@ -761,6 +786,7 @@ function App() {
    * launcher when 粘贴后关闭 is enabled (default). Invalid rows are blocked with
    * a toast and keep the launcher open. */
   function pasteClip(item: ClipboardItem) {
+    entryOpened = true; // 粘贴即使用该条目 → 清空搜索记忆
     if (item.valid === false) {
       showToast(t("clipInvalid"));
       return;
@@ -778,6 +804,7 @@ function App() {
 
   /** Merge-paste every Space-selected entry (Enter with a non-empty set). */
   function pasteClipMulti() {
+    entryOpened = true; // 合并粘贴即使用条目 → 清空搜索记忆
     const ids = clips()
       .filter((c) => multiIds().has(c.id))
       .map((c) => c.id);
@@ -805,6 +832,7 @@ function App() {
 
   /** Open a link row in the default browser (ShellExecuteW via launch_app). */
   function openClipLink(item: ClipboardItem) {
+    entryOpened = true; // 打开链接即使用条目 → 清空搜索记忆
     void invoke("launch_app", { path: item.content, name: item.content, elevated: false });
     void resetAndHide();
   }
@@ -1164,6 +1192,7 @@ function App() {
       return;
     }
     const shell = idx === 1 ? "powershell" : "cmd";
+    entryOpened = true; // 打开终端即使用条目 → 清空搜索记忆
     void invoke("open_terminal_in_folder", { path: ctx.path, shell, elevated }).catch((err) =>
       console.error("open terminal failed", err),
     );
@@ -1171,6 +1200,7 @@ function App() {
   }
 
   function activateApp(elevated: boolean) {
+    entryOpened = true; // Enter/点击打开条目 (启动或粘贴) → 清空搜索记忆
     if (mode() === "apps") {
       let item: AppEntry | undefined;
       if (zone() === "recent") item = recentApps()[recentSelected()];

@@ -1003,6 +1003,12 @@ T tile + 卫星文本预览，无 UI 改动。
   query，热键重呼出恢复、重启清空，避免明文搜索词写盘）。
 - `clearSearch`/`launcher-shown`/`onMount` 按记忆恢复模式并 runSearch；`switchMode`/
   `setClipKindAndSearch` 防抖 400ms 持久化。命名与窗口位置「记住位置」区分。
+- **补充（2026-08-21，搜索状态召回）**：搜索词在「未打开条目」时保留到下次呼出，但
+  - **打开条目后不记住**（启动 / 回车 / 粘贴 / 开链接 / 开终端等「使用条目」路径置
+    `entryOpened`，`clearSearch` 里 `opened` 分支强制回导航页，覆盖 remember_last_page）；
+  - **超过 5 分钟未再次呼出则清空**（`clearSearch` 以 `searchRecallAt` 锚点 + `SEARCH_RECALL_MS`
+    判定 TTL，`recall = !opened && fresh && 本模式有活跃查询`，否则回导航页或记住的页面）；
+  - `remember_last_page` 的 mode/category 页面恢复**不受 TTL 限制**，仅在「打开条目」时被覆盖。
 
 ### 17.6 多文件行混合类型 tile（项6）
 

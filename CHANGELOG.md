@@ -8,6 +8,13 @@ All notable changes to Lume are documented here. Format based on
 
 ### Changed
 
+- **搜索状态召回（打开即忘 / 5 分钟过期）** — 一次「未打开条目」的搜索在 5 分钟内会被下次呼出
+  恢复（`clearSearch` 的 `recall`：未打开 + 未超时 + 当前模式有活跃查询 → 保留当前 mode/query 不动，
+  `runSearch` 按它重跑）；**打开条目**（启动 / 回车 / 粘贴 / 开链接 / 开终端等使用条目的路径）即清空
+  查询、下次呼出回导航页；**超过 5 分钟未再次呼出**也回导航页（`searchRecallAt` 锚点 + `SEARCH_RECALL_MS`）。
+  `remember_last_page` 的只恢复 mode/category（页面偏好），**不受 TTL 限制**，仅被「打开条目」覆盖为导航页。
+  `tsc --noEmit` 与 `vite build` 通过。
+
 - **WebView2 闲置内存裁剪（ROADMAP #18）** — 三个常驻 webview（main/settings/preview）即使
   全隐藏也各保有一个 renderer 进程（实测基线 priv-WS **138.1 MB**，renderer ×3 = 58.1）。
   接入 WebView2 官方 `ICoreWebView2_14+::SetMemoryUsageTargetLevel(Low)`：隐藏窗口的闲置内存

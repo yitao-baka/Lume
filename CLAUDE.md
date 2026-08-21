@@ -175,6 +175,11 @@ kind）+ 复选框 + 逐文件存在性（`check_file_exists`），复制/粘贴
 Lume（托盘「关闭」/「重启」）会清除已记住页面 —— `RunEvent::ExitRequested` →
 `settings::clear_last_page`（轻量写盘、不碰 backup），重启回到初始页，记忆仅会话内
 生效；单实例第二进程在进入 Tauri 生命周期前即退出，不会误清。`cargo test` 73 通过。
+**Follow-up（2026-08-21，搜索状态召回，见 ROADMAP #17.5 补充）**：搜索词在**未打开条目**时
+保留到下次呼出（`clearSearch` 的 `recall` = 未打开 + 5 min TTL 内 + 当前模式有活跃查询 → 保留
+mode/query 不动）；**打开条目**（启动/回车/粘贴/开链接/开终端，置 `entryOpened`）即清空、下次呼出
+回导航页；**超过 5 分钟未再次呼出**也回导航页。`remember_last_page` 的 mode/category 页面恢复
+**不受 TTL 限制**，仅被「打开条目」覆盖。前端 `tsc --noEmit` + `vite build` 通过。
 
 **Prior: PDF 预览 + 源码/歌词归文本 + 音乐分类 + 预览开关 + 左磁吸重叠修复 (ROADMAP #16,
 complete) — as of 2026-08-15**: PDF preview via frontend PDF.js (`pdfjs-dist` v6,

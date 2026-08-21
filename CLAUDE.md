@@ -102,6 +102,16 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   以管理员身份启动」 (`shift_enter_admin`) toggles; settings are injected into
   the webview as `window.__LUME_CONFIG__` via an initialization script so the
   first render never races the async settings IPC (`lib.rs`, `src/App.tsx`)
+- Explorer-folder context bar — when summoned while an Explorer window has
+  focus, Lume resolves the folder it shows (COM `IShellWindows` →
+  `IPersistFolder2` → `SHGetPathFromIDListW`, `src-tauri/src/explorer.rs`) and
+  adds a 「Windows 资源管理器」 bar to the bottom of the empty-query main menu:
+  「CMD 中打开」/「PowerShell 中打开」 (cwd = that folder, `ShellExecuteW`
+  `lpDirectory`), 「复制路径」, right-click 启动 / 以管理员身份启动
+  (`runas`); gated by the `show_explorer_bar` setting (设置/界面). The
+  foreground HWND was already captured for clipboard auto-paste
+  (`window.rs` `FocusState`); the path resolves lazily on a dedicated STA
+  thread (`explorer.rs`, mirroring `icons.rs`)
 - Clipboard enhancements — right-click pin, `Del` / per-entry trash button; the
   SQLite table is migrated in place (see `docs/ARCHITECTURE.md`)
 - Window lifecycle: hidden at start, centered on show, auto-hides on focus

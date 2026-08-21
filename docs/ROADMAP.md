@@ -1094,3 +1094,40 @@ renderer 进程。实测基线（release，idle 全隐藏，`scripts/measure-web
 出现。**已回退**，仅保留 Part 1（MemoryUsageTargetLevel 裁剪）。教训：WebView2 的
 `additional_browser_args` 不能随意用 Chromium 全局进程开关；多 webview 下 renderer-process-limit
 是已知不支持的组合。
+
+## 19. Explorer 上下文栏（呼出时识别当前文件夹）（已实现）
+
+**背景**：Lume 在呼出时已用 `FocusState.last_hwnd`（`window.rs::toggle_launcher`）捕获呼出前的
+前景窗口（用于剪贴板自动粘贴回填）。把该能力向前推一步：**若前景窗口是 Explorer，拿到它当前
+打开的文件夹路径**（对齐 ZTools 的 `getExplorerFolderPath`），并实用化——在导航页底部新增
+「Windows 资源管理器」栏，可一键在**当前文件夹**打开终端 / 复制路径，右键可启动 / 以管理员身份
+启动。
+
+### 实现
+
+- **路径解析**（`src-tauri/src/explorer.rs`，COM `IShellWindows`）：`FindWindowSW(hwnd)` →
+  `IServiceProvider(SID_STopLevelBrowser)` → `IShellBrowser` → `IShellView` → `IFolderView` →
+  `IPersistFolder2::GetCurFolder` 拿 PIDL → `SHGetPathFromIDListW` 转本地路径。非 Explorer /
+  虚拟文件夹 → `None`（栏不出现），优雅降级。
+- **线程模型**：主线程是 STA COM 公寓，项目惯例把 shell COM 挪到新线程（同 `icons.rs`）。因此
+  `get_foreground_context` 做成 async 命令，在 `spawn_blocking` 里再开**专用 STA 线程** +
+  `CoInitializeEx(COINIT_APARTMENTTHREADED)` + `CoUninitialize`，避免与线程池既有公寓冲突，也
+  不在热键主路径上做 COM。HWND 从 `FocusState` 拷贝（不 take，粘贴仍可用）。
+- **动作**：`open_terminal_in_folder { path, shell, elevated }` — `ShellExecuteW` + `lpDirectory=path`
+  （终端 cwd 即该文件夹），`runas` verb 实现高权限；`copy_path` — `arboard` set_text。
+- **前端**（`src/App.tsx`）：`launcher-shown` 时 `refreshFolderCtx()` 拉取 → `folderCtx`；
+  `.bar-list` **底部**新增「Windows 资源管理器」栏（`folderBarSection`，三个 tile：CMD 中打开 /
+  PowerShell 中打开 / 复制路径），纳入**现有连续导航**（`zone` 扩展 `"folder"`，
+  `moveBarSelection`/`visibleBars`/`hasBars` 泛化）；空查询自动选中时 folder 栏兜底。右键菜单
+  `kind:"folder"`：终端 tile → 启动 / 以管理员身份启动；复制 tile → 复制路径。Enter 终端隐藏界面，
+  复制路径留界面 + toast。
+- **设置项**：`appearance.show_explorer_bar`（默认 **on**），设置/界面 → 「显示「Windows 资源
+  管理器」栏」toggle；关 = 不再捕获/显示该栏。
+- **依赖**：Cargo.toml `windows` 加 `Win32_System_Variant` + `Win32_UI_Shell_Common`
+  （`GetCurFolder`/`SHGetPathFromIDListW` 的 feature 门控）。
+
+### 验证
+
+`cargo check` / `cargo test`（73 通过）/ `tsc --noEmit` / `npm run build` 全过。手动：Explorer
+里呼出 → 底部出现该栏并显示文件夹名 → CMD/PowerShell 在目录打开、右键高权限、复制路径 toast；
+非 Explorer 场景栏不出现。

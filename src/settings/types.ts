@@ -21,6 +21,8 @@ export interface SettingsData {
     remember_position: boolean;
     /** Show the 「最近使用」 bar on the main menu. */
     show_recent: boolean;
+    /** Show the 「Windows 资源管理器」 bar (Explorer folder context). */
+    show_explorer_bar: boolean;
     /** Start with the 「已固定」 bar expanded. */
     expand_pinned: boolean;
     /** Shift+Enter launches the selected app with administrator privileges. */

@@ -38,6 +38,9 @@ windows = { version = "0.61", features = [
   "Win32_Globalization",      # GetUserDefaultUILanguage (tray label locale)
   "Win32_Graphics_Gdi",       # HBITMAP, GetDIBits, GetDC for icon conversion
   "Win32_System_Com",         # CoInitializeEx / CoUninitialize
+  "Win32_System_Variant",     # VARIANT / VT_I4 (explorer folder path via IShellWindows)
+  "Win32_UI_Shell_Common",    # SHGetPathFromIDListW / IPersistFolder2::GetCurFolder (explorer)
+  "Win32_System_Ole",         # IShellBrowser->IOleWindow::GetWindow (match shell window hwnd)
   "Win32_UI_Shell",           # IShellItemImageFactory, SHCreateItemFromParsingName
   "Win32_System_Services",    # SCM: CreateServiceW / StartServiceCtrlDispatcherW (LumeSVC)
   "Win32_System_Registry",    # HKLM DataDir, HKCU Run (autostart)

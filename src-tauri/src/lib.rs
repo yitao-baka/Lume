@@ -3,6 +3,7 @@ pub mod cache;
 mod clipboard;
 mod dirwatch;
 mod envwatch;
+mod explorer;
 mod hotkey;
 mod i18n;
 mod icons;
@@ -293,6 +294,10 @@ pub fn run() {
             window::show_preview,
             window::close_preview,
             window::get_preview_request,
+            explorer::get_foreground_context,
+            explorer::open_terminal_in_folder,
+            explorer::copy_path,
+            explorer::get_terminal_icons,
             apps::search_apps,
             apps::refresh_index,
             apps::launch_app,

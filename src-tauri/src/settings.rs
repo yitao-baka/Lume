@@ -61,6 +61,10 @@ pub struct Appearance {
     /// always continues, so re-enabling shows the history).
     #[serde(default = "default_show_recent")]
     pub show_recent: bool,
+    /// Show the 「Windows 资源管理器」 bar — the Explorer folder the launcher was
+    /// summoned from, with open-terminal / copy-path actions.
+    #[serde(default = "default_show_explorer_bar")]
+    pub show_explorer_bar: bool,
     /// Start the launcher with the 「已固定」 bar expanded (default: collapsed).
     #[serde(default)]
     pub expand_pinned: bool,
@@ -117,6 +121,11 @@ fn default_window_height() -> u32 {
 
 /// The 「最近使用」 bar shows by default.
 fn default_show_recent() -> bool {
+    true
+}
+
+/// The 「Windows 资源管理器」 bar shows by default.
+fn default_show_explorer_bar() -> bool {
     true
 }
 
@@ -245,6 +254,7 @@ impl Default for Settings {
                 window_position: "center".into(),
                 remember_position: false,
                 show_recent: true,
+                show_explorer_bar: true,
                 expand_pinned: false,
                 shift_enter_admin: true,
                 recent_count: 20,

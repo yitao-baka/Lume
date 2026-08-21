@@ -850,6 +850,16 @@ body,
   color: var(--text-muted);
 }
 
+/* The 「Windows 资源管理器」 bar's action tiles stay square (like the app tiles)
+   but let the label wrap so e.g. "PowerShell 中打开" is never ellipsized. */
+.folder-box .result-box-name {
+  white-space: normal;
+  text-overflow: clip;
+  word-break: break-word;
+  line-height: 1.2;
+  text-align: center;
+}
+
 .bar-expand {
   border: none;
   background: transparent;
@@ -1367,6 +1377,7 @@ body.settings-window #root {
 .settings-nav-icon,
 .settings-chip-icon,
 .settings-icon-btn-icon,
+.folder-icon-svg,
 .icon-unknown {
   filter: var(--icon-filter);
 }

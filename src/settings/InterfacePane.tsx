@@ -224,6 +224,16 @@ export default function InterfacePane(props: {
 
       <div class="settings-group">
         <div class="settings-sub settings-sub-between">
+          <span class="settings-sub-label">{t("showExplorerBar")}</span>
+          <Toggle
+            checked={a().show_explorer_bar}
+            onChange={(v) => props.onChange({ show_explorer_bar: v })}
+          />
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-sub settings-sub-between">
           <span class="settings-sub-label">{t("expandPinned")}</span>
           <Toggle
             checked={a().expand_pinned}

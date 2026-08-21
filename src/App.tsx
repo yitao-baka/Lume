@@ -9,6 +9,7 @@ import type { SettingsData } from "./settings/types";
 import settingsIcon from "../res/icons/settings.svg";
 import navigateIcon from "../res/icons/navigate.svg";
 import clipboardIcon from "../res/icons/clipboard.svg";
+import copyIcon from "../res/icons/copy.svg";
 import runIcon from "../res/icons/normal_run.svg";
 import administratorRunIcon from "../res/icons/administrator_run.svg";
 import folderOpenIcon from "../res/icons/folder_open.svg";
@@ -223,6 +224,7 @@ function previewTarget(
 type MenuState =
   | { kind: "app"; x: number; y: number; app: AppEntry; fromRecent?: boolean }
   | { kind: "clip"; x: number; y: number; item: ClipboardItem }
+  | { kind: "folder"; x: number; y: number; idx: number }
   | null;
 
 /**
@@ -296,6 +298,8 @@ function App() {
   const [showRecent, setShowRecent] = createSignal(_a?.show_recent ?? true);
   /** Settings-driven: start the 「已固定」 bar expanded. */
   const [expandPinned, setExpandPinned] = createSignal(_a?.expand_pinned ?? false);
+  /** Settings-driven: show the 「Windows 资源管理器」 bar (Explorer folder context). */
+  const [showExplorerBar, setShowExplorerBar] = createSignal(_a?.show_explorer_bar ?? true);
   /** Settings-driven: Shift+Enter launches with administrator privileges. */
   const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(_a?.shift_enter_admin !== false);
   /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
@@ -334,9 +338,19 @@ function App() {
   const [iconTick, setIconTick] = createSignal(0);
   const [pinnedApps, setPinnedApps] = createSignal<AppEntry[]>([]);
   const [recentApps, setRecentApps] = createSignal<AppEntry[]>([]);
-  const [zone, setZone] = createSignal<"recent" | "pinned" | "grid">("grid");
+  const [zone, setZone] = createSignal<"recent" | "pinned" | "folder" | "grid">("grid");
   const [pinnedSelected, setPinnedSelected] = createSignal(0);
   const [recentSelected, setRecentSelected] = createSignal(0);
+  /** Explorer-folder context: the folder the launcher was summoned from (or
+   * `null` when the foreground window wasn't an Explorer folder view). */
+  const [folderCtx, setFolderCtx] = createSignal<{ path: string } | null>(null);
+  /** Selected tile in the 「Windows 资源管理器」 bar: 0=CMD, 1=PowerShell, 2=copy. */
+  const [folderSelected, setFolderSelected] = createSignal(0);
+  /** cmd.exe / powershell.exe icons (base64 data URIs) for the bar tiles. */
+  const [termIcons, setTermIcons] = createSignal<{ cmd: string | null; powershell: string | null }>({
+    cmd: null,
+    powershell: null,
+  });
   const [recentExpanded, setRecentExpanded] = createSignal(false);
   const [pinnedExpanded, setPinnedExpanded] = createSignal(false);
   const [menu, setMenu] = createSignal<MenuState>(null);
@@ -487,6 +501,47 @@ function App() {
       scheduleResize();
     } catch (err) {
       console.error("get_recent_apps failed", err);
+    }
+  }
+
+  /** Fetch the Explorer folder the launcher was summoned from (the foreground
+   * window at capture time). Sets the 「Windows 资源管理器」 bar context, or
+   * clears it when the foreground window wasn't an Explorer folder view. */
+  async function refreshFolderCtx() {
+    // Setting off → never show the bar (no IPC, no capture).
+    if (!showExplorerBar()) {
+      setFolderCtx(null);
+      return;
+    }
+    try {
+      const ctx = (await invoke("get_foreground_context")) as {
+        path: string | null;
+        is_explorer: boolean;
+      };
+      if (ctx.is_explorer && ctx.path) {
+        setFolderCtx({ path: ctx.path });
+      } else {
+        setFolderCtx(null);
+      }
+      // The new (or removed) bar changes the content height — re-measure.
+      scheduleResize();
+    } catch (err) {
+      console.error("get_foreground_context failed", err);
+      setFolderCtx(null);
+    }
+  }
+
+  /** Fetch the cmd.exe / powershell.exe icons for the 「Windows 资源管理器」 bar
+   * tiles (their own icons, not the bundled icon set). Called once on mount. */
+  async function refreshTermIcons() {
+    try {
+      const icons = (await invoke("get_terminal_icons")) as {
+        cmd: string | null;
+        powershell: string | null;
+      };
+      setTermIcons({ cmd: icons.cmd ?? null, powershell: icons.powershell ?? null });
+    } catch (err) {
+      console.error("get_terminal_icons failed", err);
     }
   }
 
@@ -851,6 +906,23 @@ function App() {
       });
       return items;
     }
+    if (m.kind === "folder") {
+      // The copy-path tile has no elevation; the two terminal tiles launch
+      // normally or as administrator.
+      if (m.idx >= 2) {
+        return [
+          { label: t("copyPath"), icon: clipboardIcon, action: () => activateFolder(2, false) },
+        ];
+      }
+      return [
+        { label: t("launch"), icon: runIcon, action: () => activateFolder(m.idx, false) },
+        {
+          label: t("launchAsAdmin"),
+          icon: administratorRunIcon,
+          action: () => activateFolder(m.idx, true),
+        },
+      ];
+    }
     const isPinned = m.item.pinned;
     const items = [
       { label: t("copyBack"), icon: clipboardIcon, action: () => copyOnly(m.item) },
@@ -903,6 +975,7 @@ function App() {
   /** Search the active mode's index, dropping stale responses. */
   async function runSearch(q: string) {
     setSelected(0);
+    setNavHidden(false); // typing reveals the first entry's highlight
     setZone("grid");
     const id = ++requestSeq;
     if (mode() === "apps") {
@@ -1002,6 +1075,7 @@ function App() {
       );
       setEntrySize(s.appearance.entry_size);
       setShowRecent(s.appearance.show_recent);
+      setShowExplorerBar(s.appearance.show_explorer_bar ?? true);
       setExpandPinned(s.appearance.expand_pinned || false);
       setShiftEnterAdmin(s.appearance.shift_enter_admin !== false);
       setPlaceholderApps(s.appearance.search_placeholder_apps || "");
@@ -1073,12 +1147,38 @@ function App() {
     activateApp(true);
   }
 
+  /** Activate a tile in the 「Windows 资源管理器」 bar. `idx`: 0=CMD, 1=PowerShell,
+   * 2=copy path. A terminal hides the launcher after launching; a path copy
+   * keeps it open and shows a toast. */
+  function activateFolder(idx: number, elevated: boolean) {
+    const ctx = folderCtx();
+    if (!ctx) return;
+    if (idx >= 2) {
+      void invoke("copy_path", { path: ctx.path })
+        .then(() => showToast(t("copied")))
+        .catch((err) => {
+          console.error("copy failed", err);
+          showToast(t("copyFailed"));
+        });
+      void resetAndHide();
+      return;
+    }
+    const shell = idx === 1 ? "powershell" : "cmd";
+    void invoke("open_terminal_in_folder", { path: ctx.path, shell, elevated }).catch((err) =>
+      console.error("open terminal failed", err),
+    );
+    void resetAndHide();
+  }
+
   function activateApp(elevated: boolean) {
     if (mode() === "apps") {
       let item: AppEntry | undefined;
       if (zone() === "recent") item = recentApps()[recentSelected()];
       else if (zone() === "pinned") item = pinnedApps()[pinnedSelected()];
-      else item = apps()[selected()];
+      else if (zone() === "folder") {
+        activateFolder(folderSelected(), elevated);
+        return;
+      } else item = apps()[selected()];
       if (!item) return;
       void invoke("launch_app", { path: item.path, name: item.name, elevated });
       void resetAndHide();
@@ -1122,10 +1222,13 @@ function App() {
   }
 
   /** Bars currently visible on the empty-query main menu, top to bottom. */
-  function visibleBars(): ("recent" | "pinned")[] {
-    const bars: ("recent" | "pinned")[] = [];
+  function visibleBars(): ("recent" | "pinned" | "folder")[] {
+    const bars: ("recent" | "pinned" | "folder")[] = [];
     if (showRecent() && recentApps().length > 0) bars.push("recent");
     if (pinnedApps().length > 0) bars.push("pinned");
+    // The Explorer-folder bar sits at the bottom and only appears when a path
+    // was captured at summon time.
+    if (folderCtx()) bars.push("folder");
     return bars;
   }
 
@@ -1141,29 +1244,32 @@ function App() {
     setNavHidden(false); // arrow nav reveals the highlight from its hidden position
     const cols = Math.max(barCols(), 1);
 
-    const len = (k: "recent" | "pinned") =>
-      (k === "recent" ? recentApps() : pinnedApps()).length;
-    const expanded = (k: "recent" | "pinned") =>
-      k === "recent" ? recentExpanded() : pinnedExpanded();
+    const len = (k: "recent" | "pinned" | "folder") =>
+      k === "recent" ? recentApps().length : k === "pinned" ? pinnedApps().length : 3;
+    const expanded = (k: "recent" | "pinned" | "folder") =>
+      k === "recent" ? recentExpanded() : k === "pinned" ? pinnedExpanded() : true;
     // Navigation rows of a bar: one when collapsed, every row when expanded.
-    const rows = (k: "recent" | "pinned") =>
+    const rows = (k: "recent" | "pinned" | "folder") =>
       expanded(k) ? Math.ceil(len(k) / cols) : 1;
     // Items a collapsed bar exposes to navigation: only its first row.
-    const reach = (k: "recent" | "pinned") =>
+    const reach = (k: "recent" | "pinned" | "folder") =>
       expanded(k) ? len(k) : Math.min(len(k), cols);
 
     // The stacked grid, top to bottom: each visible bar contributes its rows.
-    const grid: { bar: "recent" | "pinned"; local: number }[] = [];
+    const grid: { bar: "recent" | "pinned" | "folder"; local: number }[] = [];
     for (const k of bars) for (let r = 0; r < rows(k); r++) grid.push({ bar: k, local: r });
 
-    const setIdx = (k: "recent" | "pinned", v: number) =>
-      k === "recent" ? setRecentSelected(v) : setPinnedSelected(v);
-    const getIdx = (k: "recent" | "pinned") =>
-      k === "recent" ? recentSelected() : pinnedSelected();
+    const setIdx = (k: "recent" | "pinned" | "folder", v: number) => {
+      if (k === "recent") setRecentSelected(v);
+      else if (k === "pinned") setPinnedSelected(v);
+      else setFolderSelected(v);
+    };
+    const getIdx = (k: "recent" | "pinned" | "folder") =>
+      k === "recent" ? recentSelected() : k === "pinned" ? pinnedSelected() : folderSelected();
 
     // Resolve the current position to a (gridRow, col); with no bar active,
     // start at the top bar.
-    let bi = bars.indexOf(zone() as "recent" | "pinned");
+    let bi = bars.indexOf(zone() as "recent" | "pinned" | "folder");
     let idx = bi >= 0 ? getIdx(bars[bi]) : 0;
     if (bi < 0) bi = 0;
     const curReach = reach(bars[bi]);
@@ -1278,7 +1384,8 @@ function App() {
         return;
       }
       // ── empty-query bar navigation (最近使用 / 已固定, one continuous grid) ──
-      const hasBars = (showRecent() && recentApps().length > 0) || pinnedApps().length > 0;
+      const hasBars =
+        (showRecent() && recentApps().length > 0) || pinnedApps().length > 0 || !!folderCtx();
       if (!hasBars) return;
       if (e.key === "ArrowLeft") {
         selectionSource = "keyboard";
@@ -1437,6 +1544,9 @@ function App() {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
     document.addEventListener("contextmenu", (e) => e.preventDefault());
 
+    // cmd.exe / powershell.exe icons for the Explorer bar tiles (once).
+    void refreshTermIcons();
+
     // Hide the selection highlight while the cursor rests on empty space (a
     // place with no entry) — mouse navigation is "suspended" until the cursor
     // touches an entry again or an arrow key resumes keyboard navigation. The
@@ -1444,13 +1554,11 @@ function App() {
     // was hidden at (see moveSelection / moveBarSelection). Navigate mode only:
     // the clipboard page keeps its row highlight + satellite preview in sync
     // with the actual selection instead.
-    document.addEventListener("mousemove", (e) => {
-      if (mode() !== "apps") {
-        setNavHidden(false);
-        return;
-      }
-      const overItem = !!(e.target as HTMLElement).closest?.(".result-box");
-      setNavHidden(!overItem);
+    document.addEventListener("mousemove", () => {
+      // The last-selected entry stays highlighted even when the cursor rests on
+      // empty space inside the window — selection only moves on hover over an
+      // entry or an arrow key, and never "disappears" mid-interaction.
+      setNavHidden(false);
     });
 
     // ── Native drag-and-drop for pinned-bar reordering ──
@@ -1568,13 +1676,18 @@ function App() {
       // 记住上次所在页面: a restored Clipboard page must load its history; an
       // apps page re-runs its (session) query or shows the bars.
       await runSearch(mode() === "apps" ? appsQuery() : clipQuery());
+      // Resolve the Explorer folder context (foreground window at summon) so the
+      // 「Windows 资源管理器」 bar can appear on the empty-query menu. Fetched
+      // before the auto-select below so a folder-only menu still gets a zone.
+      await refreshFolderCtx();
       // Auto-select the first entry of the empty-query main menu: the recent
-      // bar's first item when it has any, else the pinned bar's. (The bars'
-      // highlight requires `zoneActive`, so a resting zone of "grid" would
-      // leave nothing selected on summon.)
+      // bar's first item when it has any, else the pinned bar's, else the folder
+      // bar's. (The bars' highlight requires `zoneActive`, so a resting zone of
+      // "grid" would leave nothing selected on summon.)
       if (mode() === "apps" && appsQuery() === "" && zone() === "grid") {
         if (showRecent() && recentApps().length > 0) setZone("recent");
         else if (pinnedApps().length > 0) setZone("pinned");
+        else if (folderCtx()) setZone("folder");
       }
       queueMicrotask(() => document.getElementById("search-input")?.focus());
     });
@@ -1918,7 +2031,7 @@ function App() {
     selected: number;
     draggable?: boolean;
     onToggle: () => void;
-    onActivate: () => void;
+    onActivate: (i: number) => void;
     onSelect: (i: number) => void;
     onContext: (e: MouseEvent, app: AppEntry) => void;
     onDragStart?: (i: number, e: DragEvent) => void;
@@ -1940,13 +2053,79 @@ function App() {
           <For each={shown}>
             {(app, i) =>
               appBox(app, opts.zoneActive && i() === opts.selected, {
-                onActivate: opts.onActivate,
+                onActivate: () => opts.onActivate(i()),
                 onSelect: () => opts.onSelect(i()),
                 onContext: (e) => opts.onContext(e, app),
                 draggable: opts.draggable,
                 onDragStart: opts.onDragStart ? (e) => opts.onDragStart!(i(), e) : undefined,
               })
             }
+          </For>
+        </div>
+      </div>
+    );
+  }
+
+  /** The 「Windows 资源管理器」 bar: shown on the empty-query main menu when the
+   * launcher was summoned from an Explorer folder. Tiles open a terminal in that
+   * folder or copy the folder path; right-click a terminal tile for 启动 /
+   * 以管理员身份启动. It participates in the continuous bar navigation. */
+  function folderBarSection() {
+    const ctx = folderCtx();
+    if (!ctx) return null;
+    const icons = termIcons();
+    const items = [
+      {
+        label: t("openInCmd"),
+        icon: icons.cmd ?? runIcon,
+        act: (elev: boolean) => activateFolder(0, elev),
+      },
+      {
+        label: t("openInPowerShell"),
+        icon: icons.powershell ?? runIcon,
+        act: (elev: boolean) => activateFolder(1, elev),
+      },
+      { label: t("copyPath"), icon: copyIcon, mono: true, act: () => activateFolder(2, false) },
+    ];
+    return (
+      <div class="bar-section">
+        <div class="bar-header">
+          <span class="bar-title">{t("explorerBar")}</span>
+        </div>
+        <div class="bar-grid">
+          <For each={items}>
+            {(item, i) => (
+              <div
+                class="result-box folder-box"
+                classList={{ "result-selected": zone() === "folder" && i() === folderSelected() }}
+                role="option"
+                aria-selected={zone() === "folder" && i() === folderSelected()}
+                onMouseMove={() => {
+                  if (selectionSource === "keyboard") return;
+                  selectionSource = "mouse";
+                  setZone("folder");
+                  setFolderSelected(i());
+                }}
+                onClick={() => item.act(false)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  selectionSource = "mouse";
+                  setZone("folder");
+                  setFolderSelected(i());
+                  setMenu({ kind: "folder", x: e.clientX, y: e.clientY, idx: i() });
+                }}
+              >
+                <span class="result-box-tile result-box-icon">
+                  <img
+                    class={`result-box-img${item.mono ? " folder-icon-svg" : ""}`}
+                    src={item.icon}
+                    alt=""
+                    draggable={false}
+                  />
+                </span>
+                <span class="result-box-name">{item.label}</span>
+              </div>
+            )}
           </For>
         </div>
       </div>
@@ -2032,8 +2211,14 @@ function App() {
                     setWorkAreaH(null); // re-measure the current monitor
                     scheduleResize(); // grow/shrink the window to the bars
                   },
-                  onActivate: activate,
+                  onActivate: (i) => {
+                    selectionSource = "mouse";
+                    setZone("recent");
+                    setRecentSelected(i);
+                    activate();
+                  },
                   onSelect: (i) => {
+                    if (selectionSource === "keyboard") return;
                     selectionSource = "mouse";
                     setZone("recent");
                     setRecentSelected(i);
@@ -2058,8 +2243,14 @@ function App() {
                     setWorkAreaH(null);
                     scheduleResize();
                   },
-                  onActivate: activate,
+                  onActivate: (i) => {
+                    selectionSource = "mouse";
+                    setZone("pinned");
+                    setPinnedSelected(i);
+                    activate();
+                  },
                   onSelect: (i) => {
+                    if (selectionSource === "keyboard") return;
                     selectionSource = "mouse";
                     setZone("pinned");
                     setPinnedSelected(i);
@@ -2090,17 +2281,22 @@ function App() {
                   },
                 })}
               </Show>
+              <Show when={folderCtx()}>{folderBarSection()}</Show>
             </div>
           ) : (
             <Show when={apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
               <div class="result-grid" role="grid">
                 {apps().map((app, i) =>
                   appBox(app, i === selected(), {
-                    onActivate: activate,
+                    onActivate: () => {
+                      selectionSource = "mouse";
+                      setSelected(i);
+                      activate();
+                    },
                     onSelect: () => {
-                      // Hover-selection is a setting (default off); keyboard
-                      // nav also takes precedence until a click.
-                      if (!hoverSelect() || selectionSource === "keyboard") return;
+                      // Hover selects; keyboard nav takes precedence until a
+                      // click (or an arrow key) resets the source.
+                      if (selectionSource === "keyboard") return;
                       selectionSource = "mouse";
                       setSelected(i);
                     },

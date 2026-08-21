@@ -67,7 +67,7 @@ fn extract_shell_png(path: &str, size: i32, flags: SIIGBF, com: COINIT) -> Optio
 
 /// Extract a PNG for a `.lnk` path via the shell (the file-type icon). Icons
 /// work from MTA, so this runs on the caller's thread (async command workers).
-fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
+pub(crate) fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
     let result = extract_shell_png(
         path,
         ICON_SIZE,

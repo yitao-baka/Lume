@@ -2101,7 +2101,8 @@ function App() {
                 role="option"
                 aria-selected={zone() === "folder" && i() === folderSelected()}
                 onMouseMove={() => {
-                  if (selectionSource === "keyboard") return;
+                  // Mouse movement over an entry always takes over selection —
+                  // no keyboard-precedence gate that could leave hover stalled.
                   selectionSource = "mouse";
                   setZone("folder");
                   setFolderSelected(i());
@@ -2218,7 +2219,6 @@ function App() {
                     activate();
                   },
                   onSelect: (i) => {
-                    if (selectionSource === "keyboard") return;
                     selectionSource = "mouse";
                     setZone("recent");
                     setRecentSelected(i);
@@ -2250,7 +2250,6 @@ function App() {
                     activate();
                   },
                   onSelect: (i) => {
-                    if (selectionSource === "keyboard") return;
                     selectionSource = "mouse";
                     setZone("pinned");
                     setPinnedSelected(i);
@@ -2294,9 +2293,9 @@ function App() {
                       activate();
                     },
                     onSelect: () => {
-                      // Hover selects; keyboard nav takes precedence until a
-                      // click (or an arrow key) resets the source.
-                      if (selectionSource === "keyboard") return;
+                      // Mouse movement over an entry always takes over selection
+                      // (no keyboard-precedence gate that could leave hover
+                      // stalled; a stray position won't fire without movement).
                       selectionSource = "mouse";
                       setSelected(i);
                     },

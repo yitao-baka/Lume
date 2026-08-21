@@ -1040,3 +1040,57 @@ T tile + 卫星文本预览，无 UI 改动。
 FileDropList=旧文件。②（用户选「保留粘贴的内容」，同 ZTools）移除 `auto_paste` 的保存/还原
 （删 `SavedClipboard`/`save_current_clipboard`/`restore_saved_clipboard`）——粘贴后剪贴板
 保留粘贴内容。两者互补。文档（README/CLAUDE/CHANGELOG）同步更新。`cargo test` 仍 71 通过。
+
+## 18. WebView2 闲置内存裁剪（已实现）
+
+**背景**：Lume 常驻三个 webview（main / settings / preview），即使全部隐藏也各保有一个
+renderer 进程。实测基线（release，idle 全隐藏，`scripts/measure-webview-mem.ps1`）：
+**priv-WS 138.1 MB** = browser 39.4 + gpu 29.6 + **renderer ×3 58.1**（main 24.9 / settings
+18.1 / preview 15.1）+ utility ×2 9.4 + crashpad 1.6。可压缩的几乎全在 renderer 闲置驻留上。
+
+### 方案：WebView2 官方 `MemoryUsageTargetLevel = Low`
+
+`ICoreWebView2_14+::SetMemoryUsageTargetLevel(Low)` 把 webview 闲置内存换出到分页文件（页面
+保活不卸载、脚本继续跑），**重新激活必须手动设回 Normal**（不会自动恢复）——官方正是为
+「隐藏但需保活」场景设计。tauri 2.11.5 未把该 API 透出到 builder，但 `Webview::controller()`
+返回 COM controller 可直调。
+
+**裁剪策略**（用户 /grill-me 拍板）：
+- settings/preview **隐藏立即 Low**（`sync_aux_memory_targets` 按各自可见性设置）。
+- main **隐藏满 10s 才 Low**（`trim_main_when_idle`：spawn 线程 sleep 10s 后查仍隐藏才设 Low，
+  幂等）——频繁开关不触发换出；热键呼出前 `restore_main` 先设 Normal 预热，呼出不被换回卡住。
+
+**实现**（`src-tauri/src/window.rs`）：
+- `set_memory_target(app, label, low)` — `get_webview_window().as_ref().with_webview()` 取
+  COM controller → `CoreWebView2()` → `cast::<ICoreWebView2_19>()` →
+  `SetMemoryUsageTargetLevel(LOW/NORMAL)`。任何一步失败静默跳过（老 runtime 降级为不裁剪）。
+  `with_webview` 回调经 dispatcher 在主线程执行，后台线程调用安全。
+- `sync_aux_memory_targets`（settings/preview 按可见性）、`trim_main_now`（启动全 Low）、
+  `restore_main`（show 前 Normal）、`trim_main_when_idle`（延时 Low）。
+- 挂接点：启动 setup 末尾全 Low；`show()` 先 Normal；`toggle_launcher`/`hide_launcher`/
+  `Focused(false)` 自动隐藏 → `trim_main_when_idle`；`open_settings`/`close_settings`/
+  settings 标题栏 X → `sync_aux_memory_targets`；`show_preview` → `sync_aux`；
+  `teardown_preview` 末尾 → `sync_aux`。
+- Cargo.toml 加 `webview2-com = "0.38"`（与 tauri 的 0.38.2 统一；其 windows-core 0.61 与
+  Lume 的 `windows` 0.61.3 同版，`windows::core::Interface::cast` 直接可用）。
+
+### 实测
+
+| 状态 | 原基线 | 裁剪后 |
+|---|---|---|
+| 隐藏 idle（启动 16s，全部隐藏）| 138.1 MB | **~102 MB**（renderer 58.1 → 23 MB，省 ~36 MB / 26%）|
+| 隐藏稳定态（~2min）| — | **~59-75 MB**（含 OS 随时间的工作集修剪）|
+| 热键呼出（从全 Low 状态）| — | **87ms**（可接受）|
+
+- settings 打开 → renderer 恢复到 Normal（约 +10 MB）；关闭 → 回落 Low。
+- 预览 dock、主窗呼出/隐藏、单实例等均正常。
+- `cargo test` 73 通过；`cargo check` / `tsc --noEmit` / `npm run build` 全过。
+
+### 被否实验：`--renderer-process-limit=1`
+
+把 3 个 renderer 合并成 1 个进程（实测 renderer ×1 16.7 MB，总数 86.8 MB，额外省 ~18 MB）。
+**但 WebView2 不支持多 webview + 该开关**：settings/preview 窗口创建**静默失败**——HWND 从
+顶层窗口枚举中消失、CDP `/json/list` 只剩 1 个 page target、`open_settings` 返回 Ok 但无窗口
+出现。**已回退**，仅保留 Part 1（MemoryUsageTargetLevel 裁剪）。教训：WebView2 的
+`additional_browser_args` 不能随意用 Chromium 全局进程开关；多 webview 下 renderer-process-limit
+是已知不支持的组合。

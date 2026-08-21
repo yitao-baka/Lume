@@ -26,6 +26,11 @@ const PREVIEW_W_LOGICAL: f64 = 320.0;
 /// Logical px of breathing room between the launcher and the satellite preview
 /// (applied to the client areas on BOTH sides — a left dock keeps the same gap).
 const PREVIEW_GAP_LOGICAL: f64 = 8.0;
+/// Seconds the launcher must stay hidden before its renderer's idle memory is
+/// swapped out (`MemoryUsageTargetLevel = Low`). Frequent show/hide toggles
+/// never cross this threshold, so the hotkey show path stays instant; a
+/// long-hidden launcher releases its memory for reuse elsewhere.
+const MAIN_IDLE_TRIM_SECS: u64 = 10;
 
 /// Last foreground window HWND captured before the launcher is shown — used by
 /// the clipboard auto-paste feature to send content back to the right window.
@@ -62,6 +67,93 @@ pub fn is_hide_suppressed(focus: &FocusState) -> bool {
             false
         }
     }
+}
+
+// ── WebView2 idle memory trimming ─────────────────────────────────────────────
+// Lume keeps three webviews resident (main / settings / preview) even when
+// hidden, so each owns a renderer process that never frees its working set.
+// WebView2's official `MemoryUsageTargetLevel = Low` swaps a webview's idle
+// memory out to the paging file; `Normal` must be set again manually before the
+// window becomes active (no automatic restore). tauri doesn't expose the API on
+// the builder, but `Webview::controller()` yields the COM controller — same
+// call wry makes internally (wry-0.55.1 src/webview2/mod.rs `set_memory_usage_level`).
+
+/// Set one webview's memory usage target level. Any failure (missing webview,
+/// too-old runtime for `ICoreWebView2_19`) degrades silently to "no trimming".
+/// The COM controller is reached through `Webview::with_webview`, which runs
+/// the callback on the main thread via the dispatcher — safe from any caller
+/// (background trim threads included). The callback is queued, not synchronous;
+/// fine for memory trimming, which is never latency-critical.
+fn set_memory_target(app: &AppHandle, label: &str, low: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL, ICoreWebView2_19,
+    };
+    use windows::core::Interface;
+    let Some(window) = app.get_webview_window(label) else {
+        return;
+    };
+    let _ = window.as_ref().with_webview(move |pw| {
+        let Ok(core) = (unsafe { pw.controller().CoreWebView2() }) else {
+            return;
+        };
+        let Ok(core19) = core.cast::<ICoreWebView2_19>() else {
+            return;
+        };
+        let level = if low {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+        } else {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+        };
+        let _ = unsafe { core19.SetMemoryUsageTargetLevel(level) };
+    });
+}
+
+/// Trim the two auxiliary windows (settings / preview) by their current
+/// visibility: hidden → `Low`, visible → `Normal`. Called after every show/hide
+/// transition; the always-hidden renderers release their idle memory. The main
+/// launcher is handled separately (`restore_main` / `trim_main_when_idle`) so
+/// the hotkey show path never pays a swap-back.
+pub fn sync_aux_memory_targets(app: &AppHandle) {
+    for label in [SETTINGS_WINDOW, PREVIEW_WINDOW] {
+        let visible = app
+            .get_webview_window(label)
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        set_memory_target(app, label, !visible);
+    }
+}
+
+/// Set the main launcher to `Low` immediately. Used at startup — the launcher
+/// starts hidden and stays so until the first hotkey, which restores `Normal`.
+pub fn trim_main_now(app: &AppHandle) {
+    set_memory_target(app, MAIN_WINDOW, true);
+}
+
+/// Restore the main launcher to `Normal` **before** showing it, so the
+/// browser can swap the page's memory back while the window is still hidden —
+/// the hotkey show doesn't stall on the first frame.
+pub fn restore_main(app: &AppHandle) {
+    set_memory_target(app, MAIN_WINDOW, false);
+}
+
+/// Swap the main launcher's idle memory out only once it has stayed hidden for
+/// `MAIN_IDLE_TRIM_SECS` seconds. Each hide arms one checker thread; an extra
+/// late wake is harmless (`Low` is idempotent, and a re-show already set
+/// `Normal`). Keeps frequent toggles at `Normal` so hotkey calls stay instant.
+pub fn trim_main_when_idle(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(MAIN_IDLE_TRIM_SECS));
+        let hidden = app
+            .get_webview_window(MAIN_WINDOW)
+            .map(|w| w.is_visible().unwrap_or(false))
+            .map(|visible| !visible)
+            .unwrap_or(true);
+        if hidden {
+            set_memory_target(&app, MAIN_WINDOW, true);
+        }
+    });
 }
 
 /// Apply the configured width and (unless 记住位置) the chosen initial
@@ -184,6 +276,9 @@ fn position_at_mouse(window: &WebviewWindow) -> tauri::Result<()> {
 /// Show and focus the launcher, applying its geometry per settings
 /// (width + position, see `docs/SETTINGS.md`).
 fn show(window: &WebviewWindow) -> tauri::Result<()> {
+    // Restore Normal BEFORE the show so the browser can swap the page memory
+    // back while the window is still hidden (the hotkey frame isn't stalled).
+    restore_main(&window.app_handle());
     apply_geometry(window)?;
     window.show()?;
     window.set_focus()?;
@@ -209,6 +304,8 @@ pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
         window.hide().map_err(|e| e.to_string())?;
         // The satellite preview lives and dies with the launcher.
         teardown_preview(&app);
+        // Main renderer goes Low only after MAIN_IDLE_TRIM_SECS hidden.
+        trim_main_when_idle(&app);
     } else {
         // Record which window had focus before the launcher appeared.
         if let Some(focus) = app.try_state::<FocusState>() {
@@ -229,6 +326,8 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
     window.hide().map_err(|e| e.to_string())?;
     // The satellite preview lives and dies with the launcher.
     teardown_preview(&app);
+    // Main renderer goes Low only after MAIN_IDLE_TRIM_SECS hidden.
+    trim_main_when_idle(&app);
     Ok(())
 }
 
@@ -240,6 +339,8 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "settings window not found".to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
+    // Settings is visible → Normal; the hidden preview stays Low.
+    sync_aux_memory_targets(&app);
     Ok(())
 }
 
@@ -250,6 +351,8 @@ pub fn close_settings(app: AppHandle) -> Result<(), String> {
         .get_webview_window(SETTINGS_WINDOW)
         .ok_or_else(|| "settings window not found".to_string())?;
     window.hide().map_err(|e| e.to_string())?;
+    // Settings now hidden → Low; the preview stays as it was.
+    sync_aux_memory_targets(&app);
     Ok(())
 }
 
@@ -413,6 +516,8 @@ pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
         let hwnd = preview.hwnd().map_err(|e| e.to_string())?;
         let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
     }
+    // Preview visible → Normal; the hidden settings stays Low.
+    sync_aux_memory_targets(&app);
     Ok(())
 }
 
@@ -458,6 +563,9 @@ pub fn teardown_preview(app: &AppHandle) {
     if let Some(state) = app.try_state::<PreviewState>() {
         *state.0.lock().unwrap() = None;
     }
+    // Preview hidden → Low (settings too, per its own visibility). Covers every
+    // launcher-hide path that funnels through teardown.
+    sync_aux_memory_targets(app);
 }
 
 /// True when the mouse cursor sits over the *visible* satellite preview — used

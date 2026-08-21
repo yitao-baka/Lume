@@ -21,6 +21,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset", "tray-icon", "custom-protocol"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
+# WebView2 idle memory trimming (`SetMemoryUsageTargetLevel` via the COM
+# controller tauri exposes). Version matches tauri's transitive dep (0.38.2)
+# and its windows-core 0.61, so `windows::core::Interface::cast` applies.
+webview2-com = "0.38"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

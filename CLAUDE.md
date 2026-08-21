@@ -105,7 +105,10 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 - Clipboard enhancements — right-click pin, `Del` / per-entry trash button; the
   SQLite table is migrated in place (see `docs/ARCHITECTURE.md`)
 - Window lifecycle: hidden at start, centered on show, auto-hides on focus
-  loss (`src-tauri/src/window.rs`, `src-tauri/src/lib.rs`)
+  loss; hidden webviews' idle memory is swapped out via WebView2
+  `SetMemoryUsageTargetLevel(Low)` — settings/preview immediately, main after
+  10 s hidden (`window.rs` `sync_aux_memory_targets` / `trim_main_when_idle`,
+  restored to Normal before show; ROADMAP #18)
 - System tray icon — left-click toggles the launcher, right-click menu has
   Restart / Exit (`src-tauri/src/tray.rs`)
 - Auto-sizing window — `resizeToContent()` in `src/App.tsx` fits the window
@@ -128,6 +131,22 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   the process lifetime; a second launch of `lume.exe` exits immediately
 
 ## Current iteration
+
+**WebView2 闲置内存裁剪 (ROADMAP #18, complete) — as of 2026-08-21**: 三个常驻 webview
+（main/settings/preview）即使全隐藏也各保有一个 renderer（实测基线 priv-WS **138.1 MB**，
+renderer ×3 = 58.1）。接入 WebView2 官方 `SetMemoryUsageTargetLevel(Low)`：隐藏窗口闲置内存
+换出到分页文件（页面保活不卸载），**重新激活必须手动设回 Normal**。策略——settings/preview
+**隐藏立即 Low**（`sync_aux_memory_targets` 按可见性）；main **隐藏满 10s 才 Low**
+（`trim_main_when_idle`，频繁开关不触发换出），热键呼出前 `restore_main` 先 Normal 预热。
+实现：新增 `webview2-com` 依赖（与 tauri 0.38.2 统一），`Webview::with_webview` 取 COM
+controller → `cast<ICoreWebView2_19>` → `SetMemoryUsageTargetLevel`（tauri 未透出该 API；
+`Manager::get_webview` 在 `unstable` feature 后走 `AsRef<Webview>`）。挂接点：启动 setup
+全 Low、`show()` 先 Normal、各 show/hide 路径 `sync_aux_memory_targets`、`teardown_preview`
+末尾 `sync_aux`。实测：隐藏基线 **138.1 → ~102 MB**（renderer 58.1 → 23，省 ~36 MB / 26%）、
+全 Low 状态呼出 **87ms**、settings 开关内存恢复/回落正常、预览 dock 正常、73 测试过。**实验
+被否**：`--renderer-process-limit=1` 合并 renderer ×3→×1 虽省 ~18 MB，但 WebView2 不支持多
+webview + 该开关——settings/preview 窗口创建静默失败（HWND 消失、CDP 剩 1 target）→ 回退。
+Details in `docs/ROADMAP.md` #18。
 
 **多文件勾选 + 失效判定 + 去重开关 + 记住页面 (ROADMAP #17, complete) — as of
 2026-08-17**: grill-me 定稿七项全落地。① 修复「旧条目复制/粘贴无反应」——根因是

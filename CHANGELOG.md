@@ -8,6 +8,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Changed
 
+- **WebView2 闲置内存裁剪（ROADMAP #18）** — 三个常驻 webview（main/settings/preview）即使
+  全隐藏也各保有一个 renderer 进程（实测基线 priv-WS **138.1 MB**，renderer ×3 = 58.1）。
+  接入 WebView2 官方 `ICoreWebView2_14+::SetMemoryUsageTargetLevel(Low)`：隐藏窗口的闲置内存
+  换出到分页文件（页面保活不卸载），**重新激活必须手动设回 Normal**。策略——settings/preview
+  **隐藏立即 Low**；main **隐藏满 10s 才 Low**（`trim_main_when_idle`，频繁开关不触发换出，
+  热键呼出前 `restore_main` 预热换回）。实现：新增 `webview2-com` 依赖（与 tauri 的 0.38.2
+  统一），`Webview::with_webview` 取 COM controller → `cast<ICoreWebView2_19>` →
+  `SetMemoryUsageTargetLevel`（tauri 未透出该 API；`Manager::get_webview` 在 `unstable` feature
+  后故走 `WebviewWindow::as_ref().with_webview`）。实测：隐藏基线 **138.1 → ~102 MB**（renderer
+  58.1 → 23 MB，省 ~36 MB / 26%）；从全 Low 状态热键呼出 **87ms**（可接受）；settings 开关内存
+  恢复/回落正常；预览 dock 正常。**实验被否**：`--renderer-process-limit=1` 虽把 renderer ×3
+  合并成 ×1（省 ~18 MB），但 WebView2 不支持多 webview + 该开关——settings/preview 窗口创建
+  静默失败（HWND 消失、CDP 只剩 1 target、`open_settings` 无窗口）→ **回退**，仅保留 Part 1。
+  `cargo test` 73 通过。
 - **修复"复制/粘贴旧文件条目，系统剪贴板仍是最新文件"（真正根因，用户复测 + 参考 ZTools）** —
   `set_files_to_clipboard` 只 `SetClipboardData(CF_HDROP)`、**不调 `EmptyClipboard`**。Explorer
   复制文件时剪贴板同时有 `CF_HDROP` + `CF_UNICODETEXT`（最新文件路径文本）；Lume 替换了

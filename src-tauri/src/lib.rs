@@ -213,6 +213,9 @@ pub fn run() {
                             // merely hidden window could keep playing media and
                             // never reclaim its decoded memory.
                             window::teardown_preview(&app_handle);
+                            // Main renderer goes Low only after it stays hidden
+                            // (frequent focus-loss re-shows stay instant).
+                            window::trim_main_when_idle(&app_handle);
                         } else if preview_click {
                             // The blur came from clicking the satellite — hand
                             // focus BACK to the launcher. Otherwise the preview's
@@ -245,10 +248,14 @@ pub fn run() {
             // window, so `open_settings` can re-show the same instance.
             if let Some(win) = app.get_webview_window("settings") {
                 let keep = win.clone();
+                let app_handle = app.handle().clone();
                 win.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = keep.hide();
+                        // Title-bar X bypasses the `close_settings` command —
+                        // sync the aux windows' memory target here too.
+                        window::sync_aux_memory_targets(&app_handle);
                     }
                 });
             }
@@ -269,6 +276,11 @@ pub fn run() {
             recent::init(app);
             // System tray icon (Restart / Exit right-click menu).
             tray::setup(app);
+            // All three webviews start hidden — swap their idle memory out now so
+            // the launch baseline is minimal. The first hotkey restores Normal
+            // in `window::show` (before the window is painted).
+            window::trim_main_now(app.handle());
+            window::sync_aux_memory_targets(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

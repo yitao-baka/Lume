@@ -6,6 +6,8 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+## [0.2.18] — 2026-08-24
+
 ### Changed
 
 - **搜索状态召回（打开即忘 / 5 分钟过期）** — 一次「未打开条目」的搜索在 5 分钟内会被下次呼出

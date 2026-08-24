@@ -1,6 +1,6 @@
 {
   "name": "lume",
-  "version": "0.1.0",
+  "version": "0.2.18",
   "description": "A lightweight Windows productivity launcher.",
   "type": "module",
   "scripts": {

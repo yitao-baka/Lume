@@ -62,6 +62,15 @@ dev 为 `src-tauri/target/debug/` 下）。Lume 因此可以整体拷贝带走�
 - 当自建组件无法满足需求时，**可以从网络寻找外部组件库**（SolidJS 生态
   优先），但需保持风格统一、不破坏三语言 i18n 与简约原则。
 
+## 版本号（双版本机制）
+
+- **对外标签**：用户可见版本，位于 `src/appVersion.ts` 的 `APP_VERSION_LABEL`，
+  About 页渲染它（如 `Pre-26.8`，`<年份-月份>` 预发布格式）。
+- **内部 semver**：`Cargo.toml` / `tauri.conf.json` / `package.json` 的
+  `version`，仅用于构建/打包，**必须满足 semver**（tauri 构建强制校验版本，
+  报 `'tauri.conf.json > version' must be a semver string`）。当前为 `1.0.0`。
+- 两者相互独立、需手动同步；发布时先改两者，再打 tag / 建 GitHub Release。
+
 ## 开发流程：每次改动必编译
 
 - **每完成一处改动，立即编译验证**，交付时必须是「可直接运行测试」的状态，

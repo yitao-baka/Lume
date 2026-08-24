@@ -14,7 +14,7 @@ The goal is:
 
 # Status
 
-**v0.2.18 — clipboard manager + satellite preview + memory optimization**
+**Pre-26.8 — clipboard manager + satellite preview + memory optimization**
 (current)
 
 - ✅ Global shortcut — Alt+Space preferred, auto-fallback to a free combo
@@ -121,7 +121,7 @@ Business logic belongs to Rust.
 
 # Features
 
-## Current (v0.2.18)
+## Current (Pre-26.8)
 
 - Launcher — hidden at startup, Alt+Space toggles (auto-fallback to a free
   combo when Alt+Space is taken, e.g. by uTools); auto-hides on focus loss;

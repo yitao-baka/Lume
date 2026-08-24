@@ -6,7 +6,7 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
-## [0.2.18] — 2026-08-24
+## [Pre-26.8] — 2026-08-24
 
 ### Changed
 

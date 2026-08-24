@@ -12,7 +12,7 @@ export default function AboutPane() {
     <div class="about">
       <img class="about-icon" src={iconUrl} alt="Lume" draggable={false} />
       <div class="about-name">Lume</div>
-      <div class="about-version">v{APP_VERSION_LABEL}</div>
+      <div class="about-version">{APP_VERSION_LABEL}</div>
       <p class="about-desc">{t("aboutTagline")}</p>
     </div>
   );

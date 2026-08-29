@@ -6,6 +6,24 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Refactored
+
+- **拆分 App.tsx 为 launcher 模块（零行为变化）** — 2510 行的单文件（`App()`
+  单函数 2234 行）拆为 `src/launcher/` 下 11 个职责模块：`types.ts`（共享类型
+  + 纯常量）、`clipData.ts`（剪贴板纯函数）、`icons.ts`（图标缓存工厂）、
+  `sizing.ts`（窗口自适应/列测量工厂）、`navigate.ts`（最近/固定/Explorer 栏
+  信号 + 动作 + 连续导航 + 拖拽重排）、`clipboard.ts`（剪贴板全部信号/动作 +
+  虚拟列表窗口数学）、`menu.ts`（右键菜单构造）、`keyboard.ts`（窗口级键盘
+  路由 + WebView2 快捷键拦截）、`previewSync.ts`（卫星预览防抖同步）、
+  `NavigateView.tsx` / `ClipboardView.tsx`（两模式视图）。`App.tsx` 收敛为
+  组合根（787 行）：会话生命周期（搜索召回/模式切换/挂载监听）+ 模块接线。
+  跨模块依赖统一走 deps 对象后绑定；模块级可变全局 `lastWindowH` 移入
+  sizer 工厂内。为未来插件系统（ROADMAP #7）预备模式边界。验证：tsc +
+  build 干净；重构前后截图 5 组成对 judge 验收全部等价（差异仅为捕获期
+  鼠标悬停/光标闪烁/相对时间）；`cdp_feature_smoke` 13 项 + `cdp_clipboard_smoke`
+  全过（修正 feature smoke 中设置页重排前的过时断言）；新增
+  `cdp_launcher_shots.mjs` 截图对比工具。
+
 ### Changed
 
 - **设置页分组卡片重排（对齐 Flutter 设置）** — 设置窗口信息架构与

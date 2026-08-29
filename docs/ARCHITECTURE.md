@@ -208,9 +208,40 @@ pick up their defaults.
 
 ## Frontend
 
-- `App.tsx` holds query / mode / results / selection state. Two modes —
-  **Navigate** and **Clipboard** — are toggled with `Tab` or the pills in the
-  search row; switching keeps the current query and re-searches.
+- The launcher frontend is modular under `src/launcher/` (2026-08-30 refactor
+  out of a monolithic `App.tsx`). `src/App.tsx` is the **composition root**:
+  it owns the session lifecycle (search recall, mode switching, mount-time
+  listeners) and wires the modules together via a late-bound deps object.
+- `src/launcher/` modules:
+  - `types.ts` — shared types + pure constants (mode/entry types, key sets,
+    sizing constants, category tables).
+  - `clipData.ts` — pure clipboard-data helpers (text subtype detection,
+    row title/meta formatting, content-kind classification, satellite
+    preview-target decision).
+  - `icons.ts` — `createIconStore()`: the in-memory icon cache mirroring the
+    backend `IconCache` (batched `get_app_icons` fetches).
+  - `sizing.ts` — `createWindowSizer()`: auto-fit height, bar column
+    measurement, work-area cap, virtual-list viewport measurement.
+  - `navigate.ts` — `createNavigateStore()`: 最近使用 / 已固定 / Explorer
+    bars — signals, data refresh, app actions, continuous bar-grid
+    navigation, pinned-bar drag reorder.
+  - `clipboard.ts` — `createClipboardStore()`: history categories, copy /
+    paste / merge-paste, delete with undo, clear, pause, pin, virtual-list
+    windowing, display-only clipboard settings signals.
+  - `menu.ts` — `buildMenuItems()`: right-click menu construction for
+    app / folder / clipboard targets.
+  - `keyboard.ts` — `createKeyRouter()`: the window-level keydown routing
+    (Esc layering, mode switch, per-mode navigation) and the WebView2
+    accelerator blocker.
+  - `previewSync.ts` — `createPreviewSync()`: debounced satellite-preview
+    show/close driven by the clipboard selection.
+  - `NavigateView.tsx` / `ClipboardView.tsx` — the two mode views (pure
+    rendering: state in via accessors, interactions out via callbacks).
+- The settings window reuses the same build via the window label
+  (`src/settings/`, grouped-card layout — see `docs/SETTINGS.md`); the
+  satellite preview is its own entry (`src/preview.tsx`).
+- Two modes — **Navigate** and **Clipboard** — are toggled with `Tab` or the
+  pills in the search row; switching keeps the current query and re-searches.
 - Each keystroke invokes the active mode's search command and drops stale
   responses via a monotonic request id.
 - **Navigate** — empty query shows the two bars (最近使用 above 已固定), each a
@@ -218,14 +249,12 @@ pick up their defaults.
   the search-results grid. ↑/↓ cycle the bars on the empty main menu, ←/→ move
   within the active bar; mouse hover selects, click launches. Context menus
   offer pin / launch / open location / (recent: remove-from-recent) / admin.
-- **Clipboard** renders a list: text as muted clipboard-icon tiles with
-  single-line previews, images as cover-cropped thumbnails, pinned rows with a
-  pin badge and every row with a trash button (per-entry delete).
+- **Clipboard** renders a virtualized list (fixed row height, ~30 DOM rows)
+  with category tabs, multi-select merge paste and delete-with-undo.
 - Both modes support hover-select and click-activate; the search input is
   re-focused every time the window is shown.
-- `Enter` launches an app or copies a clipboard entry back, then hides; `Esc`
-  hides. In clipboard mode right-click pins and `Del` deletes the selected entry
-  (both re-run the search). A shortcut-hint footer shows the keys.
+- `Enter` launches an app or pastes a clipboard entry, then hides; `Esc`
+  layers: close menu → clear multi-select → close satellite preview → hide.
 - **i18n**: all user-facing strings go through `t()` from `src/i18n.ts`
   (en / zh-CN / zh-TW), keyed off the system language.
 

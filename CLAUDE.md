@@ -142,7 +142,23 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**设置页分组卡片重排（对齐 Flutter 设置，complete) — as of 2026-08-30**: main 的
+**拆分 App.tsx 为 launcher 模块（零行为变化 refactor, complete) — as of
+2026-08-30**: 2510 行的单文件拆为 `src/launcher/` 11 个模块（types/clipData/
+icons/sizing/navigate/clipboard/menu/keyboard/previewSync/NavigateView/
+ClipboardView），`App.tsx` 收敛为组合根（787 行：搜索召回/模式切换/挂载监听
++ 接线）。**约定**：跨模块依赖走 deps 对象后绑定（App 按序创建各工厂并补齐
+deps；动作只在挂载后执行所以安全）；`selectionSource`/`entryOpened`/`requestSeq`
+三个跨域可变量留在组合根经 deps 共享；视图组件以 props 接收 store（信号访问器
+跨模块天然响应式）。`lastWindowH` 全局移入 sizer 工厂。为 ROADMAP #7 插件系统
+预备模式边界。验证：tsc/build 干净、前后截图 5 组 judge 等价验收、
+`cdp_feature_smoke`（修了设置页重排前的过时断言：剪贴板面板首个组标题现为
+「历史记录条数上限」）+ `cdp_launcher_shots.mjs`。**经验教训**：CDP 调试脚本
+对隐藏窗口 evaluate 可能挂起（内存裁剪态的 settings/preview 页）——先
+`toggle_launcher` 再查询；多轮 kill/spawn 后的 WebView2 僵尸进程会让截图
+出现「数据加载不出」的假象——对比前先 `taskkill msedgewebview2.exe`。
+Details in `docs/ARCHITECTURE.md` Frontend 一节。
+
+**Prior: 设置页分组卡片重排（对齐 Flutter 设置，complete) — as of 2026-08-30**: main 的
 设置窗口（仍为 SolidJS WebView2）信息架构对齐 `feat/flutter-settings` 的 Flutter
 独立设置 exe：顶栏（Lume + 「搜索设置」框，`SECTION_SEARCH_KEYS` 按分区 i18n 键
 清单过滤、匹配分区堆叠显示）+ 7 分区导航（外观/导航页/剪贴板/快捷键/搜索/系统/

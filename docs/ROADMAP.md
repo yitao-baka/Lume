@@ -135,11 +135,28 @@ Navigate 模式的应用条目从长条列表改为方框网格（5 列），支
 
 ## 7. 插件系统
 
-**前置条件未就绪前不开始。** 等核心基础设施（i18n、图标、搜索架构、
-设置页）稳定后，由用户明确指示再启动。
+**状态：v1 已实现（2026-08-30），剪贴板与预览已插件化。**
 
-插件系统需要先定义：插件 API / 协议、插件发现与加载、权限模型、与搜索
-引擎的集成方式。
+插件 = 清单（`<base>/plugins/<id>/plugin.toml`）+ 前端贡献（`src/plugins/`）。
+v1 两类贡献，由两个第一方插件完整验证：
+
+- **mode 贡献**（整页模式）：`clipboard` 插件——自带 query/rows/selection、
+  视图（`ClipboardView`）、模式键处理（`onKey`/`onEscape`）、搜索
+  （stale-token 防抖）、记住页面（`pageKind`/`restorePage`）、设置切片
+  （`applySettings`）与卫星预览请求（`previewTarget`）。
+- **service 贡献**：`preview` 插件——卫星预览窗的路由层（选中 → 预览请求
+  的 100ms 防抖 show/close、Esc 优先级 `currentPreview`）；窗口本身是核心
+  基础设施（同设置窗）。
+
+**组成**：Rust `plugins.rs`（清单解析/扫描/`get_plugins`/`set_plugin_enabled`
++ `settings.plugins.disabled`）+ 前端 `src/plugins/registry.ts`
+（`definePlugin`/`modeById`/`modePlugins`，启停来自清单 enabled 态，
+`settings-applied` 时刷新）。跨模块依赖走 `PluginServices`（toast/入口标记/
+隐藏/搜索管线/搜索令牌/选中来源/右键菜单/模式切换请求）。
+
+**v1 未做（后续）**：第三方 JS 动态加载（清单/权限面已预留）、插件管理
+设置页、`provider` 类搜索贡献。内置插件编译进二进制但与磁盘插件走同一
+注册表/启停路径。
 
 ## 8. Program Files 安装 + LumeSVC 服务 + 管理员启动 + 开机自启
 

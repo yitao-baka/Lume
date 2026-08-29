@@ -1,11 +1,12 @@
-//! Clipboard-mode store — history filter categories, multi-select merge paste,
-//! delete with undo, clear-with-confirm, pause recording, pin, and the virtual
-//! list windowing math. Display-only settings (source app / time display /
-//! paste-close / hover-select / preview / remember-checks) live here too.
+//! Clipboard-mode store — the state machine behind the clipboard plugin.
+//! Owns the history rows, the selected index, the virtual-list windowing and
+//! every display-only clipboard setting. All mutations go through the plugin
+//! services (toasts, entry-opened marking, root search pipeline).
 
-import { createSignal } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import { t } from "../i18n";
+import { t } from "../../i18n";
+import type { SettingsData } from "../../settings/types";
 import {
   CLIP_CATS,
   CLIP_OVERSCAN,
@@ -15,39 +16,20 @@ import {
   type ClipKind,
   type ClipboardItem,
   type DeletedClip,
-} from "./types";
+} from "../../launcher/types";
+import type { PluginServices } from "../../plugins/types";
 
-export interface ClipboardDeps {
-  /** Current history rows (owned by the composition root's search). */
-  clips: () => ClipboardItem[];
-  /** Replace the history rows (optimistic pin updates). */
-  setClips: (fn: (cs: ClipboardItem[]) => ClipboardItem[]) => void;
-  selected: () => number;
-  /** Active-mode query (for refresh-after-mutation searches). */
-  query: () => string;
-  /** Clipboard-mode query (pin refresh keeps the clipboard query). */
-  clipQuery: () => string;
-  /** Virtual list viewport height (measured by the window sizer). */
-  clipViewportH: () => number;
-  showToast: (text: string, opts?: { undo?: () => void; duration?: number }) => void;
-  markEntryOpened: () => void;
-  resetAndHide: () => void;
-  runSearch: (q: string) => Promise<void>;
-  /** Debounced 记住上次所在页面 write (composition root). */
-  persistLastPage: () => void;
-}
+export function createClipboardStore(services: PluginServices) {
+  // ── Initial config (synchronous, injected by Rust before page load) ──
+  const clipCfg = (window as any).__LUME_CONFIG__?.clipboard;
 
-/** Initial values for the settings-driven signals (from `__LUME_CONFIG__`). */
-export interface ClipboardInit {
-  showSourceApp: boolean;
-  timeDisplayAbs: boolean;
-  pasteClose: boolean;
-  hoverSelect: boolean;
-  previewEnabled: boolean;
-  rememberChecks: boolean;
-}
+  // ── This mode's own query (independent, like the apps query) ──
+  const [clipQuery, setClipQuery] = createSignal("");
 
-export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
+  // ── Rows + selection (plugin-owned; the root reads via ModeInstance) ──
+  const [clips, setClips] = createSignal<ClipboardItem[]>([]);
+  const [selected, setSelected] = createSignal(0);
+
   /** Active history filter category. */
   const [clipKind, setClipKind] = createSignal<ClipKind>("all");
   /** Ids toggled with Space — Enter merges-pastes exactly this set. */
@@ -61,35 +43,44 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
   /** 清空 → keep pinned rows (confirm-dialog checkbox). */
   const [keepPinned, setKeepPinned] = createSignal(false);
   /** Settings-driven: show the source app in the second line. */
-  const [showSourceApp, setShowSourceApp] = createSignal(init.showSourceApp);
+  const [showSourceApp, setShowSourceApp] = createSignal(clipCfg?.show_source_app ?? true);
   /** Settings-driven: absolute timestamps instead of relative. */
-  const [timeDisplayAbs, setTimeDisplayAbs] = createSignal(init.timeDisplayAbs);
+  const [timeDisplayAbs, setTimeDisplayAbs] = createSignal(clipCfg?.time_display === "absolute");
   /** Settings-driven: hide the launcher after a paste. */
-  const [pasteClose, setPasteClose] = createSignal(init.pasteClose);
+  const [pasteClose, setPasteClose] = createSignal(clipCfg?.paste_close ?? true);
   /** Settings-driven: mouse hover selects entries (default off — a click is
    * the only way to select with the mouse when off). */
-  const [hoverSelect, setHoverSelect] = createSignal(init.hoverSelect);
+  const [hoverSelect, setHoverSelect] = createSignal(clipCfg?.hover_select ?? false);
   /** Runtime pause for clipboard recording (status-bar toggle, not persisted). */
   const [clipPaused, setClipPaused] = createSignal(false);
   /** Settings-driven: show the satellite preview window (设置/剪贴板 → 开启预览).
    * Off = no preview ever pops; inline row thumbnails stay. */
-  const [previewEnabled, setPreviewEnabled] = createSignal(init.previewEnabled);
+  const [previewEnabled, setPreviewEnabled] = createSignal(clipCfg?.preview ?? true);
   /** Settings-driven: 记住勾选 — persist each multi-file entry's checked files
    * across sessions (toggled in the file-list preview area). */
-  const [rememberChecks, setRememberChecks] = createSignal(init.rememberChecks);
-  /** Virtual list scroll offset (the container element + viewport height stay
-   * in the composition root — the window sizer measures them). */
-  const [clipScrollTop, setClipScrollTop] = createSignal(0);
+  const [rememberChecks, setRememberChecks] = createSignal(clipCfg?.remember_checks ?? true);
 
+  // ── Virtual list state ──
+  let clipScrollEl: HTMLDivElement | undefined;
+  const [clipScrollTop, setClipScrollTop] = createSignal(0);
+  const [clipViewportH, setClipViewportH] = createSignal(0);
   /** First/last rendered row of the windowed clipboard list. */
   const clipStart = () =>
     Math.max(0, Math.floor(clipScrollTop() / CLIP_ROW_H) - CLIP_OVERSCAN);
   const clipEnd = () =>
     Math.min(
-      deps.clips().length,
-      Math.ceil((clipScrollTop() + Math.max(deps.clipViewportH(), 160)) / CLIP_ROW_H) +
+      clips().length,
+      Math.ceil((clipScrollTop() + Math.max(clipViewportH(), 160)) / CLIP_ROW_H) +
         CLIP_OVERSCAN
     );
+
+  /** Re-read the virtual list's viewport height (idempotent; sizer hook). */
+  function measureViewport() {
+    const el = clipScrollEl;
+    if (!el) return;
+    const h = el.clientHeight;
+    if (h !== clipViewportH()) setClipViewportH(h);
+  }
 
   /** Map a copy/paste backend error to a user-facing toast: the sentinels for
    * an invalid row / an unchecked-everything multi-file row get specific text;
@@ -100,33 +91,64 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
     return fallback;
   }
 
+  /** This mode's search — fetch + swap the rows (stale-token guarded).
+   * Internal refreshes go through the root pipeline (`services.runSearch`),
+   * which ends up here after its own selection/zone resets. */
+  async function search(q: string) {
+    const token = services.searchToken();
+    const res = (await invoke("search_clipboard", {
+      query: q,
+      kind: clipKind(),
+    })) as ClipboardItem[];
+    if (token !== services.searchToken()) return;
+    setClips(res);
+    setSelected(0);
+    setClipScrollTop(0);
+    services.scheduleResize();
+  }
+
+  /** Switch the history category and re-search. */
+  function setClipKindAndSearch(k: ClipKind) {
+    setMultiIds(new Set<number>());
+    setClipKind(k);
+    void services.runSearch(clipQuery());
+    services.persistLastPage();
+  }
+
+  /** Move to the previous/next category (Left/Right arrows on an empty query). */
+  function switchCategory(delta: number) {
+    const idx = CLIP_CATS.findIndex((c) => c.kind === clipKind());
+    const next = CLIP_CATS[(idx + delta + CLIP_CATS.length) % CLIP_CATS.length];
+    setClipKindAndSearch(next.kind);
+  }
+
   /** Copy a specific clipboard item to the system clipboard. The launcher
    * stays open (copy ≠ paste), with a "Copied" toast. An invalid row (content
    * gone) is blocked with a clear toast — never a silent failure. */
   function copyOnly(item: ClipboardItem) {
     if (item.valid === false) {
-      deps.showToast(t("clipInvalid"));
+      services.showToast(t("clipInvalid"));
       return;
     }
     void invoke("copy_clipboard", { id: item.id })
-      .then(() => deps.showToast(t("copied")))
+      .then(() => services.showToast(t("copied")))
       .catch((err) => {
         console.error("copy failed", err);
-        deps.showToast(clipErrorToast(String(err), t("copyFailed")));
+        services.showToast(clipErrorToast(String(err), t("copyFailed")));
       });
   }
 
   /** Copy a rich-text row as plain text only (strips HTML formatting). */
   function copyPlain(item: ClipboardItem) {
     if (item.valid === false) {
-      deps.showToast(t("clipInvalid"));
+      services.showToast(t("clipInvalid"));
       return;
     }
     void invoke("copy_clipboard", { id: item.id, plain: true })
-      .then(() => deps.showToast(t("copied")))
+      .then(() => services.showToast(t("copied")))
       .catch((err) => {
         console.error("copy plain failed", err);
-        deps.showToast(clipErrorToast(String(err), t("copyFailed")));
+        services.showToast(clipErrorToast(String(err), t("copyFailed")));
       });
   }
 
@@ -134,44 +156,54 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
    * launcher when 粘贴后关闭 is enabled (default). Invalid rows are blocked with
    * a toast and keep the launcher open. */
   function pasteClip(item: ClipboardItem) {
-    deps.markEntryOpened(); // 粘贴即使用该条目 → 清空搜索记忆
+    services.markEntryOpened(); // 粘贴即使用该条目 → 清空搜索记忆
     if (item.valid === false) {
-      deps.showToast(t("clipInvalid"));
+      services.showToast(t("clipInvalid"));
       return;
     }
     void invoke("paste_clipboard", { id: item.id })
       .then(() => {
-        if (pasteClose()) deps.showToast(t("pasted"));
+        if (pasteClose()) services.showToast(t("pasted"));
       })
       .catch((err) => {
         console.error("paste failed", err);
-        deps.showToast(clipErrorToast(String(err), t("pasteFailed")));
+        services.showToast(clipErrorToast(String(err), t("pasteFailed")));
       });
-    if (pasteClose()) void deps.resetAndHide();
+    if (pasteClose()) void services.resetAndHide();
   }
-
   /** Merge-paste every Space-selected entry (Enter with a non-empty set). */
   function pasteClipMulti() {
-    deps.markEntryOpened(); // 合并粘贴即使用条目 → 清空搜索记忆
-    const ids = deps
-      .clips()
+    services.markEntryOpened(); // 合并粘贴即使用条目 → 清空搜索记忆
+    const ids = clips()
       .filter((c) => multiIds().has(c.id))
       .map((c) => c.id);
     if (ids.length === 0) return;
     void invoke("paste_clipboard_multi", { ids })
       .then(() => {
-        if (pasteClose()) deps.showToast(t("pasted"));
+        if (pasteClose()) services.showToast(t("pasted"));
       })
       .catch((err) => {
         console.error("merge paste failed", err);
-        deps.showToast(t("pasteFailed"));
+        services.showToast(t("pasteFailed"));
       });
-    if (pasteClose()) void deps.resetAndHide();
+    if (pasteClose()) void services.resetAndHide();
+  }
+
+  /** Activate the selected row (Enter): merge-paste the selection, else paste
+   * the single entry. */
+  function activate() {
+    if (multiIds().size > 0) {
+      pasteClipMulti();
+      return;
+    }
+    const item = clips()[selected()];
+    if (!item) return;
+    pasteClip(item);
   }
 
   /** Toggle a row into/out of the multi-select set (Space). */
   function toggleMulti(idx: number) {
-    const item = deps.clips()[idx];
+    const item = clips()[idx];
     if (!item) return;
     const next = new Set(multiIds());
     if (next.has(item.id)) next.delete(item.id);
@@ -181,9 +213,9 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
 
   /** Open a link row in the default browser (ShellExecuteW via launch_app). */
   function openClipLink(item: ClipboardItem) {
-    deps.markEntryOpened(); // 打开链接即使用条目 → 清空搜索记忆
+    services.markEntryOpened(); // 打开链接即使用条目 → 清空搜索记忆
     void invoke("launch_app", { path: item.content, name: item.content, elevated: false });
-    void deps.resetAndHide();
+    void services.resetAndHide();
   }
 
   /** Reveal the first path of a file row in Explorer (launcher stays open). */
@@ -200,7 +232,7 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
     setUndoBuf(null);
     void invoke("restore_clipboard", { item: d })
       .catch((err) => console.error("restore failed", err))
-      .finally(() => void deps.runSearch(deps.query()));
+      .finally(() => void services.runSearch(clipQuery()));
   }
 
   /** Start the delete animation, then actually delete once it finishes. */
@@ -226,10 +258,10 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
   function doClear() {
     setClearOpen(false);
     void invoke("clear_clipboard", { keepPinned: keepPinned() })
-      .then(() => deps.showToast(t("clipCleared")))
+      .then(() => services.showToast(t("clipCleared")))
       .catch((err) => console.error("clear failed", err));
     setKeepPinned(false);
-    void deps.runSearch(deps.query());
+    void services.runSearch(clipQuery());
   }
 
   /** Pin/unpin a specific clipboard entry (context-menu action). Updates the
@@ -237,16 +269,16 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
    * then re-orders pinned rows to the top. */
   async function toggleClipPin(item: ClipboardItem) {
     const pinned = !item.pinned;
-    deps.setClips((cs) =>
+    setClips((cs) =>
       cs.map((c) => (c.id === item.id ? { ...c, pinned } : c))
     );
     try {
       await invoke("pin_clipboard", { id: item.id, pinned });
     } catch (err) {
       console.error("pin failed", err);
-      deps.setClips((cs) => cs.map((c) => (c.id === item.id ? { ...c, pinned: !pinned } : c)));
+      setClips((cs) => cs.map((c) => (c.id === item.id ? { ...c, pinned: !pinned } : c)));
     }
-    await deps.runSearch(deps.clipQuery());
+    await services.runSearch(clipQuery());
   }
 
   /** Delete a clipboard entry by id, hold it for undo, then refresh results. */
@@ -254,65 +286,106 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
     try {
       const deleted = await invoke<DeletedClip>("delete_clipboard", { id });
       setUndoBuf(deleted);
-      deps.showToast(t("clipDeletedOne"), { undo: undoDelete, duration: TOAST_UNDO_MS });
+      services.showToast(t("clipDeletedOne"), { undo: undoDelete, duration: TOAST_UNDO_MS });
     } catch (err) {
       console.error("delete failed", err);
     }
-    await deps.runSearch(deps.query());
+    await services.runSearch(clipQuery());
   }
 
   /** Delete the selected clipboard entry (Del key), with the collapse animation. */
   function deleteSelected() {
-    const item = deps.clips()[deps.selected()];
+    const item = clips()[selected()];
     if (item) requestDelete(item.id);
   }
 
-  /** Switch the history category and re-search. */
-  function setClipKindAndSearch(k: ClipKind) {
+  // Virtual list: keep the selected row in the rendered window while
+  // navigating with the keyboard (the row may not be in the DOM otherwise).
+  // A small buffer keeps the row clearly inside the viewport (aligning exactly
+  // to the bottom edge left it a fraction of a pixel out of view).
+  createEffect(() => {
+    selected();
+    void clipViewportH(); // re-scroll when the viewport is resized
+    const el = clipScrollEl;
+    if (!el || services.selectionSource() !== "keyboard") return;
+    const top = selected() * CLIP_ROW_H;
+    const bottom = top + CLIP_ROW_H;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (bottom > el.scrollTop + el.clientHeight) {
+      el.scrollTop = bottom - el.clientHeight + 8;
+    }
+  });
+
+  /** Clear per-show state (clearSearch hook). */
+  function reset() {
     setMultiIds(new Set<number>());
-    setClipKind(k);
-    void deps.runSearch(deps.query());
-    deps.persistLastPage();
+    setDeletingId(null);
+    setClearOpen(false);
   }
 
-  /** Move to the previous/next category (Left/Right arrows on an empty query). */
-  function switchCategory(delta: number) {
-    const idx = CLIP_CATS.findIndex((c) => c.kind === clipKind());
-    const next = CLIP_CATS[(idx + delta + CLIP_CATS.length) % CLIP_CATS.length];
-    setClipKindAndSearch(next.kind);
+  /** 记住上次所在页面 — the clipboard page kind is the filter category. */
+  function pageKind(): string {
+    return clipKind();
+  }
+  function restorePage(kind: string) {
+    setClipKind(kind as ClipKind);
+  }
+
+  /** Apply the settings slice this mode renders live. */
+  function applySettings(s: SettingsData) {
+    setShowSourceApp(s.clipboard?.show_source_app ?? true);
+    setTimeDisplayAbs(s.clipboard?.time_display === "absolute");
+    setPasteClose(s.clipboard?.paste_close ?? true);
+    setHoverSelect(s.clipboard?.hover_select ?? false);
+    setPreviewEnabled(s.clipboard?.preview ?? true);
+    setRememberChecks(s.clipboard?.remember_checks ?? true);
   }
 
   return {
-    // signals
+    // query
+    clipQuery,
+    setClipQuery,
+    // rows + selection
+    clips,
+    setClips,
+    selected,
+    setSelected,
+    // category + page persistence
     clipKind,
-    setClipKind,
+    pageKind,
+    restorePage,
+    // view state
     multiIds,
-    setMultiIds,
     undoBuf,
     deletingId,
-    setDeletingId,
     clearOpen,
     setClearOpen,
     keepPinned,
     setKeepPinned,
     showSourceApp,
-    setShowSourceApp,
     timeDisplayAbs,
-    setTimeDisplayAbs,
-    pasteClose,
-    setPasteClose,
     hoverSelect,
-    setHoverSelect,
     clipPaused,
     previewEnabled,
-    setPreviewEnabled,
     rememberChecks,
-    setRememberChecks,
     clipScrollTop,
     setClipScrollTop,
     clipStart,
     clipEnd,
+    bindScrollEl: (el: HTMLDivElement) => {
+      clipScrollEl = el;
+    },
+    measureViewport,
     // actions
+    search,
+    activate,
+    onEscape: () => {
+      if (multiIds().size > 0) {
+        setMultiIds(new Set<number>()); // leave multi-select without hiding
+        return true;
+      }
+      return false;
+    },
     copyOnly,
     copyPlain,
     pasteClip,
@@ -327,6 +400,8 @@ export function createClipboardStore(deps: ClipboardDeps, init: ClipboardInit) {
     toggleClipPin,
     deleteItem,
     deleteSelected,
+    reset,
+    applySettings,
     setClipKindAndSearch,
     switchCategory,
   };

@@ -6,12 +6,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
-import { MIN_WINDOW_H, SCREEN_MARGIN, WINDOW_PAD, type Mode } from "./types";
+import { MIN_WINDOW_H, SCREEN_MARGIN, WINDOW_PAD } from "./types";
 
 /** Everything the sizer reads from the composition root. Accessors are Solid
  * signal getters; the whole object is read at call time (late-bound deps). */
 export interface SizerDeps {
-  mode: () => Mode;
+  /** Fixed-height model (plugin modes) vs auto-fit (Navigate). */
+  fixedHeight: () => boolean;
   windowHeight: () => number;
   windowWidth: () => number;
   recentExpanded: () => boolean;
@@ -20,9 +21,8 @@ export interface SizerDeps {
   setWorkAreaH: (v: number | null) => void;
   barCols: () => number;
   setBarCols: (v: number) => void;
-  clipViewportH: () => number;
-  setClipViewportH: (v: number) => void;
-  clipScrollEl: () => HTMLDivElement | undefined;
+  /** Plugin modes measure their own viewport (the sizer only triggers it). */
+  measureModeViewport: () => void;
 }
 
 export function createWindowSizer(deps: SizerDeps) {
@@ -68,26 +68,18 @@ export function createWindowSizer(deps: SizerDeps) {
     }
   }
 
-  /** Re-read the virtual list's viewport height (idempotent). */
-  function measureClipViewport() {
-    const el = deps.clipScrollEl();
-    if (!el) return;
-    const h = el.clientHeight;
-    if (h !== deps.clipViewportH()) deps.setClipViewportH(h);
-  }
-
   /** Fit the launcher window height to the current content, then re-center. */
   async function resizeToContent() {
     // Clipboard mode uses a fixed window height (设置 → 窗口大小 → 高度); the
     // list viewport scrolls internally, so no content-based fitting applies.
     // Previews live in the satellite window now, so the launcher never widens.
-    if (deps.mode() === "clipboard") {
+    if (deps.fixedHeight()) {
       if (deps.windowHeight() !== lastWindowH) {
         lastWindowH = deps.windowHeight();
         await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), deps.windowHeight()));
         await invoke("apply_position");
       }
-      requestAnimationFrame(measureClipViewport);
+      requestAnimationFrame(deps.measureModeViewport);
       return;
     }
     const search = document.querySelector(".search") as HTMLElement | null;
@@ -121,7 +113,7 @@ export function createWindowSizer(deps: SizerDeps) {
     // The bar-expand cap only applies on the Navigate page — the Clipboard page
     // must not inherit a bar's expanded size when switching modes.
     let cap = deps.windowHeight();
-    if (deps.mode() === "apps" && (deps.recentExpanded() || deps.pinnedExpanded())) {
+    if (!deps.fixedHeight() && (deps.recentExpanded() || deps.pinnedExpanded())) {
       await ensureWorkArea();
       const screen = deps.workAreaH();
       if (screen) cap = Math.max(deps.windowHeight(), screen - SCREEN_MARGIN);
@@ -155,7 +147,6 @@ export function createWindowSizer(deps: SizerDeps) {
     scheduleResize,
     measureBarCols,
     gridCols,
-    measureClipViewport,
     invalidate,
   };
 }

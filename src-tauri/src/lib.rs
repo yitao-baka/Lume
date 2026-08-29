@@ -8,6 +8,7 @@ mod hotkey;
 mod i18n;
 mod icons;
 pub mod paths;
+mod plugins;
 mod pins;
 pub mod recent;
 pub mod settings;
@@ -335,6 +336,8 @@ pub fn run() {
             settings::restore_backup,
             settings::save_last_page,
             settings::set_remember_checks,
+            plugins::get_plugins,
+            settings::set_plugin_enabled,
             svc::svc_status,
             svc::svc_install,
             svc::svc_uninstall,

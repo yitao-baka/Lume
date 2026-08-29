@@ -13,11 +13,22 @@ import runIcon from "../../res/icons/normal_run.svg";
 import { isUrl } from "./clipData";
 import type { MenuState } from "./types";
 import type { NavigateStore } from "./navigate";
-import type { ClipboardStore } from "./clipboard";
+
+/** The clipboard-side actions the shared context menu needs — provided by
+ * the clipboard plugin's store (structurally satisfied). */
+export interface ClipMenuActions {
+  copyOnly(item: { valid?: boolean; id: number }): void;
+  pasteClip(item: { valid?: boolean; id: number }): void;
+  toggleClipPin(item: { pinned: boolean; id: number }): Promise<void> | void;
+  copyPlain(item: { valid?: boolean; id: number; kind: string; has_html: boolean }): void;
+  openClipLink(item: { content: string; kind: string }): void;
+  revealClipFile(path: string): void;
+  requestDelete(id: number): void;
+}
 
 export interface MenuDeps {
   nav: NavigateStore;
-  clip: ClipboardStore;
+  clip: ClipMenuActions;
 }
 
 export interface MenuItem {

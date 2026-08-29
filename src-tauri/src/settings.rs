@@ -29,6 +29,17 @@ pub struct Settings {
     pub hotkeys: Hotkeys,
     pub index: Index,
     pub clipboard: Clipboard,
+    /// Plugin management (ROADMAP #7) — ids switched off by the user.
+    #[serde(default)]
+    pub plugins: Plugins,
+}
+
+/// Plugin enable/disable state. Plugins not listed are enabled; the ids here
+/// are matched against the built-in registry and  manifests.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Plugins {
+    #[serde(default)]
+    pub disabled: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,6 +344,9 @@ impl Default for Settings {
                 user_dirs_no_files: Vec::new(),
                 cache_refresh_interval_minutes: 60,
             },
+            plugins: Plugins {
+                disabled: Vec::new(),
+            },
             clipboard: Clipboard {
                 history_cap: 200,
                 record_images: true,
@@ -620,6 +634,35 @@ pub fn set_remember_checks(
     let mut guard = state.0.lock().unwrap();
     let mut next = guard.clone();
     next.clipboard.remember_checks = enabled;
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// A cloned snapshot of the effective settings — read access for other
+/// modules (the plugin registry reads `plugins.disabled`).
+pub fn snapshot(state: &State<SettingsState>) -> Settings {
+    state.0.lock().unwrap().clone()
+}
+
+/// Enable/disable a plugin by id (light write, no apply side effects — the
+/// frontend registry re-reads on ).
+#[tauri::command]
+pub fn set_plugin_enabled(
+    id: String,
+    enabled: bool,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    if enabled {
+        next.plugins.disabled.retain(|d| d != &id);
+    } else if !next.plugins.disabled.iter().any(|d| d == &id) {
+        next.plugins.disabled.push(id);
+    }
     write_settings_light(&paths::base_dir(), &next)?;
     *guard = next;
     drop(guard);

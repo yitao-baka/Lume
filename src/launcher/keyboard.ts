@@ -5,13 +5,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { APP_KEYS, EDIT_KEYS, type AppEntry, type ClipboardItem, type MenuState, type Mode, type PreviewReq } from "./types";
 import type { NavigateStore } from "./navigate";
-import type { ClipboardStore } from "./clipboard";
+import type { ModeInstance } from "../plugins/types";
 
 export interface KeyDeps {
   mode: () => Mode;
   appsQuery: () => string;
-  clipQuery: () => string;
-  /** Key that switches Navigate/Clipboard modes (settings → 快捷键). */
+  /** Key that switches modes (settings → 快捷键). */
   switchKey: () => string;
   shiftEnterAdmin: () => boolean;
   /** Settings: show the 「最近使用」 bar (gates bar navigation). */
@@ -23,7 +22,10 @@ export interface KeyDeps {
   setCurrentPreview: (v: PreviewReq | null) => void;
   markKeyboard: () => void;
   nav: NavigateStore;
-  clip: ClipboardStore;
+  /** The active plugin mode — plugin-specific keys are delegated to it. */
+  activeMode: () => ModeInstance | undefined;
+  /** Let the active mode consume Esc (multi-select) before hiding. */
+  onModeEscape: () => boolean;
   gridCols: () => number;
   moveSelection: (delta: number) => void;
   activate: () => void;
@@ -50,14 +52,14 @@ export function matchesSwitchKey(e: KeyboardEvent, combo: string): boolean {
 
 export function createKeyRouter(deps: KeyDeps) {
   function onKeyDown(e: KeyboardEvent) {
-    const { nav, clip } = deps;
+    const { nav } = deps;
     const hasResults = deps.currentResults().length > 0;
     if (e.key === "Escape") {
       e.preventDefault();
       if (deps.menu()) {
         deps.closeMenu();
-      } else if (deps.mode() === "clipboard" && clip.multiIds().size > 0) {
-        clip.setMultiIds(new Set<number>()); // leave multi-select mode without hiding
+      } else if (deps.onModeEscape()) {
+        // The active mode consumed Esc (e.g. leave multi-select) — stay open.
       } else if (deps.currentPreview()) {
         // Close the satellite preview without hiding the launcher. The preview
         // window is WS_EX_NOACTIVATE and can never receive the key itself, so
@@ -137,27 +139,17 @@ export function createKeyRouter(deps: KeyDeps) {
         else deps.activate();
       }
     } else {
-      // Clipboard list navigation. Space toggles multi-select (merge paste
-      // via Enter); ↓/↑ move; ←/→ switch categories (on an empty query, so
-      // text editing in the search box still works); Del deletes.
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        if (deps.clipQuery() === "") {
-          e.preventDefault();
-          clip.switchCategory(e.key === "ArrowLeft" ? -1 : 1);
-        }
-      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      // Plugin mode: mode-specific keys first (category switching,
+      // multi-select, delete), then the shared grid bindings (↑/↓ move,
+      // Enter activates).
+      const inst = deps.activeMode();
+      const handled = inst?.onKey(e, { hasResults, moveSelection: deps.moveSelection }) ?? false;
+      if (handled) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         if (hasResults) {
           e.preventDefault();
           deps.moveSelection(e.key === "ArrowDown" ? 1 : -1);
         }
-      } else if (e.key === " ") {
-        if (hasResults) {
-          e.preventDefault();
-          clip.toggleMulti(deps.selected());
-        }
-      } else if (e.key === "Delete") {
-        e.preventDefault();
-        void clip.deleteSelected();
       } else if (e.key === "Enter") {
         e.preventDefault();
         deps.activate();

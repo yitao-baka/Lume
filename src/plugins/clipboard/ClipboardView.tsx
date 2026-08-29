@@ -3,27 +3,17 @@
 //! clipboard store; interactions go back out through callbacks.
 
 import { Show } from "solid-js";
-import { t } from "../i18n";
-import clipboardIcon from "../../res/icons/clipboard.svg";
-import multifilesIcon from "../../res/icons/multifiles.svg";
-import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "./clipData";
-import { CLIP_CATS, CLIP_ROW_H, type ClipboardItem, type MenuState } from "./types";
-import type { ClipboardStore } from "./clipboard";
+import { t } from "../../i18n";
+import clipboardIcon from "../../../res/icons/clipboard.svg";
+import multifilesIcon from "../../../res/icons/multifiles.svg";
+import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "../../launcher/clipData";
+import { CLIP_CATS, CLIP_ROW_H, type ClipboardItem } from "../../launcher/types";
+import type { PluginServices } from "../../plugins/types";
+import type { ClipboardStore } from "./store";
 
 export interface ClipboardViewProps {
-  clips: () => ClipboardItem[];
-  selected: () => number;
-  clipQuery: () => string;
   clip: ClipboardStore;
-  activate: () => void;
-  /** selectionSource = "mouse" (hover/click takes over from keyboard nav). */
-  markMouse: () => void;
-  /** True while keyboard navigation owns the selection (hover is gated off). */
-  isKeyboard: () => boolean;
-  openMenu: (m: MenuState) => void;
-  setSelected: (i: number) => void;
-  /** Bind the scroll container back to the root (the sizer measures it). */
-  refScrollEl: (el: HTMLDivElement) => void;
+  services: PluginServices;
 }
 
 /** Left tile of a clipboard row: image thumb is rendered by the caller; the
@@ -133,10 +123,11 @@ function clipTile(item: ClipboardItem, color: string | null, link: boolean) {
 
 export function ClipboardView(props: ClipboardViewProps) {
   const clip = props.clip;
+  const services = props.services;
 
   /** A single clipboard history row: tile, two-line body, hover actions. */
   function clipRow(item: ClipboardItem, idx: number) {
-    const isSelected = idx === props.selected();
+    const isSelected = idx === clip.selected();
     const color = item.kind === "text" ? detectColor(item.content) : null;
     const link = item.kind === "text" && isUrl(item.content);
     return (
@@ -154,18 +145,18 @@ export function ClipboardView(props: ClipboardViewProps) {
         onMouseMove={() => {
           // Hover-selection is a setting (default off — then only a click
           // selects). It is also ignored while keyboard nav is active.
-          if (!clip.hoverSelect() || props.isKeyboard()) return;
-          props.markMouse();
-          props.setSelected(idx);
+          if (!clip.hoverSelect() || services.selectionSource() === "keyboard") return;
+          services.markMouse();
+          clip.setSelected(idx);
         }}
         onClick={() => {
-          props.markMouse();
+          services.markMouse();
           // First click selects the entry; a second click on the already
           // selected row pastes it.
-          if (props.selected() === idx) {
-            props.activate();
+          if (clip.selected() === idx) {
+            clip.activate();
           } else {
-            props.setSelected(idx);
+            clip.setSelected(idx);
           }
         }}
         onContextMenu={(e) => {
@@ -173,7 +164,7 @@ export function ClipboardView(props: ClipboardViewProps) {
           // Right-click must leave the window state (selection → preview pane
           // → window width) unchanged: the menu acts on `item` directly, so we
           // don't re-select the row here.
-          props.openMenu({ kind: "clip", x: e.clientX, y: e.clientY, item });
+          services.openMenu({ kind: "clip", x: e.clientX, y: e.clientY, item });
         }}
       >
         <div class="clip-row-tile-box">
@@ -302,14 +293,14 @@ export function ClipboardView(props: ClipboardViewProps) {
       </div>
       <div class="clip-main">
         <Show
-          when={props.clips().length > 0}
+          when={clip.clips().length > 0}
           fallback={
             <div class="clip-empty">
               <img class="clip-empty-icon" src={clipboardIcon} alt="" draggable={false} />
               <p class="clip-empty-title">
-                {props.clipQuery() ? t("noResults") : t("noClipboardHistory")}
+                {clip.clipQuery() ? t("noResults") : t("noClipboardHistory")}
               </p>
-              <Show when={!props.clipQuery()}>
+              <Show when={!clip.clipQuery()}>
                 <p class="clip-empty-hint">{t("clipEmptyHint")}</p>
               </Show>
             </div>
@@ -317,7 +308,7 @@ export function ClipboardView(props: ClipboardViewProps) {
         >
           <div
             class="clip-list"
-            ref={(el) => props.refScrollEl(el)}
+            ref={(el) => clip.bindScrollEl(el)}
             role="listbox"
             onScroll={(e) =>
               clip.setClipScrollTop((e.currentTarget as HTMLDivElement).scrollTop)
@@ -326,7 +317,7 @@ export function ClipboardView(props: ClipboardViewProps) {
             <div
               class="clip-spacer"
               style={{
-                height: `${props.clips().length * CLIP_ROW_H}px`,
+                height: `${clip.clips().length * CLIP_ROW_H}px`,
                 position: "relative",
               }}
             >
@@ -339,7 +330,7 @@ export function ClipboardView(props: ClipboardViewProps) {
                   right: 0,
                 }}
               >
-                {props
+                {clip
                   .clips()
                   .slice(clip.clipStart(), clip.clipEnd())
                   .map((item, i) => clipRow(item, clip.clipStart() + i))}
@@ -352,7 +343,7 @@ export function ClipboardView(props: ClipboardViewProps) {
         <span class="clip-status-count">
           {clip.multiIds().size > 0
             ? t("clipSelected", { count: String(clip.multiIds().size) })
-            : t("clipTotal", { count: String(props.clips().length) })}
+            : t("clipTotal", { count: String(clip.clips().length) })}
         </span>
         <div class="clip-status-actions">
           <button
@@ -368,6 +359,30 @@ export function ClipboardView(props: ClipboardViewProps) {
           </button>
         </div>
       </div>
+
+      <Show when={clip.clearOpen()}>
+        <div class="clip-confirm">
+          <p class="clip-confirm-title">{t("clipClearConfirm")}</p>
+          <label class="clip-confirm-check">
+            <input
+              type="checkbox"
+              checked={clip.keepPinned()}
+              onChange={(e) =>
+                clip.setKeepPinned((e.currentTarget as HTMLInputElement).checked)
+              }
+            />
+            <span>{t("keepPinned")}</span>
+          </label>
+          <div class="clip-confirm-actions">
+            <button class="clip-confirm-cancel" onClick={() => clip.setClearOpen(false)}>
+              {t("cancel")}
+            </button>
+            <button class="clip-confirm-ok" onClick={clip.doClear}>
+              {t("clipClear")}
+            </button>
+          </div>
+        </div>
+      </Show>
     </div>
   );
 }

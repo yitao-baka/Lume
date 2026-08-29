@@ -142,7 +142,24 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**拆分 App.tsx 为 launcher 模块（零行为变化 refactor, complete) — as of
+**插件系统 v1 + 剪贴板/预览插件化（ROADMAP #7, complete) — as of 2026-08-30**:
+插件 = 清单（`<base>/plugins/<id>/plugin.toml`）+ 前端贡献；Rust `plugins.rs`
+（扫描/`get_plugins`/`set_plugin_enabled` + `settings.plugins.disabled`，单测 ×3）；
+前端 `src/plugins/`（registry + 契约）。**剪贴板** = 首个 mode 贡献
+（`src/plugins/clipboard/`：store/view/键处理/搜索/记住页面/设置切片全内聚，
+`ModeInstance` 契约含 `onKey`/`onEscape`/`previewTarget`/`pageKind`/
+`applySettings`）；**预览** = 独立 service 贡献（`src/plugins/preview/`：防抖
+show/close + `currentPreview` Esc 优先级；窗口生命周期留核心）。App 以
+`PluginServices` 开放组合根能力（toast/搜索管线+`searchToken`/`markMouse`/
+`openMenu`/`requestMode`），模式 pill 与页面从注册表渲染（`<Dynamic
+component={activeMode().View}>`）。**新约定**：新增模式 = 写一个
+`create*Plugin(services)` 并 `definePlugin`，壳零改动；右键菜单的剪贴板
+动作经 `clipMenuActions()` 窄接口供给；ModeInstance 的 `search` 自带
+stale-token 守卫（根 `requestSeq` 即令牌）。验证：cargo test 77、截图 5 组
+judge 等价、三套 CDP 冒烟全过。v1 未做：第三方 JS 动态加载、插件管理页、
+provider 搜索贡献。
+
+**Prior: 拆分 App.tsx 为 launcher 模块（零行为变化 refactor, complete) — as of
 2026-08-30**: 2510 行的单文件拆为 `src/launcher/` 11 个模块（types/clipData/
 icons/sizing/navigate/clipboard/menu/keyboard/previewSync/NavigateView/
 ClipboardView），`App.tsx` 收敛为组合根（787 行：搜索召回/模式切换/挂载监听

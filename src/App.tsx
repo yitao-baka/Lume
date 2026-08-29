@@ -2,39 +2,45 @@ import { createEffect, createSignal, onCleanup, onMount, Show, For } from "solid
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { resolveLocale, setLocale, t } from "./i18n";
+import { Dynamic } from "solid-js/web";
+import { resolveLocale, setLocale, t, type Messages } from "./i18n";
 import { applyColorMode } from "./theme";
 import type { SettingsData } from "./settings/types";
 import settingsIcon from "../res/icons/settings.svg";
 import navigateIcon from "../res/icons/navigate.svg";
-import clipboardIcon from "../res/icons/clipboard.svg";
 import "./App.css";
 import type {
   AppEntry,
   ClipboardItem,
   ClipKind,
   MenuState,
-  Mode,
 } from "./launcher/types";
 import {
-  CLIP_ROW_H,
   TOAST_MS,
   TOAST_UNDO_MS,
 } from "./launcher/types";
 import { createIconStore } from "./launcher/icons";
 import { createWindowSizer } from "./launcher/sizing";
 import { createNavigateStore } from "./launcher/navigate";
-import { createClipboardStore } from "./launcher/clipboard";
 import { buildMenuItems } from "./launcher/menu";
 import { createKeyRouter } from "./launcher/keyboard";
-import { createPreviewSync } from "./launcher/previewSync";
 import { NavigateView } from "./launcher/NavigateView";
-import { ClipboardView } from "./launcher/ClipboardView";
+import {
+  APPS_MODE,
+  allPlugins,
+  definePlugin,
+  modeById,
+  modePlugins,
+  refreshPlugins,
+  type ModeId,
+  type PluginServices,
+} from "./plugins/registry";
+import { createClipboardPlugin } from "./plugins/clipboard";
+import { createPreviewPlugin } from "./plugins/preview";
 
 function App() {
   const [appsQuery, setAppsQuery] = createSignal("");
-  const [clipQuery, setClipQuery] = createSignal("");
-  const [mode, setMode] = createSignal<Mode>("apps");
+  const [mode, setMode] = createSignal<ModeId>(APPS_MODE);
   // ── Synchronous initial config from Rust initialization_script ──
   // Window starts hidden; the Rust setup() reads settings.toml and injects
   // it as window.__LUME_CONFIG__ before the webview loads. If missing (very
@@ -70,8 +76,8 @@ function App() {
    * category) on the next summon instead of always starting on Navigate. */
   const [rememberLastPage, setRememberLastPage] = createSignal(_a?.remember_last_page ?? false);
   /** Last shown mode ("apps" | "clipboard"), restored when 记住上次所在页面 is on. */
-  const [lastPageMode, setLastPageMode] = createSignal<Mode>(
-    _a?.last_page === "clipboard" ? "clipboard" : "apps"
+  const [lastPageMode, setLastPageMode] = createSignal<ModeId>(
+    _a?.last_page === "clipboard" ? "clipboard" : APPS_MODE
   );
   /** Last clipboard category when the last page was Clipboard. */
   const [lastPageKind, setLastPageKind] = createSignal<ClipKind>(
@@ -87,24 +93,23 @@ function App() {
 
 
   // Each mode keeps its own query, so clearing one never resets the other.
-  const query = () => (mode() === "apps" ? appsQuery() : clipQuery());
-  const setQuery = (q: string) =>
-    mode() === "apps" ? setAppsQuery(q) : setClipQuery(q);
+  // Plugin modes live in the registry; the root reads through accessors.
+  const activeMode = () => modeById(mode());
+  const query = (): string =>
+    mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? "");
+  const setQuery = (q: string) => {
+    if (mode() === APPS_MODE) setAppsQuery(q);
+    else activeMode()?.setQuery(q);
+  };
   const [apps, setApps] = createSignal<AppEntry[]>([]);
-  const [clips, setClips] = createSignal<ClipboardItem[]>([]);
   const [selected, setSelected] = createSignal(0);
   const [menu, setMenu] = createSignal<MenuState>(null);
 
-  // ── Clipboard-mode state ──
-  // Signals and actions live in the clipboard store (created after the nav
-  // store below); the toast + virtual-list container stay here — the toast is
-  // shared with Navigate actions and the sizer measures the list viewport.
-  const clipCfg = (window as any).__LUME_CONFIG__?.clipboard;
+  // ── Shared launcher state ──
+  // The toast is shared with every plugin action; plugin modes own their
+  // rows/selection/viewport internally (see src/plugins/*/).
   const [toast, setToast] = createSignal<{ text: string; undo?: () => void } | null>(null);
   let toastTimer: number | undefined;
-  /** Virtual-list scroll container + its viewport height (sizer-measured). */
-  let clipScrollEl: HTMLDivElement | undefined;
-  const [clipViewportH, setClipViewportH] = createSignal(0);
 
   // Monotonic counter guards against out-of-order search responses.
   let requestSeq = 0;
@@ -114,7 +119,7 @@ function App() {
 
   /** Results for the current mode (reactive). */
   const currentResults = (): (AppEntry | ClipboardItem)[] =>
-    mode() === "apps" ? apps() : clips();
+    mode() === APPS_MODE ? apps() : (activeMode()?.rows() ?? []);
 
   // 搜索状态记忆: 一次「未打开条目」的搜索会保留到下次呼出 (热键重呼出恢复);
   // 但 5 分钟未再次呼出, 或打开过条目, 则清空查询。记住上次所在页面 (mode/category)
@@ -136,26 +141,25 @@ function App() {
       // 未保留搜索 (打开过条目 / 超过 5 分钟 / 无活跃搜索) → 重置页面与查询。
       if (opened) {
         // 打开条目 → 回到导航页 (apps 空查询)。记住上次所在页面在此被覆盖。
-        setMode("apps");
-        clip.setClipKind("all");
+        setMode(APPS_MODE);
+        modeById("clipboard")?.restorePage("all");
       } else if (rememberLastPage()) {
         // 记住上次所在页面 → 恢复它记住的 mode/category (页面偏好, 不受 TTL 限制)。
-        const next: Mode = lastPageMode() === "clipboard" ? "clipboard" : "apps";
+        const next: ModeId = lastPageMode();
         setMode(next);
-        if (next === "clipboard") clip.setClipKind(lastPageKind() as ClipKind);
+        if (next !== APPS_MODE) modeById(next)?.restorePage(lastPageKind());
       } else {
         // 未记住页面 → 导航页。
-        setMode("apps");
-        clip.setClipKind("all");
+        setMode(APPS_MODE);
+        modeById("clipboard")?.restorePage("all");
       }
       // 查询一律清空, 落在该页面的默认空态。
       setAppsQuery("");
-      setClipQuery("");
+      for (const p of allPlugins()) p.mode?.setQuery("");
     }
     // recall: 保留当前 mode/kind/query 不动, 热键重呼出即恢复这次搜索结果。
 
     setApps([]);
-    setClips([]);
     setSelected(0);
     nav.setZone("grid");
     nav.setPinnedSelected(0);
@@ -163,9 +167,7 @@ function App() {
     nav.setRecentExpanded(false); // don't persist the expanded state across shows
     nav.setPinnedExpanded(expandPinned());
     setMenu(null);
-    clip.setMultiIds(new Set<number>());
-    clip.setDeletingId(null);
-    clip.setClearOpen(false);
+    for (const p of allPlugins()) p.mode?.reset();
     nav.setNavHidden(false); // fresh show always starts with the nav box visible
     sizer.invalidate(); // force a re-measure on the next show (mode may have changed)
   }
@@ -177,7 +179,7 @@ function App() {
   function persistLastPage() {
     if (!rememberLastPage()) return;
     const m = mode();
-    const kind = m === "clipboard" ? clip.clipKind() : "all";
+    const kind = m === APPS_MODE ? "all" : (activeMode()?.pageKind() ?? "all");
     // Update frontend signals so clearSearch() reads the correct values on the
     // next launcher show (the Rust backend writes to file + in-memory, but
     // does not emit settings-applied — so the signals would stay stale).
@@ -194,7 +196,8 @@ function App() {
   // over here.
   const icons = createIconStore();
   const sizer = createWindowSizer({
-    mode,
+    // Plugin modes use the fixed-height model; Navigate auto-fits.
+    fixedHeight: () => mode() !== APPS_MODE,
     windowHeight,
     windowWidth,
     // The expand flags live in the navigate store (created below) — read
@@ -205,9 +208,7 @@ function App() {
     setWorkAreaH,
     barCols,
     setBarCols,
-    clipViewportH,
-    setClipViewportH,
-    clipScrollEl: () => clipScrollEl,
+    measureModeViewport: () => activeMode()?.measureViewport(),
   });
   // Navigate-mode store: deps methods are hoisted function declarations in
   // this scope, so referencing them here is safe even though they run later.
@@ -223,48 +224,40 @@ function App() {
     },
     resetAndHide: () => void resetAndHide(),
   });
-  const clip = createClipboardStore(
-    {
-      clips,
-      setClips,
-      selected,
-      query,
-      clipQuery,
-      clipViewportH,
-      showToast,
-      markEntryOpened: () => {
-        entryOpened = true;
-      },
-      resetAndHide: () => void resetAndHide(),
-      runSearch,
-      persistLastPage,
+
+  // The services every plugin receives — late-bound like the nav deps.
+  const services: PluginServices = {
+    showToast,
+    markEntryOpened: () => {
+      entryOpened = true;
     },
-    {
-      showSourceApp: clipCfg?.show_source_app ?? true,
-      timeDisplayAbs: clipCfg?.time_display === "absolute",
-      pasteClose: clipCfg?.paste_close ?? true,
-      hoverSelect: clipCfg?.hover_select ?? false,
-      previewEnabled: clipCfg?.preview ?? true,
-      rememberChecks: clipCfg?.remember_checks ?? true,
-    }
-  );
-  // Satellite-preview sync + window-level keyboard routing.
-  const preview = createPreviewSync({
+    resetAndHide: () => void resetAndHide(),
+    persistLastPage,
+    scheduleResize: () => sizer.scheduleResize(),
+    searchToken: () => requestSeq,
+    selectionSource: () => selectionSource,
+    markMouse,
+    openMenu: setMenu,
     mode,
-    clipKind: clip.clipKind,
-    clips,
-    selected,
-    previewEnabled: clip.previewEnabled,
-    rememberChecks: clip.rememberChecks,
+    requestMode: (id) => void switchMode(id),
+    runSearch,
+  };
+  // Plugin registration — first-party plugins exercise every v1 contract.
+  const preview = createPreviewPlugin({
+    previewTarget: () =>
+      mode() === APPS_MODE ? null : (activeMode()?.previewTarget() ?? null),
+    enabled: () =>
+      mode() === APPS_MODE ? false : (activeMode()?.previewEnabled() ?? true),
   });
+  const clipboardPlugin = createClipboardPlugin(services);
+  definePlugin(clipboardPlugin);
+  definePlugin(preview);
+  void refreshPlugins();
   function markKeyboard() {
     selectionSource = "keyboard";
   }
   function markMouse() {
     selectionSource = "mouse";
-  }
-  function isKeyboard() {
-    return selectionSource === "keyboard";
   }
   /** Expanded-bar toggles invalidate the cached work area, then re-measure. */
   function invalidateWorkArea() {
@@ -274,18 +267,20 @@ function App() {
   const router = createKeyRouter({
     mode,
     appsQuery,
-    clipQuery,
     switchKey,
     shiftEnterAdmin,
     showRecent,
     selected,
     menu,
     currentResults,
-    currentPreview: preview.currentPreview,
-    setCurrentPreview: preview.setCurrentPreview,
+    currentPreview: preview.preview!.currentPreview,
+    setCurrentPreview: (v) => {
+      if (!v) preview.preview!.clear();
+    },
     markKeyboard,
     nav,
-    clip,
+    activeMode,
+    onModeEscape: () => activeMode()?.onEscape() ?? false,
     gridCols: () => sizer.gridCols(),
     moveSelection,
     activate,
@@ -341,16 +336,9 @@ function App() {
         sizer.scheduleResize();
       }
     } else {
-      const res = (await invoke("search_clipboard", {
-        query: q,
-        kind: clip.clipKind(),
-      })) as ClipboardItem[];
-      if (id === requestSeq) {
-        setClips(res);
-        setSelected(0);
-        clip.setClipScrollTop(0);
-        sizer.scheduleResize();
-      }
+      // Plugin modes run their own search (stale-guarded by searchToken).
+      void id;
+      void activeMode()?.search(q);
     }
   }
 
@@ -391,12 +379,10 @@ function App() {
       setWindowHeight(s.appearance.window_height);
       setWindowWidth(s.appearance.window_width);
       setSwitchKey(s.hotkeys.switch_mode || "Tab");
-      clip.setShowSourceApp(s.clipboard?.show_source_app ?? true);
-      clip.setTimeDisplayAbs(s.clipboard?.time_display === "absolute");
-      clip.setPasteClose(s.clipboard?.paste_close ?? true);
-      clip.setHoverSelect(s.clipboard?.hover_select ?? false);
-      clip.setPreviewEnabled(s.clipboard?.preview ?? true);
-      clip.setRememberChecks(s.clipboard?.remember_checks ?? true);
+      // Each plugin applies its own settings slice (clipboard display flags…);
+      // the plugin list itself refreshes too (启停 changes land here).
+      for (const p of allPlugins()) p.mode?.applySettings(s);
+      void refreshPlugins();
       setRememberLastPage(s.appearance.remember_last_page ?? false);
       setLastPageMode(s.appearance.last_page === "clipboard" ? "clipboard" : "apps");
       setLastPageKind((s.appearance.last_page_kind as ClipKind) ?? "all");
@@ -405,19 +391,20 @@ function App() {
     }
   }
 
-  async function switchMode(m: Mode) {
+  async function switchMode(m: ModeId) {
     if (m === mode()) return;
     setMode(m);
-    // Clipboard mode always starts on the All category with no multi-select.
-    if (m === "clipboard") {
-      clip.setClipKind("all");
-      clip.setMultiIds(new Set<number>());
-      clip.setDeletingId(null);
+    // A plugin mode always starts from a clean page (All category, no
+    // multi-select) with its own (independent) query.
+    const inst = modeById(m);
+    if (m !== APPS_MODE && inst) {
+      inst.restorePage("all");
+      inst.reset();
     }
     sizer.invalidate(); // the fixed-height model differs per mode — force a resize
     persistLastPage();
     // Re-search the target mode with its own (independent) query.
-    await runSearch(m === "apps" ? appsQuery() : clipQuery());
+    await runSearch(m === APPS_MODE ? appsQuery() : (inst?.query() ?? ""));
   }
 
   /** Activate the selected entry: launch an app or paste a clipboard entry. */
@@ -444,14 +431,9 @@ function App() {
       void invoke("launch_app", { path: item.path, name: item.name, elevated });
       void resetAndHide();
     } else {
-      // A non-empty multi-select merges; otherwise paste the single entry.
-      if (clip.multiIds().size > 0) {
-        clip.pasteClipMulti();
-        return;
-      }
-      const item = clips()[selected()];
-      if (!item) return;
-      clip.pasteClip(item);
+      // Plugin mode: the mode's own activation (merge-paste the selection,
+      // else paste the single entry).
+      activeMode()?.activate();
     }
   }
 
@@ -469,44 +451,26 @@ function App() {
   // hovering would otherwise yank the scroll position).
   createEffect(() => {
     selected();
-    // The apps grid keeps the selected box in view natively; the clipboard
-    // list is virtualized and scrolls via its own effect below (scrollIntoView
-    // would override the buffered position there).
-    if (mode() !== "clipboard" && selectionSource === "keyboard") {
+    // The apps grid keeps the selected box in view natively; plugin modes
+    // scroll their own lists (scrollIntoView would override their buffered
+    // positions).
+    if (mode() === APPS_MODE && selectionSource === "keyboard") {
       document
         .querySelector(".result-selected")
         ?.scrollIntoView({ block: "nearest" });
     }
   });
 
-  // Re-measure the virtual list viewport whenever the mode or window height
-  // changes (the launcher isn't user-resizable, so the only size changes are
-  // ours). Idempotent — settles once the measured height matches.
+  // Re-measure the active mode's internal viewport whenever the mode or
+  // window height changes (the launcher isn't user-resizable, so the only
+  // size changes are ours). Idempotent — settles once the measurement matches.
   createEffect(() => {
     void mode();
     void windowHeight();
-    requestAnimationFrame(sizer.measureClipViewport);
+    requestAnimationFrame(() => activeMode()?.measureViewport());
   });
 
   onCleanup(() => clearTimeout(lastPageTimer));
-
-  // Virtual list: keep the selected row in the rendered window while
-  // navigating with the keyboard (the row may not be in the DOM otherwise).
-  // A small buffer keeps the row clearly inside the viewport (aligning exactly
-  // to the bottom edge left it a fraction of a pixel out of view).
-  createEffect(() => {
-    if (mode() !== "clipboard") return;
-    selected();
-    void clipViewportH(); // re-scroll when the viewport is resized
-    const el = clipScrollEl;
-    if (!el || selectionSource !== "keyboard") return;
-    const top = selected() * CLIP_ROW_H;
-    const bottom = top + CLIP_ROW_H;
-    if (top < el.scrollTop) el.scrollTop = top;
-    else if (bottom > el.scrollTop + el.clientHeight) {
-      el.scrollTop = bottom - el.clientHeight + 8;
-    }
-  });
 
   onMount(async () => {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
@@ -544,7 +508,7 @@ function App() {
     void nav.refreshPins();
     // 记住上次所在页面: a remembered Clipboard page must load history on mount
     // too (the window starts hidden and the first show may restore Clipboard).
-    void runSearch(mode() === "apps" ? appsQuery() : clipQuery());
+    void runSearch(mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? ""));
     sizer.scheduleResize();
     document.getElementById("search-input")?.focus();
 
@@ -564,7 +528,7 @@ function App() {
       await Promise.all([nav.refreshRecent(), nav.refreshPins()]);
       // 记住上次所在页面: a restored Clipboard page must load its history; an
       // apps page re-runs its (session) query or shows the bars.
-      await runSearch(mode() === "apps" ? appsQuery() : clipQuery());
+      await runSearch(mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? ""));
       // Resolve the Explorer folder context (foreground window at summon) so the
       // 「Windows 资源管理器」 bar can appear on the empty-query menu. Fetched
       // before the auto-select below so a folder-only menu still gets a zone.
@@ -586,7 +550,7 @@ function App() {
     // Esc-priority state — without this, Esc would think the preview is still
     // open and close a window that is already gone.
     const unlistenPreviewClosed = await getCurrentWindow().listen("preview-closed", () => {
-      preview.setCurrentPreview(null);
+      preview.preview?.clear();
     });
     onCleanup(() => unlistenPreviewClosed());
   });
@@ -632,7 +596,7 @@ function App() {
           value={query()}
           onInput={onInput}
           placeholder={
-            mode() === "apps"
+            mode() === APPS_MODE
               ? placeholderApps() || t("searchApps")
               : placeholderClipboard() || t("searchClipboard")
           }
@@ -642,24 +606,33 @@ function App() {
         <div class="mode-switch" role="tablist" aria-label="Search mode">
           <button
             class="mode-switch-item"
-            classList={{ active: mode() === "apps" }}
+            classList={{ active: mode() === APPS_MODE }}
             role="tab"
-            aria-selected={mode() === "apps"}
-            onClick={() => void switchMode("apps")}
+            aria-selected={mode() === APPS_MODE}
+            onClick={() => void switchMode(APPS_MODE)}
           >
             <img class="mode-switch-icon" src={navigateIcon} alt="" draggable={false} />
             {t("navigate")}
           </button>
-          <button
-            class="mode-switch-item"
-            classList={{ active: mode() === "clipboard" }}
-            role="tab"
-            aria-selected={mode() === "clipboard"}
-            onClick={() => void switchMode("clipboard")}
-          >
-            <img class="mode-switch-icon" src={clipboardIcon} alt="" draggable={false} />
-            {t("clipboard")}
-          </button>
+          <For each={modePlugins()}>
+            {(m) => (
+              <button
+                class="mode-switch-item"
+                classList={{ active: mode() === m.id }}
+                role="tab"
+                aria-selected={mode() === m.id}
+                onClick={() => void switchMode(m.id)}
+              >
+                <img
+                  class="mode-switch-icon"
+                  src={m.modeMeta?.icon}
+                  alt=""
+                  draggable={false}
+                />
+                {t((m.modeMeta?.labelKey ?? m.id) as keyof Messages)}
+              </button>
+            )}
+          </For>
         </div>
         <button
           class="icon-btn"
@@ -671,7 +644,7 @@ function App() {
         </button>
       </div>
       <div class="results">
-        {mode() === "apps" ? (
+        {mode() === APPS_MODE ? (
           <NavigateView
             apps={apps}
             appsQuery={appsQuery}
@@ -687,18 +660,7 @@ function App() {
             invalidateWorkArea={invalidateWorkArea}
           />
         ) : (
-          <ClipboardView
-            clips={clips}
-            selected={selected}
-            clipQuery={clipQuery}
-            clip={clip}
-            activate={activate}
-            markMouse={markMouse}
-            isKeyboard={isKeyboard}
-            openMenu={setMenu}
-            setSelected={setSelected}
-            refScrollEl={(el) => (clipScrollEl = el)}
-          />
+          <Dynamic component={activeMode()?.View} />
         )}
       </div>
       <Show when={toast()}>
@@ -718,29 +680,6 @@ function App() {
           </Show>
         </div>
       </Show>
-      <Show when={clip.clearOpen()}>
-        <div class="clip-confirm">
-          <p class="clip-confirm-title">{t("clipClearConfirm")}</p>
-          <label class="clip-confirm-check">
-            <input
-              type="checkbox"
-              checked={clip.keepPinned()}
-              onChange={(e) =>
-                clip.setKeepPinned((e.currentTarget as HTMLInputElement).checked)
-              }
-            />
-            <span>{t("keepPinned")}</span>
-          </label>
-          <div class="clip-confirm-actions">
-            <button class="clip-confirm-cancel" onClick={() => clip.setClearOpen(false)}>
-              {t("cancel")}
-            </button>
-            <button class="clip-confirm-ok" onClick={clip.doClear}>
-              {t("clipClear")}
-            </button>
-          </div>
-        </div>
-      </Show>
       <Show when={menu()}>
         <>
           <div
@@ -758,7 +697,12 @@ function App() {
               top: `${Math.min(menu()!.y, window.innerHeight - 140)}px`,
             }}
           >
-            <For each={buildMenuItems({ nav, clip }, menu()!)}>
+            <For
+              each={buildMenuItems(
+                { nav, clip: clipboardPlugin.clipMenuActions!() as Parameters<typeof buildMenuItems>[0]["clip"] },
+                menu()!
+              )}
+            >
               {(item) => (
                 <button
                   class="ctx-item"

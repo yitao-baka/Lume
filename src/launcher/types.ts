@@ -4,8 +4,10 @@
 
 import type { Messages } from "../i18n";
 
-/** Search modes, toggled with Tab or the pills in the search row. */
-export type Mode = "apps" | "clipboard";
+/** Search modes, toggled with Tab or the pills in the search row. "apps" is
+ * the built-in Navigate mode; plugin modes register string ids ("clipboard")
+ * through the plugin registry (src/plugins). */
+export type Mode = string;
 
 /** A launcher entry as returned by the Rust `search_apps` command. */
 export interface AppEntry {

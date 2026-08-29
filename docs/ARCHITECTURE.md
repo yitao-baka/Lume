@@ -240,6 +240,17 @@ pick up their defaults.
 - The settings window reuses the same build via the window label
   (`src/settings/`, grouped-card layout — see `docs/SETTINGS.md`); the
   satellite preview is its own entry (`src/preview.tsx`).
+- **Plugins** (`src/plugins/`, ROADMAP #7): a registry
+  (`registry.ts` + `types.ts`) that first-party capabilities plug into —
+  `clipboard` (mode contribution: store + view + keys + search under
+  `src/plugins/clipboard/`) and `preview` (service contribution: satellite
+  routing under `src/plugins/preview/`). The composition root provides
+  `PluginServices` (toasts, search pipeline + stale tokens, selection
+  source, context menu, mode switching); the Rust side discovers on-disk
+  manifests (`<base>/plugins/<id>/plugin.toml`) in `plugins.rs` and carries
+  the enabled set in `settings.plugins.disabled`. The App renders mode pills
+  and pages from the registry — adding a launcher mode no longer touches the
+  shell.
 - Two modes — **Navigate** and **Clipboard** — are toggled with `Tab` or the
   pills in the search row; switching keeps the current query and re-searches.
 - Each keystroke invokes the active mode's search command and drops stale

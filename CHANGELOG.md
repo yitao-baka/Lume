@@ -6,6 +6,26 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+
+- **插件系统 v1（ROADMAP #7）+ 剪贴板/预览插件化** — 插件 = 清单
+  （`<base>/plugins/<id>/plugin.toml`：id/name/version/kind/description/
+  permissions）+ 前端贡献。Rust 新增 `plugins.rs`：清单解析与目录扫描
+  （坏清单跳过、id 回退目录名）、`get_plugins`/`set_plugin_enabled` 命令、
+  `settings.plugins.disabled` 启停集（轻量写 + `settings-applied` 刷新）；
+  内置插件与磁盘插件走同一注册表路径。前端新增 `src/plugins/`
+  （`types.ts` 契约 + `registry.ts` 注册表）：`PluginServices`（toast/入口
+  标记/隐藏/搜索管线+搜索令牌/选中来源/右键菜单/模式切换）向插件开放
+  组合根能力。**剪贴板**迁移为首个 `mode` 贡献（`src/plugins/clipboard/`：
+  store + 视图 + 模式键处理 + 搜索 + 记住页面 + 设置切片），模式 pill 与
+  页面由注册表渲染，新增模式不再改壳；**预览窗**迁移为独立的 `service`
+  贡献（`src/plugins/preview/`：选中 → 预览请求防抖 show/close + Esc
+  优先级），模式只上报 `previewTarget`/`previewEnabled`，窗口生命周期仍在
+  核心。行为零变化：cargo test 77（+3 插件单测）、截图 5 组 judge 成对
+  等价、cdp_feature_smoke 13 项 + cdp_clipboard_smoke 全过。v1 未做：
+  第三方 JS 动态加载、插件管理设置页、provider 搜索贡献（清单/权限面已
+  预留）。
+
 ### Refactored
 
 - **拆分 App.tsx 为 launcher 模块（零行为变化）** — 2510 行的单文件（`App()`

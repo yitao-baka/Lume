@@ -1,228 +1,173 @@
 # 设置功能规范（Settings）
 
-迭代状态：**规划完成（2026-08-03），等待实现。** 优先级高于插件系统。
-通用文件规范见 `docs/NORMS.md`。
+迭代状态：**分组卡片布局（2026-08-30 重排）**。信息架构与 `feat/flutter-settings`
+分支的 Flutter 独立设置 exe 对齐；实现载体仍是主进程的 SolidJS WebView2 窗口
+（两个 Lume 版本共用同一 settings.toml 格式，仅设置载体不同）。通用文件规范见
+`docs/NORMS.md`。
 
 ## 概览
 
-- **独立设置窗口**（非 launcher 主窗口）。
-- **入口**：launcher 搜索栏右侧已有的齿轮按钮（接上 onClick）+ 系统托盘
-  右键菜单新增「设置」项。
-- 窗口：普通窗口（带标题栏 / 关闭按钮），初始约 720×560，可调整大小，
-  样式沿用深色主题（`docs/UI_GUIDELINES.md`）。
-- 打开设置窗口不影响 launcher 自身的显隐与焦点逻辑。
+- **独立设置窗口**（launcher 之外的 `settings` webview，带原生标题栏），
+  940×660 启动（min 560×420），可调整大小；齿轮按钮 + 托盘「设置」打开；
+  标题栏 X = 隐藏（工作副本保留），`close_settings` 在保存成功后调用。
+- 打开设置窗口不影响 launcher 自身的显隐与焦点逻辑；隐藏时窗口内存随
+  WebView2 `SetMemoryUsageTargetLevel` 裁剪（`sync_aux_memory_targets`）。
 
-## 布局
+## 布局（Chrome 式分组卡片）
 
 ```
-┌───────────────────────────────────────────────┐
-│  界面 │  分割线  │       内容区（随选项切换）       │
-│  系统 │  ─────── │  （暂为空 / 各页内容）          │
-│  插件 │          │                              │
-│  关于 │          │                              │
-│       │          │                              │
-│       │          │                 [保存并应用]│
-└───────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│  Lume                        [🔍 搜索设置____________]  │  ← 顶栏
+├──────────────┬─────────────────────────────────────────┤
+│  外观        │      分组标题（accent 小字）              │
+│  导航页      │  ┌─────────────────────────────────┐    │
+│  剪贴板      │  │ 标签行                控件（右）  │    │
+│  快捷键      │  │ 标签行                控件（右）  │    │
+│  搜索        │  └─────────────────────────────────┘    │
+│  系统        │      分组标题                            │
+│  关于        │  ┌─────────────────────────────────┐    │
+│              │  │ …                                │    │
+│              │  └─────────────────────────────────┘    │
+├──────────────┴─────────────────────────────────────────┤
+│                       [恢复默认设置] [保存并应用]        │  ← 底栏
+└────────────────────────────────────────────────────────┘
 ```
 
-- 左侧 4 个大选项：界面 / 系统 / 插件 / 关于，与右侧用分割线分离。
-- 点击左侧选项 → 右侧展示对应内容区。
-- 右下角**始终**有「保存并应用」一个按钮（2026-08-04 由「保存」「应用」
-  合并）。
-- 用户修改任何设置后按钮进入**激活态**（可点击）；无修改则禁用。
+- **顶栏**：`Lume` 标题 + 「搜索设置」输入框。
+- **导航栏**（160px）：7 个分区，图标取 `res/icons/`（platte / navigate /
+  clipboard / keyboard / search / system / about.svg）。
+- **内容列**：居中、max-width 720；每分区由若干「分组标题 + 卡片」组成，
+  卡片 = `--surface-raised` 底、12px 圆角、细边框；行 = 标签左 + 控件右。
+- **底栏**：「恢复默认设置」（次要）+「保存并应用」（主要，`!dirty` 禁用）。
 
-## 按钮语义
+### 设置搜索框
 
-- **「保存并应用」**：备份 → 写入 settings.toml → 立即生效 → **关闭设置
-  窗口**；保存失败则留在设置页（保持脏状态）供重试。
-- 备份 = 将当前生效的 `settings.toml` 原样复制为 `backup.toml`（覆盖式）。
+与 Flutter 设置 exe 的 `_cardText` 机制一致：每个分区持有一份 i18n 键清单
+（`Settings.tsx` 的 `SECTION_SEARCH_KEYS`），查询对分区标题 + 清单的本地化
+文本做大小写不敏感子串匹配；不匹配的分区从导航栏隐藏，内容区**堆叠显示全部
+匹配分区**；清空查询恢复单分区视图；点击导航项即清空查询回到该分区。
 
-## 「界面」页
+## 保存 / 恢复语义
 
-- **颜色模式**（置顶，2026-08-04）：按钮组「跟随系统 / 深色 / 浅色」，默认
-  跟随系统。控制 launcher 与设置窗口的主题（`appearance.color_mode`）；设置
-  窗口内即时预览，主窗口保存后生效；「跟随系统」实时跟随 OS 深浅色
-  （`prefers-color-scheme`）。主题由 CSS 变量（`src/App.css` 的 `--*` 两套
-  palette）实现，`src/theme.ts` 设置 `<html data-theme>`。
-- **语言**：按钮组「跟随系统」+ en / zh-CN / zh-TW；切换后界面语言即时变化
-  （应用后生效，写入 `appearance.language`）。
-- **条目框大小**：预设档位（小 / 中 / 大），控制**包裹每个条目的整个方框**
-  （`.result-box`）的边长；网格列随框大小自适应
-  （`repeat(auto-fill, var(--entry-size))`），键盘导航按实际列数换行，
-  tile 按比例缩放。
-- **窗口大小**：预设档位（小 / 中 / 大），分**宽度**与**初始高度**两项。
-  宽度 = 窗口横向长度；初始高度 = 内容自适应的高度上限（窗口不超过它，
-  内容少时收缩，即原 520px 固定封顶改为用户可配）。
-- 数值调整统一用**预设档位**（2026-08-04 起移除滑块，仅保留小 / 中 / 大
-  三档；如需自定义数值后续再加）。
-- **窗口位置**：7 个按钮（居中 / 跟随鼠标 / 左上 / 右上 / 左下 / 右下 /
-  自定义），**默认居中**。前六个为预设位，选中后窗口每次呼出都停在所选位置
-  （「跟随鼠标」= 窗口中心对齐光标并 clamp 在当前显示器工作区内，2026-08-05
-  新增）；「自定义」相当于旧「记住位置」开关**打开**——窗口停在用户手动拖到
-  的位置，其余按钮相当于开关**关闭**（2026-08-04 重设计，移除「初始位置」
-  标签与「记住位置」开关）。
-- **最近使用 / 固定 / 快捷行为**（2026-08-05）：「显示最近使用」开关（只影响
-  显示，记录照常，重新打开可见历史）；「最近使用条数」上限（10/20/30）；
-  「默认展开已固定」开关（每次呼出时已固定栏直接展开，默认收起）；「Shift+Enter
-  以管理员身份启动」开关（选中项 Shift+Enter 提权启动，默认开）；「搜索框占位符」
-  应用/剪贴板两个文本输入（空 = 默认文案）。
+- **「保存并应用」**：备份（当前 `settings.toml` → `backup.toml`，覆盖式）→
+  写入 → 立即生效（dedup 唯一索引重建 / 窗口宽度 / 呼出热键重注册 / 索引
+  刷新 + `settings-applied` 事件）→ **关闭设置窗口**；失败留在设置页
+  （保持脏状态）供重试。
+- **「恢复默认设置」= 两步语义（同 Flutter）**：仅把内存工作副本重置为
+  `DEFAULT_SETTINGS`（`src/settings/types.ts`，镜像 Rust `Default`）并标脏 +
+  toast；**不写盘**，需再点「保存并应用」才落盘。无确认对话框（两步天然防
+  误触）。`restore_default` 命令保留但设置页不再调用。
+- 开机自启动 / 服务注册卸载 / 导入 / 导出 / 恢复备份 / 刷新索引 = **即时
+  生效**，不走脏状态。
 
-## 「系统」页
+## 分区与控件
 
-- **快捷键**：
-  - 呼出主界面：`Alt+Space` / `Ctrl+Space` / 自定义 三个按钮，默认
-    `Alt+Space`。
-  - 切换模式：`Tab` / 自定义，默认 `Tab`。
-  - 自定义交互：选中「自定义」进入录制，用户按下组合键后按钮文本替换为
-    该快捷键。实时校验，无效则不允许保存，按钮回退到上一个有效值。
-  - 校验规则：**至少 1 个修饰键（Ctrl/Alt/Shift/Win）+ 1 个普通键**；且
-    **尝试向系统注册**以检测是否被其它程序占用（与 `hotkey.rs` 现有
-    auto-fallback 机制同源）。
-- **索引目录**（搜索范围，见下方语义）：
-  - 系统索引：桌面（用户+公用）、System32、开始菜单（默认关，**递归**
-    收录 Programs 下全部 .lnk 含子文件夹）三条，**只可启用 / 停用，不可
-    编辑路径**。
-  - 用户索引：初始为空；输入框 + 「添加」按钮，每行右侧删除按钮，可多条。
-  - 保存时索引配置变化 → 立即刷新用户缓存（不等每小时定时）。
-- **导入导出与恢复**：「导入」「导出」「恢复默认设置」「恢复备份设置」
-  四个按钮；后两者点击后需**二次确认**。
-  - 恢复默认 = 用 `default.toml` 覆盖 `settings.toml`；
-  - 恢复备份 = 用 `backup.toml` 覆盖 `settings.toml`。
-- **系统服务与开机自启动**（Program Files 迭代新增）：
-  - **开机自启动**：开关。写 / 删
-    `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的 `Lume` 值（exe
-    路径带引号）。**注册表是唯一事实源，不进 settings.toml**，开关即时生效，
-    不参与保存/应用脏标记。
-  - **LumeSVC 服务**：状态行（未安装 / 已安装未运行 / 运行中）+「注册服务 /
-    卸载服务」按钮（文案随状态切换）。点击经 `ShellExecuteW runas` 提权拉起
-    `lume-svc.exe --install / --uninstall`，弹 UAC；取消显示「操作已取消」。
-    服务为 SYSTEM + AUTO 启动的**空转骨架**，**不管理数据库刷新**（主程序是
-    唯一刷新者：启动 + 每小时 + 改配置即时刷新）；数据目录经
-    `HKLM\Software\Lume\DataDir` 交接，命名管道 `\\.\pipe\LumeSVC` 为后续
-    功能预留。
+### 1. 外观（`navAppearance`）
 
-## 「剪贴板」页
+| 控件 | 键 | 值 |
+|---|---|---|
+| 语言（chips，带图标） | `appearance.language` | system / en / zh-CN / zh-TW |
+| 颜色模式（chips） | `appearance.color_mode` | system / dark / light |
 
-- **历史记录条数上限**（`clipboard.history_cap`）：100 / 200 / 500 / 1000。
-  达到上限自动删除最旧的非固定记录（固定项豁免）。
-- **记录图片**（`clipboard.record_images`）：关闭后复制图片不入历史。
-- **记录文件**（`clipboard.record_files`）：关闭后复制文件/文件夹不入历史
-  （文件复制被整体跳过，不会回落为图片）。
-- **粘贴后关闭窗口**（`clipboard.paste_close`）：关闭后粘贴动作自动隐藏
-  启动器；关闭此项则粘贴后保持启动器可见（短暂抑制失焦自动隐藏）。
-- **显示来源应用**（`clipboard.show_source_app`）：控制每条记录第二行是否
-  显示来源应用名（捕获时前台进程名）。
-- **时间显示方式**（`clipboard.time_display`）：`relative`（相对时间，如
-  "3 分钟前"）/ `absolute`（绝对时间）。
-- **忽略应用**（`clipboard.ignore_apps`）：应用名列表，与来源应用显示名
-  （如 "Chrome"）**不区分大小写精确匹配**，命中则不记录——适合密码管理器、
-  隐私聊天等。
-- **合并复制**（`clipboard.merge_copy`）+ **合并窗口**
-  （`clipboard.merge_window_ms`，默认 1500ms）：开启后间隔 ≤ 窗口的连续文本
-  复制合并进同一条（换行连接，显示「合并复制 N 条」）；超过窗口 / 非文本
-  复制 / 粘贴后关闭当前合并。
-- **悬停选中条目**（`clipboard.hover_select`，默认关）：关闭时鼠标移动不再
-  改变选中，鼠标选中的唯一条件是单击；开启后恢复悬停选中。
-- **收藏的条目置顶显示**（`clipboard.favorites_top`，默认关）：关闭时收藏
-  （固定）条目按纯时间倒序（保留图钉徽标但不置顶）；开启后固定行置顶。
-- **开启预览**（`clipboard.preview`，默认开）：关闭后选中条目不再弹出右侧卫星
-  预览窗（文本/文件/图片/音频/视频/PDF）；列表内图片行内缩略图保留。
+### 2. 导航页（`navLauncher`）
 
-## 「插件」页
+组「窗口」：
 
-- 本轮留空。
+| 控件 | 键 | 档位 |
+|---|---|---|
+| 宽度 | `appearance.window_width` | 540 / 720 / 900 |
+| 高度 | `appearance.window_height` | 420 / 520 / 620 |
+| 窗口位置 | `appearance.window_position` + `remember_position` | 居中 / 跟随鼠标 / 左上 / 右上 / 左下 / 右下 / **自定义**（=记住位置，Flutter 版没有） |
 
-## 「关于」页
+组「导航栏」：显示最近使用 `show_recent`、显示 Explorer 栏
+`show_explorer_bar`、默认展开已固定 `expand_pinned`、Shift+Enter 管理员
+`shift_enter_admin`（均为 toggle）；最近使用条数 `recent_count`
+（10/20/30/50）；应用 / 剪贴板占位符 `search_placeholder_apps` /
+`search_placeholder_clipboard`（220px 输入框）；记住上次所在页面
+`remember_last_page`（+ hint）。
 
-- 居中大图展示程序图标（`res/icons/`，复用 tauri `icons/128x128.png` 迁入）；
-- 下方为项目介绍。
+组「条目框」：条目框大小 `entry_size`（70 / 110 / 150）。
 
-## 索引目录语义
+> **档位变更（2026-08-30）**：宽度 600/720/840 → 540/720/900、高度
+> 360/520/720 → 420/520/620、条目框 80/110/140 → 70/110/150、最近使用
+> +50 档——与 Flutter 版对齐。旧的非默认值仍生效，只是对应 chip 不再高亮。
 
-- 搜索范围 = 已启用的索引目录。
-- **不递归**：只搜索索引文件夹中的文件；索引文件夹内的嵌套文件夹及其内
-  文件不参与搜索。
-- 没有任何索引启用时：无法搜索，UI 提示用户启用索引。
-- 搜索行为：`search_apps` 按本索引目录**不递归**列出文件并过滤（空查询
-  浏览封顶 200、输入按名称/拼音过滤上限 8）。旧有的开始菜单应用扫描已在
-  6.5 移除——搜索来源改为这里的索引目录；无任何启用时 Navigate 显示空态
-  提示 `indexEmpty`。
-- 性能缓存：三库于 `data/`——
-  - `system32_cache.db`：System32 启用 → 用预置库（首次构建，只含可打开
-    可执行类型，排除 DLL）。
-  - `user_cache.db`：桌面（**用户桌面 + 公用桌面**，对齐资源管理器）+ 用户
-    目录，启动刷新一次 + 每小时差异刷新（间隔在 系统→索引目录→缓存刷新
-    间隔 自定义，默认 60 分钟）。
-  - `icons.db`：图标按内容哈希去重（两库 `files.icon_hash` 引用），显示时
-    懒提取。
-  - `.lnk` 显示名去扩展名，同资源管理器。
+### 3. 剪贴板（`clipboard`）
 
-## settings.toml schema（草案）
+卡片「历史记录条数上限」（组标题复用首行标签，同 Flutter）：上限
+`history_cap`（100/200/500/1000）、记录图片 `record_images`、记录文件
+`record_files`、合并复制 `merge_copy` + 条件显示的**合并窗口滑块**
+`merge_window_ms`（500–5000ms，步进 100，显示秒——由档位 chips 改为滑块）、
+**忽略应用整宽列表编辑器** `ignore_apps`（damage-map 图标行 + 输入行 +
+folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `dedup`（+ hint）。
 
-```toml
-[meta]
-version = 1
+组「显示」：显示来源应用 `show_source_app`、时间显示方式 `time_display`
+（相对/绝对 chips）、悬停选中条目 `hover_select`、收藏的条目置顶显示
+`favorites_top`。
 
-[appearance]
-language = "system"             # "system" | "en" | "zh-CN" | "zh-TW"
-color_mode = "system"           # "system" | "dark" | "light"
-entry_size = 110                # 条目框边长 px（包裹整个条目的方框）
-window_width = 720              # 窗口横向长度 px
-window_height = 520             # 窗口初始纵向长度 px（自适应上限）
-window_position = "center"      # center | follow-mouse | top-left | top-right | bottom-left | bottom-right
-remember_position = false       # 记住位置开关（自定义按钮打开；预设位关闭）
-show_recent = true              # 主菜单显示「最近使用」栏（只影响显示，记录照常）
-expand_pinned = false           # 每次呼出时「已固定」栏直接展开
-shift_enter_admin = true        # Shift+Enter 以管理员身份启动选中项
-recent_count = 20               # 最近使用条数上限（存 + 显示同用）
-search_placeholder_apps = ""    # 应用模式搜索框占位符（空 = 默认文案）
-search_placeholder_clipboard = "" # 剪贴板模式占位符（空 = 默认文案）
+组「粘贴」：粘贴后关闭窗口 `paste_close`。
 
-[hotkeys]
-toggle = "Alt+Space"            # 呼出主界面
-switch_mode = "Tab"             # 切换模式
+组「预览」：开启预览 `preview`（+ hint）、**记住勾选 `remember_checks`**
+（本次重排新增到设置页；schema 已有，此前仅在预览区右键菜单切换）。
 
-[index]
-system_dirs = [
-  { path = "Desktop",  enabled = true },
-  { path = "System32", enabled = true },
-  { path = "StartMenu", enabled = false },
-]
-user_dirs = []                  # 用户索引路径列表
+### 4. 快捷键（`navHotkeys`）
 
-[clipboard]
-history_cap = 200               # 历史记录条数上限（100/200/500/1000）
-record_images = true            # 记录图片
-record_files = true             # 记录文件/文件夹
-paste_close = true              # 粘贴后关闭窗口
-show_source_app = true          # 第二行显示来源应用名
-time_display = "relative"       # relative | absolute
-ignore_apps = []                # 忽略应用名列表（大小写不敏感精确匹配）
-merge_copy = false              # 合并连续复制
-merge_window_ms = 1500          # 合并窗口（毫秒）
-hover_select = false            # 悬停选中条目（关 = 仅单击选中）
-favorites_top = false           # 收藏的条目置顶显示
-preview = true                  # 开启预览（关 = 卫星预览窗不弹出）
-```
+呼出主界面 `hotkeys.toggle` + 切换模式 `hotkeys.switch_mode` 两行。每行 =
+预设 chips（呼出：Alt+Space / Ctrl+Space；切换：Tab）+ **紧凑录制按钮**
+（显示当前组合；点击开始录制，标签变「按下新的组合键…」，Esc 取消）。
+录制经 `validate_hotkey` **实时校验**（缺修饰键 / 与另一 Lume 槽冲突 /
+被系统占用 / 无效），失败留在录制态并显示错误行。
 
-## 实施步骤
+> 预设 chips 是 main 版保留项：WebView2 捕获不到 Alt+Space（系统菜单占用），
+> 预设是回到默认呼出键的唯一入口。Flutter 版只有录制按钮。
 
-1. **✓ i18n 规范化（6.1，2026-08-03）** — 语言文件迁移到
-   `languages/*.json`（JSON + i18next），替换现有 `src/i18n.ts` 内联字符串。
-2. **✓ 设置文件体系（6.2，2026-08-03）** — `exe_dir/settings/`
-   （`default.toml` / `settings.toml` / `backup.toml`，toml crate 读写）；
-   `data/` 迁移 lume.db（旧 `app_data_dir()` 存在则自动复制）。
-3. **✓ 设置窗口框架（6.3，2026-08-03）** — 第二窗口 + 齿轮 / 托盘入口 +
-   布局 + 保存 / 应用 + 空页面。
-4. **✓ 「界面」页（6.4，2026-08-03）**。
-5. **✓ 「系统」页（6.5，2026-08-03）**（自定义快捷键 + 实时校验、索引目录
-   UI、导入导出恢复）。
-6. **✓ 「关于」页（6.6，2026-08-03）**（`res/icons` 图标 + 项目介绍）。
+### 5. 搜索（`navSearch`）
 
-插件页本轮留空。**设置迭代 6.1–6.6 全部完成（2026-08-03）。**
+组「索引目录」（标题行含**刷新索引**图标按钮 + 2s toast——main 版保留项）：
 
-7. **✓ 「剪贴板」页（ROADMAP #13，2026-08-13）** — 历史上限 / 记录图片 /
-   记录文件 / 粘贴后关闭 / 显示来源应用 / 时间显示方式；保存/应用走既有
-   框架，监听器实时读取设置（关闭记录图片/文件即刻生效）。
-8. **✓ 忽略应用 + 合并复制（ROADMAP #13 阶段 2，2026-08-13）** — 忽略应用
-   列表（输入添加 + 逐条删除）、合并复制开关 + 合并窗口预设。
+- **系统索引**：每目录一行 toggle（本地化标签：桌面 / System32 / 开始菜单，
+  默认 Desktop ✓、System32 ✓、StartMenu ✗）→ `index.system_dirs`。
+- **用户索引**：**键值编辑器**（对齐 Flutter，样式仿 Windows 环境变量对话框）
+  → `index.user_index: [{name, path, no_files}]`。行 = folder_open 图标 +
+  **名称（粗体）→ 路径** + **「索引文件」toggle（main 版保留项，`no_files`，
+  Flutter 版无）** + 删除；添加行 = 名称输入（留空自动取 basename）+ 路径
+  输入 + folder_plus 按钮，任一输入框 Enter 提交；空态「尚未添加索引项」。
+
+组「索引缓存」：刷新间隔滑块 `index.cache_refresh_interval_minutes`
+（5–1440 分钟，步进 5）。
+
+> **schema 迁移（2026-08-30）**：`user_dirs`/`user_dirs_no_files`（旧路径
+> 列表）→ `user_index` 键值结构。`Index::migrate()` 在 `read_settings` 时
+> 一次性转换（name = basename），旧 settings.toml 自动升级，写回只保留
+> `user_index`；两版本格式互通。`cache.rs::live_dirs` 与 `dirwatch.rs`
+> 改读 `user_index`。
+
+### 6. 系统（`system`）
+
+- 组「开机自启动」：toggle，经 `autostart_get`/`autostart_set` 直写
+  `HKCU\...\CurrentVersion\Run`（注册表为唯一事实源，即时生效不走脏状态）。
+- 组「系统服务」：状态文本（未安装 / 运行中 / 已安装未运行）+
+  注册/卸载按钮（UAC `runas`；取消给友好提示；2s 后重查状态）。
+- 组「导入导出」：导出（save 对话框，默认 settings.toml）、导入（open
+  对话框 + 重载工作副本）、**恢复备份设置**（双击确认——main 版保留项，
+  Flutter 版已删）。`backup.toml` 由每次保存自动写。
+
+### 7. 关于（`about`）
+
+行式布局（对齐 Flutter）：描述（`aboutTagline`）、版本（`APP_VERSION_LABEL`，
+无 v 前缀）、许可证 Apache License 2.0、作者 yitao-baka、主页
+`https://github.com/yitao-baka/Lume`（点击经 `launch_app` ShellExecuteW 打开）。
+旧的大图标居中头部移除。
+
+## 实现说明（2026-08-30 重排）
+
+- 壳：`src/settings/Settings.tsx`（顶栏 / 搜索过滤 / 7 导航 / 底栏）；
+  分区组件 `AppearancePane` / `LauncherPane` / `ClipboardPane` / `HotkeysPane`
+  / `SearchPane` / `SystemPane` / `AboutPane`；共享控件 `controls.tsx`
+  （Chip / Toggle / NumberPreset / Row）。旧 `InterfacePane.tsx` 删除（拆入
+  外观 + 导航页）；`plugins.svg` / `interface.svg` 不再被设置页引用（文件保留）。
+- 设置窗口 720×560 → 940×660（`lib.rs`）。
+- i18n 新增 20 键（nav* / group* / searchSettings / settingsUserIndex* /
+  about* / clipIgnoreEmpty），三语言同步。
+- 验证：`cargo test` 74 通过（含 `legacy_user_dirs_migrate_to_key_value_index`）、
+  `tsc --noEmit` + `vite build` 干净。

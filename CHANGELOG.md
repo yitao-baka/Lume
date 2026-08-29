@@ -6,6 +6,34 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Changed
+
+- **设置页分组卡片重排（对齐 Flutter 设置）** — 设置窗口信息架构与
+  `feat/flutter-settings` 的 Flutter 独立设置 exe 对齐：顶栏（Lume + 「搜索
+  设置」框）+ 7 分区导航（外观 / 导航页 / 剪贴板 / 快捷键 / 搜索 / 系统 /
+  关于，删除「插件」占位页）+ 居中 720px 分组卡片内容列 + 底栏
+  「恢复默认设置 + 保存并应用」；窗口 720×560 → 940×660。搜索框按分区
+  i18n 键清单过滤导航与内容（匹配分区堆叠显示）。**保留 main 版独有项**：
+  窗口位置「自定义」、快捷键预设 chips（WebView2 录不到 Alt+Space）+
+  `validate_hotkey` 实时校验、用户索引每行「索引文件」开关、刷新索引按钮 +
+  toast、恢复备份设置、系统索引中文标签；**新增「记住勾选」到设置页**。
+  「恢复默认设置」改两步语义（重置工作副本并标脏，需再点保存才落盘，
+  同 Flutter）；`restore_default` 命令保留但不再被设置页调用。
+- **档位值对齐 Flutter 版** — 窗口宽度 600/720/840 → 540/720/900、高度
+  360/520/720 → 420/520/620、条目框 80/110/140 → 70/110/150、最近使用条数
+  新增 50 档（10/20/30/50）；合并复制窗口由 0.5–3s 档位 chips 改为
+  500–5000ms 连续滑块（步进 100）。旧的非默认值仍生效，只是对应 chip 不再
+  高亮。
+- **用户索引改键值结构（settings.toml schema 迁移）** — `index.user_dirs`
+  /`user_dirs_no_files`（旧路径列表）→ `index.user_index: [{name, path,
+  no_files}]`（显示名 → 目录，仿 Windows 环境变量对话框的编辑器：名称留空
+  自动取 basename）。`Index::migrate()` 在读取旧 `settings.toml` 时一次性
+  转换（name = basename、`no_files` 继承、遗留字段清空），写回只保留
+  `user_index`——与 Flutter 版格式互通。`cache.rs::live_dirs`、
+  `dirwatch.rs::watch_dirs` 改读 `user_index`。`cargo test` 74 通过（新增
+  `legacy_user_dirs_migrate_to_key_value_index`）；`tsc --noEmit` +
+  `vite build` 通过。
+
 ## [Pre-26.8] — 2026-08-24
 
 ### Changed

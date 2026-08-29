@@ -108,7 +108,7 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   adds a 「Windows 资源管理器」 bar to the bottom of the empty-query main menu:
   「CMD 中打开」/「PowerShell 中打开」 (cwd = that folder, `ShellExecuteW`
   `lpDirectory`), 「复制路径」, right-click 启动 / 以管理员身份启动
-  (`runas`); gated by the `show_explorer_bar` setting (设置/界面). The
+  (`runas`); gated by the `show_explorer_bar` setting (设置/导航页). The
   foreground HWND was already captured for clipboard auto-paste
   (`window.rs` `FocusState`); the path resolves lazily on a dedicated STA
   thread (`explorer.rs`, mirroring `icons.rs`)
@@ -142,7 +142,33 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**WebView2 闲置内存裁剪 (ROADMAP #18, complete) — as of 2026-08-21**: 三个常驻 webview
+**设置页分组卡片重排（对齐 Flutter 设置，complete) — as of 2026-08-30**: main 的
+设置窗口（仍为 SolidJS WebView2）信息架构对齐 `feat/flutter-settings` 的 Flutter
+独立设置 exe：顶栏（Lume + 「搜索设置」框，`SECTION_SEARCH_KEYS` 按分区 i18n 键
+清单过滤、匹配分区堆叠显示）+ 7 分区导航（外观/导航页/剪贴板/快捷键/搜索/系统/
+关于，删除「插件」占位）+ 居中 720px 分组卡片列（`--surface-raised` 卡片、
+accent 组标题、标签左控件右）+ 底栏「恢复默认设置 + 保存并应用」；窗口
+720×560 → 940×660。**恢复默认 = 两步语义**（重置 `DEFAULT_SETTINGS` 工作副本
+并标脏，需再点保存落盘；`restore_default` 命令保留但 UI 不再调用）。
+**档位对齐 Flutter**：宽度 540/720/900、高度 420/520/620、条目框 70/110/150、
+最近使用 10/20/30/50、合并窗口 500–5000ms 连续滑块（旧非默认值仍生效仅 chip
+不高亮）。**schema 迁移**：`index.user_dirs`/`user_dirs_no_files` →
+`index.user_index: [{name, path, no_files}]`（`Index::migrate()` 读取时一次性
+转换，name=basename；`cache.rs::live_dirs`/`dirwatch.rs` 改读；与 Flutter 版
+settings.toml 互通）。**main 独有项保留**：窗口位置「自定义」、快捷键预设
+chips（WebView2 录不到 Alt+Space）+ `validate_hotkey` 实时校验、用户索引每行
+「索引文件」开关、刷新索引按钮 + toast、恢复备份设置、系统索引中文标签；
+**新增**：「记住勾选」进入设置页（预览组）。实现：`Settings.tsx` 壳 +
+`AppearancePane`/`LauncherPane`/`ClipboardPane`/`HotkeysPane`/`SearchPane`/
+`SystemPane`/`AboutPane` + `controls.tsx` 共享控件（`InterfacePane.tsx` 删除）。
+注意 SectionBody 分支必须用 `<Switch>/<Match>`（函数体 switch 会在首挂载僵死，
+ROADMAP #13.5 同款陷阱）；`.settings-body` 居中必须带 `width: 100%`
+（纯 `margin: 0 auto` 会禁用列 flex 交叉轴 stretch 导致收缩）。i18n +20 键
+三语言。验证：`cargo test` 74（+`legacy_user_dirs_migrate_to_key_value_index`）、
+`tsc --noEmit`、`vite build`、`scripts/cdp_settings_smoke.mjs` 9 项 + judge
+6 截图全过。Details in `docs/SETTINGS.md`。
+
+**Prior: WebView2 闲置内存裁剪 (ROADMAP #18, complete) — as of 2026-08-21**: 三个常驻 webview
 （main/settings/preview）即使全隐藏也各保有一个 renderer（实测基线 priv-WS **138.1 MB**，
 renderer ×3 = 58.1）。接入 WebView2 官方 `SetMemoryUsageTargetLevel(Low)`：隐藏窗口闲置内存
 换出到分页文件（页面保活不卸载），**重新激活必须手动设回 Normal**。策略——settings/preview

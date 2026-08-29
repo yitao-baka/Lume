@@ -38,7 +38,9 @@ The goal is:
 - ✅ System tray icon — left-click toggles, right-click Restart / Exit
 - ✅ Auto-sizing window — height fits the results, stays centered (fixed
   height in clipboard mode)
-- ✅ Settings window — interface / system / clipboard / plugins / about
+- ✅ Settings window — appearance / navigation / clipboard / hotkeys / search
+  / system / about (grouped-card layout with a settings search box, matching
+  the Flutter settings edition)
 - ✅ Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows
 - 🔲 Plugin system — planned (see [docs/ROADMAP.md](docs/ROADMAP.md))

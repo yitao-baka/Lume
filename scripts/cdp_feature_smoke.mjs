@@ -171,8 +171,8 @@ if (settingsH) {
   await settingsH.evalJs(`([...document.querySelectorAll(".settings-nav")].find(b => /剪贴板|Clipboard|剪貼板/.test(b.textContent)))?.click(); "clip-nav"`);
   await sleep(400);
   const labels = await settingsH.evalJs(`[...document.querySelectorAll(".settings-sub-label")].map(e => e.textContent.trim())`);
-  const toggleExists = await settingsH.evalJs(`!!document.querySelector(".settings-sub [role=switch]")`);
-  check("剪贴板 pane shows 开启预览 toggle", toggleExists && labels[0].includes("预览"), JSON.stringify(labels[0]));
+  const previewRow = await settingsH.evalJs(`[...document.querySelectorAll(".settings-sub-label")].some((e) => e.textContent.includes("预览")) && !!document.querySelector(".settings-group [role=switch]")`);
+  check("剪贴板 pane shows 开启预览 toggle", previewRow, JSON.stringify(labels[0]));
 } else {
   check("settings window opened for toggle render check", false);
 }

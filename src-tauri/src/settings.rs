@@ -147,14 +147,59 @@ pub struct Hotkeys {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Index {
     pub system_dirs: Vec<SystemDir>,
+    /// Named user-index entries (key-value, like Windows env vars): a display
+    /// `name` per indexed `path`. `no_files` = index only openable files in it.
+    #[serde(default)]
+    pub user_index: Vec<UserIndexDir>,
+    /// Legacy path list — kept only to migrate pre-key-value `settings.toml`.
+    #[serde(default)]
     pub user_dirs: Vec<String>,
-    /// User dirs where only `.lnk`/`.exe` are indexed (other files filtered).
-    /// Empty = every user dir indexes all files (the default).
+    /// Legacy no-files path list, paired with `user_dirs` (migration only).
     #[serde(default)]
     pub user_dirs_no_files: Vec<String>,
     /// Minutes between user-cache refreshes (startup always refreshes once).
     #[serde(default = "default_refresh_interval")]
     pub cache_refresh_interval_minutes: u32,
+}
+
+impl Index {
+    /// Convert the legacy `user_dirs` path list into `user_index` entries
+    /// (basename as the name). Called once when reading an old `settings.toml`;
+    /// the legacy fields are cleared so the write stays key-value.
+    fn migrate(&mut self) {
+        if self.user_index.is_empty() && !self.user_dirs.is_empty() {
+            self.user_index = self
+                .user_dirs
+                .iter()
+                .map(|p| UserIndexDir {
+                    name: name_of(p),
+                    path: p.clone(),
+                    no_files: self.user_dirs_no_files.iter().any(|f| f == p),
+                })
+                .collect();
+        }
+        self.user_dirs.clear();
+        self.user_dirs_no_files.clear();
+    }
+}
+
+/// A user-index entry: a display name mapped to an indexed directory path.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserIndexDir {
+    pub name: String,
+    pub path: String,
+    /// Only `.lnk`/`.exe` are indexed here (other files filtered).
+    #[serde(default)]
+    pub no_files: bool,
+}
+
+/// A human-friendly name for a directory path's last segment.
+fn name_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| path.to_string())
 }
 
 fn default_refresh_interval() -> u32 {
@@ -283,6 +328,7 @@ impl Default for Settings {
                         enabled: false,
                     },
                 ],
+                user_index: Vec::new(),
                 user_dirs: Vec::new(),
                 user_dirs_no_files: Vec::new(),
                 cache_refresh_interval_minutes: 60,
@@ -358,7 +404,11 @@ fn ensure_settings_files(base: &Path) -> Result<(), String> {
 fn read_settings(base: &Path) -> Settings {
     fs::read_to_string(settings_path(base))
         .ok()
-        .and_then(|text| toml::from_str(&text).ok())
+        .and_then(|text| {
+            let mut s: Settings = toml::from_str(&text).ok()?;
+            s.index.migrate();
+            Some(s)
+        })
         .unwrap_or_default()
 }
 
@@ -662,7 +712,35 @@ mod tests {
         let on_disk = fs::read_to_string(settings_path(&base)).unwrap();
         let re_imported: Settings = toml::from_str(&on_disk).unwrap();
         assert_eq!(re_imported.index.user_dirs, vec!["D:/Projects"]);
+        // Reading the file back migrates the legacy list to key-value entries.
+        let migrated = read_settings(&base);
+        assert_eq!(migrated.index.user_index.len(), 1);
+        assert_eq!(migrated.index.user_index[0].path, "D:/Projects");
+        assert_eq!(migrated.index.user_index[0].name, "Projects");
         fs::remove_dir_all(&base).ok();
+    }
+
+    /// A legacy `user_dirs` path list must convert to key-value `user_index`
+    /// entries (basename = name) and clear the legacy fields afterward.
+    #[test]
+    fn legacy_user_dirs_migrate_to_key_value_index() {
+        let mut s = Settings::default();
+        s.index.user_dirs = vec!["C:\\Projects\\A".into(), "C:\\Projects\\B".into()];
+        s.index.user_dirs_no_files = vec!["C:\\Projects\\B".into()];
+        s.index.migrate();
+        assert!(s.index.user_dirs.is_empty(), "legacy path list cleared");
+        assert!(s.index.user_dirs_no_files.is_empty());
+        assert_eq!(s.index.user_index.len(), 2);
+        assert_eq!(s.index.user_index[0].name, "A");
+        assert_eq!(s.index.user_index[0].path, "C:\\Projects\\A");
+        assert_eq!(s.index.user_index[0].no_files, false);
+        assert_eq!(s.index.user_index[1].name, "B");
+        assert_eq!(s.index.user_index[1].path, "C:\\Projects\\B");
+        assert_eq!(s.index.user_index[1].no_files, true);
+        // Re-running is a no-op (already key-value).
+        let mark = s.index.user_index.clone();
+        s.index.migrate();
+        assert_eq!(s.index.user_index, mark);
     }
 
     #[test]

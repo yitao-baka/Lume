@@ -1,17 +1,23 @@
-//! 「剪贴板」页 — history cap, what gets recorded, paste behavior and time
-//! display (docs/SETTINGS.md). Edits drive the working copy via `onChange`,
-//! which marks the settings dirty and enables 保存 / 应用.
+//! 「剪贴板」页 — history cap / recording, merge-copy, display, paste and
+//! preview groups (docs/SETTINGS.md). Edits drive the working copy via
+//! `onChange`, which marks the settings dirty and enables 保存并应用.
 
-import { createSignal, For } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { t } from "../i18n";
 import type { SettingsData } from "./types";
-import { Chip, Toggle } from "./InterfacePane";
+import { Chip, NumberPreset, Row, Toggle } from "./controls";
+import folderPlusIcon from "../../res/icons/folder_plus.svg";
 import deleteIcon from "../../res/icons/delete.svg";
+import damageMapIcon from "../../res/icons/damage-map.svg";
 
 /** History-cap presets (达到上限自动删除最旧的非固定记录). */
 const CAPS = [100, 200, 500, 1000];
-/** Auto-merge window presets in milliseconds. */
-const MERGE_WINDOWS = [500, 1000, 1500, 2000, 3000];
+
+/** 1500 → "1.5s"、3000 → "3s" — compact seconds label for the merge slider. */
+function mergeWindowLabel(ms: number): string {
+  const s = ms / 1000;
+  return `${Number.isInteger(s) ? s : s.toFixed(1)}s`;
+}
 
 export default function ClipboardPane(props: {
   settings: SettingsData;
@@ -33,158 +39,80 @@ export default function ClipboardPane(props: {
   function removeIgnoreApp(app: string) {
     props.onChange({ ignore_apps: (c().ignore_apps ?? []).filter((a) => a !== app) });
   }
+
   return (
     <>
+      <h2 class="settings-grouptitle">{t("clipHistoryCap")}</h2>
       <div class="settings-group">
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("settingsClipPreview")}</span>
-          <Toggle
-            checked={c().preview}
-            onChange={(v) => props.onChange({ preview: v })}
+        <Row label={t("clipHistoryCap")}>
+          <NumberPreset
+            value={c().history_cap}
+            presets={CAPS.map((v) => ({ label: String(v), value: v }))}
+            onCommit={(v) => props.onChange({ history_cap: v })}
           />
-        </div>
-        <span class="settings-hint">{t("settingsClipPreviewHint")}</span>
-      </div>
-
-      <div class="settings-group">
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("clipDedup")}</span>
-          <Toggle
-            checked={c().dedup}
-            onChange={(v) => props.onChange({ dedup: v })}
-          />
-        </div>
-        <span class="settings-hint">{t("clipDedupHint")}</span>
-      </div>
-
-      <div class="settings-group">
-        <h2 class="settings-title">{t("clipHistoryCap")}</h2>
-        <div class="settings-row">
-          <For each={CAPS}>
-            {(v) => (
-              <Chip
-                label={String(v)}
-                active={c().history_cap === v}
-                onClick={() => props.onChange({ history_cap: v })}
-              />
-            )}
-          </For>
-        </div>
-      </div>
-
-      <div class="settings-group">
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("clipRecordImages")}</span>
+        </Row>
+        <Row label={t("clipRecordImages")}>
           <Toggle
             checked={c().record_images}
             onChange={(v) => props.onChange({ record_images: v })}
           />
-        </div>
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("clipRecordFiles")}</span>
+        </Row>
+        <Row label={t("clipRecordFiles")}>
           <Toggle
             checked={c().record_files}
             onChange={(v) => props.onChange({ record_files: v })}
           />
-        </div>
-      </div>
-
-      <div class="settings-group">
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("clipPasteClose")}</span>
-          <Toggle
-            checked={c().paste_close}
-            onChange={(v) => props.onChange({ paste_close: v })}
-          />
-        </div>
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("clipShowSource")}</span>
-          <Toggle
-            checked={c().show_source_app}
-            onChange={(v) => props.onChange({ show_source_app: v })}
-          />
-        </div>
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("clipHoverSelect")}</span>
-          <Toggle
-            checked={c().hover_select}
-            onChange={(v) => props.onChange({ hover_select: v })}
-          />
-        </div>
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("clipFavoritesTop")}</span>
-          <Toggle
-            checked={c().favorites_top}
-            onChange={(v) => props.onChange({ favorites_top: v })}
-          />
-        </div>
-      </div>
-
-      <div class="settings-group">
-        <h2 class="settings-title">{t("clipTimeDisplay")}</h2>
-        <div class="settings-row">
-          <Chip
-            label={t("clipTimeRelative")}
-            active={c().time_display === "relative"}
-            onClick={() => props.onChange({ time_display: "relative" })}
-          />
-          <Chip
-            label={t("clipTimeAbsolute")}
-            active={c().time_display === "absolute"}
-            onClick={() => props.onChange({ time_display: "absolute" })}
-          />
-        </div>
-      </div>
-
-      <div class="settings-group">
-        <div class="settings-sub settings-sub-between">
-          <span class="settings-sub-label">{t("clipMergeCopy")}</span>
+        </Row>
+        <Row label={t("clipMergeCopy")}>
           <Toggle
             checked={c().merge_copy}
             onChange={(v) => props.onChange({ merge_copy: v })}
           />
-        </div>
-        <div class="settings-sub">
-          <span class="settings-sub-label">{t("clipMergeWindow")}</span>
-          <div class="settings-row">
-            <For each={MERGE_WINDOWS}>
-              {(ms) => (
-                <Chip
-                  label={`${ms / 1000}s`}
-                  active={c().merge_window_ms === ms}
-                  onClick={() => props.onChange({ merge_window_ms: ms })}
-                />
-              )}
-            </For>
-          </div>
-        </div>
-      </div>
+        </Row>
+        <Show when={c().merge_copy}>
+          <Row label={t("clipMergeWindow")}>
+            <div class="settings-slider">
+              <input
+                class="settings-slider-input"
+                type="range"
+                min={500}
+                max={5000}
+                step={100}
+                value={c().merge_window_ms}
+                style={{
+                  "--fill": `${
+                    ((c().merge_window_ms - 500) / (5000 - 500)) * 100
+                  }%`,
+                }}
+                onInput={(e) => {
+                  const v = e.currentTarget.valueAsNumber;
+                  if (Number.isFinite(v)) {
+                    props.onChange({ merge_window_ms: Math.round(v) });
+                  }
+                }}
+              />
+              <span class="settings-slider-value">
+                {mergeWindowLabel(c().merge_window_ms)}
+              </span>
+            </div>
+          </Row>
+        </Show>
 
-      <div class="settings-group">
-        <h2 class="settings-title">{t("clipIgnoreApps")}</h2>
-        <div class="settings-sub">
-          <div class="settings-row">
-            <input
-              class="settings-text-input"
-              type="text"
-              placeholder={t("clipIgnorePlaceholder")}
-              value={ignore()}
-              onInput={(e) => setIgnore(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addIgnoreApp();
-              }}
-            />
-            <button
-              class="settings-action"
-              disabled={!ignore().trim()}
-              onClick={addIgnoreApp}
-            >
-              {t("settingsAdd")}
-            </button>
-          </div>
+        <div class="settings-blocktitle">{t("clipIgnoreApps")}</div>
+        <span class="settings-hint">{t("clipIgnoreHint")}</span>
+        <Show
+          when={(c().ignore_apps ?? []).length > 0}
+          fallback={<span class="settings-empty">{t("clipIgnoreEmpty")}</span>}
+        >
           <For each={c().ignore_apps ?? []}>
             {(app) => (
-              <div class="settings-row settings-row-between">
+              <div class="settings-row-between settings-listrow">
+                <img
+                  class="settings-icon-btn-icon"
+                  src={damageMapIcon}
+                  alt=""
+                  draggable={false}
+                />
                 <span class="settings-path">{app}</span>
                 <button
                   class="settings-icon-btn"
@@ -197,8 +125,99 @@ export default function ClipboardPane(props: {
               </div>
             )}
           </For>
-          <span class="settings-hint">{t("clipIgnoreHint")}</span>
+        </Show>
+        <div class="settings-row settings-listadd">
+          <input
+            class="settings-text-input"
+            type="text"
+            placeholder={t("clipIgnorePlaceholder")}
+            value={ignore()}
+            onInput={(e) => setIgnore(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addIgnoreApp();
+            }}
+          />
+          <button
+            class="settings-icon-btn"
+            title={t("settingsAdd")}
+            aria-label={t("settingsAdd")}
+            disabled={!ignore().trim()}
+            onClick={addIgnoreApp}
+          >
+            <img class="settings-icon-btn-icon" src={folderPlusIcon} alt="" draggable={false} />
+          </button>
         </div>
+
+        <Row label={t("clipDedup")}>
+          <Toggle
+            checked={c().dedup}
+            onChange={(v) => props.onChange({ dedup: v })}
+          />
+        </Row>
+        <span class="settings-hint">{t("clipDedupHint")}</span>
+      </div>
+
+      <h2 class="settings-grouptitle">{t("groupDisplay")}</h2>
+      <div class="settings-group">
+        <Row label={t("clipShowSource")}>
+          <Toggle
+            checked={c().show_source_app}
+            onChange={(v) => props.onChange({ show_source_app: v })}
+          />
+        </Row>
+        <Row label={t("clipTimeDisplay")}>
+          <div class="settings-row settings-row-chips">
+            <Chip
+              label={t("clipTimeRelative")}
+              active={c().time_display === "relative"}
+              onClick={() => props.onChange({ time_display: "relative" })}
+            />
+            <Chip
+              label={t("clipTimeAbsolute")}
+              active={c().time_display === "absolute"}
+              onClick={() => props.onChange({ time_display: "absolute" })}
+            />
+          </div>
+        </Row>
+        <Row label={t("clipHoverSelect")}>
+          <Toggle
+            checked={c().hover_select}
+            onChange={(v) => props.onChange({ hover_select: v })}
+          />
+        </Row>
+        <Row label={t("clipFavoritesTop")}>
+          <Toggle
+            checked={c().favorites_top}
+            onChange={(v) => props.onChange({ favorites_top: v })}
+          />
+        </Row>
+      </div>
+
+      <h2 class="settings-grouptitle">{t("groupPaste")}</h2>
+      <div class="settings-group">
+        <Row label={t("clipPasteClose")}>
+          <Toggle
+            checked={c().paste_close}
+            onChange={(v) => props.onChange({ paste_close: v })}
+          />
+        </Row>
+      </div>
+
+      <h2 class="settings-grouptitle">{t("groupPreview")}</h2>
+      <div class="settings-group">
+        <Row label={t("settingsClipPreview")}>
+          <Toggle
+            checked={c().preview}
+            onChange={(v) => props.onChange({ preview: v })}
+          />
+        </Row>
+        <span class="settings-hint">{t("settingsClipPreviewHint")}</span>
+        <Row label={t("rememberChecks")}>
+          <Toggle
+            checked={c().remember_checks}
+            onChange={(v) => props.onChange({ remember_checks: v })}
+          />
+        </Row>
       </div>
     </>
   );

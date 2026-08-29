@@ -983,19 +983,80 @@ body.settings-window #root {
 
 .settings {
   display: flex;
+  flex-direction: column;
   height: 100%;
   background: var(--surface);
   color: var(--text);
   overflow: hidden;
 }
 
+/* Top bar: app name + the 设置搜索框 (filters nav + content sections). */
+.settings-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 18px 10px;
+}
+
+.settings-appname {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.settings-search {
+  flex: 1;
+  max-width: 340px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.settings-search:focus-within {
+  border-color: #5ac8fa;
+}
+
+.settings-search-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  filter: var(--icon-filter);
+  opacity: 0.65;
+}
+
+.settings-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.settings-search-input::placeholder {
+  color: var(--text-faint);
+}
+
+/* Below the top bar: nav rail + scrollable content. */
+.settings-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .settings-sidebar {
   flex: none;
-  width: 148px;
+  width: 160px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 14px 8px;
+  padding: 10px 8px;
   border-right: 1px solid var(--border);
 }
 
@@ -1034,19 +1095,25 @@ body.settings-window #root {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 22px;
+  /* Grouped-card column, centered and capped like the Flutter settings.
+     `width: 100%` is required — auto margins alone disable cross-axis
+     stretch in a column flex container and the body shrink-wraps. */
+  width: 100%;
+  max-width: 776px;
+  margin: 0 auto;
+  padding: 4px 28px 16px;
 }
 
-.settings-placeholder {
-  color: var(--text-faint);
-  font-size: 13px;
+/* A whole section (title + cards) — stacked when the search box filters. */
+.settings-section {
+  margin-bottom: 8px;
 }
 
 .settings-footer {
   flex: none;
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   padding: 12px 18px;
   border-top: 1px solid var(--border);
 }
@@ -1081,9 +1148,29 @@ body.settings-window #root {
   cursor: default;
 }
 
-/* Settings content controls (6.4 界面页). */
+/* Settings content controls — grouped-card layout. A group title (small
+   accent text) sits above each card; the card holds the labeled rows. */
+.settings-grouptitle {
+  margin: 16px 4px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5ac8fa;
+}
+
+/* Small sub-block title inside a card (系统索引 / 用户索引 / 忽略应用). */
+.settings-blocktitle {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5ac8fa;
+}
+
 .settings-group {
-  margin-bottom: 26px;
+  margin-bottom: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
 }
 
 .settings-title {
@@ -1265,7 +1352,101 @@ body.settings-window #root {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 4px 0;
+  padding: 6px 0;
+}
+
+/* Chip groups right-aligned inside a labeled row. */
+.settings-row-chips {
+  justify-content: flex-end;
+}
+
+/* List editor rows (忽略应用 / 用户索引): leading icon + text + actions. */
+.settings-listrow {
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.settings-listrow .settings-path {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-listadd {
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+
+/* Empty-state text for list editors (尚未添加忽略应用 / 尚未添加索引项). */
+.settings-empty {
+  display: block;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+/* 用户索引 key-value row: fixed-width name + arrow + ellipsized path. */
+.settings-index-name {
+  flex: none;
+  min-width: 88px;
+  max-width: 140px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-index-arrow {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.settings-input-fixed {
+  flex: none;
+  width: 220px;
+}
+
+.settings-input-name {
+  flex: none;
+  width: 130px;
+}
+
+/* Hotkey slot recorder button — shows the current combo, or the recording
+   hint while capturing. */
+.settings-hotkey-btn {
+  padding: 5px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.settings-hotkey-btn:hover {
+  background: var(--hover);
+}
+
+.settings-hotkey-btn.active {
+  border-color: #5ac8fa;
+  background: rgba(90, 200, 250, 0.16);
+  color: #5ac8fa;
+}
+
+.settings-link {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: #5ac8fa;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-link:hover {
+  text-decoration: underline;
 }
 
 .settings-path {
@@ -1382,37 +1563,16 @@ body.settings-window #root {
   filter: var(--icon-filter);
 }
 
-/* 「关于」页 — centered app icon + intro (docs/SETTINGS.md). */
-.about {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  text-align: center;
-}
-
-.about-icon {
-  width: 96px;
-  height: 96px;
-  border-radius: 22px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
-}
-
-.about-name {
-  font-size: 22px;
-  font-weight: 600;
-}
-
-.about-version {
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.about-desc {
-  max-width: 320px;
-  margin: 4px 0 0;
+/* 「关于」页 — description + version / license / author / homepage rows. */
+.settings-about-desc {
+  display: block;
+  padding: 4px 0 6px;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.settings-about-value {
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }

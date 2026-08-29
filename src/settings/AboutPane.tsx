@@ -1,19 +1,40 @@
-//! 「关于」页 — centered app icon + project intro (docs/SETTINGS.md).
-//!
-//! The icon lives in `res/icons/software.png` (docs/NORMS.md res/ convention)
-//! and is bundled here for display.
+//! 「关于」页 — description + version / license / author / homepage rows
+//! (docs/SETTINGS.md). The homepage opens through `launch_app`
+//! (ShellExecuteW), the same path the clipboard 「打开链接」 uses.
 
+import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import { APP_VERSION_LABEL } from "../appVersion";
-import iconUrl from "../../res/icons/software.png";
+import { Row } from "./controls";
+
+const HOMEPAGE = "https://github.com/yitao-baka/Lume";
 
 export default function AboutPane() {
   return (
-    <div class="about">
-      <img class="about-icon" src={iconUrl} alt="Lume" draggable={false} />
-      <div class="about-name">Lume</div>
-      <div class="about-version">{APP_VERSION_LABEL}</div>
-      <p class="about-desc">{t("aboutTagline")}</p>
-    </div>
+    <>
+      <h2 class="settings-grouptitle">{t("about")}</h2>
+      <div class="settings-group">
+        <span class="settings-about-desc">{t("aboutTagline")}</span>
+        <Row label={t("aboutVersion")}>
+          <span class="settings-about-value">{APP_VERSION_LABEL}</span>
+        </Row>
+        <Row label={t("aboutLicense")}>
+          <span class="settings-about-value">Apache License 2.0</span>
+        </Row>
+        <Row label={t("aboutAuthor")}>
+          <span class="settings-about-value">yitao-baka</span>
+        </Row>
+        <Row label={t("aboutHomepage")}>
+          <button
+            class="settings-link"
+            onClick={() =>
+              void invoke("launch_app", { path: HOMEPAGE, name: HOMEPAGE, elevated: false })
+            }
+          >
+            {HOMEPAGE}
+          </button>
+        </Row>
+      </div>
+    </>
   );
 }

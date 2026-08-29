@@ -123,7 +123,7 @@ pub fn run() {
                 tauri::WebviewUrl::App("index.html".into()),
             )
             .title("Lume")
-            .inner_size(720.0, 560.0)
+            .inner_size(940.0, 660.0)
             .min_inner_size(560.0, 420.0)
             .center()
             .resizable(true)

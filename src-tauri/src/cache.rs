@@ -283,9 +283,12 @@ fn live_dirs(settings: &Settings) -> Vec<(PathBuf, bool)> {
     {
         dirs.extend(resolve_index_dirs("Desktop").into_iter().map(|d| (d, true)));
     }
-    for spec in &settings.index.user_dirs {
-        let index_files = !settings.index.user_dirs_no_files.iter().any(|f| f == spec);
-        dirs.extend(resolve_index_dirs(spec).into_iter().map(|d| (d, index_files)));
+    for dir in &settings.index.user_index {
+        dirs.extend(
+            resolve_index_dirs(&dir.path)
+                .into_iter()
+                .map(|d| (d, !dir.no_files)),
+        );
     }
     dirs
 }

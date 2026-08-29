@@ -44,8 +44,11 @@ export interface SettingsData {
   hotkeys: { toggle: string; switch_mode: string };
   index: {
     system_dirs: { path: string; enabled: boolean }[];
+    /** Named user-index entries (key-value, like Windows env vars). */
+    user_index: { name: string; path: string; no_files: boolean }[];
+    /** Legacy path list — migration only, always empty after a read. */
     user_dirs: string[];
-    /** User dirs where only .lnk/.exe are indexed (files filtered out). */
+    /** Legacy no-files list — migration only, always empty after a read. */
     user_dirs_no_files: string[];
     /** Minutes between user-cache refreshes (startup always refreshes once). */
     cache_refresh_interval_minutes: number;
@@ -84,3 +87,56 @@ export interface SettingsData {
     remember_checks: boolean;
   };
 }
+
+/** Mirrors the Rust `impl Default for Settings` (src-tauri/src/settings.rs) —
+ * the working copy 「恢复默认设置」 resets to. */
+export const DEFAULT_SETTINGS: SettingsData = {
+  meta: { version: 1 },
+  appearance: {
+    language: "system",
+    color_mode: "system",
+    entry_size: 110,
+    window_width: 720,
+    window_height: 520,
+    window_position: "center",
+    remember_position: false,
+    show_recent: true,
+    show_explorer_bar: true,
+    expand_pinned: false,
+    shift_enter_admin: true,
+    recent_count: 20,
+    search_placeholder_apps: "",
+    search_placeholder_clipboard: "",
+    remember_last_page: false,
+    last_page: "apps",
+    last_page_kind: "all",
+  },
+  hotkeys: { toggle: "Alt+Space", switch_mode: "Tab" },
+  index: {
+    system_dirs: [
+      { path: "Desktop", enabled: true },
+      { path: "System32", enabled: true },
+      { path: "StartMenu", enabled: false },
+    ],
+    user_index: [],
+    user_dirs: [],
+    user_dirs_no_files: [],
+    cache_refresh_interval_minutes: 60,
+  },
+  clipboard: {
+    history_cap: 200,
+    record_images: true,
+    record_files: true,
+    paste_close: true,
+    show_source_app: true,
+    time_display: "relative",
+    ignore_apps: [],
+    merge_copy: false,
+    merge_window_ms: 1500,
+    hover_select: false,
+    favorites_top: false,
+    preview: true,
+    dedup: true,
+    remember_checks: true,
+  },
+};

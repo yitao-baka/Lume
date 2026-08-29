@@ -92,9 +92,9 @@ fn watch_dirs(settings: &crate::settings::Settings) -> Vec<(PathBuf, bool)> {
                 .map(|p| (p, false)),
         );
     }
-    for spec in &settings.index.user_dirs {
+    for dir in &settings.index.user_index {
         dirs.extend(
-            crate::cache::resolve_index_dirs(spec)
+            crate::cache::resolve_index_dirs(&dir.path)
                 .into_iter()
                 .map(|p| (p, false)),
         );

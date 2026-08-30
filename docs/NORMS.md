@@ -68,7 +68,7 @@ dev 为 `src-tauri/target/debug/` 下）。Lume 因此可以整体拷贝带走�
   About 页渲染它（如 `Pre-26.8`，`<年份-月份>` 预发布格式）。
 - **内部 semver**：`Cargo.toml` / `tauri.conf.json` / `package.json` 的
   `version`，仅用于构建/打包，**必须满足 semver**（tauri 构建强制校验版本，
-  报 `'tauri.conf.json > version' must be a semver string`）。当前为 `1.0.0`。
+  报 `'tauri.conf.json > version' must be a semver string`）。当前为 `2.0.0`。
 - 两者相互独立、需手动同步；发布时先改两者，再打 tag / 建 GitHub Release。
 
 ## 开发流程：每次改动必编译

@@ -5,6 +5,6 @@
 //! 这里由前端渲染，而打包用的内部 semver 为 `1.0.0`（见上述文件）。
 //!
 //! 发布时手动保持两处同步：
-//!   - 对外标签 = APP_VERSION_LABEL  （About 页展示，如 "Pre-26.8"）
+//!   - 对外标签 = APP_VERSION_LABEL  （About 页展示，如 "Pre-26.8.1"）
 //!   - 内部 semver = Cargo.toml / tauri.conf.json / package.json 的 version
-export const APP_VERSION_LABEL = "Pre-26.8";
+export const APP_VERSION_LABEL = "Pre-26.8.1";

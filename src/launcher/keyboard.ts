@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { APP_KEYS, EDIT_KEYS, type AppEntry, type ClipboardItem, type MenuState, type Mode, type PreviewReq } from "./types";
+import type { ModeId } from "../plugins/types";
 import type { NavigateStore } from "./navigate";
 import type { ModeInstance } from "../plugins/types";
 
@@ -12,6 +13,8 @@ export interface KeyDeps {
   appsQuery: () => string;
   /** Key that switches modes (settings → 快捷键). */
   switchKey: () => string;
+  /** All enabled mode ids in cycle order (apps first, then plugin modes). */
+  modeIds: () => ModeId[];
   shiftEnterAdmin: () => boolean;
   /** Settings: show the 「最近使用」 bar (gates bar navigation). */
   showRecent: () => boolean;
@@ -71,7 +74,10 @@ export function createKeyRouter(deps: KeyDeps) {
       }
     } else if (matchesSwitchKey(e, deps.switchKey())) {
       e.preventDefault();
-      void deps.switchMode(deps.mode() === "apps" ? "clipboard" : "apps");
+      // Cycle through every enabled mode (apps first, then plugin modes).
+      const modes = deps.modeIds();
+      const idx = modes.indexOf(deps.mode());
+      void deps.switchMode(modes[(Math.max(idx, 0) + 1) % modes.length]);
     } else if (deps.mode() === "apps") {
       const empty = deps.appsQuery() === "";
       // ── search results grid (non-empty query) ──

@@ -272,6 +272,7 @@ function App() {
   const router = createKeyRouter({
     mode,
     appsQuery,
+    modeIds: () => [APPS_MODE, ...modePlugins().map((m) => m.id)],
     switchKey,
     shiftEnterAdmin,
     showRecent,

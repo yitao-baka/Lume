@@ -22,7 +22,7 @@ export default function AboutPane() {
           <span class="settings-about-value">Apache License 2.0</span>
         </Row>
         <Row label={t("aboutAuthor")}>
-          <span class="settings-about-value">yitao-baka</span>
+          <span class="settings-about-value">IndexEeve&amp;yitao-baka</span>
         </Row>
         <Row label={t("aboutHomepage")}>
           <button

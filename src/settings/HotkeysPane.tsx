@@ -116,7 +116,11 @@ function HotkeyControl(props: {
             setError(null);
           }}
         >
-          {recording() ? t("hotkeyRecording") : props.value}
+          {recording()
+            ? t("hotkeyRecording")
+            : isPreset()
+              ? t("settingsCustom")
+              : props.value}
         </button>
       </div>
       <Show when={error()}>

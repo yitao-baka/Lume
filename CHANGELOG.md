@@ -6,6 +6,16 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **设置/快捷键：录制按钮文本错误** — 重排时丢失「自定义」标签逻辑：预设
+  chip 激活时录制按钮错误地重复显示当前组合键（如 `Tab | Tab`）。恢复为
+  预设激活 → 显示「自定义」，自定义组合 → 显示组合键，录制中 → 显示
+  「按下新的组合键…」。
+- **Tab 无法切换到插件模式** — 切换键硬编码 `apps ⇄ clipboard`。改为在
+  全部启用模式间循环（导航 → 剪贴板 → 插件模式 → …，顺序 = 注册序）。
+- **关于页贡献者** — 作者行改为「贡献者 = IndexEeve&yitao-baka」。
+
 ### Added
 
 - **插件系统第三轮：mode/service 磁盘加载 + 宿主能力 API（uTools 式）** —

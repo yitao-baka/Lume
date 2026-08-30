@@ -3,7 +3,9 @@ pub mod cache;
 mod clipboard;
 mod dirwatch;
 mod envwatch;
+pub mod everything;
 mod explorer;
+mod filesearch;
 mod hotkey;
 mod i18n;
 mod icons;
@@ -14,6 +16,7 @@ pub mod recent;
 pub mod settings;
 pub mod svc;
 mod tray;
+pub mod usnidx;
 mod window;
 
 use tauri::{Manager, WindowEvent};
@@ -303,6 +306,7 @@ pub fn run() {
             apps::refresh_index,
             apps::launch_app,
             apps::reveal_in_folder,
+            filesearch::file_search,
             hotkey::get_hotkey,
             hotkey::validate_hotkey,
             i18n::load_language_files,

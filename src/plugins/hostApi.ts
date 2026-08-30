@@ -3,7 +3,7 @@
 //! pages reach the same surface through the postMessage bridge (§ iframe).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { PluginHostApi, PluginServices } from "./types";
+import type { FileSearchOut, PluginHostApi, PluginServices } from "./types";
 
 /** Build the capability surface for one plugin id. `services` comes from the
  * composition root; every storage call is scoped by the plugin id (the Rust
@@ -39,6 +39,10 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       remove: async (key: string) => {
         await invoke("plugin_storage_set", { id, key, value: null });
       },
+    },
+    search: {
+      files: (q: string, max?: number) =>
+        invoke<FileSearchOut>("file_search", { query: q, max }),
     },
   };
 }

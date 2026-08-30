@@ -1,11 +1,12 @@
 //! LumeSVC SYSTEM service (docs/ROADMAP service iteration).
 //!
 //! The companion `lume-svc.exe` binary registers/unregisters the service and
-//! runs it as SYSTEM. It is a **dormant bridge for future features** — it holds
-//! the SCM lifecycle and a named pipe, but does no work today: the launcher is
-//! the sole refresher of the index-cache DBs.
-//!
-//! Data-dir handoff: the elevated `--install` writes
+//! runs it as SYSTEM. Beyond the SCM lifecycle and the `\\.\pipe\LumeSVC`
+//! bridge, it owns the **self-hosted full-drive file index** (`usnidx.rs`) —
+//! the backend that answers file searches on machines where Everything is not
+//! running. While Everything runs, the engine stays dormant (no duplicate
+//! full-drive index on the machine); when Everything disappears, the watcher
+//! builds the index lazily. Data-dir handoff: the elevated `--install` writes
 //! `HKLM\Software\Lume\DataDir` (same user's elevated token, so its
 //! `%LOCALAPPDATA%` is the right one); the SYSTEM service reads that value at
 //! start (its own `%LOCALAPPDATA%` is the system profile).
@@ -19,6 +20,8 @@ use serde::Serialize;
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::System::Registry::HKEY;
 
+use crate::usnidx;
+
 pub const SERVICE_NAME: &str = "LumeSVC";
 const SERVICE_DISPLAY: &str = "Lume Service";
 const PIPE_NAME: &str = r"\\.\pipe\LumeSVC";
@@ -26,6 +29,8 @@ const REG_KEY: &str = r"Software\Lume";
 const REG_VALUE: &str = "DataDir";
 const AUTOSTART_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const AUTOSTART_VALUE: &str = "Lume";
+/// How often the dormancy watcher re-checks whether Everything is running.
+const ENGINE_WATCH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Set by the control handler on STOP so the worker threads can exit and
 /// `service_main` reports STOPPED promptly (SCM gives ~30s).
@@ -37,6 +42,7 @@ static STATUS_HANDLE: Mutex<Option<usize>> = Mutex::new(None);
 /// State shared between the service's worker threads.
 struct Shared {
     data_dir: Mutex<Option<PathBuf>>,
+    engine: Arc<usnidx::Engine>,
 }
 
 /// Service status reported to the settings UI.
@@ -367,7 +373,7 @@ pub fn install() -> Result<(), String> {
             }
         };
         // Friendly description shown in services.msc.
-        let desc_text = wide("Lume background service (bridge for future SYSTEM features)");
+        let desc_text = wide("Lume background service (full-drive file index for instant file search)");
         let desc = SERVICE_DESCRIPTIONW {
             lpDescription: PWSTR(desc_text.as_ptr() as *mut u16),
         };
@@ -499,12 +505,14 @@ pub fn run_foreground(data_dir_override: Option<PathBuf>) -> Result<(), String> 
     }
     let shared = Arc::new(Shared {
         data_dir: Mutex::new(Some(crate::paths::base_dir())),
+        engine: Arc::new(usnidx::Engine::new()),
     });
+    spawn_engine_watcher(Arc::clone(&shared.engine));
     std::thread::spawn({
         let s = shared.clone();
         move || pipe_server(s)
     });
-    eprintln!("[lume-svc] running in foreground (dormant); Ctrl+C to quit");
+    eprintln!("[lume-svc] running in foreground; Ctrl+C to quit");
     loop {
         std::thread::sleep(Duration::from_secs(1));
     }
@@ -533,7 +541,9 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
 
         let shared = Arc::new(Shared {
             data_dir: Mutex::new(Some(data_dir)),
+            engine: Arc::new(usnidx::Engine::new()),
         });
+        spawn_engine_watcher(Arc::clone(&shared.engine));
         std::thread::spawn({
             let s = shared.clone();
             move || pipe_server(s)
@@ -601,9 +611,64 @@ fn report_status(
     let _ = unsafe { SetServiceStatus(*handle, &status) };
 }
 
-/// Named-pipe server: accept a HELLO carrying the data dir and reply. The
-/// protocol is the future bridge's IPC surface; today the service only records
-/// the data dir. Blocking single-thread accept loop.
+/// Engine dormancy watcher: while Everything is running the self-hosted index
+/// stays off (no duplicate full-drive index on the machine); when Everything
+/// disappears the engine builds lazily and keeps itself fresh.
+fn spawn_engine_watcher(engine: Arc<usnidx::Engine>) {
+    std::thread::spawn(move || loop {
+        if everything_running() {
+            engine.set_off();
+        } else {
+            engine.ensure_running();
+        }
+        std::thread::sleep(ENGINE_WATCH_INTERVAL);
+    });
+}
+
+/// Whether an Everything process exists (name match via the toolhelp
+/// snapshot). Window-message IPC is session-scoped, so a SYSTEM service can't
+/// probe Everything's UI window — process existence is the right signal for
+/// the dormancy decision.
+fn everything_running() -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return false;
+        };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut found = false;
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                let len = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                if String::from_utf16_lossy(&entry.szExeFile[..len]).eq_ignore_ascii_case("Everything.exe") {
+                    found = true;
+                    break;
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snapshot);
+        found
+    }
+}
+
+/// Named-pipe server: length-prefixed JSON requests in, length-prefixed JSON
+/// replies out. Verbs: `hello` (data-dir handoff), `search` (file search via
+/// the usnidx engine), `status` (engine state). Blocking single-thread accept
+/// loop; requests are one message each.
 fn pipe_server(shared: Arc<Shared>) {
     use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
@@ -644,7 +709,7 @@ fn pipe_server(shared: Arc<Shared>) {
                 PIPE_ACCESS_DUPLEX,
                 NAMED_PIPE_MODE(PIPE_TYPE_MESSAGE.0 | PIPE_READMODE_MESSAGE.0),
                 PIPE_UNLIMITED_INSTANCES,
-                4096,
+                65536, // out: search replies carry up to ~100 paths
                 4096,
                 0,
                 sa.as_ref().map(|p| p as *const SECURITY_ATTRIBUTES),
@@ -669,30 +734,158 @@ fn pipe_server(shared: Arc<Shared>) {
             let len = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
             if len + 4 <= n as usize {
                 let payload = String::from_utf8_lossy(&buf[4..4 + len]).into_owned();
-                handle_hello(&shared, &payload);
+                let reply = handle_message(&shared, &payload);
+                let mut out = Vec::with_capacity(reply.len() + 4);
+                out.extend_from_slice(&(reply.len() as u32).to_le_bytes());
+                out.extend_from_slice(reply.as_bytes());
+                let _ = unsafe { WriteFile(pipe, Some(&out), None, None) };
+                // Wait for the client to hang up before recycling the pipe
+                // instance: DisconnectNamedPipe discards data the client has
+                // not read yet, so an immediate disconnect would race the
+                // reply out of the buffer (classic lost-reply bug).
+                let mut drain = [0u8; 64];
+                let mut dn: u32 = 0;
+                let _ = unsafe { ReadFile(pipe, Some(&mut drain), Some(&mut dn), None) };
             }
         }
-        let ack: &[u8] = br#"{"t":"hello_ack","ok":true}"#;
-        let _ = unsafe { WriteFile(pipe, Some(ack), None, None) };
         let _ = unsafe { DisconnectNamedPipe(pipe) };
         let _ = unsafe { CloseHandle(pipe) };
     }
 }
 
-/// Parse a HELLO message and update the service's data dir. Future features can
-/// extend this protocol; the service is dormant today.
-fn handle_hello(shared: &Shared, payload: &str) {
-    #[derive(serde::Deserialize)]
-    struct Hello {
-        #[serde(default)]
-        data_dir: Option<String>,
-    }
-    let Ok(msg) = serde_json::from_str::<Hello>(payload) else {
-        return;
+/// Dispatch one request. Every verb replies with a length-prefixed JSON
+/// message (see `pipe_transact` on the GUI side).
+fn handle_message(shared: &Shared, payload: &str) -> String {
+    let Ok(msg) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return r#"{"t":"error","message":"bad json"}"#.into();
     };
-    if let Some(dir) = msg.data_dir {
-        let p = PathBuf::from(&dir);
-        crate::paths::set_base_dir(p.clone());
-        *shared.data_dir.lock().unwrap() = Some(p);
+    match msg.get("t").and_then(|v| v.as_str()) {
+        Some("hello") => {
+            if let Some(dir) = msg.get("data_dir").and_then(|v| v.as_str()) {
+                let p = PathBuf::from(dir);
+                crate::paths::set_base_dir(p.clone());
+                *shared.data_dir.lock().unwrap() = Some(p);
+            }
+            r#"{"t":"hello_ack","ok":true}"#.into()
+        }
+        Some("search") => {
+            let query = msg.get("q").and_then(|v| v.as_str()).unwrap_or("");
+            let max = msg
+                .get("max")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50)
+                .clamp(1, 100) as usize;
+            let (status, hits) = shared.engine.search(query, max);
+            let items = serde_json::to_string(&hits).unwrap_or_else(|_| "[]".into());
+            format!(r#"{{"t":"results","status":"{status}","items":{items}}}"#)
+        }
+        Some("status") => {
+            let (state, files) = shared.engine.status();
+            format!(r#"{{"t":"status","state":"{state}","files":{files}}}"#)
+        }
+        _ => r#"{"t":"error","message":"unknown verb"}"#.into(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pipe client (GUI side)
+// ---------------------------------------------------------------------------
+
+/// One request/reply exchange with the service over `\\.\pipe\LumeSVC`,
+/// bounded by `timeout` (a hung service must never stall the search path —
+/// the worker thread is abandoned on timeout and dies with its next pipe op).
+pub fn pipe_transact(payload: &str, timeout: Duration) -> Result<String, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let owned = payload.to_string();
+    std::thread::Builder::new()
+        .name("svc-pipe-client".into())
+        .spawn(move || {
+            let _ = tx.send(pipe_transact_blocking(&owned));
+        })
+        .map_err(|e| e.to_string())?;
+    rx.recv_timeout(timeout)
+        .map_err(|_| "svc pipe timeout".to_string())?
+}
+
+fn pipe_transact_blocking(payload: &str) -> Result<String, String> {
+    use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, GetLastError};
+    use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, OPEN_EXISTING};
+    use windows::Win32::Foundation::ERROR_PIPE_BUSY;
+    let name = wide(PIPE_NAME);
+    let mut handle = None;
+    for attempt in 0..3 {
+        handle = unsafe {
+            CreateFileW(
+                PCWSTR(name.as_ptr()),
+                GENERIC_READ.0 | GENERIC_WRITE.0,
+                windows::Win32::Storage::FileSystem::FILE_SHARE_MODE(0),
+                None,
+                OPEN_EXISTING,
+                windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
+                None,
+            )
+        }
+        .ok();
+        if handle.is_some() {
+            break;
+        }
+        if unsafe { GetLastError() } != ERROR_PIPE_BUSY || attempt == 2 {
+            return Err("connect pipe: busy/failed".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let handle = handle.ok_or("connect pipe failed")?;
+    let result = (|| {
+        let mut message = Vec::with_capacity(payload.len() + 4);
+        message.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        message.extend_from_slice(payload.as_bytes());
+        unsafe {
+            WriteFile(handle, Some(&message), None, None).map_err(|e| format!("write pipe: {e}"))?;
+        }
+        // Length-prefixed reply; byte-mode reads accumulate the message.
+        let mut head = [0u8; 4];
+        read_exact(handle, &mut head)?;
+        let len = u32::from_le_bytes(head) as usize;
+        if len > 1024 * 1024 {
+            return Err("svc reply too large".into());
+        }
+        let mut body = vec![0u8; len];
+        read_exact(handle, &mut body)?;
+        String::from_utf8(body).map_err(|e| format!("svc reply utf8: {e}"))
+    })();
+    let _ = unsafe { CloseHandle(handle) };
+    result
+}
+
+fn read_exact(handle: windows::Win32::Foundation::HANDLE, buf: &mut [u8]) -> Result<(), String> {
+    use windows::Win32::Storage::FileSystem::ReadFile;
+    let mut done = 0usize;
+    while done < buf.len() {
+        let mut n: u32 = 0;
+        let ok = unsafe { ReadFile(handle, Some(&mut buf[done..]), Some(&mut n), None) };
+        if ok.is_err() || n == 0 {
+            return Err("short pipe read".into());
+        }
+        done += n as usize;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Live round trip against a running service (foreground or SCM):
+    /// `lume-svc.exe --foreground`, then run this test.
+    #[test]
+    #[ignore] // requires the service (or --foreground) to be running
+    fn live_pipe_status() {
+        let reply = pipe_transact(r#"{"t":"status"}"#, Duration::from_secs(2)).expect("status");
+        eprintln!("status reply: {reply}");
+        assert!(reply.contains(r#""t":"status""#));
+        let reply = pipe_transact(r#"{"t":"search","q":"readme","max":3}"#, Duration::from_secs(2))
+            .expect("search");
+        eprintln!("search reply: {reply}");
+        assert!(reply.contains(r#""t":"results""#));
     }
 }

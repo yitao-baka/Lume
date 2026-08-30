@@ -1167,3 +1167,62 @@ renderer 进程。实测基线（release，idle 全隐藏，`scripts/measure-web
 `cargo check` / `cargo test`（73 通过）/ `tsc --noEmit` / `npm run build` 全过。手动：Explorer
 里呼出 → 底部出现该栏并显示文件夹名 → CMD/PowerShell 在目录打开、右键高权限、复制路径 toast；
 非 Explorer 场景栏不出现。
+
+## 20. 文件秒搜：统一门面 + Everything IPC + LumeSVC 自研索引（已实现）
+
+**背景**：全盘文件「秒搜」有两条互补路径——用户已装并运行 Everything 时直接借它的
+实时索引（零配置、毫秒级）；没有 Everything 时由 LumeSVC（ROADMAP #8 的 SYSTEM 服务
+骨架，本就是为 SYSTEM 级索引铺路）自建 USN/MFT 索引。两者包成**一个统一 API**
+（`file_search` 命令），前端管线一次接入，后端按可用性自动选择/降级。
+
+### 实现
+
+- **Everything IPC 客户端**（`src-tauri/src/everything.rs`，纯 Rust，**不依赖 SDK
+  DLL**）：直连 Everything 1.4 的 WM_COPYDATA 协议（常量对照官方 SDK
+  `Everything_IPC.h`）——`FindWindow("EVERYTHING_TASKBAR_NOTIFICATION")` 探测；查询 =
+  packed `EVERYTHING_IPC_QUERYW`（5×DWORD + 变长宽字符串，`reply_hwnd` 只取低 32 位）；
+  回复 = `EVERYTHING_IPC_LISTW`（28 字节头 + 12 字节项，filename/path 为相对 LIST
+  起点的**字节偏移**）。专用 worker 线程持有 message-only 回复窗口并串行化查询
+  （Everything 同窗口第二个查询会取消第一个）；等待循环 **泵消息 → 查槽 → 再等待**
+  的顺序是实测关键（反了会睡满超时才看到已到的回复：7ms 变 3s）。回复的 `path` 字段
+  是**父目录**，解析时拼上文件名成为完整路径——否则前端的 path 去重会把同目录命中
+  全部误杀（实机冒烟抓到的 bug）。单查询实测 **7–8ms**。
+- **统一门面**（`src-tauri/src/filesearch.rs`）：`file_search(query)`（async 命令，
+  内部 `spawn_blocking`——同步命令跑主线程，后端超时会卡 UI）。后端选择：Everything
+  窗口存在 → IPC 查询（600ms 超时）；否则/失败 → LumeSVC 管道（800ms 超时）；都没有
+  → `unavailable`。每个后端失败后进入 **10s 冷却**（进程级 map），连击键盘不会反复
+  撞卡死的后端。返回 `{backend, status, entries}`，entries 复用 `AppEntry` 形状。
+- **SVC 管道协议**（`src-tauri/src/svc.rs`）：请求/回复统一 **u32 LE 长度前缀 +
+  JSON**；动词 `hello`（原有 data-dir 交接）/ `search {q,max}` / `status`。**坑**：
+  服务端 `WriteFile` 后立即 `DisconnectNamedPipe` 会把客户端还没读的回复**丢出缓冲**
+  （lost-reply 竞态，实测 "short pipe read"）——写完追加一次阻塞 `ReadFile` 等客户端
+  挂断再回收管道实例。GUI 侧 `pipe_transact` 在独立线程上跑 + `recv_timeout`，挂死的
+  服务永不拖住搜索路径。
+- **自研引擎**（`src-tauri/src/usnidx.rs`，仅 lume-svc 使用）：每固定 NTFS 卷一个
+  `VolumeIndex`——FRN→节点表（parent FRN + 原始/小写双 UTF-8 名字 arena）由
+  `FSCTL_ENUM_USN_DATA` 全量读 MFT 构建（先 `FSCTL_QUERY_USN_JOURNAL` 捕获
+  journal 位点，卷无 journal 则按 Everything 默认尺寸 32MiB+8MiB 创建），之后每卷一个
+  **阻塞式** `FSCTL_READ_USN_JOURNAL` watcher 线程增量维护（CREATE/DELETE/
+  RENAME_OLD/NEW_NAME 四个 reason；阻塞读 = 零空闲 CPU）。查询 = 小写 arena 上
+  Horspool 子串扫描（UTF-8 字节级匹配对多字节安全），前缀命中优先，路径沿 parent
+  链回溯解析（FRN 5 = 卷根，深度钳 128）。order 数组按 2×+1024 阈值惰性压实。
+  **休眠策略**：SVC 每 60s 探测 Everything 进程（toolhelp 快照；SYSTEM 会话看不见
+  用户会话的窗口，不能走 FindWindow）——在跑则 `set_off` 丢弃索引（机器上不留两份
+  全盘索引），不在跑则 `ensure_running` 懒建；generation 计数让构建线程在 Everything
+  中途出现时放弃落地。卷 watcher 出错 → 卷摘除 + `Failed` → 下个心跳重建。
+  v1 限制：仅固定 NTFS 卷；目录删除后其子节点成孤儿（路径解析跳过，重建清理）。
+- **前端管线**（`src/App.tsx runSearch`）：`search_apps` 与 `file_search`
+  **Promise.all 并行**，合并序 = 原生索引 → 全局关键字行（不能后移：20 条封顶会把它
+  挤掉）→ 文件命中（`FILE_RESULTS_MAX=12`）→ 插件 provider；合计封顶仍 20、path 全局
+  去重、同一 `requestSeq` 令牌守卫。无新设置项、无新 UI——无后端时静默退化为纯原生。
+
+### 验证
+
+`cargo test --lib` 93 通过（+13：IPC reply 解析/查询布局、USN 树增删改/路径解析/
+查询排序/压实、冷却窗口）。实机（本机 Everything 运行中）：`cargo test -- --ignored
+everything`（live_query 4 连跑 7–8ms/次）；`lume-svc --foreground` + ignored
+`live_pipe_status` 双动词往返（`state:"off"` 实证休眠判定）；CDP 冒烟
+`scripts/cdp_filesearch_smoke.mjs`：直呼 `file_search` = everything/12 条，输入
+"readme" 网格 15 行 = 3 原生 + 12 文件命中（含真实文件/文件夹图标）。ignored
+`live_scan`（MFT 全量实扫）需**管理员**运行，留作提权环境验证。`tsc --noEmit` /
+`npm run build` 全过。

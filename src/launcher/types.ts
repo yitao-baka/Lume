@@ -16,6 +16,17 @@ export interface AppEntry {
   path: string;
 }
 
+/** Reply of the Rust `file_search` command — the unified file-search facade
+ * (backend "everything" = voidtools Everything via its WM_COPYDATA IPC; "svc"
+ * = the LumeSVC self-hosted USN index; "none" = neither backend available).
+ * `status` "building" means the service index is still scanning and the
+ * results are partial. */
+export interface FileSearchOut {
+  backend: "everything" | "svc" | "none";
+  status: "ready" | "building" | "unavailable";
+  entries: AppEntry[];
+}
+
 /** A history entry as returned by the Rust `search_clipboard` command. */
 export interface ClipboardItem {
   id: number;

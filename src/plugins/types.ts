@@ -14,7 +14,9 @@
 //! the manifest/permission surfaces exist so the loader can slot in).
 
 import type { Component } from "solid-js";
-import type { ClipboardItem, PreviewReq } from "../launcher/types";
+import type { ClipboardItem, FileSearchOut, PreviewReq } from "../launcher/types";
+
+export type { FileSearchOut };
 
 /** Manifest as reported by the Rust `get_plugins` command. */
 export interface PluginManifest {
@@ -69,6 +71,12 @@ export interface PluginHostApi {
     get<T = unknown>(key: string): Promise<T | null>;
     set(key: string, value: unknown): Promise<void>;
     remove(key: string): Promise<void>;
+  };
+  /** Whole-drive file search — the unified `file_search` facade (ROADMAP
+   * #20): a running Everything when present, the LumeSVC self-hosted USN
+   * index otherwise. `max` defaults to 12, clamped 1..=100. */
+  search: {
+    files(q: string, max?: number): Promise<FileSearchOut>;
   };
 }
 

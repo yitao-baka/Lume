@@ -14,6 +14,7 @@ import type {
   AppEntry,
   ClipboardItem,
   ClipKind,
+  FileSearchOut,
   MenuState,
 } from "./launcher/types";
 import {
@@ -363,15 +364,29 @@ function App() {
         sizer.scheduleResize();
         return;
       }
-      const res = (await invoke("search_apps", { query: q })) as AppEntry[];
+      // Native index and the unified file-search backend race in parallel;
+      // both are stale-guarded by the same request token below.
+      const [res, files] = (await Promise.all([
+        invoke("search_apps", { query: q }),
+        invoke<FileSearchOut>("file_search", { query: q }).catch((err) => {
+          console.error("file_search failed:", err);
+          return null;
+        }),
+      ])) as [AppEntry[], FileSearchOut | null];
       if (id === requestSeq) {
-        // Provider results (registry + disk plugins) append after the native
-        // index — deduped by path, capped to keep the grid sane.
+        // Merge order: native index → 全局关键字 rows (never crowded out) →
+        // file-search hits (Everything or the LumeSVC engine) → plugin
+        // providers — deduped by path, capped to keep the grid sane.
         const extra: AppEntry[] = [];
         const seen = new Set(res.map((r) => r.path));
-        // 全局关键字（uTools 式）: exact match offers an 「进入 <name>」 row.
         for (const kw of modeKeywordMatches(q)) {
           extra.push({ id: -1, name: `进入 ${kw.name}`, path: `lume-mode://${kw.id}` });
+        }
+        for (const f of files?.entries ?? []) {
+          if (res.length + extra.length >= 20) break;
+          if (!f?.name || !f?.path || seen.has(f.path)) continue;
+          seen.add(f.path);
+          extra.push(f);
         }
         for (const p of providerPlugins()) {
           try {

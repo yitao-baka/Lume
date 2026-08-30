@@ -226,6 +226,8 @@ async function execHostRpc(
       return api.storage.set(a.key, (args as { value: unknown }).value);
     case "storage.remove":
       return api.storage.remove(a.key);
+    case "search.files":
+      return api.search.files(a.q, args.max as number | undefined);
     default:
       throw new Error(`unknown lume rpc: ${method}`);
   }
@@ -286,7 +288,20 @@ function createDiskModeInstance(
     setSelected,
     rows: () => [],
     activate: () => {},
-    onKey: () => false,
+    onKey: (e) => {
+      // Forward every key to the iframe (`lume.on.key`) — plugin pages
+      // implement their own arrow/Enter handling. Never consumed: rows() is
+      // empty, so the root's own grid bindings are no-ops anyway.
+      if (viewReady) {
+        post("key", {
+          key: e.key,
+          ctrlKey: e.ctrlKey,
+          shiftKey: e.shiftKey,
+          altKey: e.altKey,
+        });
+      }
+      return false;
+    },
     onEscape: () => false,
     previewTarget: () => null,
     previewEnabled: () => false,

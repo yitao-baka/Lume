@@ -20,7 +20,10 @@ Rust Core (src-tauri/src/)
   ├─ settings.rs — settings.toml / default.toml / backup.toml three-file system
   ├─ tray.rs     — system tray icon, Restart/Exit menu, left-click toggle
   ├─ hotkey.rs   — toggle shortcut: Alt+Space preferred, fallback chain
-  ├─ svc.rs      — LumeSVC SYSTEM-service skeleton (SCM + IPC pipe only)
+  ├─ svc.rs      — LumeSVC SYSTEM service (SCM + IPC pipe + index dormancy)
+  ├─ everything.rs— Everything voidtools WM_COPYDATA IPC client (no DLL)
+  ├─ filesearch.rs— unified file-search facade (Everything / LumeSVC backends)
+  ├─ usnidx.rs   — self-hosted NTFS USN/MFT full-drive index (runs in lume-svc)
   └─ envwatch.rs — keep the process env block in sync with system env changes
         ▼
 Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
@@ -53,6 +56,39 @@ that hides the window, so clicking elsewhere dismisses it.
   `CreateProcess`, which cannot resolve `.lnk` targets, so the shell is
   required. A successful launch is recorded into `recent_apps` (the single
   chokepoint for the 最近使用 bar).
+
+### `filesearch.rs` / `everything.rs` / `usnidx.rs`
+The whole-drive file-search stack (ROADMAP #20), surfaced as one command —
+`file_search(query)` (async: sync commands run on the main thread and the
+backends have timeouts).
+
+- **Backend selection** (`filesearch.rs`): a running Everything first (its
+  index is live and free), then the LumeSVC pipe, else `unavailable`. A failed
+  backend enters a process-wide 10s cooldown so per-keystroke typing never
+  pays repeated timeouts. Returns `{backend, status, entries}` in `AppEntry`
+  shape.
+- **Everything IPC** (`everything.rs`): Everything 1.4's documented
+  WM_COPYDATA protocol, no SDK DLL — query = packed `EVERYTHING_IPC_QUERYW`,
+  reply = `EVERYTHING_IPC_LISTW`. One worker thread owns a message-only reply
+  window and serializes queries; the wait loop pumps sent messages before
+  checking the reply slot (replies answered reentrantly inside the blocking
+  send are already in the slot; pumping in the wrong order sleeps past them).
+  Everything's reply `path` is the parent directory — joined with the
+  filename so hits carry full openable paths. Measured 7–8ms per query.
+- **USN engine** (`usnidx.rs`, runs only inside lume-svc): per fixed NTFS
+  volume a FRN→node tree (parent FRN + original/lowercased UTF-8 name arenas)
+  built by a full MFT enumeration (`FSCTL_ENUM_USN_DATA`, journal position
+  captured first, journal created at Everything's default sizing when
+  missing), kept fresh by one blocking `FSCTL_READ_USN_JOURNAL` watcher per
+  volume (zero idle CPU). Queries are Horspool substring scans over the
+  lowercased arena (prefix matches ranked first); paths resolve by walking
+  the parent chain (FRN 5 = volume root). v1 limits: fixed NTFS volumes only,
+  no persistence (rebuild at service start), deleted directories leave
+  orphans until a rebuild.
+- **Dormancy** (`svc.rs`): while an Everything process exists the engine holds
+  no index (no duplicate full-drive index on the machine); when it disappears
+  the watcher builds lazily. The service cannot see user-session windows, so
+  the probe is a toolhelp process-name check, not FindWindow.
 
 ### `icons.rs`
 - **Extraction**: `extract_icon_png` calls `IShellItemImageFactory` (via
@@ -202,9 +238,9 @@ pick up their defaults.
   (hash-deduped) plus a process-level in-memory cache.
 - **WAL lets three connections share `lume.db`** concurrently
   (`PRAGMA journal_mode=WAL`).
-- The SYSTEM service (`lume-svc.exe`) is a **dormant skeleton**: it reads and
-  writes no database — it only learns the data dir for future SYSTEM-level
-  features (USN indexing).
+- The SYSTEM service (`lume-svc.exe`) owns the **self-hosted USN index**
+  (`usnidx.rs`, in memory only — rebuilt from the MFT on service start, no
+  database) and answers `search`/`status` over `\\.\pipe\LumeSVC`.
 
 ## Frontend
 

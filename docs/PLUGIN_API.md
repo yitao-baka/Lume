@@ -24,7 +24,7 @@ Lume 插件 = **一份清单**（`plugin.toml`）+ **零或多份贡献**（cont
 | 贡献 | 契约 | 动态加载 | 内置示例 | 磁盘示例 |
 |---|---|---|---|---|
 | `provider` | `ProviderInstance` — 向 Navigate 搜索追加结果 | ✅ | `web-search`（examples/） |
-| `mode` | `ModeInstance`（内置）/ **桥接 iframe 页**（磁盘） | ✅ | `clipboard` | `hello-mode`（examples/） |
+| `mode` | `ModeInstance`（内置）/ **桥接 iframe 页**（磁盘） | ✅ | `clipboard` | `hello-mode`、`file-search`（examples/） |
 | `service` | `PreviewService`（内置）/ **生命周期钩子**（磁盘） | ✅ | `preview` | — |
 | `navBars` | `NavBarContribution[]` — 导航页栏目（§5A，任意 kind 可选钩子） | ✅ | — | `nav-bar`（examples/） |
 
@@ -316,6 +316,32 @@ lume.app.resize({ width: 800, height: 600 });
 
 内置剪贴板模式不声明 `height`（沿用全局设置）；示例 `examples/plugins/
 hello-mode/` 演示了 `height = 560` 与 `app.resize` 按钮。
+
+---
+
+## 6C. 磁盘 mode 桥接契约（`window.lume`）
+
+mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise RPC 对象
+`window.lume`（方法拒绝时 reject；桥接层捕获并 `console.error`，返回
+`undefined`）：
+
+| 组 | 方法 | 说明 |
+|---|---|---|
+| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `openPath(path)` / `resize({width?, height?})` | 同 §6B.0 的组合根能力；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」 |
+| `clipboard` | `readText()` / `writeText(text)` | 系统剪贴板文本 |
+| `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV（`<base>/plugins/<id>/storage.json`） |
+| `search` | `files(q, max?)` | **全盘文件搜索** — 统一门面 `file_search`（Everything 在运行则走它的 IPC，否则 LumeSVC 自研 USN 索引）。返回 `{backend: "everything"\|"svc"\|"none", status: "ready"\|"building"\|"unavailable", entries: [{id,name,path}]}`；`max` 默认 12、钳制 1..=100。完整示例 `examples/plugins/file-search/` |
+
+事件（页面赋值 `window.lume.on.<type> = fn`）：
+
+| 事件 | 载荷 | 时机 |
+|---|---|---|
+| `query` | `string` | 模式激活期间的每次搜索框输入（含清空） |
+| `show` | — | 模式切入 / 每次呼出（reset） |
+| `hide` | — | 启动器隐藏且本模式活动 |
+| `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 window keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
+
+Esc 不经过 `key` 事件（根统一处理：菜单 → 模式 onEscape → 卫星预览 → 隐藏）。
 
 ---
 

@@ -6,6 +6,25 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+
+- **文件秒搜 mode 插件 + 宿主 search 能力** — 统一文件搜索 API 以宿主能力
+  `search.files(q, max?)` 开放给插件（桥接 `window.lume.search.files`）；磁盘
+  mode 新增 `lume.on.key` 按键转发事件（模式页自实现 ↑↓/Enter 导航）。示例
+  `examples/plugins/file-search/`：关键字「秒搜」进入的全盘文件搜索模式页
+  （↑↓ 选择 / Enter 打开 / Ctrl+Enter 复制路径 / 后端与构建状态徽标，50 条
+  结果）。
+- **文件秒搜（ROADMAP #20）** — 统一文件搜索门面 `file_search` + 双后端：
+  本机 Everything 在运行时经**纯 Rust WM_COPYDATA IPC** 直连其索引（不依赖
+  SDK DLL，单查询实测 7–8ms）；没有 Everything 时由 LumeSVC SYSTEM 服务
+  自建 **USN/MFT 全盘索引**（全量 `FSCTL_ENUM_USN_DATA` + 阻塞式 journal
+  增量，零空闲 CPU；Everything 在跑则服务自动休眠不留双份索引，消失后
+  懒建）。前端搜索网格并行并入文件结果（原生 → 关键字行 → 文件命中 →
+  插件 provider，合计封顶 20、路径去重）；后端失败 10s 冷却，挂死的服务
+  永不拖住键入。管道协议升级为长度前缀 JSON 多动词（hello/search/status）。
+  新增 `scripts/cdp_filesearch_smoke.mjs` 实机冒烟与三个 `#[ignore]` 集成
+  测试（Everything 实查 / 管道往返 / 管理员 MFT 实扫）。
+
 ### Fixed
 
 - **导航页条目失去选中反馈（描边高亮）** — NavigateView 重构引入的 Solid

@@ -61,10 +61,18 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   (recent opens, SQLite `recent_apps`, deduped by path, capped by
   `appearance.recent_count`) above 「已固定」 (SQLite `pinned_apps`). Both are
   titled + expandable (one row collapsed / all rows on 展开), sized like the
-  results grid; the empty-query browse grid was removed in 0.2.12. Typing shows
-  the file-search results grid (settings 系统索引). Launches are recorded at the
-  single `launch_app` chokepoint (`src-tauri/src/apps.rs`,
-  `src-tauri/src/recent.rs`, `src-tauri/src/pins.rs`, `src/App.tsx`)
+  results grid; the empty-query browse grid was removed in 0.2.12. Typing
+  shows the file-search results grid (settings 系统索引) merged with the
+  unified file-search backends (Everything IPC / LumeSVC USN index, ROADMAP
+  #20). Launches are recorded at the single `launch_app` chokepoint
+  (`src-tauri/src/apps.rs`, `src-tauri/src/recent.rs`, `src-tauri/src/pins.rs`,
+  `src/App.tsx`)
+- Whole-drive file search — `file_search` facade picks a backend per query:
+  a running Everything (pure-Rust WM_COPYDATA IPC, ~7ms) or the LumeSVC
+  self-hosted USN/MFT index over `\\.\pipe\LumeSVC` (the service sleeps while
+  Everything runs, builds lazily when it disappears); failed backends cool
+  down 10s; hits merge into the Navigate grid after the native index
+  (`src-tauri/src/filesearch.rs`, `everything.rs`, `usnidx.rs`, `svc.rs`)
 - Clipboard manager — background capture (250 ms seq poll) → SQLite history
   of text, images **and file/folder copies**, search + copy back; `Tab`
   switches Navigate / Clipboard modes. The Clipboard mode is a full page:
@@ -142,7 +150,45 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**插件系统 v1 + 剪贴板/预览插件化（ROADMAP #7, complete) — as of 2026-08-30**:
+**文件秒搜 mode 插件 + 宿主 search 能力 (complete) — as of 2026-08-30**：
+统一 API 以宿主能力开放给插件 —— `PluginHostApi.search.files(q, max?)`
+（types/hostApi/registry RPC 三处接线，`file_search` 命令加 `max` 参数钳制
+1..=100）；磁盘 mode 新增 `lume.on.key` 桥接事件（`createDiskModeInstance
+.onKey` 把 window keydown 转发进 iframe——磁盘 mode `rows()` 为空、根网格
+键位不生效，模式页自实现 ↑↓/Enter；Esc 仍走根分层不转发）。示例
+`examples/plugins/file-search/`（kind=mode：keywords「秒搜/file」进入 +
+`lume.search.files(q, 50)` 列表页 + ↑↓/Enter 打开/Ctrl+Enter 复制路径 +
+building/backend 状态徽标）。**坑**：`custom-protocol` 在 Cargo.toml 无条件
+启用 → **debug exe 也内嵌构建时的 dist/（页面 URL = tauri.localhost）**，
+改前端后必须重跑 `npm run build` 再 `cargo build`，否则跑的是旧前端
+（冒烟表现为 iframe 里桥接缺新方法）。验证：cargo test 93、tsc/build 干净、
+`scripts/cdp_filesearch_mode_smoke.mjs`（关键字「秒搜」进入 → iframe 50 行
+（meta `everything · 50 项`）→ 窗口 ArrowDown 驱动 iframe 选中 → 截图）。
+
+**Prior: 文件秒搜：统一门面 + Everything IPC + LumeSVC 自研索引 (ROADMAP #20, complete) —
+as of 2026-08-30**: `file_search` 命令 = 双后端统一门面（`src-tauri/src/
+filesearch.rs`）：**Everything 分支** —— `everything.rs` 纯 Rust 直连
+Everything 1.4 的 WM_COPYDATA 协议（官方 SDK 头文件对照，无 DLL 依赖；
+worker 线程持 message-only 回复窗口 + 串行化；等待循环必须「泵消息→查槽→
+等待」，顺序反了回复会被睡过——实测 3s→7ms）；回复 `path` 是父目录，须拼
+文件名成完整路径，否则前端 path 去重误杀同目录命中。**SVC 分支** ——
+`usnidx.rs` USN/MFT 全盘索引（`FSCTL_ENUM_USN_DATA` 全量 + 每卷阻塞式
+journal watcher 零空闲 CPU；小写 arena + Horspool 查询；FRN 父链路径解析）；
+svc.rs 管道升级为长度前缀 JSON 多动词（hello/search/status），**写完回复须
+再阻塞读等客户端挂断再 Disconnect**（否则回复被丢弃，lost-reply 竞态）；
+休眠策略 = 每 60s toolhelp 探测 Everything 进程（SYSTEM 会话不能
+FindWindow 跨会话窗口），在跑则弃索引、消失则懒建（generation 防过期落地）。
+门面：Everything 窗口探测 → IPC 查询(600ms) → SVC 管道(800ms, 独立线程 +
+recv_timeout) → unavailable；失败后端 10s 冷却；async 命令 + spawn_blocking
+（同步命令跑主线程会卡 UI）。前端 `runSearch`：search_apps 与 file_search
+Promise.all 并行，合并序 = 原生 → 关键字行（不能后移，20 封顶会挤掉）→
+文件命中(12) → provider，合计 20 + path 去重 + requestSeq 令牌。验证：
+cargo test 93（+13）、tsc/build 干净、ignored live_query 7–8ms/次、
+`--foreground` 管道双动词（state:"off" 实证休眠）、`scripts/
+cdp_filesearch_smoke.mjs` 网格 15 行 = 3 原生 + 12 文件；`live_scan`
+（MFT 实扫）需管理员，留提权环境。
+
+**Prior: 插件系统 v1 + 剪贴板/预览插件化（ROADMAP #7, complete) — as of 2026-08-30**:
 插件 = 清单（`<base>/plugins/<id>/plugin.toml`）+ 前端贡献；Rust `plugins.rs`
 （扫描/`get_plugins`/`set_plugin_enabled` + `settings.plugins.disabled`，单测 ×3）；
 前端 `src/plugins/`（registry + 契约）。**剪贴板** = 首个 mode 贡献
@@ -409,7 +455,8 @@ search-box placeholders per mode. Details + known edge cases in
 complete as of 2026-08-03** (6.1–6.6).
 Next up: ROADMAP #7 plugin system (started only on explicit instruction).
 
-Not yet implemented (future): plugin system; the file search is basic (lists
-the settings 索引目录 top-level files, non-recursive); USN / whole-drive
-SYSTEM indexing (LumeSVC is the skeleton for it); clipboard page redesign
-(ROADMAP #10.4, design pending) — see `docs/ROADMAP.md`.
+Not yet implemented (future): plugin system follow-ups (permissions layer,
+plugin-level settings UI); SVC USN index hardening (non-NTFS volumes, orphan
+GC, index persistence across service restarts, file-search settings UI);
+clipboard page redesign (ROADMAP #10.4, design pending) — see
+`docs/ROADMAP.md`.

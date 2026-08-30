@@ -1,0 +1,155 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 13px "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0;
+         background: transparent; color: inherit; user-select: none;
+         overflow: hidden; }
+  #hint { padding: 26px 24px; opacity: .55; line-height: 1.7; }
+  #meta { position: fixed; right: 14px; top: 12px; font-size: 11px;
+          opacity: .45; pointer-events: none; }
+  #building { padding: 6px 24px 0; font-size: 12px; opacity: .7; }
+  #list { position: absolute; top: 30px; bottom: 0; left: 0; right: 0;
+          overflow-y: auto; padding-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 6px 18px 6px 14px;
+         border-left: 3px solid transparent; }
+  .row.sel { background: rgba(128,150,200,.22); border-left-color: rgba(120,160,255,.9); }
+  .glyph { flex: 0 0 34px; height: 34px; border-radius: 8px; display: flex;
+           align-items: center; justify-content: center; font-size: 12px;
+           font-weight: 600; background: rgba(128,128,128,.16); }
+  .glyph.dir { font-size: 17px; }
+  .body { flex: 1 1 auto; min-width: 0; }
+  .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .path { font-size: 11px; opacity: .55; white-space: nowrap; overflow: hidden;
+          text-overflow: ellipsis; direction: rtl; text-align: left; }
+  .copy { flex: 0 0 auto; opacity: 0; font-size: 11px; padding: 3px 9px;
+          border: 1px solid rgba(128,128,128,.5); border-radius: 6px;
+          background: transparent; color: inherit; cursor: pointer; }
+  .row.sel .copy, .row:hover .copy { opacity: .8; }
+  .copy:hover { background: rgba(128,128,128,.2); }
+</style>
+</head>
+<body>
+  <div id="building" style="display:none">⏳ LumeSVC 索引构建中 — 结果可能不全</div>
+  <div id="meta"></div>
+  <div id="hint">输入以搜索全盘文件 — Everything / LumeSVC 引擎自动选择<br>
+    <span style="font-size:12px">↑/↓ 选择 · Enter 打开 · Ctrl+Enter 复制路径 · 点击打开</span></div>
+  <div id="list"></div>
+  <script>
+    var list = document.getElementById("list");
+    var hint = document.getElementById("hint");
+    var meta = document.getElementById("meta");
+    var building = document.getElementById("building");
+    var rows = [];        // [{name, path, isFolder}]
+    var sel = 0;
+    var seq = 0;          // stale-response guard
+    var timer = null;
+    var lastQuery = "";
+
+    function esc(s) {
+      var d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    }
+
+    function ext(name) {
+      var i = name.lastIndexOf(".");
+      return i > 0 ? name.slice(i + 1, i + 5).toUpperCase() : "FILE";
+    }
+
+    function render() {
+      building.style.display = "none";
+      if (!lastQuery) {
+        list.innerHTML = "";
+        hint.style.display = "block";
+        meta.textContent = "";
+        return;
+      }
+      hint.style.display = "none";
+      if (!rows.length) {
+        list.innerHTML = '<div id="hint" style="padding:20px 24px;opacity:.5">无结果</div>';
+        return;
+      }
+      var html = "";
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        html += '<div class="row' + (i === sel ? " sel" : "") + '" data-i="' + i + '">'
+          + '<div class="glyph' + (r.isFolder ? " dir" : "") + '">'
+          + (r.isFolder ? "📁" : esc(ext(r.name))) + "</div>"
+          + '<div class="body"><div class="name">' + esc(r.name) + "</div>"
+          + '<div class="path">' + esc(r.path) + "&nbsp;</div></div>"
+          + '<button class="copy" data-i="' + i + '">复制路径</button></div>';
+      }
+      list.innerHTML = html;
+      var el = list.querySelector(".row.sel");
+      if (el) el.scrollIntoView({ block: "nearest" });
+    }
+
+    function search(q) {
+      lastQuery = q;
+      var token = ++seq;
+      if (!q) { rows = []; sel = 0; render(); return; }
+      lume.search.files(q, 50).then(function (out) {
+        if (token !== seq) return; // a newer query already landed
+        rows = (out && out.entries) || [];
+        sel = 0;
+        meta.textContent = (out ? out.backend : "") + " · " + rows.length + " 项";
+        if (out && out.status === "building") building.style.display = "block";
+        if (out && out.backend === "none") {
+          hint.style.display = "block";
+          hint.innerHTML = "文件搜索后端不可用 — 需要正在运行的 Everything，"
+            + "或已安装并启动 LumeSVC 服务";
+          rows = [];
+        }
+        render();
+      });
+    }
+
+    function openRow(i) {
+      var r = rows[i];
+      if (!r) return;
+      lume.app.openPath(r.path);   // launch_app → 文件/文件夹都走 ShellExecuteW
+      lume.app.hide();
+    }
+
+    lume.on.query = function (q) {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () { search(q || ""); }, 60);
+    };
+    lume.on.show = function () { sel = 0; render(); };
+    lume.on.key = function (k) {
+      if (!rows.length) return;
+      if (k.key === "ArrowDown") { sel = Math.min(sel + 1, rows.length - 1); render(); }
+      else if (k.key === "ArrowUp") { sel = Math.max(sel - 1, 0); render(); }
+      else if (k.key === "PageDown") { sel = Math.min(sel + 8, rows.length - 1); render(); }
+      else if (k.key === "PageUp") { sel = Math.max(sel - 8, 0); render(); }
+      else if (k.key === "Home") { sel = 0; render(); }
+      else if (k.key === "End") { sel = rows.length - 1; render(); }
+      else if (k.key === "Enter" && k.ctrlKey) {
+        var r = rows[sel];
+        if (r) {
+          lume.clipboard.writeText(r.path);
+          lume.app.toast("已复制路径");
+        }
+      } else if (k.key === "Enter") { openRow(sel); }
+    };
+
+    list.addEventListener("click", function (e) {
+      var btn = e.target.closest(".copy");
+      if (btn) {
+        var r = rows[+btn.dataset.i];
+        if (r) { lume.clipboard.writeText(r.path); lume.app.toast("已复制路径"); }
+        e.stopPropagation();
+        return;
+      }
+      var row = e.target.closest(".row");
+      if (row) { sel = +row.dataset.i; openRow(sel); }
+    });
+    list.addEventListener("mousemove", function (e) {
+      var row = e.target.closest(".row");
+      if (row && sel !== +row.dataset.i) { sel = +row.dataset.i; render(); }
+    });
+  </script>
+</body>
+</html>

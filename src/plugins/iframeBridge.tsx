@@ -2,7 +2,7 @@
 //! (srcdoc, same-origin — the trust model is "explicit placement = trusted")
 //! with an injected bridge client. The page talks to the host through
 //! `window.lume` (promise-based RPC) and receives events by assigning
-//! `window.lume.on.query / .show / .hide`.
+//! `window.lume.on.query / .show / .hide / .key`.
 
 import { createSignal, onCleanup, onMount, type Component } from "solid-js";
 
@@ -49,7 +49,10 @@ export const BRIDGE_SCRIPT = `
       set: function (k, v) { return call("storage.set", { key: k, value: v }); },
       remove: function (k) { return call("storage.remove", { key: k }); },
     },
-    on: {}, // the page assigns: lume.on.query / .show / .hide = function(payload)
+    search: {
+      files: function (q, max) { return call("search.files", { q: q, max: max }); },
+    },
+    on: {}, // the page assigns: lume.on.query / .show / .hide / .key = function(payload)
   };
   window.addEventListener("message", function (e) {
     var d = e.data || {};

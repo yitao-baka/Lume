@@ -1,0 +1,15 @@
+# 文件秒搜 — the reference example for a disk MODE plugin built on the host
+# `search.files` capability (ROADMAP #20). Install: copy this folder into
+# <base>/plugins/, restart Lume (or trigger a settings change), then type the
+# global keyword "秒搜" (or "file") in Navigate and pick 「进入 文件秒搜」 —
+# or Tab to it in the mode pills. Type in the launcher search box: whole-drive
+# file hits render here (Everything when running, the LumeSVC USN index
+# otherwise). ↑/↓ select, Enter opens, Ctrl+Enter copies the path, click opens.
+id = "file-search"
+name = "文件秒搜"
+version = "1.0.0"
+kind = "mode"
+description = "全盘文件秒搜模式：宿主 search.files 能力（Everything / LumeSVC 引擎）+ 键盘导航"
+keywords = ["秒搜", "file"]
+view = "view.html"    # 桥接 iframe 页 — 本插件不需要 entry 逻辑钩子
+height = 560          # 本模式页面的窗口高度（逻辑 px）

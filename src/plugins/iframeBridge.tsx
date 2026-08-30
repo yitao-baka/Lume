@@ -36,6 +36,9 @@ export const BRIDGE_SCRIPT = `
       toast: function (text, opts) { return call("app.toast", { text: text, opts: opts }); },
       setQuery: function (q) { return call("app.setQuery", { q: q }); },
       openPath: function (p) { return call("app.openPath", { path: p }); },
+      resize: function (size) {
+        return call("app.resize", { width: size && size.width, height: size && size.height });
+      },
     },
     clipboard: {
       readText: function () { return call("clipboard.readText"); },

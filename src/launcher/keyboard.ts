@@ -16,8 +16,6 @@ export interface KeyDeps {
   /** All enabled mode ids in cycle order (apps first, then plugin modes). */
   modeIds: () => ModeId[];
   shiftEnterAdmin: () => boolean;
-  /** Settings: show the 「最近使用」 bar (gates bar navigation). */
-  showRecent: () => boolean;
   selected: () => number;
   menu: () => MenuState;
   currentResults: () => (AppEntry | ClipboardItem)[];
@@ -109,12 +107,8 @@ export function createKeyRouter(deps: KeyDeps) {
         }
         return;
       }
-      // ── empty-query bar navigation (最近使用 / 已固定, one continuous grid) ──
-      const hasBars =
-        (deps.showRecent() && nav.recentApps().length > 0) ||
-        nav.pinnedApps().length > 0 ||
-        !!nav.folderCtx();
-      if (!hasBars) return;
+      // ── empty-query bar navigation (the section registry, one continuous grid) ──
+      if (nav.sections().length === 0) return;
       if (e.key === "ArrowLeft") {
         deps.markKeyboard();
         e.preventDefault();
@@ -132,12 +126,13 @@ export function createKeyRouter(deps: KeyDeps) {
         e.preventDefault();
         nav.moveBarSelection(0, -1);
       } else if (e.key === "Delete") {
-        // Remove the selected recent entry (soft delete). In the grid zone
-        // (typing) Delete falls through to text editing in the search input.
-        if (nav.zone() === "recent") {
+        // Remove the selected entry of a section that supports it (最近使用's
+        // soft delete). In the grid zone (typing) Delete falls through to text
+        // editing in the search input.
+        const sec = nav.activeSection();
+        if (sec?.onDelete) {
           e.preventDefault();
-          const item = nav.recentApps()[nav.recentSelected()];
-          if (item) void nav.deleteRecent(item);
+          sec.onDelete(sec.selected());
         }
       } else if (e.key === "Enter") {
         e.preventDefault();

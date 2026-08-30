@@ -1,6 +1,6 @@
 # Lume 插件 API 参考（v1）
 
-> 适用版本：Pre-26.8+（ROADMAP #7 v1 + 第二轮）。
+> 适用版本：Pre-26.8+（ROADMAP #7 v1 + 第二/三/四轮）。
 > 快速上手见 `docs/PLUGINS.md`；本文是完整的 API 参考。
 > 所有契约以源码为唯一事实：`src/plugins/types.ts`（契约）、
 > `src/plugins/registry.ts`(注册表与加载器)、`src-tauri/src/plugins.rs`
@@ -26,6 +26,7 @@ Lume 插件 = **一份清单**（`plugin.toml`）+ **零或多份贡献**（cont
 | `provider` | `ProviderInstance` — 向 Navigate 搜索追加结果 | ✅ | `web-search`（examples/） |
 | `mode` | `ModeInstance`（内置）/ **桥接 iframe 页**（磁盘） | ✅ | `clipboard` | `hello-mode`（examples/） |
 | `service` | `PreviewService`（内置）/ **生命周期钩子**（磁盘） | ✅ | `preview` | — |
+| `navBars` | `NavBarContribution[]` — 导航页栏目（§5A，任意 kind 可选钩子） | ✅ | — | `nav-bar`（examples/） |
 
 **生命周期**：
 
@@ -89,12 +90,13 @@ export default {
 | `id` | string | **目录名** | 插件唯一 id。省略时回退为所在目录名；与目录名不一致时以清单为准（不强制相等）。启停、去重、日志都以它为键。 |
 | `name` | string | `""` | 设置页显示名；为空时前端回退显示 id。 |
 | `version` | string | `""` | 显示用；设置页以 chip 呈现。内置插件固定为 lume 的包版本。 |
-| `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。**动态加载只认 `provider`**；磁盘上的 `mode`/`service` 清单会被列出但不会执行任何入口。 |
+| `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。三类均支持磁盘加载（mode 需 `view`，provider/service 需 `entry`）。 |
 | `description` | string | `""` | 预留展示位。 |
 | `permissions` | string[] | `[]` | **预留**（v1 不校验、不强制）。为将来权限层准备的声明位。 |
 | `entry` | string | `""` | 入口 JS（相对插件目录）。provider 必填；mode 可选（逻辑钩子）；service 必填（钩子）。 |
 | `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入与关键字完全一致时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。 |
+| `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。 |
 
 **解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
 
@@ -135,8 +137,10 @@ interface PluginManifest {   // 前端看到的形态
 **`settings-applied`**（设置窗口保存 / 插件启停 / 导入恢复）。流程：
 
 1. `invoke("get_plugins")` 拉清单 → 存入响应式 signal（设置页据此渲染）。
-2. `loadDiskProviders()`：遍历清单，加载所有「未加载过 + 非内置 +
-   `kind === "provider"` + `enabled` + 有 `entry`/`dir`」的插件。
+2. `loadDiskPlugins()`：遍历清单，加载所有「未加载过 + 非内置 + `enabled`
+   + 有 `entry`/`dir`」的插件，按 `kind` 分流 — `provider`（§5）、
+   `mode`（桥接 iframe 页）、`service`（生命周期钩子）；任意 kind 都可带
+   `navBars` 钩子（§5A）。
 
 **加载一个磁盘 provider 的步骤**：
 
@@ -228,10 +232,98 @@ settings-applied，然后在 设置 → 插件 里确认它处于开启状态。
 
 ---
 
+## 5A. 导航页栏目（navBars — 任意 kind 的可选钩子）
+
+任何磁盘插件（provider/mode/service 不限）都可以在工厂逻辑对象上实现
+`navBars()`，向**导航页空查询主菜单**贡献栏目（bar/栏目）：
+
+```js
+export default function create(ctx) {
+  return {
+    navBars() {
+      return [
+        {
+          id: "links",            // 插件内唯一 — 宿主加 "<插件id>:" 前缀
+          title: "快速链接",       // 直接渲染，i18n 由插件自行处理
+          items: [
+            { name: "GitHub", path: "https://github.com" },
+            { name: "设备管理器", path: "C:\\Windows\\System32\\devmgmt.msc" },
+          ],
+        },
+      ];
+    },
+  };
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | string | ✅ | 栏目 id，插件内唯一；宿主加 `<插件id>:` 前缀作为键盘导航 zone 键。 |
+| `title` | string | ✅ | 栏目标题，原样渲染。 |
+| `items` | `{ name, path, icon? }[]` | ✅ | 每栏封顶 50 条；name/path 必填，坏条目丢弃并记控制台日志。 |
+
+- **渲染位置**：「已固定」之后、「Windows 资源管理器」之前，多个栏目按
+  插件注册序排列；**explorer 栏始终位于最下层**（结构性固定，插件栏不可
+  越过）。
+- **条目激活**：与原生栏条目完全一致 — 点击/Enter → `launch_app`（文件与
+  URL 都可以）→ 启动器隐藏；右键 → 共享 app 菜单（固定/启动/打开位置/管理
+  员启动）。
+- **图标**：`icon` 可省 — 文件路径走 `get_app_icons` 管线（取不到 → 未知图
+  标回退）；`data:`/`https?:`/`asset:`/`blob:` URI 直接使用，其它字符串按
+  文件路径（如插件目录内的图标）经 asset 协议解析。
+- **调用时机**：组合时、每次呼出（`launcher-shown`）、每次插件刷新
+  （settings-applied）。可返回 Promise（宿主等待）；单插件抛错/坏形状只影
+  响它自己。动态栏目（按 `ctx.storage` 状态返回不同条目）因此可行。
+- **键盘导航 / 展开**：与原生栏一致 — 参与连续网格导航（↑/↓/←/→ 跨栏保
+  列），超过一栏宽度出现「展开」，展开态撑满工作区（sizer cap 覆盖插件栏）。
+- **空栏目**（items 为空）不渲染；返回 `[]` 或不实现钩子 = 不贡献。
+
+完整示例：`examples/plugins/nav-bar/`。
+
+---
+
+## 5B. 插件自定窗口尺寸
+
+mode 插件可以用两种互补的方式决定启动器窗口大小：
+
+**① 声明式 — 清单 `height` 字段（静态默认值）**
+
+```toml
+kind = "mode"
+view = "view.html"
+height = 560        # 本模式页面的窗口高度（逻辑 px）
+```
+
+切换进该模式时，sizer 的 fixed-height 分支取 `desiredHeight()`（清单
+`height`），未声明时回退全局 设置 → 窗口大小 → 高度。前端会把声明值钳制
+到 `90px ≤ height ≤ 工作区高度 - 32px`，坏清单值不会撑爆屏幕。
+
+**② 运行时 — 宿主 RPC `app.resize`（动态调整）**
+
+iframe 页面里（桥接 `window.lume`）或工厂 `ctx.app` 上：
+
+```js
+lume.app.resize({ height: 720 });          // 只改高度，宽度保持当前值
+lume.app.resize({ width: 800, height: 600 });
+```
+
+- 省略的轴保持当前尺寸；height 钳制到启动器最小高度（90px）。
+- 典型用法：页面加载/内容变化后量自己的 DOM 再调
+  （`lume.app.resize({ height: document.documentElement.scrollHeight + padding })`），
+  实现真正的按内容自适应。调用频率请自行节制（host 侧不做防抖）。
+- **时效**：`app.resize` 的尺寸保持到下一次内容驱动的 resize —— 切换模式、
+  回到导航页（auto-fit）或其它 `scheduleResize` 触发会重新应用配置值。
+
+内置剪贴板模式不声明 `height`（沿用全局设置）；示例 `examples/plugins/
+hello-mode/` 演示了 `height = 560` 与 `app.resize` 按钮。
+
+---
+
 ## 6. 内置插件开发 API（TypeScript 贡献）
 
 > 这一节面向**第一方/编译进二进制**的插件（clipboard/preview 即此形态）。
-> 磁盘动态加载 v1 只覆盖 provider；mode/service 的动态化是后续工作。
+> 磁盘 mode/service 动态加载已支持（第三轮，`kind = "mode"` + `view` /
+> `kind = "service"` + `entry`）；本节仍是内置贡献契约的权威描述。
 > 契约定义：`src/plugins/types.ts`。
 
 ### 6.1 `LauncherPlugin` — 注册单元
@@ -290,6 +382,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 | `previewTarget()` | 卫星预览插件每次选中变化时轮询：当前选中行的预览请求（`PreviewReq`）或 `null`（隐藏）。行失效 → `null`。 |
 | `previewEnabled()` | 该模式当前是否想要卫星预览（对应 设置 → 开启预览）。 |
 | `measureViewport()` | 窗口尺寸变化（sizer 定高分支 + 根视口 effect）时触发；重测模式内部虚拟列表视口。 |
+| `desiredHeight?()` | 可选 — sizer 定高分支读取：本模式的固定窗口高度（清单 `height`），`null` = 用全局设置高度（§5B）。 |
 | `pageKind()` / `restorePage(kind)` | 记住上次所在页面：持久化当前页（如剪贴板分类）/ 恢复；切到该模式时根先 `restorePage("all")` 复位。 |
 | `applySettings(s)` | 每次 `settings-applied`（对**所有**模式实例，含未激活的）：应用自己的设置切片（如剪贴板的显示类开关）。 |
 | `View` | 无 props 的 Solid 组件——活动时经 `<Dynamic>` 渲染为整页内容。内部通过闭包持有自己的 store 与 `services`。 |

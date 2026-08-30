@@ -1,14 +1,14 @@
-//! Navigate-mode view — the empty-query main menu (最近使用 / 已固定 /
-//! Explorer-folder bars) and the search results grid. Pure rendering: state
-//! comes in as accessors + the navigate store; interactions go back out
-//! through callbacks.
+//! Navigate-mode view — the empty-query main menu (one section per bar:
+//! 最近使用 / 已固定 / plugin bars / the Explorer-folder bar) and the search
+//! results grid. Pure rendering: state comes in as accessors + the navigate
+//! store's section registry; interactions go back out through the section
+//! contract and callbacks.
 
 import { For, Show } from "solid-js";
 import { t } from "../i18n";
-import copyIcon from "../../res/icons/copy.svg";
-import runIcon from "../../res/icons/normal_run.svg";
 import unknownIcon from "../../res/icons/unknow_universal.svg";
 import type { AppEntry, MenuState } from "./types";
+import type { NavSection } from "./navigate";
 import type { NavigateStore } from "./navigate";
 
 export interface NavigateViewProps {
@@ -18,22 +18,24 @@ export interface NavigateViewProps {
   nav: NavigateStore;
   barCols: () => number;
   iconFor: (path: string) => string | undefined;
-  /** Settings: show the 「最近使用」 bar. */
-  showRecent: () => boolean;
   activate: () => void;
   /** selectionSource = "mouse" (hover/click takes over from keyboard nav). */
   markMouse: () => void;
   openMenu: (m: MenuState) => void;
   setSelected: (i: number) => void;
-  /** Expanded-bar toggles invalidate the cached work area + re-measure. */
-  invalidateWorkArea: () => void;
 }
 
-/** A single app box (grid or bar) with a cached icon + unknown-icon fallback. */
-function appBox(
+/** A single box in a bar or the results grid, with icon resolution: an
+ * explicit item icon (explorer tiles / plugin bars) wins, then the cached
+ * icon pipeline, then the unknown-icon fallback. `selected` is an accessor —
+ * boxes render inside <For> callbacks (not tracking scopes), so the
+ * highlight class must be read reactively at the classList position or it
+ * freezes at the initial value (no selection feedback at all). */
+function itemBox(
   props: NavigateViewProps,
-  app: AppEntry,
-  selected: boolean,
+  item: { name: string; path: string; icon?: string; mono?: boolean },
+  opts: { wrap?: boolean },
+  selected: () => boolean,
   handlers: {
     onActivate: () => void;
     onSelect: () => void;
@@ -42,14 +44,13 @@ function appBox(
     onDragStart?: (e: DragEvent) => void;
   }
 ) {
+  const src = () => item.icon ?? props.iconFor(item.path);
   return (
     <div
       class="result-box"
-      classList={{
-        "result-selected": selected,
-      }}
+      classList={{ "result-selected": selected(), "folder-box": opts.wrap }}
       role="option"
-      aria-selected={selected}
+      aria-selected={selected()}
       draggable={handlers.draggable ?? false}
       onMouseMove={handlers.onSelect}
       onClick={handlers.onActivate}
@@ -59,65 +60,97 @@ function appBox(
       }}
       onDragStart={handlers.onDragStart}
     >
-      <Show
-        when={props.iconFor(app.path)}
-        fallback={
-          <span class="result-box-tile result-box-icon">
+      <span class="result-box-tile result-box-icon">
+        <Show
+          when={src()}
+          fallback={
             <img class="result-box-img icon-unknown" src={unknownIcon} alt="" />
-          </span>
-        }
-      >
-        <span class="result-box-tile result-box-icon">
-          <img class="result-box-img" src={props.iconFor(app.path)} alt="" />
-        </span>
-      </Show>
-      <span class="result-box-name">{app.name}</span>
+          }
+        >
+          <img
+            class={`result-box-img${item.mono ? " folder-icon-svg" : ""}`}
+            src={src()}
+            alt=""
+            draggable={false}
+          />
+        </Show>
+      </span>
+      <span class="result-box-name">{item.name}</span>
     </div>
   );
 }
 
-/** A titled, expandable bar (最近使用 / 已固定) on the empty-query main menu.
- * Collapsed = the measured column count (one row); expanded = everything.
- * The 展开 button only appears when content exceeds one row. */
-function barSection(
-  props: NavigateViewProps,
-  opts: {
-    title: string;
-    items: AppEntry[];
-    expanded: boolean;
-    zoneActive: boolean;
-    selected: number;
-    draggable?: boolean;
-    onToggle: () => void;
-    onActivate: (i: number) => void;
-    onSelect: (i: number) => void;
-    onContext: (e: MouseEvent, app: AppEntry) => void;
-    onDragStart?: (i: number, e: DragEvent) => void;
-  }
-) {
-  const cols = Math.max(props.barCols(), 1);
-  const shown = opts.expanded ? opts.items : opts.items.slice(0, cols);
+/** One titled bar (栏目) on the empty-query main menu, rendered from its
+ * NavSection contract. Collapsed = the measured column count (one row);
+ * expanded (or non-expandable) = everything. The 展开 button only appears
+ * when an expandable bar's content exceeds one row. */
+function SectionView(props: NavigateViewProps, section: NavSection) {
+  const nav = props.nav;
+  // Reactive: 条目框大小 / 窗口宽度变化会重测列数，切片与展开按钮随之更新。
+  const cols = () => Math.max(props.barCols(), 1);
+  const zoneActive = () => nav.zone() === section.id;
+  const shown = () =>
+    !section.expandable || section.expanded() ? section.items : section.items.slice(0, cols());
 
   return (
     <div class="bar-section">
       <div class="bar-header">
-        <span class="bar-title">{opts.title}</span>
-        <Show when={opts.items.length > cols}>
-          <button class="bar-expand" onClick={opts.onToggle}>
-            {opts.expanded ? t("collapse") : t("expand")}
+        <span class="bar-title">{section.title}</span>
+        <Show when={section.expandable && section.items.length > cols()}>
+          <button class="bar-expand" onClick={() => section.toggleExpanded()}>
+            {section.expanded() ? t("collapse") : t("expand")}
           </button>
         </Show>
       </div>
-      <div class="bar-grid" classList={{ collapsed: !opts.expanded }}>
-        <For each={shown}>
-          {(app, i) =>
-            appBox(props, app, opts.zoneActive && i() === opts.selected, {
-              onActivate: () => opts.onActivate(i()),
-              onSelect: () => opts.onSelect(i()),
-              onContext: (e) => opts.onContext(e, app),
-              draggable: opts.draggable,
-              onDragStart: opts.onDragStart ? (e) => opts.onDragStart!(i(), e) : undefined,
-            })
+      <div
+        class="bar-grid"
+        data-bar-id={section.id}
+        classList={{ collapsed: section.expandable && !section.expanded() }}
+      >
+        <For each={shown()}>
+          {(item, i) =>
+            itemBox(
+              props,
+              item,
+              { wrap: section.wrap },
+              () => zoneActive() && i() === section.selected(),
+              {
+                onActivate: () => {
+                  props.markMouse();
+                  nav.setZone(section.id);
+                  section.setSelected(i());
+                  props.activate();
+                },
+                onSelect: () => {
+                  props.markMouse();
+                  nav.setZone(section.id);
+                  section.setSelected(i());
+                },
+                onContext: (e) => section.onContext(e, i()),
+                draggable: section.draggable,
+                onDragStart: section.draggable
+                  ? (e) => {
+                      section.onDragStart?.(i());
+                      // The drag image: a dimmed clone parked off-screen.
+                      const src = e.currentTarget as HTMLElement;
+                      src.classList.add("result-dragging");
+                      if (e.dataTransfer) {
+                        e.dataTransfer.setData("text/plain", "");
+                        e.dataTransfer.effectAllowed = "move";
+                        const clone = src.cloneNode(true) as HTMLElement;
+                        clone.style.opacity = "0.6";
+                        clone.style.position = "absolute";
+                        clone.style.top = "-9999px";
+                        clone.style.pointerEvents = "none";
+                        document.body.appendChild(clone);
+                        const rect = src.getBoundingClientRect();
+                        e.dataTransfer.setDragImage(clone, rect.width / 2, rect.height / 2);
+                        setTimeout(() => clone.remove(), 0);
+                      }
+                    }
+                  : undefined,
+              }
+            )
           }
         </For>
       </div>
@@ -128,73 +161,6 @@ function barSection(
 export function NavigateView(props: NavigateViewProps) {
   const nav = props.nav;
 
-  /** The 「Windows 资源管理器」 bar: shown on the empty-query main menu when the
-   * launcher was summoned from an Explorer folder. Tiles open a terminal in that
-   * folder or copy the folder path; right-click a terminal tile for 启动 /
-   * 以管理员身份启动. It participates in the continuous bar navigation. */
-  function folderBarSection() {
-    const ctx = nav.folderCtx();
-    if (!ctx) return null;
-    const icons = nav.termIcons();
-    const items = [
-      {
-        label: t("openInCmd"),
-        icon: icons.cmd ?? runIcon,
-        act: (elev: boolean) => nav.activateFolder(0, elev),
-      },
-      {
-        label: t("openInPowerShell"),
-        icon: icons.powershell ?? runIcon,
-        act: (elev: boolean) => nav.activateFolder(1, elev),
-      },
-      { label: t("copyPath"), icon: copyIcon, mono: true, act: () => nav.activateFolder(2, false) },
-    ];
-    return (
-      <div class="bar-section">
-        <div class="bar-header">
-          <span class="bar-title">{t("explorerBar")}</span>
-        </div>
-        <div class="bar-grid">
-          <For each={items}>
-            {(item, i) => (
-              <div
-                class="result-box folder-box"
-                classList={{ "result-selected": nav.zone() === "folder" && i() === nav.folderSelected() }}
-                role="option"
-                aria-selected={nav.zone() === "folder" && i() === nav.folderSelected()}
-                onMouseMove={() => {
-                  // Mouse movement over an entry always takes over selection —
-                  // no keyboard-precedence gate that could leave hover stalled.
-                  props.markMouse();
-                  nav.setZone("folder");
-                  nav.setFolderSelected(i());
-                }}
-                onClick={() => item.act(false)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  props.markMouse();
-                  nav.setZone("folder");
-                  nav.setFolderSelected(i());
-                  props.openMenu({ kind: "folder", x: e.clientX, y: e.clientY, idx: i() });
-                }}
-              >
-                <span class="result-box-tile result-box-icon">
-                  <img
-                    class={`result-box-img${item.mono ? " folder-icon-svg" : ""}`}
-                    src={item.icon}
-                    alt=""
-                    draggable={false}
-                  />
-                </span>
-                <span class="result-box-name">{item.label}</span>
-              </div>
-            )}
-          </For>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <Show
       when={props.appsQuery() === ""}
@@ -202,7 +168,7 @@ export function NavigateView(props: NavigateViewProps) {
         <Show when={props.apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
           <div class="result-grid" role="grid">
             {props.apps().map((app, i) =>
-              appBox(props, app, i === props.selected(), {
+              itemBox(props, app, {}, () => i === props.selected(), {
                 onActivate: () => {
                   props.markMouse();
                   props.setSelected(i);
@@ -227,85 +193,7 @@ export function NavigateView(props: NavigateViewProps) {
       }
     >
       <div class="bar-list">
-        <Show when={props.showRecent() && nav.recentApps().length > 0}>
-          {barSection(props, {
-            title: t("recent"),
-            items: nav.recentApps(),
-            expanded: nav.recentExpanded(),
-            zoneActive: nav.zone() === "recent",
-            selected: nav.recentSelected(),
-            onToggle: () => {
-              nav.setRecentExpanded(!nav.recentExpanded());
-              props.invalidateWorkArea();
-            },
-            onActivate: (i) => {
-              props.markMouse();
-              nav.setZone("recent");
-              nav.setRecentSelected(i);
-              props.activate();
-            },
-            onSelect: (i) => {
-              props.markMouse();
-              nav.setZone("recent");
-              nav.setRecentSelected(i);
-            },
-            onContext: (e, app) => {
-              nav.setZone("recent");
-              nav.setRecentSelected(nav.recentApps().findIndex((r) => r.path === app.path));
-              props.openMenu({ kind: "app", x: e.clientX, y: e.clientY, app, fromRecent: true });
-            },
-          })}
-        </Show>
-        <Show when={nav.pinnedApps().length > 0}>
-          {barSection(props, {
-            title: t("pinned"),
-            items: nav.pinnedApps(),
-            expanded: nav.pinnedExpanded(),
-            zoneActive: nav.zone() === "pinned",
-            selected: nav.pinnedSelected(),
-            draggable: true,
-            onToggle: () => {
-              nav.setPinnedExpanded(!nav.pinnedExpanded());
-              props.invalidateWorkArea();
-            },
-            onActivate: (i) => {
-              props.markMouse();
-              nav.setZone("pinned");
-              nav.setPinnedSelected(i);
-              props.activate();
-            },
-            onSelect: (i) => {
-              props.markMouse();
-              nav.setZone("pinned");
-              nav.setPinnedSelected(i);
-            },
-            onContext: (e, app) => {
-              nav.setZone("pinned");
-              nav.setPinnedSelected(nav.pinnedApps().findIndex((p) => p.path === app.path));
-              props.openMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
-            },
-            onDragStart: (i, e) => {
-              const items = nav.pinnedApps();
-              nav.beginDrag(items[i], i);
-              const src = e.currentTarget as HTMLElement;
-              src.classList.add("result-dragging");
-              if (e.dataTransfer) {
-                e.dataTransfer.setData("text/plain", "");
-                e.dataTransfer.effectAllowed = "move";
-                const clone = src.cloneNode(true) as HTMLElement;
-                clone.style.opacity = "0.6";
-                clone.style.position = "absolute";
-                clone.style.top = "-9999px";
-                clone.style.pointerEvents = "none";
-                document.body.appendChild(clone);
-                const rect = src.getBoundingClientRect();
-                e.dataTransfer.setDragImage(clone, rect.width / 2, rect.height / 2);
-                setTimeout(() => clone.remove(), 0);
-              }
-            },
-          })}
-        </Show>
-        <Show when={nav.folderCtx()}>{folderBarSection()}</Show>
+        <For each={nav.sections()}>{(section) => SectionView(props, section)}</For>
       </div>
     </Show>
   );

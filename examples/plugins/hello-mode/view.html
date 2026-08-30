@@ -29,6 +29,7 @@
   <div class="row">
     <button id="paste">读剪贴板 → 标题</button>
     <button id="back">回导航页（setQuery）</button>
+    <button id="grow">窗口长高 120px（app.resize）</button>
   </div>
   <script>
     var n = 0;
@@ -44,6 +45,11 @@
       lume.clipboard.readText().then(function (t) { $("q").textContent = t || "(空)"; });
     };
     $("back").onclick = function () { lume.app.setQuery(""); };
+    // 运行时改窗口尺寸：只传 height 时宽度保持不变；尺寸保持到下一次
+    // 内容驱动的 resize（切模式 / 导航页自动适配会恢复配置值）。
+    $("grow").onclick = function () {
+      lume.app.resize({ height: document.documentElement.clientHeight + 120 });
+    };
 
     lume.storage.get("count").then(function (v) { n = v || 0; render(); });
     $("count").onclick = function () {

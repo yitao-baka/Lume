@@ -4,9 +4,10 @@
 # Navigate and pick 「进入 Hello Mode」 — or Tab to it in the mode pills.
 id = "hello-mode"
 name = "Hello Mode"
-version = "1.0.0"
+version = "1.1.0"
 kind = "mode"
-description = "示例模式插件：iframe 自由 UI + 插件存储 + toast + 剪贴板"
+description = "示例模式插件：iframe 自由 UI + 插件存储 + toast + 剪贴板 + 自定窗口高度"
 keywords = ["hello", "你好"]
 entry = "main.js"     # 可选 — 逻辑钩子（onQuery/onShow/onHide）
 view = "view.html"    # 必填 — 桥接 iframe 渲染的自由 UI
+height = 560          # 可选 — 本模式页面的窗口高度（逻辑 px）；省略 = 全局设置高度

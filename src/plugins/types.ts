@@ -32,6 +32,9 @@ export interface PluginManifest {
   view: string;
   /** Global keywords (uTools-style mode entry). */
   keywords: string[];
+  /** Mode plugins: the mode page's preferred window height (logical px);
+   * null = use the global 设置 → 窗口大小 → 高度. */
+  height: number | null;
   /** Absolute plugin directory (disk plugins; empty for built-ins). */
   dir: string;
 }
@@ -48,6 +51,11 @@ export interface PluginHostApi {
     setQuery(q: string): void;
     /** Open a file path or URL via launch_app (ShellExecuteW). */
     openPath(path: string): void;
+    /** Resize the launcher window (logical px). Omitted axes keep their
+     * current size; height is clamped to the launcher minimum. The size
+     * holds until the next content-driven resize (Navigate auto-fit or a
+     * mode switch re-applies the configured size). */
+    resize(size: { width?: number; height?: number }): void;
   };
   clipboard: {
     /** Current system clipboard text (null = non-text/empty). */
@@ -110,6 +118,9 @@ export interface PluginServices {
   requestMode(id: string): void;
   /** Overwrite the launcher search-box query (the active mode's query). */
   setQuery(q: string): void;
+  /** Resize the launcher window (logical px; omitted axes keep their size).
+   * Backs the disk-plugin `app.resize` bridge RPC. */
+  resizeWindow(size: { width?: number; height?: number }): void;
 }
 
 /** Structural subset of the shared MenuState (avoids a launcher import). */
@@ -151,6 +162,10 @@ export interface ModeInstance {
   previewEnabled(): boolean;
   /** Re-measure this mode's internal viewport (window sizer hook). */
   measureViewport(): void;
+  /** This mode's preferred fixed window height (manifest `height`), or null
+   * to use the global 设置 → 窗口大小 → 高度. Read by the sizer's
+   * fixed-height branch (plugin modes). */
+  desiredHeight?: () => number | null;
   /** 记住上次所在页面: the mode's current page kind + restore. */
   pageKind(): string;
   restorePage(kind: string): void;
@@ -189,6 +204,24 @@ export interface ProviderResult {
   path: string;
 }
 
+/** A Navigate-page bar (栏目) contributed by a plugin — rendered on the
+ * empty-query main menu between 已固定 and the explorer bar (which always
+ * stays last). Items activate exactly like native bar entries: `launch_app`
+ * opens files AND URLs, and the shared app context menu (pin / launch /
+ * open location / admin) works on them. */
+export interface NavBarContribution {
+  /** Plugin-unique bar id — the host prefixes the plugin id, so the
+   * keyboard-navigation zone key is namespaced. */
+  id: string;
+  /** Rendered title — the plugin localizes it itself. */
+  title: string;
+  /** Bar entries. `icon` is optional: data:/http(s): URIs pass through,
+   * anything else is treated as a file path (resolved via the asset
+   * protocol); omitted → the regular icon pipeline (real icons for file
+   * paths, unknown-icon fallback otherwise). */
+  items: { name: string; path: string; icon?: string }[];
+}
+
 /** A `provider` contribution: feeds extra results into Navigate search
  * (appended after the native index, deduped by path). */
 export interface ProviderInstance {
@@ -211,6 +244,10 @@ export interface LauncherPlugin {
   mode?: ModeInstance;
   preview?: PreviewService;
   provider?: ProviderInstance;
+  /** Navigate-page bars (栏目) — optional, any plugin kind may contribute
+   * them. Called by the host on every launcher show + plugin refresh; return
+   * the (possibly empty) bar list. */
+  navBars?: () => Promise<NavBarContribution[]> | NavBarContribution[];
   /** Global keywords + display name (uTools-style mode entry). */
   keywords?: string[];
   pluginName?: string;

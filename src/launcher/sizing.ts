@@ -15,8 +15,14 @@ export interface SizerDeps {
   fixedHeight: () => boolean;
   windowHeight: () => number;
   windowWidth: () => number;
-  recentExpanded: () => boolean;
-  pinnedExpanded: () => boolean;
+  /** The active mode's preferred fixed height (manifest `height`) — wins over
+   * windowHeight when set; the sizer clamps it to the work area. */
+  modeHeight: () => number | null;
+  /** Every size we apply is reported back (logical px) — the composition root
+   * uses it as the "current size" baseline for plugin `app.resize` calls. */
+  setRuntimeSize: (w: number, h: number) => void;
+  /** Whether any expandable Navigate bar is expanded (work-area cap). */
+  anyExpanded: () => boolean;
   workAreaH: () => number | null;
   setWorkAreaH: (v: number | null) => void;
   barCols: () => number;
@@ -70,13 +76,24 @@ export function createWindowSizer(deps: SizerDeps) {
 
   /** Fit the launcher window height to the current content, then re-center. */
   async function resizeToContent() {
-    // Clipboard mode uses a fixed window height (设置 → 窗口大小 → 高度); the
-    // list viewport scrolls internally, so no content-based fitting applies.
+    // Plugin modes use a fixed height: the mode's manifest `height` when it
+    // declares one (clamped to the work area so a bad manifest can't overflow
+    // the screen), else the global 设置 → 窗口大小 → 高度. The list/page
+    // viewport scrolls internally, so no content-based fitting applies.
     // Previews live in the satellite window now, so the launcher never widens.
     if (deps.fixedHeight()) {
-      if (deps.windowHeight() !== lastWindowH) {
-        lastWindowH = deps.windowHeight();
-        await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), deps.windowHeight()));
+      const declared = deps.modeHeight();
+      let h = declared ?? deps.windowHeight();
+      if (declared != null) {
+        await ensureWorkArea();
+        const screen = deps.workAreaH();
+        if (screen) h = Math.min(h, screen - SCREEN_MARGIN);
+      }
+      h = Math.max(MIN_WINDOW_H, h);
+      if (h !== lastWindowH) {
+        lastWindowH = h;
+        deps.setRuntimeSize(deps.windowWidth(), h);
+        await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), h));
         await invoke("apply_position");
       }
       requestAnimationFrame(deps.measureModeViewport);
@@ -113,7 +130,7 @@ export function createWindowSizer(deps: SizerDeps) {
     // The bar-expand cap only applies on the Navigate page — the Clipboard page
     // must not inherit a bar's expanded size when switching modes.
     let cap = deps.windowHeight();
-    if (!deps.fixedHeight() && (deps.recentExpanded() || deps.pinnedExpanded())) {
+    if (!deps.fixedHeight() && deps.anyExpanded()) {
       await ensureWorkArea();
       const screen = deps.workAreaH();
       if (screen) cap = Math.max(deps.windowHeight(), screen - SCREEN_MARGIN);
@@ -127,6 +144,7 @@ export function createWindowSizer(deps: SizerDeps) {
     // Set the configured width (from settings) rather than re-reading the
     // current window width: a physical→logical→physical round trip drifts on
     // DPI scaling and the window grows wider on every resize.
+    deps.setRuntimeSize(deps.windowWidth(), targetH);
     await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), targetH));
     await invoke("apply_position");
   }

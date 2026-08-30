@@ -50,6 +50,11 @@ pub struct PluginManifest {
     /// an 「进入 <name>」 row that opens the mode.
     #[serde(default)]
     pub keywords: Vec<String>,
+    /// Mode plugins: the mode page's preferred window height (logical px).
+    /// Optional — the frontend clamps it to the work area; `None` falls back
+    /// to the global 设置 → 窗口大小 → 高度.
+    #[serde(default)]
+    pub height: Option<u32>,
 }
 
 fn default_kind() -> String {
@@ -75,6 +80,8 @@ pub struct PluginInfo {
     pub view: String,
     /// Global keywords (mode plugins).
     pub keywords: Vec<String>,
+    /// Mode-declared preferred window height (logical px; None = global).
+    pub height: Option<u32>,
     /// Absolute plugin directory (disk plugins; empty for built-ins).
     pub dir: String,
 }
@@ -151,6 +158,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             entry: String::new(),
             view: String::new(),
             keywords: Vec::new(),
+            height: None,
             dir: String::new(),
         })
         .collect();
@@ -168,6 +176,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             entry: m.entry,
             view: m.view,
             keywords: m.keywords,
+            height: m.height,
             dir: dir.to_string_lossy().into_owned(),
         });
     }
@@ -338,11 +347,15 @@ mod tests {
 kind = \"mode\"
 view = \"view.html\"
 keywords = [\"clip\", \"剪贴板\"]
+height = 560
 ",
         )
         .unwrap();
         assert_eq!(m.view, "view.html");
         assert_eq!(m.keywords, vec!["clip".to_string(), "剪贴板".to_string()]);
+        assert_eq!(m.height, Some(560));
+        // height is optional — omitted means "use the global setting".
+        assert_eq!(parse_manifest("id = \"m\"").unwrap().height, None);
     }
 
     #[test]

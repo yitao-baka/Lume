@@ -1,12 +1,17 @@
-//! Navigate-mode store — the 最近使用 / 已固定 bars, the Explorer-folder bar,
-//! their data refresh, app actions (launch / reveal / pin / remove-from-recent)
-//! and the continuous bar-grid keyboard navigation. Also owns the pinned-bar
-//! drag-reorder listeners.
+//! Navigate-mode store — the empty-query main menu's bars (栏目). The three
+//! native bars (最近使用 / 已固定 / Windows 资源管理器) and plugin-contributed
+//! bars share one section contract: `sections()` is the single ordered
+//! registry (recent → pinned → plugin bars → explorer, which is pinned last),
+//! NavigateView renders every section uniformly, and the continuous
+//! section-grid keyboard navigation walks them top to bottom. Also owns data
+//! refresh, app actions (launch / reveal / pin / remove-from-recent) and the
+//! pinned-bar drag-reorder listeners.
 
-import { createSignal } from "solid-js";
+import { createMemo, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
-import type { AppEntry } from "./types";
+import runIcon from "../../res/icons/normal_run.svg";
+import type { AppEntry, MenuState } from "./types";
 
 export interface NavigateDeps {
   /** Settings: show the 「最近使用」 bar (display-only toggle). */
@@ -17,17 +22,80 @@ export interface NavigateDeps {
   barCols: () => number;
   icons: { loadIcons(apps: AppEntry[]): Promise<void> };
   scheduleResize: () => void;
+  /** An expand/collapse or bar-list change re-measures against the work area. */
+  invalidateWorkArea: () => void;
+  /** Open the shared right-click menu (the composition root renders it). */
+  openMenu: (m: MenuState) => void;
   showToast: (text: string, opts?: { undo?: () => void; duration?: number }) => void;
   /** Marks that an entry was opened (launch / terminal) — clears search recall. */
   markEntryOpened: () => void;
   resetAndHide: () => void;
 }
 
+/** An item in a navigate-page bar — AppEntry-compatible, plus display
+ * overrides for bars whose tiles carry their own icons (explorer actions,
+ * plugin bars). */
+export interface NavItem {
+  id: number;
+  name: string;
+  /** Launch target (file path or URL). Action tiles that activate by index
+   * (explorer) use an empty string. */
+  path: string;
+  /** Explicit icon URL (data:/http(s):/asset:) overriding the icon pipeline. */
+  icon?: string;
+  /** Render as a monochrome (currentColor-filtered) SVG tile. */
+  mono?: boolean;
+}
+
+/** One titled bar (栏目) on the empty-query Navigate main menu. Native bars
+ * and plugin bars share this contract: the view renders every section
+ * uniformly and the keyboard navigation treats them as one continuous grid.
+ * `zone` values are section ids; "grid" is reserved for the results grid. */
+export interface NavSection {
+  /** Stable zone key, unique across the registry. */
+  id: string;
+  /** Rendered title (contributors localize it themselves). */
+  title: string;
+  items: NavItem[];
+  /** false = every item always visible, never an 展开 toggle (explorer). */
+  expandable: boolean;
+  /** Whether the bar shows all rows (expandable bars only). */
+  expanded: () => boolean;
+  toggleExpanded: () => void;
+  selected: () => number;
+  setSelected: (i: number) => void;
+  /** Click / Enter activation (`elevated` = Shift+Enter / admin menu). */
+  activate(idx: number, elevated: boolean): void;
+  /** Right-click: select the item, then open the shared context menu. */
+  onContext(e: MouseEvent, idx: number): void;
+  /** Delete-key soft delete (recent only — absent = key ignored). */
+  onDelete?(idx: number): void;
+  /** Native drag-reorder (pinned only). The view draws the drag image and
+   * calls `onDragStart`; the document-level listeners commit via `onReorder`. */
+  draggable?: boolean;
+  onDragStart?(idx: number): void;
+  onReorder?(fromIndex: number, overIndex: number): void;
+  /** Labels wrap instead of ellipsizing (explorer action tiles). */
+  wrap?: boolean;
+}
+
+/** A plugin-contributed bar, already normalized by the plugin registry
+ * (ids prefixed with the plugin id, icons resolved). The store wraps it with
+ * selection/expansion state and launch activation. */
+export interface ContributedBar {
+  id: string;
+  title: string;
+  items: { name: string; path: string; icon?: string }[];
+}
+
+/** The grid zone — no bar owns the selection (search results, or nothing). */
+export const GRID_ZONE = "grid";
+
 export function createNavigateStore(deps: NavigateDeps) {
   const [pinnedApps, setPinnedApps] = createSignal<AppEntry[]>([]);
   const [recentApps, setRecentApps] = createSignal<AppEntry[]>([]);
-  /** Which area owns the selection on the empty-query main menu. */
-  const [zone, setZone] = createSignal<"recent" | "pinned" | "folder" | "grid">("grid");
+  /** Which section owns the selection on the empty-query main menu. */
+  const [zone, setZone] = createSignal<string>(GRID_ZONE);
   const [pinnedSelected, setPinnedSelected] = createSignal(0);
   const [recentSelected, setRecentSelected] = createSignal(0);
   /** Explorer-folder context: the folder the launcher was summoned from (or
@@ -42,6 +110,11 @@ export function createNavigateStore(deps: NavigateDeps) {
   });
   const [recentExpanded, setRecentExpanded] = createSignal(false);
   const [pinnedExpanded, setPinnedExpanded] = createSignal(false);
+  /** Plugin-contributed bars (normalized by the registry) + their per-bar
+   * selection / expansion state, keyed by the prefixed bar id. */
+  const [pluginBars, setPluginBarsSig] = createSignal<NavSection[]>([]);
+  const [pluginSel, setPluginSel] = createSignal<Record<string, number>>({});
+  const [pluginExpanded, setPluginExpanded] = createSignal<Record<string, boolean>>({});
   /** True while the cursor rests on empty space (a place with no entry) — the
    * selection highlight is hidden, but the selection index is retained. Moving
    * back over an entry or pressing an arrow key reveals it again (arrow nav
@@ -49,10 +122,192 @@ export function createNavigateStore(deps: NavigateDeps) {
    * main menu / results grid only. */
   const [navHidden, setNavHidden] = createSignal(false);
 
-  // ── Native drag-and-drop for pinned-bar reordering ──
-  // Use a plain ref (not a SolidJS signal) so drag event handlers never
-  // trigger reactive re-renders that would destroy the dragged DOM element.
-  let dragRef: { item: AppEntry; fromIndex: number; overIndex: number } | null = null;
+  // ── Section registry ────────────────────────────────────────────────────
+  // Order on the empty-query main menu: 最近使用 → 已固定 → plugin bars (in
+  // registration order) → the explorer bar, which is structurally pinned to
+  // the bottom. Empty bars (nothing to show / toggled off) drop out.
+
+  const launchSectionItem = (items: NavItem[], idx: number, elevated: boolean) => {
+    const item = items[idx];
+    if (item) launchApp({ id: item.id, name: item.name, path: item.path }, elevated);
+  };
+
+  /** The 「Windows 资源管理器」 bar: action tiles (CMD / PowerShell / copy path)
+   * for the folder the launcher was summoned from. */
+  const folderItems = (): NavItem[] => {
+    const icons = termIcons();
+    return [
+      { id: 0, name: t("openInCmd"), path: "", icon: icons.cmd ?? runIcon },
+      { id: 0, name: t("openInPowerShell"), path: "", icon: icons.powershell ?? runIcon },
+      { id: 0, name: t("copyPath"), path: "", icon: undefined, mono: true },
+    ];
+  };
+
+  const sections = createMemo<NavSection[]>(() => {
+    const list: NavSection[] = [];
+    if (deps.showRecent() && recentApps().length > 0) {
+      list.push({
+        id: "recent",
+        title: t("recent"),
+        items: recentApps(),
+        expandable: true,
+        expanded: recentExpanded,
+        toggleExpanded: () => {
+          setRecentExpanded(!recentExpanded());
+          deps.invalidateWorkArea();
+        },
+        selected: recentSelected,
+        setSelected: setRecentSelected,
+        activate: (idx, elevated) => launchSectionItem(recentApps(), idx, elevated),
+        onContext: (e, idx) => {
+          setZone("recent");
+          setRecentSelected(idx);
+          const app = recentApps()[idx];
+          if (app)
+            deps.openMenu({ kind: "app", x: e.clientX, y: e.clientY, app, fromRecent: true });
+        },
+        onDelete: (idx) => {
+          const app = recentApps()[idx];
+          if (app) void deleteRecent(app);
+        },
+      });
+    }
+    if (pinnedApps().length > 0) {
+      list.push({
+        id: "pinned",
+        title: t("pinned"),
+        items: pinnedApps(),
+        expandable: true,
+        expanded: pinnedExpanded,
+        toggleExpanded: () => {
+          setPinnedExpanded(!pinnedExpanded());
+          deps.invalidateWorkArea();
+        },
+        selected: pinnedSelected,
+        setSelected: setPinnedSelected,
+        activate: (idx, elevated) => launchSectionItem(pinnedApps(), idx, elevated),
+        onContext: (e, idx) => {
+          setZone("pinned");
+          setPinnedSelected(idx);
+          const app = pinnedApps()[idx];
+          if (app) deps.openMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
+        },
+        draggable: true,
+        onDragStart: (idx) => beginDrag("pinned", idx),
+        onReorder: (fromIndex, overIndex) => void commitPinnedReorder(fromIndex, overIndex),
+      });
+    }
+    list.push(...pluginBars());
+    // The explorer bar is structurally last — plugins can never push it up.
+    if (folderCtx() && deps.showExplorerBar()) {
+      list.push({
+        id: "folder",
+        title: t("explorerBar"),
+        items: folderItems(),
+        expandable: false,
+        expanded: () => true,
+        toggleExpanded: () => {},
+        selected: folderSelected,
+        setSelected: setFolderSelected,
+        activate: (idx, elevated) => activateFolder(idx, elevated),
+        onContext: (e, idx) => {
+          setZone("folder");
+          setFolderSelected(idx);
+          deps.openMenu({ kind: "folder", x: e.clientX, y: e.clientY, idx });
+        },
+        wrap: true,
+      });
+    }
+    return list;
+  });
+
+  /** The section owning the current bar-zone selection (undefined = grid). */
+  function activeSection(): NavSection | undefined {
+    const z = zone();
+    return z === GRID_ZONE ? undefined : sections().find((s) => s.id === z);
+  }
+
+  function sectionById(id: string): NavSection | undefined {
+    return sections().find((s) => s.id === id);
+  }
+
+  /** Whether any expandable bar is currently expanded (sizer work-area cap). */
+  function anyExpanded(): boolean {
+    return sections().some((s) => s.expandable && s.expanded());
+  }
+
+  /** Reset every bar's selection (fresh show / clearSearch). */
+  function resetSelections() {
+    setRecentSelected(0);
+    setPinnedSelected(0);
+    setFolderSelected(0);
+    setPluginSel({});
+  }
+
+  /** Drop the zone when its section disappeared (list emptied, bar toggled
+   * off, plugin removed) — fall to the first section, else the grid. */
+  function reconcileZone() {
+    const z = zone();
+    if (z === GRID_ZONE) return;
+    if (!sections().some((s) => s.id === z)) {
+      setZone(sections()[0]?.id ?? GRID_ZONE);
+    }
+  }
+
+  // ── Plugin bars ─────────────────────────────────────────────────────────
+
+  /** Replace the plugin-contributed bars. Each contribution gets launch
+   * activation (identical to native bar items: `launch_app` opens files AND
+   * URLs), the shared app context menu, and its own selection/expansion state. */
+  function setPluginBars(contribs: ContributedBar[]) {
+    const built: NavSection[] = contribs
+      .filter((b) => b.items.length > 0)
+      .map((b) => {
+        const items: NavItem[] = b.items.map((it) => ({
+          id: 0,
+          name: it.name,
+          path: it.path,
+          icon: it.icon,
+        }));
+        return {
+          id: b.id,
+          title: b.title,
+          items,
+          expandable: true,
+          expanded: () => pluginExpanded()[b.id] ?? false,
+          toggleExpanded: () => {
+            setPluginExpanded((prev) => ({ ...prev, [b.id]: !(prev[b.id] ?? false) }));
+            deps.invalidateWorkArea();
+          },
+          selected: () => pluginSel()[b.id] ?? 0,
+          setSelected: (i: number) => setPluginSel((prev) => ({ ...prev, [b.id]: i })),
+          activate: (idx, elevated) => launchSectionItem(items, idx, elevated),
+          onContext: (e: MouseEvent, idx: number) => {
+            setZone(b.id);
+            setPluginSel((prev) => ({ ...prev, [b.id]: idx }));
+            const app = items[idx];
+            if (app)
+              deps.openMenu({
+                kind: "app",
+                x: e.clientX,
+                y: e.clientY,
+                app: { id: app.id, name: app.name, path: app.path },
+              });
+          },
+        };
+      });
+    setPluginBarsSig(built);
+    // Tiles without an explicit icon go through the regular icon pipeline.
+    const wantIcons = built
+      .flatMap((s) => s.items)
+      .filter((it) => !it.icon)
+      .map((it) => ({ id: it.id, name: it.name, path: it.path }));
+    if (wantIcons.length > 0) void deps.icons.loadIcons(wantIcons);
+    reconcileZone();
+    deps.scheduleResize();
+  }
+
+  // ── Data refresh ────────────────────────────────────────────────────────
 
   /** Reload the pinned-apps bar from the store. */
   async function refreshPins() {
@@ -60,9 +315,7 @@ export function createNavigateStore(deps: NavigateDeps) {
       const pins = (await invoke("get_pinned_apps")) as AppEntry[];
       setPinnedApps(pins);
       if (pinnedSelected() >= pins.length) setPinnedSelected(0);
-      if (pins.length === 0 && zone() === "pinned") {
-        setZone(recentApps().length > 0 ? "recent" : "grid");
-      }
+      reconcileZone();
       void deps.icons.loadIcons(pins);
       deps.scheduleResize();
     } catch (err) {
@@ -76,9 +329,7 @@ export function createNavigateStore(deps: NavigateDeps) {
       const recents = (await invoke("get_recent_apps")) as AppEntry[];
       setRecentApps(recents);
       if (recentSelected() >= recents.length) setRecentSelected(0);
-      if (recents.length === 0 && zone() === "recent") {
-        setZone(pinnedApps().length > 0 ? "pinned" : "grid");
-      }
+      reconcileZone();
       void deps.icons.loadIcons(recents);
       deps.scheduleResize();
     } catch (err) {
@@ -106,6 +357,7 @@ export function createNavigateStore(deps: NavigateDeps) {
         setFolderCtx(null);
       }
       // The new (or removed) bar changes the content height — re-measure.
+      reconcileZone();
       deps.scheduleResize();
     } catch (err) {
       console.error("get_foreground_context failed", err);
@@ -119,7 +371,7 @@ export function createNavigateStore(deps: NavigateDeps) {
     try {
       const icons = (await invoke("get_terminal_icons")) as {
         cmd: string | null;
-        powershell: string | null;
+        powershell: null | string;
       };
       setTermIcons({ cmd: icons.cmd ?? null, powershell: icons.powershell ?? null });
     } catch (err) {
@@ -205,58 +457,36 @@ export function createNavigateStore(deps: NavigateDeps) {
     void deps.resetAndHide();
   }
 
-  /** Bars currently visible on the empty-query main menu, top to bottom. */
-  function visibleBars(): ("recent" | "pinned" | "folder")[] {
-    const bars: ("recent" | "pinned" | "folder")[] = [];
-    if (deps.showRecent() && recentApps().length > 0) bars.push("recent");
-    if (pinnedApps().length > 0) bars.push("pinned");
-    // The Explorer-folder bar sits at the bottom and only appears when a path
-    // was captured at summon time.
-    if (folderCtx()) bars.push("folder");
-    return bars;
-  }
+  // ── Continuous section-grid keyboard navigation ─────────────────────────
+  // The stacked sections are treated as one grid: ↓/↑ move to the next/prev
+  // row that actually has an item at the current column (a collapsed section
+  // contributes exactly one row), crossing a section boundary keeps the
+  // column, and ←/→ move within the current row (clamped, no wrap).
 
-  /** Move the bar selection across the two bars treated as one continuous
-   * grid. `↓`/`↑` move to the next/previous row that actually has an item at
-   * the current column — a collapsed bar contributes exactly one row (only its
-   * visible items are reachable), and crossing a bar boundary keeps the column
-   * instead of landing on the bar's end. `←`/`→` move within the current row
-   * (clamped, no wrap). */
   function moveBarSelection(dc: number, dr: number) {
-    const bars = visibleBars();
+    const bars = sections();
     if (bars.length === 0) return;
     setNavHidden(false); // arrow nav reveals the highlight from its hidden position
     const cols = Math.max(deps.barCols(), 1);
 
-    const len = (k: "recent" | "pinned" | "folder") =>
-      k === "recent" ? recentApps().length : k === "pinned" ? pinnedApps().length : 3;
-    const expanded = (k: "recent" | "pinned" | "folder") =>
-      k === "recent" ? recentExpanded() : k === "pinned" ? pinnedExpanded() : true;
-    // Navigation rows of a bar: one when collapsed, every row when expanded.
-    const rows = (k: "recent" | "pinned" | "folder") =>
-      expanded(k) ? Math.ceil(len(k) / cols) : 1;
-    // Items a collapsed bar exposes to navigation: only its first row.
-    const reach = (k: "recent" | "pinned" | "folder") =>
-      expanded(k) ? len(k) : Math.min(len(k), cols);
+    // Navigation rows of a section: one when collapsed, every row otherwise.
+    const rows = (s: NavSection) =>
+      !s.expandable || s.expanded() ? Math.ceil(s.items.length / cols) : 1;
+    // Items a collapsed section exposes to navigation: only its first row.
+    const reach = (s: NavSection) =>
+      !s.expandable || s.expanded() ? s.items.length : Math.min(s.items.length, cols);
 
-    // The stacked grid, top to bottom: each visible bar contributes its rows.
-    const grid: { bar: "recent" | "pinned" | "folder"; local: number }[] = [];
-    for (const k of bars) for (let r = 0; r < rows(k); r++) grid.push({ bar: k, local: r });
-
-    const setIdx = (k: "recent" | "pinned" | "folder", v: number) => {
-      if (k === "recent") setRecentSelected(v);
-      else if (k === "pinned") setPinnedSelected(v);
-      else setFolderSelected(v);
-    };
-    const getIdx = (k: "recent" | "pinned" | "folder") =>
-      k === "recent" ? recentSelected() : k === "pinned" ? pinnedSelected() : folderSelected();
+    // The stacked grid, top to bottom: each visible section contributes its rows.
+    const grid: { bar: NavSection; local: number }[] = [];
+    for (const s of bars) for (let r = 0; r < rows(s); r++) grid.push({ bar: s, local: r });
 
     // Resolve the current position to a (gridRow, col); with no bar active,
     // start at the top bar.
-    let bi = bars.indexOf(zone() as "recent" | "pinned" | "folder");
-    let idx = bi >= 0 ? getIdx(bars[bi]) : 0;
+    let bi = bars.findIndex((s) => s.id === zone());
+    let idx = bi >= 0 ? bars[bi].selected() : 0;
     if (bi < 0) bi = 0;
-    const curReach = reach(bars[bi]);
+    const cur = bars[bi];
+    const curReach = reach(cur);
     idx = Math.min(idx, Math.max(0, curReach - 1));
     let gridRow = 0;
     for (let i = 0; i < bi; i++) gridRow += rows(bars[i]);
@@ -271,8 +501,8 @@ export function createNavigateStore(deps: NavigateDeps) {
     const commitGrid = (r: number) => {
       const { bar, local } = grid[r];
       const target = Math.min(Math.max(local * cols + col, 0), reach(bar) - 1);
-      setIdx(bar, target);
-      setZone(bar);
+      bar.setSelected(target);
+      setZone(bar.id);
     };
 
     if (dr === 0) {
@@ -280,8 +510,8 @@ export function createNavigateStore(deps: NavigateDeps) {
       // row's real extent (a partial last row, or a collapsed bar's one row).
       const rowStart = Math.floor(idx / cols) * cols;
       const rowEnd = Math.min(rowStart + cols, curReach) - 1;
-      setIdx(bars[bi], Math.min(Math.max(idx + dc, rowStart), rowEnd));
-      setZone(bars[bi]);
+      cur.setSelected(Math.min(Math.max(idx + dc, rowStart), rowEnd));
+      setZone(cur.id);
       return;
     }
     if (dr > 0) {
@@ -290,17 +520,19 @@ export function createNavigateStore(deps: NavigateDeps) {
       while (r < grid.length && !hasItem(r)) r++;
       if (r < grid.length) {
         commitGrid(r);
-      } else if (gridRow === grid.length - 1) {
+      } else if (gridRow < grid.length - 1) {
+        // No lower row reaches this column (a partial last row here, and the
+        // bars below are shorter than the current column): go to the next
+        // bar instead of snapping to this bar's last item — commitGrid
+        // clamps the column to that bar's extent. (Every grid row has at
+        // least one item: empty bars contribute no rows.)
+        commitGrid(gridRow + 1);
+      } else {
         // Already on the last row: loop back to the top of this column.
         r = 0;
         while (r < grid.length && !hasItem(r)) r++;
         if (r >= grid.length) return;
         commitGrid(r);
-      } else {
-        // A lower row exists but doesn't reach this column (a partial last
-        // row): jump to the current bar's last item (the section end).
-        setIdx(bars[bi], reach(bars[bi]) - 1);
-        setZone(bars[bi]);
       }
     } else {
       // Up: the previous row that has an item at this column, wrapping to the
@@ -316,18 +548,45 @@ export function createNavigateStore(deps: NavigateDeps) {
     }
   }
 
-  /** Start a pinned-bar drag (called from the row's onDragStart handler). */
-  function beginDrag(item: AppEntry, fromIndex: number) {
-    dragRef = { item, fromIndex, overIndex: fromIndex };
+  // ── Native drag-and-drop for pinned-bar reordering ──────────────────────
+  // Use a plain ref (not a SolidJS signal) so drag event handlers never
+  // trigger reactive re-renders that would destroy the dragged DOM element.
+  // `sectionId` scopes the listeners to the dragged section's grid, so a drag
+  // that crosses into another bar (recent / a plugin bar) is ignored.
+  let dragRef: { sectionId: string; fromIndex: number; overIndex: number } | null = null;
+
+  function beginDrag(sectionId: string, fromIndex: number) {
+    dragRef = { sectionId, fromIndex, overIndex: fromIndex };
   }
 
-  /** Install the document-level drag listeners for pinned-bar reordering.
+  /** Commit a completed pinned-bar drag: splice the item to its new slot and
+   * persist the new order. */
+  async function commitPinnedReorder(fromIndex: number, overIndex: number) {
+    const items = pinnedApps();
+    const reordered = items.filter((_, idx) => idx !== fromIndex);
+    const insertAt = Math.min(
+      overIndex > fromIndex ? overIndex - 1 : overIndex,
+      reordered.length
+    );
+    reordered.splice(insertAt, 0, items[fromIndex]);
+    try {
+      await invoke("reorder_pins", { paths: reordered.map((p) => p.path) });
+      await refreshPins();
+    } catch (err) {
+      console.error("reorder_pins failed", err);
+    }
+  }
+
+  /** Install the document-level drag listeners for section reordering.
    * Raw DOM listeners (not Solid events) so preventDefault() always reaches
    * the native event. Listeners live for the window's lifetime. */
   function installDragReorder() {
     document.addEventListener("dragover", (e) => {
       const target = (e.target as HTMLElement).closest(".bar-grid") as HTMLElement | null;
       if (!target || !dragRef) return;
+      // Only the dragged section's own grid accepts the drag — hovering
+      // another bar (recent / plugin bars) must not compute insert positions.
+      if (target.dataset.barId !== dragRef.sectionId) return;
       e.preventDefault();
       // Group items by row (same top ≈ same row), then find which row the
       // cursor is on. Within that row, find the horizontal insertion point.
@@ -373,9 +632,8 @@ export function createNavigateStore(deps: NavigateDeps) {
     });
 
     // Clear drag styling from every box. Query the whole document rather than
-    // just the first .bar-grid: with both bars visible the draggable pinned
-    // items live in the *second* grid, and a scoped query would miss them,
-    // leaving the dragged item dimmed after a cancelled drag.
+    // just one grid: with several bars visible, styling from an earlier drag
+    // must never linger on any section.
     const clearDragStyling = () => {
       document
         .querySelectorAll(
@@ -396,13 +654,7 @@ export function createNavigateStore(deps: NavigateDeps) {
       dragRef = null;
       if (!dr || (e as DragEvent).dataTransfer?.dropEffect === "none") return;
       if (dr.overIndex === dr.fromIndex || dr.overIndex === dr.fromIndex + 1) return;
-      const items = pinnedApps();
-      const reordered = items.filter((_, idx) => idx !== dr.fromIndex);
-      const insertAt = Math.min(dr.overIndex > dr.fromIndex ? dr.overIndex - 1 : dr.overIndex, reordered.length);
-      reordered.splice(insertAt, 0, items[dr.fromIndex]);
-      invoke("reorder_pins", { paths: reordered.map((p) => p.path) })
-        .then(() => void refreshPins())
-        .catch((err) => console.error("reorder_pins failed", err));
+      sectionById(dr.sectionId)?.onReorder?.(dr.fromIndex, dr.overIndex);
     });
   }
 
@@ -426,6 +678,13 @@ export function createNavigateStore(deps: NavigateDeps) {
     setPinnedExpanded,
     navHidden,
     setNavHidden,
+    // section registry
+    sections,
+    activeSection,
+    sectionById,
+    anyExpanded,
+    resetSelections,
+    setPluginBars,
     // actions
     refreshPins,
     refreshRecent,
@@ -436,7 +695,6 @@ export function createNavigateStore(deps: NavigateDeps) {
     launchApp,
     revealInFolder,
     activateFolder,
-    visibleBars,
     moveBarSelection,
     beginDrag,
     installDragReorder,

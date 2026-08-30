@@ -20,6 +20,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
           console.error("[plugins] openPath failed:", id, err)
         );
       },
+      resize: (size) => services.resizeWindow(size ?? {}),
     },
     clipboard: {
       readText: () => invoke<string | null>("get_clipboard_text"),

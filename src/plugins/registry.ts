@@ -11,7 +11,7 @@
 
 import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import type { LauncherPlugin, ModeId, ModeInstance, PluginManifest, PluginServices } from "./types";
+import type { LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginManifest, PluginServices } from "./types";
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
 export {
@@ -129,6 +129,71 @@ function callHook(logic: Record<string, unknown>, name: string, ...args: unknown
   return undefined;
 }
 
+/** data:/http(s):/asset:/blob: URIs pass through untouched; anything else in
+ * an item's `icon` is a file path (e.g. inside the plugin dir) → asset URL. */
+function resolvePluginIcon(icon: unknown): string | undefined {
+  if (typeof icon !== "string" || icon === "") return undefined;
+  if (/^(data:|https?:|asset:|blob:)/i.test(icon)) return icon;
+  return convertFileSrc(icon);
+}
+
+/** Validate + normalize a plugin's `navBars()` return: prefix bar ids with
+ * the plugin id (the zone-key namespace), resolve icons, cap items per bar.
+ * Malformed bars/entries are dropped with a console error. */
+function normalizeNavBarContributions(pluginId: string, raw: unknown): NavBarContribution[] {
+  if (!Array.isArray(raw)) return [];
+  const out: NavBarContribution[] = [];
+  for (const bar of raw) {
+    const b = bar as { id?: unknown; title?: unknown; items?: unknown } | null;
+    if (
+      !b ||
+      typeof b.id !== "string" ||
+      b.id === "" ||
+      typeof b.title !== "string" ||
+      !Array.isArray(b.items)
+    ) {
+      console.error("[plugins] bad navBars entry:", pluginId);
+      continue;
+    }
+    const items = b.items
+      .slice(0, 50) // keep the bar grid sane, like the provider result cap
+      .filter((it): it is { name: string; path: string; icon?: string } => {
+        const x = it as { name?: unknown; path?: unknown; icon?: unknown } | null;
+        return (
+          !!x &&
+          typeof x.name === "string" &&
+          typeof x.path === "string" &&
+          (x.icon === undefined || typeof x.icon === "string")
+        );
+      })
+      .map((it) => ({ name: it.name, path: it.path, icon: resolvePluginIcon(it.icon) }));
+    out.push({ id: `${pluginId}:${b.id}`, title: b.title, items });
+  }
+  return out;
+}
+
+/** The plugin's optional `navBars` hook as a LauncherPlugin contribution —
+ * undefined when the logic object doesn't provide one. */
+function navBarsContribution(
+  pluginId: string,
+  logic: Record<string, unknown>
+): (() => Promise<NavBarContribution[]> | NavBarContribution[]) | undefined {
+  if (typeof logic.navBars !== "function") return undefined;
+  return () => {
+    try {
+      return Promise.resolve(
+        normalizeNavBarContributions(
+          pluginId,
+          (logic.navBars as () => unknown)()
+        )
+      );
+    } catch (err) {
+      console.error("[plugins] navBars failed:", pluginId, err);
+      return Promise.resolve([]);
+    }
+  };
+}
+
 /** Route a bridge RPC ("app.hide" / "storage.get" / …) to the host API. */
 async function execHostRpc(
   id: string,
@@ -146,6 +211,11 @@ async function execHostRpc(
       return api.app.setQuery(a.q);
     case "app.openPath":
       return api.app.openPath(a.path);
+    case "app.resize":
+      return api.app.resize({
+        width: args.width as number | undefined,
+        height: args.height as number | undefined,
+      });
     case "clipboard.readText":
       return api.clipboard.readText();
     case "clipboard.writeText":
@@ -162,7 +232,11 @@ async function execHostRpc(
 }
 
 /** Build the ModeInstance for a disk mode plugin (bridged iframe UI). */
-function createDiskModeInstance(m: PluginManifest, logic: Record<string, unknown>): ModeInstance {
+function createDiskModeInstance(
+  m: PluginManifest,
+  logic: Record<string, unknown>,
+  services: PluginServices
+): ModeInstance {
   const [query, setQuerySig] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   const hook = (name: string, ...args: unknown[]) => callHook(logic, name, ...args);
@@ -197,11 +271,16 @@ function createDiskModeInstance(m: PluginManifest, logic: Record<string, unknown
     search: async (q) => {
       if (viewReady) post("query", q);
       hook("onQuery", q);
+      // ModeInstance contract: every search ends with a resize request —
+      // without it the window keeps the previous page's size after a mode
+      // switch (the fixed-height model differs per mode).
+      services.scheduleResize();
     },
     reset: () => {
       setSelected(0);
       if (viewReady) post("show");
       hook("onShow");
+      services.scheduleResize();
     },
     selected,
     setSelected,
@@ -212,6 +291,8 @@ function createDiskModeInstance(m: PluginManifest, logic: Record<string, unknown
     previewTarget: () => null,
     previewEnabled: () => false,
     measureViewport: () => {},
+    // Manifest `height` — the mode's preferred fixed window height.
+    desiredHeight: () => (m.height != null && m.height > 0 ? m.height : null),
     pageKind: () => "main",
     restorePage: () => {},
     applySettings: () => {},
@@ -241,6 +322,7 @@ export async function loadDiskPlugins() {
           console.error("[plugins] provider needs search():", m.id);
           continue;
         }
+        const navBars = navBarsContribution(m.id, logic);
         definePlugin({
           id: m.id,
           provider: {
@@ -254,6 +336,7 @@ export async function loadDiskPlugins() {
               }
             },
           },
+          ...(navBars ? { navBars } : {}),
         });
         loadedAny = true;
         console.log("[plugins] loaded provider:", m.id);
@@ -261,7 +344,8 @@ export async function loadDiskPlugins() {
         const logic = m.entry
           ? resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!))
           : {};
-        const instance = createDiskModeInstance(m, logic);
+        const instance = createDiskModeInstance(m, logic, services!);
+        const navBars = navBarsContribution(m.id, logic);
         definePlugin({
           id: m.id,
           modeMeta: {
@@ -273,12 +357,14 @@ export async function loadDiskPlugins() {
           keywords: m.keywords,
           pluginName: m.name || m.id,
           mode: instance,
+          ...(navBars ? { navBars } : {}),
         });
         loadedAny = true;
         console.log("[plugins] loaded mode:", m.id);
       } else if (m.kind === "service" && m.entry) {
         const def = await importDiskModule(m.dir, m.entry);
         const logic = resolveLogic(def, createHostApi(m.id, services!));
+        const navBars = navBarsContribution(m.id, logic);
         definePlugin({
           id: m.id,
           lifecycle: {
@@ -286,6 +372,7 @@ export async function loadDiskPlugins() {
             onHide: () => void callHook(logic, "onHide"),
             onQuery: (q) => void callHook(logic, "onQuery", q),
           },
+          ...(navBars ? { navBars } : {}),
         });
         loadedAny = true;
         console.log("[plugins] loaded service:", m.id);
@@ -317,6 +404,18 @@ export function modeKeywordMatches(q: string): { id: ModeId; name: string }[] {
       id: p.id,
       name: (p as { pluginName?: string }).pluginName ?? p.id,
     }));
+}
+
+/** Enabled plugins contributing Navigate bars (栏目), in registration
+ * order. The composition root calls each `navBars()` on show/refresh and
+ * feeds the results into the navigate store's section registry. */
+export function navBarPlugins(): {
+  id: string;
+  navBars: () => Promise<NavBarContribution[]> | NavBarContribution[];
+}[] {
+  return plugins
+    .filter((p) => p.navBars && isEnabled(p.id))
+    .map((p) => ({ id: p.id, navBars: p.navBars! }));
 }
 
 /** Enabled mode plugins, in registration order (id + instance + pill meta). */

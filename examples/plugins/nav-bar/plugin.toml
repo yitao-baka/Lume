@@ -1,0 +1,10 @@
+# Nav Bar 示例 — 向导航页贡献栏目的最小插件（ROADMAP #7 第四轮）。
+# 安装：把整个 nav-bar/ 目录拷进 <base>/plugins/，重启 Lume（或触发一次
+# 设置变更），空查询的导航页主菜单会在「已固定」下方出现「快速链接」栏
+# （「Windows 资源管理器」栏始终位于最下层）。设置 → 插件 可启停。
+id = "nav-bar"
+name = "Nav Bar Example"
+version = "1.0.0"
+kind = "service"      # 无 UI — 只贡献 navBars 钩子（kind 不限，mode/provider 也能带）
+description = "示例插件：向导航页贡献一个可启动的栏目"
+entry = "main.js"

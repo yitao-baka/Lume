@@ -8,6 +8,24 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **导航页条目失去选中反馈（描边高亮）** — NavigateView 重构引入的 Solid
+  响应式陷阱：`<For>` 的回调不是追踪作用域，`zoneActive() && i() ===
+  selected()` 作为普通布尔值传入条目组件后，`classList` 在创建时冻结为初
+  始值（zone 尚为 "grid"）→ 栏目/网格的选中描边永不更新。改为把选中态以
+  **访问器**传入、在 `classList`/`aria-selected` 属性位置求值（搜索网格同
+  步受益：选中变化改为细粒度 class 更新，不再整体重建 DOM）。
+- **剪贴板键盘导航失效** — 根选中移动（↑/↓）只更新组合根的 `selected` 信
+  号，而剪贴板插件持有自己的 `selected`（视图高亮、Enter 激活、预览、滚动
+  跟随全读它），两个信号漂移导致方向键看似无反应。`moveSelection`/
+  `runSearch`/`clearSearch` 的选中读写改为按模式路由（插件模式走
+  ModeInstance 的 `selected`/`setSelected`）。
+- **导航页 ↓ 键不换栏** — 连续栏目导航中「下方行不达当前列」（部分末行或
+  下方栏目更短）时，↓ 会跳到本栏末尾条目。改为进入下一个栏目（列钳制到其
+  宽度）；仍在同一栏的部分末行时保持落栏尾的旧行为。
+- **插件模式窗口尺寸继承** — 切进磁盘 mode 插件的 iframe 页时窗口保持上
+  一页面的尺寸：磁盘 mode 实现的 `search`/`reset` 未调
+  `services.scheduleResize()`（违反 ModeInstance 契约，内置剪贴板插件有
+  调），模式切换后没有任何重测。已补调，切入即应用定高模型的正确高度。
 - **设置/快捷键：录制按钮文本错误** — 重排时丢失「自定义」标签逻辑：预设
   chip 激活时录制按钮错误地重复显示当前组合键（如 `Tab | Tab`）。恢复为
   预设激活 → 显示「自定义」，自定义组合 → 显示组合键，录制中 → 显示
@@ -18,6 +36,24 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件自定窗口尺寸（清单 `height` + RPC `app.resize`）** — ① mode 插件
+  清单可声明 `height`（逻辑 px）：`PluginInfo` 透传，sizer 定高分支经
+  `ModeInstance.desiredHeight()` 取值，前端钳制到最小高度与工作区高度，未
+  声明回退全局 设置 → 窗口大小 → 高度；② 桥接/工厂宿主 API 新增
+  `app.resize({width?, height?})`（iframe 页 `lume.app.resize`）：运行时改
+  窗口尺寸，省略轴保持当前值（sizer 每次 setSize 上报 `runtimeSize` 基
+  线），尺寸保持到下一次内容驱动的 resize。hello-mode 示例演示两者。
+- **导航页栏目注册表 + 插件 `navBars` 钩子（ROADMAP #7 第四轮）** — 导航页
+  空查询主菜单的三个原生栏（最近使用/已固定/Windows 资源管理器）与插件栏
+  统一为 `NavSection` 契约：`navigate.ts` 的 `sections()` 是唯一注册表
+  （顺序 = 最近使用 → 已固定 → 插件栏 → 资源管理器栏**结构性固定最下层**），
+  `NavigateView` 单一 `SectionView` 渲染，连续网格键盘导航、拖拽排序、
+  Delete 软删、展开撑满的 work-area cap 全部走注册表（拖拽按栏目隔离，顺带
+  修复拖拽跨栏时误算插入位的隐患）。任意 kind 的磁盘插件可在工厂逻辑里实现
+  `navBars()` 贡献栏目：条目 `{name, path, icon?}` 点击/Enter 经 `launch_app`
+  打开（文件与 URL 均可）、右键共享 app 菜单、`icon` 缺省走图标管线
+  （data:/URL 直通、本地路径转 asset 协议）；每次呼出与插件刷新时重新拉取。
+  示例 `examples/plugins/nav-bar/`。
 - **插件系统第三轮：mode/service 磁盘加载 + 宿主能力 API（uTools 式）** —
   ① **磁盘 mode 插件**：`kind = "mode"` + `view`（HTML）渲染进同源桥接
   iframe（srcdoc 注入 `window.lume` 桥：Promise RPC + `lume.on.query/show/

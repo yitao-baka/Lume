@@ -174,7 +174,39 @@ iframeBridge.tsx`：`window.lume` Promise RPC + `lume.on.query/show/hide`
 set` + storage.json + id 消毒））。main.js 默认导出 = 工厂 `create(ctx)`
 （v1 纯对象向后兼容）。**坑**：`import()` 返回命名空间必须取 `.default`；
 `plugins` 注册数组是普通的——disk 加载后须 clone manifests 信号触发
-响应式（否则 pill 不出现）。示例 `examples/plugins/hello-mode/`。
+响应式（否则 pill 不出现）。示例 `examples/plugins/hello-mode/`。**第四轮（同日）**：导航页栏目注册表
+重构 + 插件 `navBars` 钩子 —— 三个原生栏（最近使用/已固定/资源管理器）与
+插件栏统一为 `NavSection` 契约（`navigate.ts` 的 `sections()` 是唯一注册
+表，顺序 = recent → pinned → 插件栏 → explorer **结构性固定最下层**），
+`NavigateView` 单一 `SectionView` 渲染（条目级图标覆盖/mono/wrap），连续
+网格键盘导航、拖拽排序、Delete 软删、sizer 的 work-area cap（`anyExpanded`）
+全走注册表；拖拽 dragover 按 `data-bar-id` 限定到被拖栏（顺手修了跨栏拖拽
+误算插入位的隐患）。任意 kind 的磁盘插件可在工厂逻辑实现 `navBars()` 贡献
+栏目（`NavBarContribution`：`{id,title,items:[{name,path,icon?}]}`；id 加
+插件前缀、每栏 50 条封顶、icon data:/URL 直通/本地路径转 asset；调用时机 =
+组合/每次呼出/settings-applied；条目激活 = `launch_app`、右键 = 共享 app
+菜单）。示例 `examples/plugins/nav-bar/`。**第五轮（同日）**：① 修**磁盘
+mode 尺寸继承** —— `createDiskModeInstance` 的 `search`/`reset` 补调
+`services.scheduleResize()`（对齐 ModeInstance 契约；此前切入 iframe 页窗口
+停在上一页面尺寸）。② **插件自定窗口尺寸** —— 清单新增 `height` 字段
+（Rust manifest/PluginInfo 透传），sizer fixed 分支经 ModeInstance 可选
+`desiredHeight()` 取值（钳制 90px…工作区-32px，未声明回退全局设置高度）；
+桥接 RPC `app.resize`（`PluginServices.resizeWindow`；`runtimeSize` 信号 =
+sizer 每次 setSize 上报的"当前尺寸"基线，省略轴保持当前值，尺寸保持到下一
+次内容驱动的 resize）。hello-mode 示例加 `height = 560` + resize 按钮。
+③ 修**导航页 ↓ 不换栏** —— `moveBarSelection` 的「低位行不达当前列 → 跳到
+本栏末尾条目」回退改为 `commitGrid(下一行)`（列钳进下一栏；同栏部分行仍落
+栏尾，与旧行为一致）。④ 修**剪贴板键盘导航失效** —— 根
+`moveSelection`/`runSearch`/`clearSearch` 的选中读写原来只动根 `selected`
+信号，而剪贴板 store 持有自己的 `selected`（视图高亮/激活读它）→ 两个信号
+漂移、↑↓ 表现为无反应；新增 `activeSelected`/`setActiveSelected` 按模式
+路由（插件模式走 ModeInstance accessors）。⑤ 修**导航页选中反馈消失** ——
+NavigateView 重构把 `zoneActive() && i() === selected` 以普通布尔传入
+itemBox，而 `<For>` 回调非追踪作用域 → classList 冻结初值；选中态改访问器
+传入、classList 属性位求值（网格从整体重建变细粒度 class 更新）。**Solid
+教训**：For 回调内跨普通函数边界传计算值会丢响应式——必须在 JSX 属性位置
+以访问器求值。验证：tsc/build 干净、cargo
+test 79（+height 断言）。
 
 **Prior: 拆分 App.tsx 为 launcher 模块（零行为变化 refactor, complete) — as of
 2026-08-30**: 2510 行的单文件拆为 `src/launcher/` 11 个模块（types/clipData/

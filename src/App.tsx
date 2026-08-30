@@ -2,6 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show, For } from "solid
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { Dynamic } from "solid-js/web";
 import { resolveLocale, setLocale, t, type Messages } from "./i18n";
 import { applyColorMode } from "./theme";
@@ -16,12 +17,13 @@ import type {
   MenuState,
 } from "./launcher/types";
 import {
+  MIN_WINDOW_H,
   TOAST_MS,
   TOAST_UNDO_MS,
 } from "./launcher/types";
 import { createIconStore } from "./launcher/icons";
 import { createWindowSizer } from "./launcher/sizing";
-import { createNavigateStore } from "./launcher/navigate";
+import { createNavigateStore, type ContributedBar } from "./launcher/navigate";
 import { buildMenuItems } from "./launcher/menu";
 import { createKeyRouter } from "./launcher/keyboard";
 import { NavigateView } from "./launcher/NavigateView";
@@ -32,6 +34,7 @@ import {
   modeById,
   modeKeywordMatches,
   modePlugins,
+  navBarPlugins,
   providerPlugins,
   refreshPlugins,
   setPluginServices,
@@ -59,6 +62,13 @@ function App() {
   /** Launcher width, from settings — the source of truth for resizing (never
    * re-read from the window, which drifts on DPI rounding). */
   const [windowWidth, setWindowWidth] = createSignal(_a?.window_width ?? 720);
+  /** The size we last applied ourselves (logical px) — the baseline for
+   * plugin `app.resize` calls (omitted axes keep "current"). The sizer
+   * reports every setSize through it; plugin resize writes it too. */
+  const [runtimeSize, setRuntimeSize] = createSignal({
+    w: _a?.window_width ?? 720,
+    h: _a?.window_height ?? 520,
+  });
   /** Key that switches Navigate/Clipboard modes (settings → 系统 → 快捷键). */
   const [switchKey, setSwitchKey] = createSignal(_cfg?.hotkeys?.switch_mode || "Tab");
   /** Settings-driven: show the 「最近使用」 bar (display-only toggle). */
@@ -163,10 +173,9 @@ function App() {
     // recall: 保留当前 mode/kind/query 不动, 热键重呼出即恢复这次搜索结果。
 
     setApps([]);
-    setSelected(0);
+    setActiveSelected(0);
     nav.setZone("grid");
-    nav.setPinnedSelected(0);
-    nav.setRecentSelected(0);
+    nav.resetSelections();
     nav.setRecentExpanded(false); // don't persist the expanded state across shows
     nav.setPinnedExpanded(expandPinned());
     setMenu(null);
@@ -203,10 +212,12 @@ function App() {
     fixedHeight: () => mode() !== APPS_MODE,
     windowHeight,
     windowWidth,
+    // A mode's manifest `height` (desiredHeight) overrides the global setting.
+    modeHeight: () => activeMode()?.desiredHeight?.() ?? null,
+    setRuntimeSize: (w, h) => setRuntimeSize({ w, h }),
     // The expand flags live in the navigate store (created below) — read
-    // through wrappers; the sizer only calls them at resize time.
-    recentExpanded: () => nav.recentExpanded(),
-    pinnedExpanded: () => nav.pinnedExpanded(),
+    // through a wrapper; the sizer only calls it at resize time.
+    anyExpanded: () => nav.anyExpanded(),
     workAreaH,
     setWorkAreaH,
     barCols,
@@ -221,6 +232,8 @@ function App() {
     barCols,
     icons,
     scheduleResize: () => sizer.scheduleResize(),
+    invalidateWorkArea,
+    openMenu: (m) => setMenu(m),
     showToast,
     markEntryOpened: () => {
       entryOpened = true;
@@ -245,6 +258,19 @@ function App() {
     requestMode: (id) => void switchMode(id),
     runSearch,
     setQuery,
+    resizeWindow: (size) => {
+      // Logical px; omitted axes keep the current size. Height is clamped to
+      // the launcher minimum; the size holds until the next content-driven
+      // resize (mode switch / Navigate auto-fit re-applies the configured one).
+      const cur = runtimeSize();
+      const w = Math.max(240, Math.round(size.width ?? cur.w));
+      const h = Math.max(MIN_WINDOW_H, Math.round(size.height ?? cur.h));
+      setRuntimeSize({ w, h });
+      void getCurrentWindow()
+        .setSize(new LogicalSize(w, h))
+        .then(() => invoke("apply_position"))
+        .catch((err) => console.error("resize failed:", err));
+    },
   };
   setPluginServices(services);
   // Plugin registration — first-party plugins exercise every v1 contract.
@@ -257,7 +283,7 @@ function App() {
   const clipboardPlugin = createClipboardPlugin(services);
   definePlugin(clipboardPlugin);
   definePlugin(preview);
-  void refreshPlugins();
+  void refreshPlugins().then(() => void refreshPluginBars());
   function markKeyboard() {
     selectionSource = "keyboard";
   }
@@ -275,7 +301,6 @@ function App() {
     modeIds: () => [APPS_MODE, ...modePlugins().map((m) => m.id)],
     switchKey,
     shiftEnterAdmin,
-    showRecent,
     selected,
     menu,
     currentResults,
@@ -327,7 +352,7 @@ function App() {
 
   /** Search the active mode's index, dropping stale responses. */
   async function runSearch(q: string) {
-    setSelected(0);
+    setActiveSelected(0);
     nav.setNavHidden(false); // typing reveals the first entry's highlight
     nav.setZone("grid");
     const id = ++requestSeq;
@@ -374,6 +399,22 @@ function App() {
     }
   }
 
+  /** Pull plugin-contributed Navigate bars (the `navBars` hook) into the
+   * section registry. Runs on composition, on mount, at every summon (bars
+   * may recompute between shows), and whenever the plugin set refreshes. */
+  async function refreshPluginBars() {
+    const contribs: ContributedBar[] = [];
+    for (const p of navBarPlugins()) {
+      try {
+        const bars = await p.navBars();
+        if (Array.isArray(bars)) contribs.push(...bars);
+      } catch (err) {
+        console.error("navBars failed:", p.id, err);
+      }
+    }
+    nav.setPluginBars(contribs);
+  }
+
   async function onInput(e: Event) {
     const q = (e.currentTarget as HTMLInputElement).value;
     setQuery(q);
@@ -418,6 +459,8 @@ function App() {
       // ACTIVE mode was just disabled, fall back to Navigate.
       for (const p of allPlugins()) p.mode?.applySettings(s);
       void refreshPlugins().then(() => {
+        // Plugin bars ride the same refresh (启停 toggles add/remove bars).
+        void refreshPluginBars();
         if (mode() !== APPS_MODE && !modeById(mode())) {
           setMode(APPS_MODE);
           setAppsQuery("");
@@ -461,13 +504,15 @@ function App() {
   function activateApp(elevated: boolean) {
     entryOpened = true; // Enter/点击打开条目 (启动或粘贴) → 清空搜索记忆
     if (mode() === "apps") {
-      let item: AppEntry | undefined;
-      if (nav.zone() === "recent") item = nav.recentApps()[nav.recentSelected()];
-      else if (nav.zone() === "pinned") item = nav.pinnedApps()[nav.pinnedSelected()];
-      else if (nav.zone() === "folder") {
-        nav.activateFolder(nav.folderSelected(), elevated);
+      // Bar zone: the owning section activates its selected item — a plain
+      // app launch (recent/pinned/plugin bars), an explorer action tile, or
+      // anything else a section contract defines.
+      const sec = nav.activeSection();
+      if (sec) {
+        sec.activate(sec.selected(), elevated);
         return;
-      } else item = apps()[selected()];
+      }
+      const item = apps()[selected()];
       if (!item) return;
       // 全局关键字行：进入对应插件模式（不隐藏，不记为已使用条目）。
       if (item.path.startsWith("lume-mode://")) {
@@ -483,13 +528,24 @@ function App() {
     }
   }
 
-  /** Move the selection by `delta` steps, clamped to the result bounds. */
+  /** Move the selection by `delta` steps, clamped to the result bounds.
+   * Plugin modes own their selection signal (e.g. the clipboard store's) —
+   * reads AND writes must go through the mode's accessors, or the root
+   * signal drifts apart from what the mode's view highlights/activates
+   * (this exact drift is what killed clipboard ↑/↓ navigation once). */
+  function activeSelected(): number {
+    return mode() === APPS_MODE ? selected() : (activeMode()?.selected() ?? 0);
+  }
+  function setActiveSelected(i: number) {
+    if (mode() === APPS_MODE) setSelected(i);
+    else activeMode()?.setSelected(i);
+  }
   function moveSelection(delta: number) {
     const len = currentResults().length;
     if (len === 0) return;
     selectionSource = "keyboard";
     nav.setNavHidden(false); // arrow nav reveals the highlight from its hidden position
-    setSelected(Math.min(Math.max(selected() + delta, 0), len - 1));
+    setActiveSelected(Math.min(Math.max(activeSelected() + delta, 0), len - 1));
   }
 
   // Keep the selected result visible while navigating with the keyboard.
@@ -552,6 +608,7 @@ function App() {
     clearSearch();
     void nav.refreshRecent();
     void nav.refreshPins();
+    void refreshPluginBars();
     // 记住上次所在页面: a remembered Clipboard page must load history on mount
     // too (the window starts hidden and the first show may restore Clipboard).
     void runSearch(mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? ""));
@@ -573,6 +630,7 @@ function App() {
       for (const p of allPlugins()) p.lifecycle?.onShow?.();
       clearSearch();
       await Promise.all([nav.refreshRecent(), nav.refreshPins()]);
+      await refreshPluginBars();
       // 记住上次所在页面: a restored Clipboard page must load its history; an
       // apps page re-runs its (session) query or shows the bars.
       await runSearch(mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? ""));
@@ -580,14 +638,14 @@ function App() {
       // 「Windows 资源管理器」 bar can appear on the empty-query menu. Fetched
       // before the auto-select below so a folder-only menu still gets a zone.
       await nav.refreshFolderCtx();
-      // Auto-select the first entry of the empty-query main menu: the recent
-      // bar's first item when it has any, else the pinned bar's, else the folder
-      // bar's. (The bars' highlight requires `zoneActive`, so a resting zone of
-      // "grid" would leave nothing selected on summon.)
+      // Auto-select the first entry of the empty-query main menu: the first
+      // section in the registry (最近使用 when visible, else 已固定, else a
+      // plugin bar, else the explorer bar). (The bars' highlight requires
+      // `zoneActive`, so a resting zone of "grid" would leave nothing
+      // selected on summon.)
       if (mode() === "apps" && appsQuery() === "" && nav.zone() === "grid") {
-        if (showRecent() && nav.recentApps().length > 0) nav.setZone("recent");
-        else if (nav.pinnedApps().length > 0) nav.setZone("pinned");
-        else if (nav.folderCtx()) nav.setZone("folder");
+        const first = nav.sections()[0];
+        if (first) nav.setZone(first.id);
       }
       queueMicrotask(() => document.getElementById("search-input")?.focus());
     });
@@ -699,12 +757,10 @@ function App() {
             nav={nav}
             barCols={barCols}
             iconFor={icons.iconFor}
-            showRecent={showRecent}
             activate={activate}
             markMouse={markMouse}
             openMenu={setMenu}
             setSelected={setSelected}
-            invalidateWorkArea={invalidateWorkArea}
           />
         ) : (
           <Dynamic component={activeMode()?.View} />

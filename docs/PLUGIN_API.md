@@ -1,0 +1,419 @@
+# Lume 插件 API 参考（v1）
+
+> 适用版本：Pre-26.8+（ROADMAP #7 v1 + 第二轮）。
+> 快速上手见 `docs/PLUGINS.md`；本文是完整的 API 参考。
+> 所有契约以源码为唯一事实：`src/plugins/types.ts`（契约）、
+> `src/plugins/registry.ts`(注册表与加载器)、`src-tauri/src/plugins.rs`
+> （清单发现）。
+
+---
+
+## 1. 模型总览
+
+Lume 插件 = **一份清单**（`plugin.toml`）+ **零或多份贡献**（contribution）。
+注册表按 id 把两者关联，启停状态来自 `settings.plugins.disabled`。
+
+```
+<base>/plugins/<id>/           ← 磁盘插件（便携版 = exe 同级；安装版 = %LOCALAPPDATA%\Lume）
+├── plugin.toml                ← 清单（§3）
+└── main.js                    ← 入口（provider 类；kind 决定是否需要）
+```
+
+**三类贡献**：
+
+| 贡献 | 契约 | 动态加载 | 内置示例 |
+|---|---|---|---|
+| `provider` | `ProviderInstance` — 向 Navigate 搜索追加结果 | ✅ v1 唯一支持磁盘加载的类型 | `web-search`（examples/） |
+| `mode` | `ModeInstance` — 整页模式（query/视图/键盘/搜索） | ❌ 仅内置 | `clipboard` |
+| `service` | `PreviewService` — 后台能力（卫星预览路由） | ❌ 仅内置 | `preview` |
+
+**生命周期**：
+
+```
+启动 → Rust 扫描 plugins/*/plugin.toml（坏清单跳过）
+     → 前端 App 组合根创建内置插件并 definePlugin()
+     → refreshPlugins(): get_plugins 拉清单（含 enabled 态）
+       → loadDiskProviders(): 磁盘 provider 经 asset 协议 + blob import()
+设置变更/插件启停 → settings-applied → refreshPlugins() 重新同步
+     → 若活动模式被禁用 → 自动回导航页
+```
+
+**运行中安装新插件**：下一次 `settings-applied`（任一设置保存、任一插件
+启停）时加载；重启必然加载。已加载的插件每个会话只尝试一次（见 §5.4）。
+
+---
+
+## 2. 快速开始（5 分钟写一个 provider）
+
+```
+<base>/plugins/my-plugin/
+├── plugin.toml
+└── main.js
+```
+
+**plugin.toml**
+
+```toml
+id = "my-plugin"        # 可省略 — 默认取目录名
+name = "My Plugin"      # 设置页显示名（可省）
+kind = "provider"       # 必填 — 动态加载仅支持 provider
+entry = "main.js"       # 必填（provider）— 入口 JS，相对插件目录
+```
+
+**main.js**
+
+```js
+export default {
+  async search(query) {
+    const q = query.trim();
+    if (!q) return [];
+    return [{ name: `搜索 "${q}"`, path: `https://www.bing.com/search?q=${encodeURIComponent(q)}` }];
+  },
+};
+```
+
+完成。重启 Lume（或任一设置变更触发 settings-applied）后，Navigate 搜索
+结果末尾会出现插件返回的条目；**设置 → 插件** 里可启停。
+可运行的完整示例：`examples/plugins/web-search/`。
+
+---
+
+## 3. 清单 `plugin.toml` 参考
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `id` | string | **目录名** | 插件唯一 id。省略时回退为所在目录名；与目录名不一致时以清单为准（不强制相等）。启停、去重、日志都以它为键。 |
+| `name` | string | `""` | 设置页显示名；为空时前端回退显示 id。 |
+| `version` | string | `""` | 显示用；设置页以 chip 呈现。内置插件固定为 lume 的包版本。 |
+| `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。**动态加载只认 `provider`**；磁盘上的 `mode`/`service` 清单会被列出但不会执行任何入口。 |
+| `description` | string | `""` | 预留展示位。 |
+| `permissions` | string[] | `[]` | **预留**（v1 不校验、不强制）。为将来权限层准备的声明位。 |
+| `entry` | string | `""` | provider 入口 JS（相对插件目录）。`kind = "provider"` 且磁盘插件时必填，否则该插件被跳过加载。 |
+
+**解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
+
+- TOML 语法错误 → 该插件被**静默跳过**（stderr 记录 `[plugins] skipping …`），不影响其它插件。
+- 非 `plugin.toml` 的散文件、无清单的子目录一律忽略。
+- 清单里的字段拼错会被 toml 解析器**忽略**（不会报错）——拼写要对照上表。
+- 磁盘插件清单按 id 排序后合并进列表；内置插件（clipboard/preview）始终排在前面。
+
+---
+
+## 4. 发现与加载管线
+
+### 4.1 Rust 侧（`src-tauri/src/plugins.rs`）
+
+- 启动时不主动扫描——`get_plugins` 命令**每次调用都实时扫描**磁盘目录，
+  合并 `BUILTIN_PLUGINS`（clipboard/preview），并按
+  `settings.plugins.disabled` 计算每个插件的 `enabled`。
+- 返回结构（`PluginInfo`）：
+
+```ts
+interface PluginManifest {   // 前端看到的形态
+  id: string;
+  name: string;
+  version: string;
+  kind: string;             // "mode" | "service" | "provider"
+  description: string;
+  permissions: string[];
+  builtin: boolean;         // 内置 = true
+  enabled: boolean;         // settings.plugins.disabled 的反相
+  entry: string;            // 磁盘 provider 的入口文件；内置为 ""
+  dir: string;              // 磁盘插件绝对目录；内置为 ""
+}
+```
+
+### 4.2 前端侧（`src/plugins/registry.ts`）
+
+`refreshPlugins()` 在两处被调用：**App 组合时**（启动）与每次
+**`settings-applied`**（设置窗口保存 / 插件启停 / 导入恢复）。流程：
+
+1. `invoke("get_plugins")` 拉清单 → 存入响应式 signal（设置页据此渲染）。
+2. `loadDiskProviders()`：遍历清单，加载所有「未加载过 + 非内置 +
+   `kind === "provider"` + `enabled` + 有 `entry`/`dir`」的插件。
+
+**加载一个磁盘 provider 的步骤**：
+
+1. `fetch(convertFileSrc(dir + "\\" + entry))` 经 asset 协议读文件（CSP
+   为 null、asset scope `**`，无需额外配置）。
+2. 文本 → `Blob(text/javascript)` → `import(URL.createObjectURL(blob))`
+   —— 标准 ES Module 语义（可用 `export`，不可 `import` 项目内部模块）。
+3. 校验默认导出：`default.search` 必须是函数；否则
+   `console.error("[plugins] bad default export …")` 并放弃。
+4. 合格则包装成 `LauncherPlugin`（provider 贡献）注册进注册表，
+   `console.log("[plugins] loaded provider: <id>")`。
+
+**失败语义（重要）**：
+
+- 每个磁盘插件 id 每会话**只尝试加载一次**——进入流程即标记
+  `loadedDiskIds`，失败（文件缺失 / HTTP 错误 / 语法错误 / 形状不对）
+  不重试。改完插件代码需要**重启 Lume** 才会重新加载。
+- 加载失败、运行期 `search` 抛错，都只影响该插件自己（§5 错误模型）。
+- 查询 `get_plugins` 失败（理论上不会）→ 保留上一次清单状态，插件是
+  可选能力，从不阻塞启动器。
+
+---
+
+## 5. Provider 插件 API（磁盘 JS 插件）
+
+### 5.1 入口契约
+
+入口文件是**标准 ES Module**，默认导出必须满足：
+
+```ts
+export default {
+  search(query: string): Promise<{ name: string; path: string }[]>
+};
+```
+
+| 成员 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `search` | `(query: string) => Promise<ProviderResult[]>` | ✅ | 同步返回数组也可以（加载器会 `Promise.resolve` 包装）。 |
+
+`ProviderResult`：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | string | ✅ | 结果条目显示名（网格里单行省略）。 |
+| `path` | string | ✅ | 文件绝对路径 **或** URL。激活时经 `launch_app`（`ShellExecuteW`）打开，两者都支持。 |
+
+### 5.2 调用时机与结果合并
+
+- **只在 Navigate 模式的非空查询时调用**（空查询的主菜单不触发 provider）。
+- 每次按键搜索都会调用——`search` 应当快速返回（异步网络请求请自行加
+  防抖/缓存；慢响应会被 stale-token 机制丢弃结果，见下）。
+- 合并规则（组合根 `runSearch` apps 分支）：
+  1. 先取原生索引结果（`search_apps`，System32/桌面/开始菜单/用户索引）；
+  2. 依次调用每个**已启用** provider，把返回条目**追加在原生结果之后**；
+  3. 按 `path` 全局去重（与原生结果、与其它 provider 之间都去重）；
+  4. 总条数封顶 **20**（原生 + provider 合计）；
+  5. 整个过程用根搜索令牌（`searchToken`）守卫——期间有新按键搜索，
+     迟到的结果被丢弃。
+- **激活路径与原生条目完全一致**：点击/Enter → `launch_app`（URL 走默认
+  浏览器，文件走 ShellExecute）；图标走 `get_app_icons` 管线（取不到 →
+  未知图标回退，URL 条目通常就是未知图标）。
+- **错误隔离**：单个 provider 的 `search` 抛错/拒绝 →
+  `console.error("provider search failed: <id>")`，其它 provider 与原生
+  结果不受影响。
+
+### 5.3 能力边界（v1 provider 不能做什么）
+
+- 无法访问启动器内部模块（i18n、store、图标缓存……）——blob 模块是独立
+  作用域，只有标准 Web API + Tauri 注入的全局（`window.__TAURI_INTERNALS__`
+  技术上可达，但**不属于契约**，随版本可能变化）。
+- 无法贡献整页模式、右键菜单动作或卫星预览——那些是内置 mode/service
+  贡献的能力（§6）。
+- 无法在条目上挂自定义动作/预览——条目激活固定走 `launch_app`。
+
+### 5.4 加载与禁用语义
+
+- **单次加载**：`loadDiskProviders` 用 `loadedDiskIds` 保证每个 id 每会话
+  只 import 一次（无论成败）。修改插件代码 → 重启 Lume。
+- **禁用**：设置 → 插件 关闭后，`settings.plugins.disabled` 记录 id →
+  `providerPlugins()` 的 enabled 过滤把它的结果从合并中剔除——**但模块
+  仍驻留内存**（v1 不卸载已加载模块）。重新启用立即恢复结果，无需重启。
+- **内置 provider**（如果有）与磁盘 provider 走同一合并管线。
+
+### 5.5 完整参考示例
+
+`examples/plugins/web-search/`——为每个查询追加一个 Bing 搜索条目。
+安装：把整个 `web-search/` 目录拷进 `<base>/plugins/`，重启或触发一次
+settings-applied，然后在 设置 → 插件 里确认它处于开启状态。
+
+---
+
+## 6. 内置插件开发 API（TypeScript 贡献）
+
+> 这一节面向**第一方/编译进二进制**的插件（clipboard/preview 即此形态）。
+> 磁盘动态加载 v1 只覆盖 provider；mode/service 的动态化是后续工作。
+> 契约定义：`src/plugins/types.ts`。
+
+### 6.1 `LauncherPlugin` — 注册单元
+
+```ts
+interface LauncherPlugin {
+  id: string;                        // 稳定 id（= 清单 id；启停/日志的键）
+  modeMeta?: {                       // mode 贡献的模式 pill 元数据
+    labelKey: string;                //   i18n 键（pill 文案）
+    placeholderKey: string;          //   i18n 键（搜索框占位，v1 占位实际仍按 id 特判）
+    icon: string;                    //   SVG import 的 URL
+  };
+  mode?: ModeInstance;               // mode 贡献（§6.3）
+  preview?: PreviewService;          // service 贡献（§6.5）
+  provider?: ProviderInstance;       // provider 贡献（§5）
+  clipMenuActions?: () => unknown;   // 共享右键菜单的剪贴板动作（§6.6）
+}
+```
+
+注册：组合根按序 `definePlugin(plugin)`。**注册顺序 = 模式 pill 顺序 =
+磁盘插件之前的合并顺序**。注册发生在 App 组件作用域内——mode 实例里的
+Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
+
+### 6.2 `PluginServices` — 组合根开放给插件的能力
+
+| 方法 | 语义 |
+|---|---|
+| `showToast(text, opts?)` | 底部 toast。`opts.undo` 撤销回调（3s 窗口）；`opts.duration` 覆盖默认停留（1.6s）。 |
+| `markEntryOpened()` | 标记「本此呼出已使用条目」→ 清空搜索召回（下次呼出回导航页）。launch/paste/开链接类动作都应调用。 |
+| `resetAndHide()` | 清空会话状态（走 clearSearch）并隐藏启动器。 |
+| `persistLastPage()` | 防抖 400ms 持久化「记住上次所在页面」（读活动模式的 `pageKind`）。模式内切换分类/页面时调用。 |
+| `runSearch(q)` | **根搜索管线**：重置选中/隐藏导航高亮/zone 归 grid → 按 mode 分发（apps 原生搜索；插件模式 → `instance.search(q)`）。模式内部刷新数据应调它而不是自己的 `search`，以保证选中态/zone/令牌一致。 |
+| `scheduleResize()` | 下一帧重测窗口高度（内容变化后调用）。 |
+
+| `searchToken()` | 单调递增令牌——根每次搜索 +1。异步结果落地前比对，令牌变了就丢弃（防乱序）。 |
+| `selectionSource()` | `"keyboard" \| "mouse" \| "other"`——最后一次选中变更的来源。hover 门控（键盘导航中悬停不接管）读它。 |
+| `markMouse()` | `selectionSource = "mouse"`。视图的 onMouseMove/onClick 调用。 |
+| `openMenu(m)` | 打开共享右键菜单（根渲染；`m` 为 `MenuState` 结构：`{kind, x, y, app?/item?/idx?}`）。 |
+| `mode()` | 当前活动模式 id（`"apps"` 或插件模式 id）。 |
+| `requestMode(id)` | 请求切模式（等价于用户点 pill → `switchMode`）。 |
+
+### 6.3 `ModeInstance` — 整页模式契约
+
+每个方法都标注**调用方与时机**——实现必须能在这些时机被安全调用：
+
+| 成员 | 调用方 / 时机 |
+|---|---|
+| `query()` / `setQuery(q)` | 组合根读取/清空当前模式查询（呼出恢复、clearSearch 全清、搜索框输入回写）。query 与 apps 模式独立。 |
+| `search(q)` | 根 `runSearch` 对非 apps 模式的分发。实现须：取 `services.searchToken()` 快照 → 异步取数 → 令牌不一致则丢弃 → 写自己的 rows → `setSelected(0)` + 复位滚动 → `services.scheduleResize()`。 |
+| `reset()` | 每次呼出（`clearSearch`）与切模式（`switchMode`）调用：清多选/对话框/动画态等**每呼出状态**，并清空自己的 rows（原生语义：呼出即全新搜索）。 |
+| `selected()` / `setSelected(i)` | 根 `moveSelection`（↑↓/网格移动）、`runSearch` 复位、Enter 激活前的对齐。 |
+| `rows()` | `currentResults()`（键盘移动的边界）与 Enter 激活。返回 `ClipboardItem[]` 形状（v1 契约即剪贴板行；泛化是后续工作）。 |
+| `activate()` | Enter / 第二次点击选中行的激活：多选 → 合并粘贴；单选 → 粘贴。 |
+| `onKey(e, ctx)` | 键盘路由在**非 apps 模式**下先交给模式处理；返回 `true` = 已消费。收到的键：←/→（空查询切分类）、Space（多选）、Del（删除）——↑/↓/Enter 由根统一处理（`ctx.moveSelection`、根 `activate`）。`ctx = { hasResults, moveSelection }`。 |
+| `onEscape()` | Esc 分层：菜单 → **模式**（如退出多选，返回 true）→ 卫星预览 → 隐藏。 |
+| `previewTarget()` | 卫星预览插件每次选中变化时轮询：当前选中行的预览请求（`PreviewReq`）或 `null`（隐藏）。行失效 → `null`。 |
+| `previewEnabled()` | 该模式当前是否想要卫星预览（对应 设置 → 开启预览）。 |
+| `measureViewport()` | 窗口尺寸变化（sizer 定高分支 + 根视口 effect）时触发；重测模式内部虚拟列表视口。 |
+| `pageKind()` / `restorePage(kind)` | 记住上次所在页面：持久化当前页（如剪贴板分类）/ 恢复；切到该模式时根先 `restorePage("all")` 复位。 |
+| `applySettings(s)` | 每次 `settings-applied`（对**所有**模式实例，含未激活的）：应用自己的设置切片（如剪贴板的显示类开关）。 |
+| `View` | 无 props 的 Solid 组件——活动时经 `<Dynamic>` 渲染为整页内容。内部通过闭包持有自己的 store 与 `services`。 |
+
+**模式 pill**：`modeMeta.labelKey` 提供文案（i18n），`icon` 提供图标；
+关闭插件的 pill 自动消失，Tab 循环也随之跳过。
+
+### 6.4 `ModeKeyContext`
+
+```ts
+{ hasResults: boolean; moveSelection(delta: number): void }
+```
+
+`hasResults` = 当前 rows 非空；`moveSelection` = 根的选中移动（含
+selectionSource 标记、导航高亮恢复、自动滚动）。
+
+### 6.5 `PreviewService` — 卫星预览服务
+
+```ts
+{ currentPreview(): PreviewReq | null; clear(): void }
+```
+
+- 组合根把「活动模式的 `previewTarget()`/`previewEnabled()`」组装成依赖
+  注入 preview 插件；插件内部跑 100ms 防抖 effect（show/close IPC）。
+- `currentPreview` 是**同步**信号——Esc 分层在预览防抖未落地前也能正确
+  判断「预览开着」并优先关它。
+- `clear()` = 立即清空（卫星窗 × 按钮 / Rust 侧 teardown 的
+  `preview-closed` 事件回调）。
+
+### 6.6 共享右键菜单集成（`clipMenuActions`）
+
+右键菜单由根渲染（`buildMenuItems`），剪贴板目标的动作由剪贴板插件以
+**窄接口**供给（`menu.ts::ClipMenuActions`：`copyOnly / pasteClip /
+toggleClipPin / copyPlain / openClipLink / revealClipFile / requestDelete`）。
+组合根取 `clipboardPlugin.clipMenuActions()` 传入——菜单不依赖插件的完整
+类型，只依赖这份结构；插件端直接返回自己的 store（结构天然满足）。
+
+### 6.7 完整内置示例：剪贴板插件
+
+`src/plugins/clipboard/` 的目录结构即推荐的内置插件布局：
+
+```
+src/plugins/clipboard/
+├── index.tsx          ← createClipboardPlugin(services)：建 store、
+│                        实现 ModeInstance 契约、返回 LauncherPlugin
+├── store.ts           ← 全部信号与动作（rows/selection/虚拟列表/设置切片
+│                        + 键盘滚动跟随 effect——在组件 owner 内创建）
+└── ClipboardView.tsx  ← 纯渲染（读 store + services，交互经回调）
+```
+
+关键实现要点（照抄即可避坑）：
+
+- **store 工厂只依赖 `PluginServices`**——rows/selection/viewport 都是
+  自己的信号，不向根索要。
+- 内部数据刷新（撤销/清空/pin/删除后）调 `services.runSearch(query)` 走
+  根管线，而不是自己的 `search`——保持选中复位/zone/令牌语义一致。
+- 视图的悬停选中要同时满足：`hoverSelect` 设置开启 +
+  `services.selectionSource() !== "keyboard"`；点击先
+  `services.markMouse()`。
+- `search` 第一行取令牌：`const token = services.searchToken()`；落地前
+  `token !== services.searchToken()` 则丢弃。
+
+---
+
+## 7. 启停与状态管理
+
+- 启停集 = `settings.toml` 的 `plugins.disabled: string[]`（缺省 = 全启用）。
+- **设置 → 插件** 的 toggle 调 `set_plugin_enabled`（轻量写，不触发重量级
+  apply 副作用），随后 `settings-applied` 让前端 `refreshPlugins()`。
+- **fail-open**：清单里查不到的 id 视为启用（内置插件在首次清单落地前也
+  如此）。
+- **关闭活动模式插件**：`applyRuntimeSettings` 在 refresh 后校验
+  `modeById(mode())`，不存在则自动切回导航页并清空搜索。
+- 关闭 provider：结果立即从合并中消失（模块驻留内存，重新启用即恢复）。
+- 关闭 preview 服务：卫星窗不再弹出（`enabled` 门控）。
+
+---
+
+## 8. 设置页集成
+
+设置第 8 分区「插件」（`PluginsPane`）自动列出 `get_plugins` 的全部插件：
+显示名（回退 id）+ 类型/来源/版本 chips + 启停 toggle。无需为新插件写
+任何设置 UI 代码——清单字段齐了，面板就有了。设置搜索框可用关键词：
+`插件 / pluginKindMode / pluginKindService / pluginKindProvider /
+pluginBuiltin`。
+
+---
+
+## 9. 安全模型
+
+- **动态加载 = 任意代码执行**。v1 的信任模型是**显式放置即信任**：用户
+  自己把插件放进 `<base>/plugins/`。清单 `permissions` 字段只是声明位，
+  v1 不校验、不隔离——插件代码与启动器同权限（可达 Tauri IPC）。
+- 内置插件与磁盘插件在注册表/启停上无差别，但内置代码经编译审计随包发布。
+- 后续方向：`permissions` 强制层（IPC 白名单）、插件沙箱、签名校验。
+
+---
+
+## 10. 调试与测试
+
+- **控制台日志**（WebView2 DevTools / CDP）：
+  - `[plugins] loaded provider: <id>` — 加载成功
+  - `[plugins] bad default export …` — 默认导出缺少 `search` 函数
+  - `[plugins] load failed: <id>` — 文件缺失 / HTTP / 语法错误
+  - `[plugins] skipping …` — Rust 侧清单解析失败
+  - `provider search failed: <id>` — 运行期 search 抛错
+- **CDP 连接**：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
+  启动后连 `127.0.0.1:9222`。现成脚本：
+  - `scripts/cdp_plugin_verify.mjs` — provider 行 + 插件面板截图
+  - `scripts/cdp_settings_smoke.mjs` — 8 分区设置冒烟
+  - `scripts/cdp_launcher_shots.mjs` — 启动器截图（前后对比）
+- **手工验证清单**：放入插件 → 重启 → 设置/插件可见 → 搜索出现结果行 →
+  启停 toggle 即时生效 → 关闭活动模式插件自动回导航页。
+
+---
+
+## 11. 兼容性与版本化
+
+- v1 没有 manifest 版本字段与协商机制——契约变更以「字段只增不改义」的
+  方式演进；`kind` 是分发键，新增贡献类型会引入新的 kind 值。
+- `ModeInstance.rows` 目前与剪贴板行形状（`ClipboardItem`）耦合，泛化为
+  任意模式自定义行模型留待后续。
+- 磁盘插件的 JS 在 blob URL 中执行：可用标准 Web API 与标准 ESM 语法
+  （`export`），但**不能 `import` 项目内部模块或第三方包**（无解析根）。
+
+---
+
+## 12. 路线
+
+- 权限强制层（消费 `permissions` 声明：IPC 白名单/能力注入）
+- 磁盘 `mode` / `service` 动态加载（需要视图与服务的沙箱化）
+- provider 结果的自定义动作与预览
+- 插件级设置界面（插件自述设置项 → 设置页自动渲染）

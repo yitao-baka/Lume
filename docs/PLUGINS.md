@@ -1,5 +1,9 @@
 # 插件开发指南（ROADMAP #7，v1）
 
+> **完整 API 参考**见 `docs/PLUGIN_API.md`（清单字段表、Provider 契约、
+> ModeInstance/PluginServices 逐方法时序、启停语义、安全模型、调试）。
+> 本文是最小上手指南。
+
 Lume 的插件 = 一份**清单**（`plugin.toml`）+ 一份**入口 JS**（provider 类）。
 插件放在 `<base>/plugins/<id>/`（便携版 = lume.exe 同级的 `plugins/`；安装
 版 = `%LOCALAPPDATA%\Lume\plugins\`），启动时被自动发现，在 **设置 → 插件**

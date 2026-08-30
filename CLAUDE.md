@@ -163,7 +163,18 @@ JS 动态加载（磁盘清单 `kind=provider` + `entry` → asset 协议 + blob
 信任，`permissions` 预留）、设置第 8 分区「插件」（PluginsPane，启停经
 `set_plugin_enabled`，关闭活动模式自动回导航页）。示例
 `examples/plugins/web-search/` + `docs/PLUGINS.md`。settings 冒烟断言
-更新为 8 分区。
+更新为 8 分区。**第三轮（同日）**：mode/service 磁盘加载 + 宿主能力 API
+（uTools 式）——磁盘 mode = `view` HTML 桥接 iframe（`src/plugins/
+iframeBridge.tsx`：`window.lume` Promise RPC + `lume.on.query/show/hide`
+事件，同源 srcdoc 注入桥）+ 可选 entry 钩子 + `keywords` 全局关键字进入
+（`lume-mode://<id>` 合成行在 activateApp 拦截切模式）；磁盘 service =
+`lifecycle` 钩子（onShow/onHide/onQuery）；宿主 API `PluginHostApi`
+（`hostApi.ts`：app.hide/toast/setQuery/openPath + clipboard 读写（新命令
+`get/set_clipboard_text`）+ 插件私有 KV 存储（新命令 `plugin_storage_get/
+set` + storage.json + id 消毒））。main.js 默认导出 = 工厂 `create(ctx)`
+（v1 纯对象向后兼容）。**坑**：`import()` 返回命名空间必须取 `.default`；
+`plugins` 注册数组是普通的——disk 加载后须 clone manifests 信号触发
+响应式（否则 pill 不出现）。示例 `examples/plugins/hello-mode/`。
 
 **Prior: 拆分 App.tsx 为 launcher 模块（零行为变化 refactor, complete) — as of
 2026-08-30**: 2510 行的单文件拆为 `src/launcher/` 11 个模块（types/clipData/

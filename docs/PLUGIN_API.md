@@ -21,11 +21,11 @@ Lume 插件 = **一份清单**（`plugin.toml`）+ **零或多份贡献**（cont
 
 **三类贡献**：
 
-| 贡献 | 契约 | 动态加载 | 内置示例 |
-|---|---|---|---|
-| `provider` | `ProviderInstance` — 向 Navigate 搜索追加结果 | ✅ v1 唯一支持磁盘加载的类型 | `web-search`（examples/） |
-| `mode` | `ModeInstance` — 整页模式（query/视图/键盘/搜索） | ❌ 仅内置 | `clipboard` |
-| `service` | `PreviewService` — 后台能力（卫星预览路由） | ❌ 仅内置 | `preview` |
+| 贡献 | 契约 | 动态加载 | 内置示例 | 磁盘示例 |
+|---|---|---|---|---|
+| `provider` | `ProviderInstance` — 向 Navigate 搜索追加结果 | ✅ | `web-search`（examples/） |
+| `mode` | `ModeInstance`（内置）/ **桥接 iframe 页**（磁盘） | ✅ | `clipboard` | `hello-mode`（examples/） |
+| `service` | `PreviewService`（内置）/ **生命周期钩子**（磁盘） | ✅ | `preview` | — |
 
 **生命周期**：
 
@@ -76,6 +76,10 @@ export default {
 结果末尾会出现插件返回的条目；**设置 → 插件** 里可启停。
 可运行的完整示例：`examples/plugins/web-search/`。
 
+要拿到宿主能力（toast/剪贴板/存储…），把默认导出写成**工厂函数**（§5.6）；
+要贡献**整页模式**（自由 HTML UI + 全局关键字进入），见 §6（示例
+`examples/plugins/hello-mode/`）。
+
 ---
 
 ## 3. 清单 `plugin.toml` 参考
@@ -88,7 +92,9 @@ export default {
 | `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。**动态加载只认 `provider`**；磁盘上的 `mode`/`service` 清单会被列出但不会执行任何入口。 |
 | `description` | string | `""` | 预留展示位。 |
 | `permissions` | string[] | `[]` | **预留**（v1 不校验、不强制）。为将来权限层准备的声明位。 |
-| `entry` | string | `""` | provider 入口 JS（相对插件目录）。`kind = "provider"` 且磁盘插件时必填，否则该插件被跳过加载。 |
+| `entry` | string | `""` | 入口 JS（相对插件目录）。provider 必填；mode 可选（逻辑钩子）；service 必填（钩子）。 |
+| `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
+| `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入与关键字完全一致时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。 |
 
 **解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
 
@@ -249,7 +255,7 @@ interface LauncherPlugin {
 磁盘插件之前的合并顺序**。注册发生在 App 组件作用域内——mode 实例里的
 Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 
-### 6.2 `PluginServices` — 组合根开放给插件的能力
+### 6B.0 `PluginServices` — 组合根开放给内置插件的能力
 
 | 方法 | 语义 |
 |---|---|
@@ -267,7 +273,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 | `mode()` | 当前活动模式 id（`"apps"` 或插件模式 id）。 |
 | `requestMode(id)` | 请求切模式（等价于用户点 pill → `switchMode`）。 |
 
-### 6.3 `ModeInstance` — 整页模式契约
+### 6B.1 `ModeInstance` — 整页模式契约
 
 每个方法都标注**调用方与时机**——实现必须能在这些时机被安全调用：
 
@@ -291,7 +297,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 **模式 pill**：`modeMeta.labelKey` 提供文案（i18n），`icon` 提供图标；
 关闭插件的 pill 自动消失，Tab 循环也随之跳过。
 
-### 6.4 `ModeKeyContext`
+### 6B.2 `ModeKeyContext`
 
 ```ts
 { hasResults: boolean; moveSelection(delta: number): void }
@@ -300,7 +306,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 `hasResults` = 当前 rows 非空；`moveSelection` = 根的选中移动（含
 selectionSource 标记、导航高亮恢复、自动滚动）。
 
-### 6.5 `PreviewService` — 卫星预览服务
+### 6B.3 `PreviewService` — 卫星预览服务
 
 ```ts
 { currentPreview(): PreviewReq | null; clear(): void }
@@ -313,7 +319,7 @@ selectionSource 标记、导航高亮恢复、自动滚动）。
 - `clear()` = 立即清空（卫星窗 × 按钮 / Rust 侧 teardown 的
   `preview-closed` 事件回调）。
 
-### 6.6 共享右键菜单集成（`clipMenuActions`）
+### 6B.4 共享右键菜单集成（`clipMenuActions`）
 
 右键菜单由根渲染（`buildMenuItems`），剪贴板目标的动作由剪贴板插件以
 **窄接口**供给（`menu.ts::ClipMenuActions`：`copyOnly / pasteClip /
@@ -321,7 +327,7 @@ toggleClipPin / copyPlain / openClipLink / revealClipFile / requestDelete`）。
 组合根取 `clipboardPlugin.clipMenuActions()` 传入——菜单不依赖插件的完整
 类型，只依赖这份结构；插件端直接返回自己的 store（结构天然满足）。
 
-### 6.7 完整内置示例：剪贴板插件
+### 6B.5 完整内置示例：剪贴板插件
 
 `src/plugins/clipboard/` 的目录结构即推荐的内置插件布局：
 

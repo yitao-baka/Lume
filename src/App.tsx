@@ -30,9 +30,11 @@ import {
   allPlugins,
   definePlugin,
   modeById,
+  modeKeywordMatches,
   modePlugins,
   providerPlugins,
   refreshPlugins,
+  setPluginServices,
   type ModeId,
   type PluginServices,
 } from "./plugins/registry";
@@ -242,7 +244,9 @@ function App() {
     mode,
     requestMode: (id) => void switchMode(id),
     runSearch,
+    setQuery,
   };
+  setPluginServices(services);
   // Plugin registration — first-party plugins exercise every v1 contract.
   const preview = createPreviewPlugin({
     previewTarget: () =>
@@ -313,6 +317,9 @@ function App() {
 
 
   async function resetAndHide() {
+    // Lifecycle: the active mode + disk services learn about the hide first.
+    activeMode()?.onHide?.();
+    for (const p of allPlugins()) p.lifecycle?.onHide?.();
     clearSearch();
     await invoke("hide_launcher");
   }
@@ -336,6 +343,10 @@ function App() {
         // index — deduped by path, capped to keep the grid sane.
         const extra: AppEntry[] = [];
         const seen = new Set(res.map((r) => r.path));
+        // 全局关键字（uTools 式）: exact match offers an 「进入 <name>」 row.
+        for (const kw of modeKeywordMatches(q)) {
+          extra.push({ id: -1, name: `进入 ${kw.name}`, path: `lume-mode://${kw.id}` });
+        }
         for (const p of providerPlugins()) {
           try {
             const items = await p.instance.search(q);
@@ -365,6 +376,8 @@ function App() {
   async function onInput(e: Event) {
     const q = (e.currentTarget as HTMLInputElement).value;
     setQuery(q);
+    // Disk service plugins see every Navigate keystroke (non-empty).
+    if (q.trim()) for (const p of allPlugins()) p.lifecycle?.onQuery?.(q);
     await runSearch(q);
   }
 
@@ -455,6 +468,11 @@ function App() {
         return;
       } else item = apps()[selected()];
       if (!item) return;
+      // 全局关键字行：进入对应插件模式（不隐藏，不记为已使用条目）。
+      if (item.path.startsWith("lume-mode://")) {
+        void switchMode(item.path.slice("lume-mode://".length));
+        return;
+      }
       void invoke("launch_app", { path: item.path, name: item.name, elevated });
       void resetAndHide();
     } else {
@@ -551,6 +569,7 @@ function App() {
     // refocuses it (Rust `is_mid_drag` suppresses the hide on that side), and a
     // reset there would wipe the current mode/search mid-drag.
     const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
+      for (const p of allPlugins()) p.lifecycle?.onShow?.();
       clearSearch();
       await Promise.all([nav.refreshRecent(), nav.refreshPins()]);
       // 记住上次所在页面: a restored Clipboard page must load its history; an
@@ -656,7 +675,7 @@ function App() {
                   alt=""
                   draggable={false}
                 />
-                {t((m.modeMeta?.labelKey ?? m.id) as keyof Messages)}
+                {m.modeMeta?.label ?? t((m.modeMeta?.labelKey ?? m.id) as keyof Messages)}
               </button>
             )}
           </For>

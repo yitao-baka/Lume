@@ -971,6 +971,16 @@ body,
    Settings window (docs/SETTINGS.md) — a decorated, solid-background window.
 --------------------------------------------------------------------------- */
 
+/* Disk mode plugin page — the bridged iframe fills the launcher below the
+   search row (the page scrolls internally). */
+.plugin-frame {
+  width: 100%;
+  height: calc(100vh - 60px);
+  border: none;
+  display: block;
+  background: var(--surface);
+}
+
 /* The launcher leaves the body transparent (Acrylic); the settings window
    needs a solid fill and no 1px transparent gutter. */
 body.settings-window {

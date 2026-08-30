@@ -26,10 +26,62 @@ export interface PluginManifest {
   permissions: string[];
   builtin: boolean;
   enabled: boolean;
-  /** Entry JS file (disk provider plugins, relative to the plugin dir). */
+  /** Entry JS file (disk plugins, relative to the plugin dir). */
   entry: string;
+  /** View HTML file (disk mode plugins, relative to the plugin dir). */
+  view: string;
+  /** Global keywords (uTools-style mode entry). */
+  keywords: string[];
   /** Absolute plugin directory (disk plugins; empty for built-ins). */
   dir: string;
+}
+
+/** The capability surface handed to disk plugin factories (v2, uTools-
+ * inspired). First-party plugins get the same shape via `createHostApi`. */
+export interface PluginHostApi {
+  app: {
+    /** Hide the launcher (equivalent to Esc/blur). */
+    hide(): void;
+    /** Bottom toast (1.6s, or 3s when opts.undo is set). */
+    toast(text: string, opts?: { undo?: () => void; duration?: number }): void;
+    /** Overwrite the launcher search-box query. */
+    setQuery(q: string): void;
+    /** Open a file path or URL via launch_app (ShellExecuteW). */
+    openPath(path: string): void;
+  };
+  clipboard: {
+    /** Current system clipboard text (null = non-text/empty). */
+    readText(): Promise<string | null>;
+    /** Write plain text to the system clipboard. */
+    writeText(text: string): Promise<void>;
+  };
+  /** Plugin-scoped key/value store persisted to
+   * `<base>/plugins/<id>/storage.json` (values are JSON-serialized). */
+  storage: {
+    get<T = unknown>(key: string): Promise<T | null>;
+    set(key: string, value: unknown): Promise<void>;
+    remove(key: string): Promise<void>;
+  };
+}
+
+/** Optional lifecycle hooks for disk **service** plugins (headless). */
+export interface ServiceHooks {
+  onShow?(): void;
+  onHide?(): void;
+  /** Every Navigate keystroke (non-empty query). */
+  onQuery?(q: string): void;
+}
+
+/** What a disk **mode** plugin's factory returns. The page UI lives in
+ * `view` (HTML); the logic object only feeds it events and may transform
+ * queries. All members optional. */
+export interface DiskModeLogic {
+  /** Called on every query keystroke while the mode is active. */
+  onQuery?(q: string): void;
+  /** Called each time the launcher shows with this mode active. */
+  onShow?(): void;
+  /** Called when the launcher hides with this mode active. */
+  onHide?(): void;
 }
 
 /** Services the composition root provides to every plugin. */
@@ -56,6 +108,8 @@ export interface PluginServices {
   mode(): string;
   /** Request that the root switches to the given mode id. */
   requestMode(id: string): void;
+  /** Overwrite the launcher search-box query (the active mode's query). */
+  setQuery(q: string): void;
 }
 
 /** Structural subset of the shared MenuState (avoids a launcher import). */
@@ -102,6 +156,8 @@ export interface ModeInstance {
   restorePage(kind: string): void;
   /** Apply the settings slice this mode renders live. */
   applySettings(s: unknown): void;
+  /** Launcher hidden with this mode active (lifecycle hook, optional). */
+  onHide?(): void;
   /** The full-page view. */
   View: Component;
 }
@@ -145,10 +201,21 @@ export interface ProviderInstance {
 export interface LauncherPlugin {
   id: string;
   /** Pill metadata when the plugin contributes a mode. */
-  modeMeta?: { labelKey: string; placeholderKey: string; icon: string };
+  modeMeta?: {
+    labelKey: string;
+    placeholderKey: string;
+    icon: string;
+    /** Raw display label (disk modes have no i18n key). */
+    label?: string;
+  };
   mode?: ModeInstance;
   preview?: PreviewService;
   provider?: ProviderInstance;
+  /** Global keywords + display name (uTools-style mode entry). */
+  keywords?: string[];
+  pluginName?: string;
+  /** Headless lifecycle hooks (disk service plugins). */
+  lifecycle?: ServiceHooks;
   /** Actions for the shared context menu (structural — menu.ts declares the
    * narrow interface it needs). */
   clipMenuActions?: () => unknown;

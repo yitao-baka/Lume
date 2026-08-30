@@ -1,0 +1,12 @@
+# Hello Mode — the reference example for disk MODE plugins (ROADMAP #7 v2).
+# Install: copy this folder into <base>/plugins/, restart Lume (or trigger a
+# settings change), then type the global keyword "hello" (or "你好") in
+# Navigate and pick 「进入 Hello Mode」 — or Tab to it in the mode pills.
+id = "hello-mode"
+name = "Hello Mode"
+version = "1.0.0"
+kind = "mode"
+description = "示例模式插件：iframe 自由 UI + 插件存储 + toast + 剪贴板"
+keywords = ["hello", "你好"]
+entry = "main.js"     # 可选 — 逻辑钩子（onQuery/onShow/onHide）
+view = "view.html"    # 必填 — 桥接 iframe 渲染的自由 UI

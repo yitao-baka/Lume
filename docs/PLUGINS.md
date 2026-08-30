@@ -21,9 +21,16 @@ permissions = ["network"]  # 预留字段 — v1 不强制
 entry = "main.js"          # provider 的入口 JS（相对插件目录）
 ```
 
-`kind` 决定贡献类型：`provider` = 向搜索结果追加条目（**v1 唯一支持动态
-加载的类型**）；`mode` / `service` 目前仅内置插件使用（剪贴板/预览），
-动态加载它们是后续工作。
+`kind` 决定贡献类型（**三类均已支持磁盘加载**）：
+
+- `provider` — 向搜索结果追加条目（纯对象 `{search}` 或工厂 `create(ctx)`）
+- `mode` — 整页模式：`view` HTML 自由 UI（桥接 iframe）+ 可选 `entry`
+  逻辑钩子 + `keywords` 全局关键字进入（示例 `examples/plugins/hello-mode/`）
+- `service` — 无 UI 生命周期钩子（`onShow`/`onHide`/`onQuery`）
+
+宿主能力 API（`ctx` / `window.lume`）：`app.hide/toast/setQuery/openPath`、
+`clipboard.readText/writeText`、`storage.get/set/remove`（插件私有 KV）。
+详见 `docs/PLUGIN_API.md`。
 
 ## provider 契约（entry JS）
 

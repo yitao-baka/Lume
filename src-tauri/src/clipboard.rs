@@ -1258,6 +1258,24 @@ fn io_err(e: impl std::fmt::Display) -> rusqlite::Error {
 /// `kind` filters the category (`"all"` default); the result limit is the
 /// configured history cap so the frontend's virtual list can page the whole
 /// history.
+/// Read the current system clipboard TEXT (None = non-text or empty).
+/// Exposed to plugins via the `clipboard.readText()` host API.
+#[tauri::command]
+pub fn get_clipboard_text() -> Result<Option<String>, String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    match cb.get().text() {
+        Ok(text) => Ok(if text.is_empty() { None } else { Some(text) }),
+        Err(_) => Ok(None), // non-text content is not an error for readers
+    }
+}
+
+/// Write plain text to the system clipboard (plugin `clipboard.writeText`).
+#[tauri::command]
+pub fn set_clipboard_text(text: String) -> Result<(), String> {
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    cb.set_text(text).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn search_clipboard(
     query: String,

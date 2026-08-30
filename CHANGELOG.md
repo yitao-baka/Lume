@@ -8,6 +8,27 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件系统第三轮：mode/service 磁盘加载 + 宿主能力 API（uTools 式）** —
+  ① **磁盘 mode 插件**：`kind = "mode"` + `view`（HTML）渲染进同源桥接
+  iframe（srcdoc 注入 `window.lume` 桥：Promise RPC + `lume.on.query/show/
+  hide` 事件），页面 UI 完全自由；`entry` 可选逻辑钩子；manifest 新增
+  `view`/`keywords` 字段。**全局关键字**（uTools 式进入）：`keywords` 与
+  Navigate 查询完全一致时出现「进入 <name>」行，激活即切入模式（pill 同步
+  出现，禁用回退兼容）。② **磁盘 service 插件**：`kind = "service"` +
+  无 UI 生命周期钩子（`onShow`/`onHide`/`onQuery`，异常隔离）。③ **宿主
+  能力 API**（`PluginHostApi`，三类插件通用；iframe 经 postMessage RPC 桥）：
+  `app.hide/toast/setQuery/openPath`、`clipboard.readText/writeText`（新增
+  `get/set_clipboard_text` 命令）、`storage.get/set/remove`（插件私有 KV，
+  新增 `plugin_storage_get/set` 命令 + storage.json + 路径穿越消毒）。
+  默认导出支持工厂形式 `create(ctx)`，v1 纯对象形式向后兼容。修复
+  `import()` 命名空间未取 `default` 导致 provider 不加载、以及 `plugins`
+  数组 push 不触发响应式（disk 加载后 clone manifests）两个本轮引入的
+  缺陷。验证：cargo test 79（+2 存储/清单）；实测 hello-mode（关键字进入/
+  iframe UI/存储跨重启持久化/toast/剪贴板）与 web-search（向后兼容）全通；
+  截图 3 张 judge 通过；三套冒烟全过。示例 `examples/plugins/hello-mode/`。
+
+### Added
+
 - **插件系统第二轮：provider 搜索贡献 + 第三方 JS 动态加载 + 插件管理页** —
   ① `provider` 贡献类型：`search(query)` 返回 `{name, path}` 条目，追加在
   Navigate 原生搜索结果之后（path 去重、封顶 20、异常隔离），激活/图标

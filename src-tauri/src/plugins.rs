@@ -42,6 +42,14 @@ pub struct PluginManifest {
     /// Entry JS file for disk provider plugins (relative to the plugin dir).
     #[serde(default)]
     pub entry: String,
+    /// View HTML file for disk mode plugins (relative to the plugin dir;
+    /// rendered in a sandboxed iframe inside the launcher page).
+    #[serde(default)]
+    pub view: String,
+    /// Global keywords (uTools-style): typing one in Navigate search offers
+    /// an 「进入 <name>」 row that opens the mode.
+    #[serde(default)]
+    pub keywords: Vec<String>,
 }
 
 fn default_kind() -> String {
@@ -63,6 +71,10 @@ pub struct PluginInfo {
     pub enabled: bool,
     /// Entry JS file (disk provider plugins).
     pub entry: String,
+    /// View HTML file (disk mode plugins).
+    pub view: String,
+    /// Global keywords (mode plugins).
+    pub keywords: Vec<String>,
     /// Absolute plugin directory (disk plugins; empty for built-ins).
     pub dir: String,
 }
@@ -137,6 +149,8 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             builtin: true,
             enabled: enabled(id),
             entry: String::new(),
+            view: String::new(),
+            keywords: Vec::new(),
             dir: String::new(),
         })
         .collect();
@@ -152,6 +166,8 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             builtin: false,
             enabled: enabled(&m.id),
             entry: m.entry,
+            view: m.view,
+            keywords: m.keywords,
             dir: dir.to_string_lossy().into_owned(),
         });
     }
@@ -163,6 +179,81 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
 pub fn get_plugins(state: State<SettingsState>) -> Result<Vec<PluginInfo>, String> {
     let snapshot = settings::snapshot(&state);
     Ok(list_plugins(&base_dir(), &snapshot.plugins.disabled))
+}
+
+// ── Plugin-scoped key/value storage (uTools db 风格, ROADMAP #7) ──
+//
+// Each disk plugin gets `<base>/plugins/<id>/storage.json` — a flat
+// string→JSON map only its own id can address. Values arrive as JSON text
+// (the frontend JSON-stringifies); the backend never interprets them.
+
+fn plugin_storage_path(base: &Path, id: &str) -> Result<std::path::PathBuf, String> {
+    // Path-traversal guard: storage lives INSIDE the plugin's own dir.
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("invalid plugin id".into());
+    }
+    Ok(plugins_dir(base).join(id).join("storage.json"))
+}
+
+fn read_storage(path: &Path) -> std::collections::BTreeMap<String, String> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Read one key (None = unset). `key` is the exact map key.
+#[tauri::command]
+pub fn plugin_storage_get(
+    id: String,
+    key: String,
+    _state: State<SettingsState>,
+) -> Result<Option<String>, String> {
+    plugin_storage_get_for(&base_dir(), &id, key)
+}
+
+fn plugin_storage_get_for(
+    base: &Path,
+    id: &str,
+    key: String,
+) -> Result<Option<String>, String> {
+    let path = plugin_storage_path(base, id)?;
+    Ok(read_storage(&path).get(&key).cloned())
+}
+
+/// Write one key (value = JSON text; null deletes). Atomic-ish: the whole
+/// map is rewritten each time (plugin storage is small by design).
+#[tauri::command]
+pub fn plugin_storage_set(
+    id: String,
+    key: String,
+    value: Option<String>,
+    _state: State<SettingsState>,
+) -> Result<(), String> {
+    plugin_storage_set_for(&base_dir(), &id, key, value)
+}
+
+fn plugin_storage_set_for(
+    base: &Path,
+    id: &str,
+    key: String,
+    value: Option<String>,
+) -> Result<(), String> {
+    let path = plugin_storage_path(base, id)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut map = read_storage(&path);
+    match value {
+        Some(v) => map.insert(key, v),
+        None => map.remove(&key),
+    };
+    fs::write(&path, serde_json::to_string(&map).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -202,6 +293,56 @@ mod tests {
         assert_eq!(found.len(), 1, "bad manifest skipped, files ignored");
         assert_eq!(found[0].id, "demo", "id falls back to the directory name");
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn storage_roundtrip_and_traversal_guard() {
+        let root = std::env::temp_dir().join(format!("lume-plugins-store-{}", std::process::id()));
+        let base = root.join("plugins");
+        let demo = base.join("demo");
+        fs::create_dir_all(&demo).unwrap();
+        let path = plugin_storage_path(&root, "demo").unwrap();
+        assert_eq!(path, demo.join("storage.json"));
+
+        // set → get → overwrite → delete
+        plugin_storage_set_for(&root, "demo", "counter".into(), Some("41".into())).unwrap();
+        plugin_storage_set_for(&root, "demo", "greeting".into(), Some("\"hi\"".into())).unwrap();
+        assert_eq!(
+            plugin_storage_get_for(&root, "demo", "counter".into()).unwrap(),
+            Some("41".into())
+        );
+        plugin_storage_set_for(&root, "demo", "counter".to_string(), Some("42".into())).unwrap();
+        assert_eq!(
+            plugin_storage_get_for(&root, "demo", "counter".into()).unwrap(),
+            Some("42".into())
+        );
+        // other keys survive an overwrite
+        assert_eq!(
+            plugin_storage_get_for(&root, "demo", "greeting".into()).unwrap(),
+            Some("\"hi\"".into())
+        );
+        plugin_storage_set_for(&root, "demo", "greeting".into(), None).unwrap();
+        assert_eq!(plugin_storage_get_for(&root, "demo", "greeting".into()).unwrap(), None);
+
+        // unset key → None; path traversal ids rejected
+        assert_eq!(plugin_storage_get_for(&root, "demo", "nope".into()).unwrap(), None);
+        assert!(plugin_storage_path(&base, "..\\evil").is_err());
+        assert!(plugin_storage_path(&base, "").is_err());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn manifest_carries_keywords_and_view() {
+        let m = parse_manifest(
+            "id = \"m\"
+kind = \"mode\"
+view = \"view.html\"
+keywords = [\"clip\", \"剪贴板\"]
+",
+        )
+        .unwrap();
+        assert_eq!(m.view, "view.html");
+        assert_eq!(m.keywords, vec!["clip".to_string(), "剪贴板".to_string()]);
     }
 
     #[test]

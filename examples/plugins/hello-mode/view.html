@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 14px "Segoe UI", sans-serif; margin: 0; padding: 18px 22px;
+         background: transparent; color: inherit; }
+  h1 { margin: 0 0 4px; font-size: 18px; }
+  .dim { opacity: .6; font-size: 12px; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+  button { padding: 6px 14px; border: 1px solid rgba(128,128,128,.5);
+           border-radius: 8px; background: transparent; color: inherit;
+           cursor: pointer; }
+  button:hover { background: rgba(128,128,128,.15); }
+  code { background: rgba(128,128,128,.18); padding: 1px 6px; border-radius: 5px; }
+  #q { font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1>Hello Mode 👋</h1>
+  <div class="dim">磁盘模式插件示例 — 这整个页面是你的自由 UI（桥接 iframe）</div>
+  <div class="row">搜索框查询：<code id="q">（空）</code></div>
+  <div class="row">
+    <button id="toast">弹一个 Toast</button>
+    <button id="clip">写剪贴板</button>
+    <button id="count">存储计数 +1</button>
+    <span>计数：<code id="countView">…</code></span>
+  </div>
+  <div class="row">
+    <button id="paste">读剪贴板 → 标题</button>
+    <button id="back">回导航页（setQuery）</button>
+  </div>
+  <script>
+    var n = 0;
+    var $ = function (id) { return document.getElementById(id); };
+    var render = function () { $("countView").textContent = String(n); };
+
+    lume.on.query = function (q) { $("q").textContent = q || "（空）"; };
+    lume.on.show = function () { /* 每次呼出 */ };
+
+    $("toast").onclick = function () { lume.app.toast("来自 hello-mode 的问候 👋"); };
+    $("clip").onclick = function () { lume.clipboard.writeText("hello from hello-mode"); };
+    $("paste").onclick = function () {
+      lume.clipboard.readText().then(function (t) { $("q").textContent = t || "(空)"; });
+    };
+    $("back").onclick = function () { lume.app.setQuery(""); };
+
+    lume.storage.get("count").then(function (v) { n = v || 0; render(); });
+    $("count").onclick = function () {
+      n += 1;
+      lume.storage.set("count", n).then(render);
+    };
+  </script>
+</body>
+</html>

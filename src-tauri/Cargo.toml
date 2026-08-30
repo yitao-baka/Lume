@@ -4,6 +4,9 @@ version = "2.0.0"
 description = "A lightweight Windows productivity launcher."
 authors = ["Lume"]
 edition = "2021"
+# Tauri bundler picks the "main binary" via `default-run`; without it the
+# externalBin `lume-svc` wins and MSI bundling fails with ICE30.
+default-run = "lume"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

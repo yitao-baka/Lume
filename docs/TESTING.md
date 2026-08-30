@@ -157,7 +157,7 @@ dev server.
 8. **Dev loopback** — `lume-svc.exe --foreground` runs dormant (Ctrl+C quits);
    the service holds `\\.\pipe\LumeSVC` ready for a future client.
 9. **Bundle** — `npm run tauri build` puts `lume-svc.exe` next to `lume.exe`
-   in the installer (`externalBin` + `scripts/copy-lume-svc.mjs`).
+   in the installer (lume-svc 作为 cargo bin 随包安装，无需 externalBin).
 
 ### Environment sync (envwatch)
 

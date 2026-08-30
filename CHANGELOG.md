@@ -27,6 +27,14 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **自研引擎实机五连修（ROADMAP #20.1）** — Everything UI 关闭但无头服务
+  实例存留时引擎永远休眠（休眠探针改按交互会话判定）；USN journal 读报
+  1784（READ_USN_JOURNAL_DATA_V0 按 MSDN 实布局 40 字节重写）；索引静默
+  截断为 USN=0 记录子集（MFT_ENUM_DATA_V0 的 HighUsn 过滤区间修正为
+  [0, NextUsn]）；路径解析 100% 失败（FRN 高 16 位 MFT 序列号掩码）；rename
+  循环产生重复条目（order 成员集去重）。修复后实测 82.1 万文件索引、门面
+  端到端 110–141ms、新建文件 6s 内可搜。
+
 - **导航页条目失去选中反馈（描边高亮）** — NavigateView 重构引入的 Solid
   响应式陷阱：`<For>` 的回调不是追踪作用域，`zoneActive() && i() ===
   selected()` 作为普通布尔值传入条目组件后，`classList` 在创建时冻结为初

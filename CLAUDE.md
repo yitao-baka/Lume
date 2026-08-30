@@ -149,6 +149,24 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   the process lifetime; a second launch of `lume.exe` exits immediately
 
 ## Current iteration
+## Current iteration
+
+**自研引擎实机修复（ROADMAP #20.1, complete) — as of 2026-08-30**: 用户实测
+「Everything UI 关闭后 SVC 引擎无结果」暴露五个连环 bug，全部修复并实机验证：
+① 休眠探针被 Everything 无头服务实例（会话 0，无 UI 不响应 IPC）骗成「在
+用」→ 改 `ProcessIdToSessionId` 只认交互会话（会话查询失败也偏向建索引）；
+② `READ_USN_JOURNAL_DATA_V0` 字段序/大小写错 → 1784，按 MSDN 实布局 40 字节
+重写（教训：Win32 结构体必须查文档，"大致知道"必错）；③ 索引静默截断成
+USN=0 子集 → `MFT_ENUM_DATA_V0` 的 `LowUsn/HighUsn` 是按记录最后 USN 的过滤
+区间，正确值 `[0, NextUsn]`（0/0 = 只要从未 journaled 的文件；MAX = 超范围
+返回空）；④ 路径解析全灭 → FRN 高 16 位是 MFT 序列号（根目录引用 =
+0x0005_0000_0000_0005 ≠ 5），解析前统一掩码低 48 位；⑤ rename 循环（remove→
+upsert 同 FRN）重复 order 条目 → `ordered: HashSet` 成员判定。实机：82.1 万
+文件索引秒级构建、门面端到端 110–141ms（管道 + 全表扫描排序）、新建文件
+6s 内可搜。**诊断基建**：管道 `debug` 动词（每卷计数/样本/扫描遥测批次/记录
+/终止原因）+ `status` 携带失败原因——SCM 下 stderr 不可见，错误必须走管道
+回传。验证：cargo test 95（+2）、release lume-svc 实装运行。
+
 
 **文件秒搜 mode 插件 + 宿主 search 能力 (complete) — as of 2026-08-30**：
 统一 API 以宿主能力开放给插件 —— `PluginHostApi.search.files(q, max?)`

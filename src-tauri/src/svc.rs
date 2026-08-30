@@ -625,16 +625,21 @@ fn spawn_engine_watcher(engine: Arc<usnidx::Engine>) {
     });
 }
 
-/// Whether an Everything process exists (name match via the toolhelp
-/// snapshot). Window-message IPC is session-scoped, so a SYSTEM service can't
-/// probe Everything's UI window — process existence is the right signal for
-/// the dormancy decision.
+/// Whether an Everything process that owns an interactive session exists
+/// (name match via the toolhelp snapshot). Window-message IPC is session-
+/// scoped, so a SYSTEM service can't probe Everything's UI window — process
+/// existence is the right signal, **but only in an interactive session**:
+/// Everything installs its own headless Windows *service* instance
+/// (session 0) that answers no IPC queries at all. Counting that one would
+/// keep the engine dormant forever on machines where the Everything UI is
+/// closed — exactly the case the self-hosted index exists for.
 fn everything_running() -> bool {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
+    use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
     unsafe {
         let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
             return false;
@@ -651,9 +656,16 @@ fn everything_running() -> bool {
                     .iter()
                     .position(|&c| c == 0)
                     .unwrap_or(entry.szExeFile.len());
-                if String::from_utf16_lossy(&entry.szExeFile[..len]).eq_ignore_ascii_case("Everything.exe") {
-                    found = true;
-                    break;
+                let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
+                if name.eq_ignore_ascii_case("Everything.exe") {
+                    let mut session = 0u32;
+                    let session = ProcessIdToSessionId(entry.th32ProcessID, &mut session)
+                        .ok()
+                        .map(|_| session);
+                    if everything_counts(session) {
+                        found = true;
+                        break;
+                    }
                 }
                 if Process32NextW(snapshot, &mut entry).is_err() {
                     break;
@@ -663,6 +675,14 @@ fn everything_running() -> bool {
         let _ = CloseHandle(snapshot);
         found
     }
+}
+
+/// Pure decision core of `everything_running`: does an Everything process
+/// with this session id imply "Everything is in use"? Only interactive-
+/// session instances own the UI window the launcher's IPC talks to. A failed
+/// session lookup (`None`) counts as not-running — fail toward indexing.
+fn everything_counts(session: Option<u32>) -> bool {
+    matches!(session, Some(s) if s != 0)
 }
 
 /// Named-pipe server: length-prefixed JSON requests in, length-prefixed JSON
@@ -779,9 +799,20 @@ fn handle_message(shared: &Shared, payload: &str) -> String {
             let items = serde_json::to_string(&hits).unwrap_or_else(|_| "[]".into());
             format!(r#"{{"t":"results","status":"{status}","items":{items}}}"#)
         }
+        Some("debug") => {
+            let n = msg.get("n").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+            let payload = shared.engine.debug_samples(n.min(20));
+            format!(r#"{{"t":"debug","payload":{payload}}}"#)
+        }
         Some("status") => {
-            let (state, files) = shared.engine.status();
-            format!(r#"{{"t":"status","state":"{state}","files":{files}}}"#)
+            let (state, files, error) = shared.engine.status();
+            match error {
+                Some(e) => {
+                    let err = serde_json::to_string(&e).unwrap_or_else(|_| "\"?\"".into());
+                    format!(r#"{{"t":"status","state":"{state}","files":{files},"error":{err}}}"#)
+                }
+                None => format!(r#"{{"t":"status","state":"{state}","files":{files}}}"#),
+            }
         }
         _ => r#"{"t":"error","message":"unknown verb"}"#.into(),
     }
@@ -875,11 +906,24 @@ fn read_exact(handle: windows::Win32::Foundation::HANDLE, buf: &mut [u8]) -> Res
 mod tests {
     use super::*;
 
+    /// The Everything **service** instance (session 0) must not count as
+    /// "in use" — it answers no IPC queries, so Lume must index for itself
+    /// when the Everything UI is closed (the headless-instance bug).
+    #[test]
+    fn dormancy_only_counts_interactive_everything() {
+        assert!(!everything_counts(Some(0))); // headless service instance
+        assert!(everything_counts(Some(1))); // UI in a user session
+        assert!(everything_counts(Some(42)));
+        assert!(!everything_counts(None)); // session lookup failed → index
+    }
+
     /// Live round trip against a running service (foreground or SCM):
     /// `lume-svc.exe --foreground`, then run this test.
     #[test]
     #[ignore] // requires the service (or --foreground) to be running
     fn live_pipe_status() {
+        let reply = pipe_transact(r#"{"t":"debug","n":4}"#, Duration::from_secs(2)).expect("debug");
+        eprintln!("debug reply: {reply}");
         let reply = pipe_transact(r#"{"t":"status"}"#, Duration::from_secs(2)).expect("status");
         eprintln!("status reply: {reply}");
         assert!(reply.contains(r#""t":"status""#));

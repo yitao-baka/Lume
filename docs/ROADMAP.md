@@ -1226,3 +1226,35 @@ everything`（live_query 4 连跑 7–8ms/次）；`lume-svc --foreground` + ign
 "readme" 网格 15 行 = 3 原生 + 12 文件命中（含真实文件/文件夹图标）。ignored
 `live_scan`（MFT 全量实扫）需**管理员**运行，留作提权环境验证。`tsc --noEmit` /
 `npm run build` 全过。
+
+### 20.1 用户实测修复（同日，"Everything UI 已关但自研引擎无结果"）
+
+用户实测暴露**五个连环 bug**，全部经本机运行中的服务取证修复：
+
+1. **休眠探针误判**——Everything 的 UI 已关，但其**无头 Windows 服务实例**
+   （会话 0，不响应任何 IPC 查询）仍以 `Everything.exe` 进程存在；探针按进程
+   名匹配把这台机器判成「Everything 在用」→ 引擎永远 `off`。修复：
+   `ProcessIdToSessionId` 过滤，**只有交互会话的实例算「在用」**（会话查询
+   失败也偏向建索引）。
+2. **USN 读 1784**（`ERROR_INVALID_USER_BUFFER`）——`READ_USN_JOURNAL_DATA_V0`
+   的字段序/大小凭记忆写错（真实布局 40 字节：StartUsn/ReasonMask/
+   ReturnOnlyOnClose/Timeout/BytesToWaitFor/UsnJournalID）。教训：**结构体
+   必须对照 MSDN**，"大致知道"在这种接口上必错。修好后 MFT 全量枚举与 journal
+   位点捕获实际都已在工作——报错只在 journal 增量读。
+3. **索引静默截断**（60k vs 60 万）——`MFT_ENUM_DATA_V0` 的 `LowUsn/HighUsn`
+   是**按记录最后 USN 过滤**：0/0 只返回从未被 journal 记录过的文件（看起来
+   像神秘提前 EOF）；`=MAX` 超出有效范围返回空。正确区间是 **[0, NextUsn]**
+   （QUERY 返回的位点）。新增扫描遥测（批次数/记录数/终止原因）经管道
+   `debug` 动词吐出后一眼定位。
+4. **路径解析全灭**——**FRN 高 16 位是 MFT 序列号**：指向根目录的 parent 是
+   `0x0005_0000_0000_0005` 而非 `5`，`== ROOT_FRN` 永不命中且带序列号的
+   parent 查不到表。修复：解析时统一掩码到低 48 位记录号。
+5. **rename/记录复用产生重复 order 条目**——`remove → upsert` 同 FRN 会重复
+   push；加 `ordered: HashSet` 成员判定 + 压实时重建。
+
+**修复后的实机数据**（Everything UI 关闭状态）：索引 C: 61.4 万 / D: 13.7 万 /
+E: 26.4 万 = **82.1 万文件**，全量扫描秒级；`readme`/`lume`/`usnidx` 经门面
+（release 启动器 → 管道 → 全表扫描排序）**110–141ms**；新建文件 6 秒内被
+journal watcher 捕获并可搜到。诊断基建沉淀：管道 `debug` 动词（每卷计数 +
+样本路径 + 扫描遥测）+ `status` 携带失败原因（SCM 下服务 stderr 不可见，
+错误必须走管道回传）。

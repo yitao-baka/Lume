@@ -60,6 +60,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Ioctl",        # usnidx: FSCTL_ENUM/READ_USN_JOURNAL etc (LumeSVC file index)
   "Win32_System_Diagnostics_ToolHelp", # svc: process snapshot (Everything dormancy probe)
   "Win32_System_WindowsProgramming", # usnidx: DRIVE_FIXED (volume discovery)
+  "Win32_System_RemoteDesktop", # svc: ProcessIdToSessionId (Everything dormancy probe)
 ] }
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",

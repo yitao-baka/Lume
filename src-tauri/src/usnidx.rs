@@ -22,6 +22,13 @@ use super::everything::FileHit;
 
 /// NTFS root-directory file reference number ("." record). Parent chains stop
 /// here; the volume prefix is prepended at path resolution.
+///
+/// FRNs carry the MFT **sequence number in the high 16 bits** — a parent
+/// reference to the root arrives as 0x0005_0000_0000_0005, not 5. Every FRN
+/// is masked to its low 48-bit record number at parse time (matching is
+/// tree-internal, so the sequence is irrelevant); forgetting the mask makes
+/// 100% of path resolutions fail while names still look fine.
+const FRN_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 const ROOT_FRN: u64 = 5;
 /// Hard stop for parent-chain walks (corrupt map → bound the loop).
 const MAX_DEPTH: usize = 128;
@@ -79,19 +86,33 @@ struct VolumeIndex {
     /// FRNs in insertion order (deterministic query iteration); may hold stale
     /// ids after deletions until compaction.
     order: Vec<u64>,
+    /// Membership of `order` — the rename path (remove → upsert of the same
+    /// FRN) and MFT record reuse would otherwise push duplicates.
+    ordered: std::collections::HashSet<u64>,
     /// Append-only UTF-8 name arenas — original case for path building,
     /// lowercased for scanning. Renames append; the old bytes leak until the
     /// next full rebuild.
     names: Vec<u8>,
     lcase: Vec<u8>,
     files: u64,
+    /// One-line scan telemetry (batches/records/skips/termination) surfaced
+    /// through the pipe `debug` verb.
+    scan_debug: String,
 }
 
 #[derive(Clone, Copy)]
 struct Node {
     parent: u64,
+    /// Original-name slice in the `names` arena (path building).
     name_off: u32,
     name_len: u16,
+    /// Lowercased-name slice in the `lcase` arena (scanning). Offsets are
+    /// tracked per arena because `to_lowercase` can change the byte length
+    /// (e.g. U+0130 → "i" + U+0307) — sharing one offset pair silently
+    /// desynchronizes the lowercase arena and kills matching for every node
+    /// after the first length-changing name.
+    lcase_off: u32,
+    lcase_len: u16,
     dir: bool,
 }
 
@@ -134,15 +155,47 @@ impl Engine {
             .spawn(move || build(engine));
     }
 
-    /// `(state, indexed files)` for the pipe `status` verb.
-    pub fn status(&self) -> (&'static str, u64) {
+    /// Diagnostics for the pipe `debug` verb: per-volume counters + a few
+    /// resolved sample paths (empty when nothing resolves).
+    pub fn debug_samples(&self, count: usize) -> serde_json::Value {
+        let inner = self.inner.lock().unwrap();
+        let volumes = inner
+            .volumes
+            .iter()
+            .map(|v| {
+                let samples: Vec<String> = v
+                    .order
+                    .iter()
+                    .filter_map(|frn| resolve_path(v, *frn))
+                    .take(count)
+                    .collect();
+                serde_json::json!({
+                    "root": v.root,
+                    "files": v.files,
+                    "map": v.map.len(),
+                    "order": v.order.len(),
+                    "names_bytes": v.names.len(),
+                    "lcase_bytes": v.lcase.len(),
+                    "scan": v.scan_debug,
+                    "samples": samples,
+                })
+            })
+            .collect::<Vec<serde_json::Value>>();
+        serde_json::json!({ "volumes": volumes })
+    }
+
+    /// `(state, indexed files, failure reason)` for the pipe `status` verb —
+    /// the reason travels to the caller because the service's own stderr is
+    /// lost under the SCM.
+    pub fn status(&self) -> (&'static str, u64, Option<String>) {
         let inner = self.inner.lock().unwrap();
         match &inner.state {
-            State::Failed(e) => {
-                eprintln!("[usnidx] failed: {e}");
-                ("failed", 0)
-            }
-            s => (s.as_str(), inner.volumes.iter().map(|v| v.files).sum()),
+            State::Failed(e) => ("failed", 0, Some(e.clone())),
+            s => (
+                s.as_str(),
+                inner.volumes.iter().map(|v| v.files).sum(),
+                None,
+            ),
         }
     }
 
@@ -162,7 +215,7 @@ impl Engine {
                 let Some(node) = vol.map.get(&frn) else {
                     continue; // stale order entry
                 };
-                let hay = &vol.lcase[node.name_off as usize..node.name_off as usize + node.name_len as usize];
+                let hay = &vol.lcase[node.lcase_off as usize..node.lcase_off as usize + node.lcase_len as usize];
                 if !contains_bytes(hay, &needle) {
                     continue;
                 }
@@ -238,16 +291,20 @@ fn upsert(vol: &mut VolumeIndex, frn: u64, parent: u64, name: &[u16], dir: bool)
     }
     let name_str = String::from_utf16_lossy(name);
     let name_bytes = name_str.as_bytes();
+    let lcase_bytes = name_str.to_lowercase();
     let name_off = vol.names.len() as u32;
+    let lcase_off = vol.lcase.len() as u32;
     vol.names.extend_from_slice(name_bytes);
+    vol.lcase.extend_from_slice(lcase_bytes.as_bytes());
     let name_len = name_bytes.len().min(u16::MAX as usize) as u16;
-    vol.lcase
-        .extend_from_slice(name_str.to_lowercase().as_bytes());
+    let lcase_len = lcase_bytes.len().min(u16::MAX as usize) as u16;
     match vol.map.get_mut(&frn) {
         Some(node) => {
             node.parent = parent;
             node.name_off = name_off;
             node.name_len = name_len;
+            node.lcase_off = lcase_off;
+            node.lcase_len = lcase_len;
             node.dir = dir;
         }
         None => {
@@ -257,10 +314,14 @@ fn upsert(vol: &mut VolumeIndex, frn: u64, parent: u64, name: &[u16], dir: bool)
                     parent,
                     name_off,
                     name_len,
+                    lcase_off,
+                    lcase_len,
                     dir,
                 },
             );
-            vol.order.push(frn);
+            if vol.ordered.insert(frn) {
+                vol.order.push(frn);
+            }
             if !dir {
                 vol.files += 1;
             }
@@ -280,6 +341,7 @@ fn remove_node(vol: &mut VolumeIndex, frn: u64) {
     // Compaction: once stale order entries dominate, rebuild the list.
     if vol.order.len() >= vol.map.len() * 2 + 1024 {
         vol.order.retain(|f| vol.map.contains_key(f));
+        vol.ordered = vol.order.iter().copied().collect();
     }
 }
 
@@ -452,49 +514,72 @@ fn scan_volume(root: &str) -> Result<VolumeIndex, String> {
         next_usn,
         map: HashMap::new(),
         order: Vec::new(),
+        ordered: std::collections::HashSet::new(),
         names: Vec::new(),
         lcase: Vec::new(),
         files: 0,
+        scan_debug: String::new(),
     };
-    // MFT_ENUM_DATA_V0 { StartFileReferenceNumber, LowUsn, HighUsn }
-    let mut input = [0u8; 24];
-    let mut out = vec![0u8; ENUM_BUFFER];
+    // MFT_ENUM_DATA_V0 { StartFileReferenceNumber, LowUsn, HighUsn } — u64
+    // backing for the DWORD alignment the FSCTLs expect (see `as_u8`).
+    let mut input = [0u64; 3];
+    // HighUsn filters records by their LAST USN — the pair must bracket the
+    // whole journal: [0, NextUsn]. 0/0 returns only never-journaled records
+    // (a small fraction that looked like an early EOF); MAX exceeds the
+    // journal's valid range and returns nothing.
+    input[2] = next_usn;
+    let mut out = vec![0u64; ENUM_BUFFER / 8];
+    let (mut batches, mut records, mut skips) = (0u32, 0u32, 0u32);
+    let mut term = "eof".to_string();
+    let mut written = 0usize;
     loop {
-        let written = match device_ioctl(handle, FSCTL_ENUM_USN_DATA, &input, &mut out) {
+        batches += 1;
+        written = match device_ioctl(handle, FSCTL_ENUM_USN_DATA, as_u8(&input), as_u8_mut(&mut out)) {
             Ok(w) => w,
             Err(e) if win32_code(&e) == ERROR_HANDLE_EOF => break, // enum complete
             Err(e) => return Err(format!("enum mft: {e}")),
         };
         if written < 8 {
+            term = format!("short:{written}");
             break;
         }
-        let next_frn = u64::from_le_bytes(out[0..8].try_into().unwrap());
-        input[0..8].copy_from_slice(&next_frn.to_le_bytes());
+        let bytes = as_u8(&out);
+        let next_frn = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        input[0] = next_frn;
         let mut off = 8usize;
         while off + 60 <= written {
-            let rec_len = u32::from_le_bytes(out[off..off + 4].try_into().unwrap()) as usize;
+            let rec_len = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
             if rec_len < 60 || off + rec_len > written {
                 break;
             }
-            let frn = u64::from_le_bytes(out[off + 8..off + 16].try_into().unwrap());
-            let parent = u64::from_le_bytes(out[off + 16..off + 24].try_into().unwrap());
-            let attrs = u32::from_le_bytes(out[off + 52..off + 56].try_into().unwrap());
+            let frn =
+                u64::from_le_bytes(bytes[off + 8..off + 16].try_into().unwrap()) & FRN_MASK;
+            let parent =
+                u64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap()) & FRN_MASK;
+            let attrs = u32::from_le_bytes(bytes[off + 52..off + 56].try_into().unwrap());
             let name_len =
-                u16::from_le_bytes(out[off + 56..off + 58].try_into().unwrap()) as usize;
+                u16::from_le_bytes(bytes[off + 56..off + 58].try_into().unwrap()) as usize;
             let name_off =
-                u16::from_le_bytes(out[off + 58..off + 60].try_into().unwrap()) as usize;
+                u16::from_le_bytes(bytes[off + 58..off + 60].try_into().unwrap()) as usize;
             if frn != ROOT_FRN && name_len > 0 && name_off + name_len <= rec_len {
                 let units = name_len / 2;
-                let slice = &out[off + name_off..off + name_off + units * 2];
+                let slice = &bytes[off + name_off..off + name_off + units * 2];
                 let name: Vec<u16> = slice
                     .chunks_exact(2)
                     .map(|p| u16::from_le_bytes([p[0], p[1]]))
                     .collect();
+                records += 1;
                 upsert(&mut vol, frn, parent, &name, attrs & FILE_ATTRIBUTE_DIRECTORY != 0);
             }
             off += rec_len;
         }
+        if off + 60 <= written {
+            skips += 1;
+        }
     }
+    vol.scan_debug = format!(
+        "batches:{batches} records:{records} skips:{skips} term:{term} last_written:{written}"
+    );
     Ok(vol)
 }
 
@@ -520,17 +605,23 @@ fn spawn_usn_worker(engine: &Arc<Engine>, root: &str, generation: u64) {
                 mark_volume_failed(&engine, &root, "volume open failed");
                 return;
             };
-            // READ_USN_JOURNAL_DATA_V0 { StartUsn, ReasonMask, BytesToWaitFor,
-            // UsnJournalID } — BytesToWaitFor = 1 makes the call block until
-            // the journal grows.
-            let mut input = [0u8; 24];
-            input[8..12].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // reason mask
-            input[12..16].copy_from_slice(&1u32.to_le_bytes()); // bytes to wait
-            input[16..24].copy_from_slice(&journal_id.to_le_bytes());
-            let mut out = vec![0u8; ENUM_BUFFER];
+            // READ_USN_JOURNAL_DATA_V0 (40 bytes, MSDN layout):
+            // { StartUsn, ReasonMask, ReturnOnlyOnClose, Timeout,
+            //   BytesToWaitFor, UsnJournalID } — BytesToWaitFor = 1 with
+            // Timeout = 0 blocks until the journal grows (zero idle CPU).
+            // Buffers ride on u64 backing: this FSCTL is picky about buffer
+            // validity (a short/misaligned one fails with
+            // ERROR_INVALID_USER_BUFFER 0x6F8) — `u8` arrays/Vecs carry no
+            // alignment guarantee.
+            let mut input = [0u64; 5];
+            let mut out = vec![0u64; ENUM_BUFFER / 8];
             loop {
-                input[0..8].copy_from_slice(&next_usn.to_le_bytes());
-                let written = match device_ioctl(handle, FSCTL_READ_USN_JOURNAL, &input, &mut out) {
+                input[0] = next_usn; // StartUsn
+                input[1] = 0xFFFF_FFFF; // ReasonMask | ReturnOnlyOnClose(0)
+                input[2] = 0; // Timeout (seconds)
+                input[3] = 1; // BytesToWaitFor
+                input[4] = journal_id; // UsnJournalID
+                let written = match device_ioctl(handle, FSCTL_READ_USN_JOURNAL, as_u8(&input), as_u8_mut(&mut out)) {
                     Ok(w) if w >= 8 => w,
                     Ok(_) => continue,
                     Err(e) => {
@@ -538,7 +629,8 @@ fn spawn_usn_worker(engine: &Arc<Engine>, root: &str, generation: u64) {
                         return;
                     }
                 };
-                next_usn = u64::from_le_bytes(out[0..8].try_into().unwrap());
+                let bytes = as_u8(&out);
+                next_usn = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
                 let mut off = 8usize;
                 let mut inner = engine.inner.lock().unwrap();
                 if inner.generation != generation {
@@ -549,21 +641,23 @@ fn spawn_usn_worker(engine: &Arc<Engine>, root: &str, generation: u64) {
                 };
                 vol.next_usn = next_usn;
                 while off + 60 <= written {
-                    let rec_len = u32::from_le_bytes(out[off..off + 4].try_into().unwrap()) as usize;
+                    let rec_len = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()) as usize;
                     if rec_len < 60 || off + rec_len > written {
                         break;
                     }
-                    let frn = u64::from_le_bytes(out[off + 8..off + 16].try_into().unwrap());
-                    let parent = u64::from_le_bytes(out[off + 16..off + 24].try_into().unwrap());
-                    let reason = u32::from_le_bytes(out[off + 40..off + 44].try_into().unwrap());
-                    let attrs = u32::from_le_bytes(out[off + 52..off + 56].try_into().unwrap());
+                    let frn =
+                        u64::from_le_bytes(bytes[off + 8..off + 16].try_into().unwrap()) & FRN_MASK;
+                    let parent =
+                        u64::from_le_bytes(bytes[off + 16..off + 24].try_into().unwrap()) & FRN_MASK;
+                    let reason = u32::from_le_bytes(bytes[off + 40..off + 44].try_into().unwrap());
+                    let attrs = u32::from_le_bytes(bytes[off + 52..off + 56].try_into().unwrap());
                     let name_len =
-                        u16::from_le_bytes(out[off + 56..off + 58].try_into().unwrap()) as usize;
+                        u16::from_le_bytes(bytes[off + 56..off + 58].try_into().unwrap()) as usize;
                     let name_off =
-                        u16::from_le_bytes(out[off + 58..off + 60].try_into().unwrap()) as usize;
+                        u16::from_le_bytes(bytes[off + 58..off + 60].try_into().unwrap()) as usize;
                     if frn != ROOT_FRN && name_len > 0 && name_off + name_len <= rec_len {
                         let units = name_len / 2;
-                        let slice = &out[off + name_off..off + name_off + units * 2];
+                        let slice = &bytes[off + name_off..off + name_off + units * 2];
                         let name: Vec<u16> = slice
                             .chunks_exact(2)
                             .map(|p| u16::from_le_bytes([p[0], p[1]]))
@@ -583,6 +677,19 @@ fn mark_volume_failed(engine: &Engine, root: &str, why: &str) {
         inner.state = State::Failed(format!("{root}: {why}"));
     }
     eprintln!("[usnidx] {root} watcher stopped: {why} (rebuild scheduled)");
+}
+
+/// Byte views over `u64`-backed buffers: the USN FSCTLs require DWORD-
+/// aligned buffers (`READ_USN_JOURNAL` fails with ERROR_INVALID_USER_BUFFER
+/// on misaligned ones), and `u8` arrays/`Vec<u8>` carry no alignment
+/// guarantee. A `u64` slice is always 8-aligned; these casts only reinterpret
+/// the same memory.
+fn as_u8(buf: &[u64]) -> &[u8] {
+    unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len() * 8) }
+}
+
+fn as_u8_mut(buf: &mut [u64]) -> &mut [u8] {
+    unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, buf.len() * 8) }
 }
 
 /// Win32 error code of a windows-crate HRESULT (0x8007xxxx → xxxx).
@@ -629,9 +736,11 @@ mod tests {
             next_usn: 0,
             map: HashMap::new(),
             order: Vec::new(),
+            ordered: std::collections::HashSet::new(),
             names: Vec::new(),
             lcase: Vec::new(),
             files: 0,
+            scan_debug: String::new(),
         }
     }
 
@@ -721,6 +830,18 @@ mod tests {
         // removals after that point just accumulate again (bounded).
         assert_eq!(v.map.len(), 400);
         assert_eq!(v.order.len(), 487);
+    }
+
+    #[test]
+    fn upsert_does_not_duplicate_order_across_rename_cycles() {
+        let mut v = vol();
+        upsert(&mut v, 10, 5, &name_u16("a.txt"), false);
+        apply_usn_record(&mut v, 10, 5, USN_REASON_RENAME_OLD_NAME, 0, &name_u16("a.txt"));
+        apply_usn_record(&mut v, 10, 5, USN_REASON_RENAME_NEW_NAME, 0, &name_u16("b.txt"));
+        // MFT record reuse after delete + create of the same record number.
+        apply_usn_record(&mut v, 10, 5, USN_REASON_FILE_DELETE, 0, &name_u16("b.txt"));
+        upsert(&mut v, 10, 5, &name_u16("c.txt"), false);
+        assert_eq!(v.order.iter().filter(|&&f| f == 10).count(), 1);
     }
 
     #[test]

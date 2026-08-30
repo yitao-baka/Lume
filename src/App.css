@@ -1563,6 +1563,26 @@ body.settings-window #root {
   filter: var(--icon-filter);
 }
 
+/* 「插件」页 — plugin rows: name + kind/built-in/version chips + toggle. */
+.settings-plugin-meta {
+  min-width: 0;
+}
+
+.settings-plugin-chips {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.settings-chip-mini {
+  padding: 1px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* 「关于」页 — description + version / license / author / homepage rows. */
 .settings-about-desc {
   display: block;

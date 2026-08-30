@@ -191,5 +191,10 @@
   "aboutLicense": "License",
   "aboutAuthor": "Author",
   "aboutHomepage": "Homepage",
-  "clipIgnoreEmpty": "No ignored apps yet"
+  "clipIgnoreEmpty": "No ignored apps yet",
+  "pluginKindMode": "Mode",
+  "pluginKindService": "Service",
+  "pluginKindProvider": "Provider",
+  "pluginBuiltin": "Built-in",
+  "pluginDisk": "Disk"
 }

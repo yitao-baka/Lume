@@ -31,6 +31,7 @@ import {
   definePlugin,
   modeById,
   modePlugins,
+  providerPlugins,
   refreshPlugins,
   type ModeId,
   type PluginServices,
@@ -331,8 +332,27 @@ function App() {
       }
       const res = (await invoke("search_apps", { query: q })) as AppEntry[];
       if (id === requestSeq) {
-        setApps(res);
-        void icons.loadIcons(res);
+        // Provider results (registry + disk plugins) append after the native
+        // index — deduped by path, capped to keep the grid sane.
+        const extra: AppEntry[] = [];
+        const seen = new Set(res.map((r) => r.path));
+        for (const p of providerPlugins()) {
+          try {
+            const items = await p.instance.search(q);
+            if (id !== requestSeq) return;
+            for (const it of items ?? []) {
+              if (res.length + extra.length >= 20) break;
+              if (!it?.name || !it?.path || seen.has(it.path)) continue;
+              seen.add(it.path);
+              extra.push({ id: 0, name: it.name, path: it.path });
+            }
+          } catch (err) {
+            console.error("provider search failed:", p.id, err);
+          }
+        }
+        const merged = [...res, ...extra];
+        setApps(merged);
+        void icons.loadIcons(merged);
         sizer.scheduleResize();
       }
     } else {
@@ -380,9 +400,16 @@ function App() {
       setWindowWidth(s.appearance.window_width);
       setSwitchKey(s.hotkeys.switch_mode || "Tab");
       // Each plugin applies its own settings slice (clipboard display flags…);
-      // the plugin list itself refreshes too (启停 changes land here).
+      // the plugin list itself refreshes too (启停 changes land here). If the
+      // ACTIVE mode was just disabled, fall back to Navigate.
       for (const p of allPlugins()) p.mode?.applySettings(s);
-      void refreshPlugins();
+      void refreshPlugins().then(() => {
+        if (mode() !== APPS_MODE && !modeById(mode())) {
+          setMode(APPS_MODE);
+          setAppsQuery("");
+          void runSearch("");
+        }
+      });
       setRememberLastPage(s.appearance.remember_last_page ?? false);
       setLastPageMode(s.appearance.last_page === "clipboard" ? "clipboard" : "apps");
       setLastPageKind((s.appearance.last_page_kind as ClipKind) ?? "all");

@@ -191,5 +191,10 @@
   "aboutLicense": "许可证",
   "aboutAuthor": "作者",
   "aboutHomepage": "主页",
-  "clipIgnoreEmpty": "尚未添加忽略应用"
+  "clipIgnoreEmpty": "尚未添加忽略应用",
+  "pluginKindMode": "模式",
+  "pluginKindService": "服务",
+  "pluginKindProvider": "搜索提供",
+  "pluginBuiltin": "内置",
+  "pluginDisk": "磁盘"
 }

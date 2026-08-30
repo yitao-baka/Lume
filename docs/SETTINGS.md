@@ -34,8 +34,8 @@
 ```
 
 - **顶栏**：`Lume` 标题 + 「搜索设置」输入框。
-- **导航栏**（160px）：7 个分区，图标取 `res/icons/`（platte / navigate /
-  clipboard / keyboard / search / system / about.svg）。
+- **导航栏**（160px）：8 个分区，图标取 `res/icons/`（platte / navigate /
+  clipboard / keyboard / search / system / plugins / about.svg）。
 - **内容列**：居中、max-width 720；每分区由若干「分组标题 + 卡片」组成，
   卡片 = `--surface-raised` 底、12px 圆角、细边框；行 = 标签左 + 控件右。
 - **底栏**：「恢复默认设置」（次要）+「保存并应用」（主要，`!dirty` 禁用）。
@@ -152,7 +152,13 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   对话框 + 重载工作副本）、**恢复备份设置**（双击确认——main 版保留项，
   Flutter 版已删）。`backup.toml` 由每次保存自动写。
 
-### 7. 关于（`about`）
+### 7. 插件（`plugins`）
+
+内置 + 磁盘插件一览（`get_plugins`）：每行 = 名称 + 类型/来源/版本 chips +
+启停 toggle（写 `settings.plugins.disabled`，`settings-applied` 后启动器
+重读注册表；关闭活动模式插件自动回导航页）。格式与开发见 `docs/PLUGINS.md`。
+
+### 8. 关于（`about`）
 
 行式布局（对齐 Flutter）：描述（`aboutTagline`）、版本（`APP_VERSION_LABEL`，
 无 v 前缀）、许可证 Apache License 2.0、作者 yitao-baka、主页

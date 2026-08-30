@@ -17,6 +17,7 @@ import ClipboardPane from "./ClipboardPane";
 import HotkeysPane from "./HotkeysPane";
 import SearchPane from "./SearchPane";
 import SystemPane from "./SystemPane";
+import PluginsPane from "./PluginsPane";
 import AboutPane from "./AboutPane";
 import appearanceIcon from "../../res/icons/platte.svg";
 import launcherIcon from "../../res/icons/navigate.svg";
@@ -24,6 +25,7 @@ import clipboardIcon from "../../res/icons/clipboard.svg";
 import hotkeysIcon from "../../res/icons/keyboard.svg";
 import searchIcon from "../../res/icons/search.svg";
 import systemIcon from "../../res/icons/system.svg";
+import pluginsIcon from "../../res/icons/plugins.svg";
 import aboutIcon from "../../res/icons/about.svg";
 import { DEFAULT_SETTINGS, type SettingsData } from "./types";
 
@@ -34,6 +36,7 @@ type Section =
   | "hotkeys"
   | "search"
   | "system"
+  | "plugins"
   | "about";
 
 const SECTIONS: Section[] = [
@@ -43,6 +46,7 @@ const SECTIONS: Section[] = [
   "hotkeys",
   "search",
   "system",
+  "plugins",
   "about",
 ];
 
@@ -53,6 +57,7 @@ const SECTION_ICONS: Record<Section, string> = {
   hotkeys: hotkeysIcon,
   search: searchIcon,
   system: systemIcon,
+  plugins: pluginsIcon,
   about: aboutIcon,
 };
 
@@ -63,6 +68,7 @@ const SECTION_LABELS: Record<Section, keyof Messages> = {
   hotkeys: "navHotkeys",
   search: "navSearch",
   system: "system",
+  plugins: "plugins",
   about: "about",
 };
 
@@ -85,6 +91,7 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
   hotkeys: ["settingsHotkeys", "settingsToggleLauncher", "settingsSwitchMode"],
   search: ["settingsIndexDirs", "settingsSystemIndex", "settingsUserIndex", "settingsCacheRefresh"],
   system: ["settingsAutostart", "settingsSystemService", "settingsImportExport"],
+  plugins: ["plugins", "pluginKindMode", "pluginKindService", "pluginKindProvider", "pluginBuiltin"],
   about: ["aboutTagline", "aboutVersion", "aboutLicense", "aboutAuthor", "aboutHomepage"],
 };
 
@@ -317,6 +324,9 @@ function SectionBody(props: {
       </Match>
       <Match when={props.section === "system"}>
         <SystemPane settings={props.settings} onReload={props.onReload} />
+      </Match>
+      <Match when={props.section === "plugins"}>
+        <PluginsPane />
       </Match>
       <Match when={props.section === "about"}>
         <AboutPane />

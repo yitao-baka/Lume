@@ -26,6 +26,10 @@ export interface PluginManifest {
   permissions: string[];
   builtin: boolean;
   enabled: boolean;
+  /** Entry JS file (disk provider plugins, relative to the plugin dir). */
+  entry: string;
+  /** Absolute plugin directory (disk plugins; empty for built-ins). */
+  dir: string;
 }
 
 /** Services the composition root provides to every plugin. */
@@ -121,6 +125,20 @@ export interface PreviewService {
   clear(): void;
 }
 
+/** A search result contributed by a provider — AppEntry-shaped, so the
+ * results grid, activation (launch_app opens files AND URLs) and the icon
+ * pipeline treat provider rows exactly like app rows. */
+export interface ProviderResult {
+  name: string;
+  path: string;
+}
+
+/** A `provider` contribution: feeds extra results into Navigate search
+ * (appended after the native index, deduped by path). */
+export interface ProviderInstance {
+  search(query: string): Promise<ProviderResult[]>;
+}
+
 /** A plugin: manifest identity + its already-created contributions.
  * First-party plugins export a `create*(services)` factory; the composition
  * root calls it once (inside its reactive owner) and registers the result. */
@@ -130,6 +148,7 @@ export interface LauncherPlugin {
   modeMeta?: { labelKey: string; placeholderKey: string; icon: string };
   mode?: ModeInstance;
   preview?: PreviewService;
+  provider?: ProviderInstance;
   /** Actions for the shared context menu (structural — menu.ts declares the
    * narrow interface it needs). */
   clipMenuActions?: () => unknown;

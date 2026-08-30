@@ -8,6 +8,21 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件系统第二轮：provider 搜索贡献 + 第三方 JS 动态加载 + 插件管理页** —
+  ① `provider` 贡献类型：`search(query)` 返回 `{name, path}` 条目，追加在
+  Navigate 原生搜索结果之后（path 去重、封顶 20、异常隔离），激活/图标
+  走既有管线；② 磁盘插件动态加载：清单 `kind = "provider"` + `entry`
+  指向 ES Module，前端经 asset 协议 + blob URL `import()` 加载，默认导出
+  `{ search }` 即成为搜索提供者（示例 `examples/plugins/web-search/`，
+  开发指南 `docs/PLUGINS.md`；`PluginInfo` 向前端暴露 `entry`/`dir`）；
+  ③ 设置新增第 8 分区「插件」（`PluginsPane`）：内置/磁盘插件全部列出
+  （类型/来源/版本 chips + 启停 toggle），关闭活动模式插件时启动器自动
+  回导航页。截图验证：provider 结果行与插件管理页 judge 通过；
+  cdp_feature/settings/clipboard 三套冒烟全过（settings 冒烟断言更新为
+  8 分区）。
+
+### Added
+
 - **插件系统 v1（ROADMAP #7）+ 剪贴板/预览插件化** — 插件 = 清单
   （`<base>/plugins/<id>/plugin.toml`：id/name/version/kind/description/
   permissions）+ 前端贡献。Rust 新增 `plugins.rs`：清单解析与目录扫描

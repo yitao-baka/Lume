@@ -154,9 +154,22 @@ v1 两类贡献，由两个第一方插件完整验证：
 `settings-applied` 时刷新）。跨模块依赖走 `PluginServices`（toast/入口标记/
 隐藏/搜索管线/搜索令牌/选中来源/右键菜单/模式切换请求）。
 
-**v1 未做（后续）**：第三方 JS 动态加载（清单/权限面已预留）、插件管理
-设置页、`provider` 类搜索贡献。内置插件编译进二进制但与磁盘插件走同一
-注册表/启停路径。
+**第二轮（同日）三项补齐**：
+
+- **provider 搜索贡献**：`ProviderInstance.search(query)` → `{name, path}`
+  条目追加在原生索引结果之后（path 去重、总数封顶 20），激活/图标复用
+  既有管线（`launch_app` 对文件与 URL 均可用）。
+- **第三方 JS 动态加载**：磁盘清单 `kind = "provider"` + `entry = "main.js"`
+  → 前端经 asset 协议取文件、blob URL 动态 import，默认导出
+  `{ search(query) }` 即成为 provider。加载失败/形状不对只记录跳过；
+  每个插件只尝试一次（不重试刷屏）。信任模型 = 显式放置即信任，
+  `permissions` 仍为预留。示例见 `examples/plugins/web-search/`，
+  开发指南见 `docs/PLUGINS.md`。
+- **插件管理设置页**：设置新增第 8 分区「插件」（`PluginsPane`）——每个
+  插件一行（名称 + 类型/内置/磁盘/版本 chips + 启停 toggle），写
+  `set_plugin_enabled`；关闭活动模式插件时启动器自动回导航页。
+
+内置插件编译进二进制但与磁盘插件走同一注册表/启停路径。
 
 ## 8. Program Files 安装 + LumeSVC 服务 + 管理员启动 + 开机自启
 

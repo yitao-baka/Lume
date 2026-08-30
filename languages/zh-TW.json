@@ -191,5 +191,10 @@
   "aboutLicense": "授權條款",
   "aboutAuthor": "作者",
   "aboutHomepage": "首頁",
-  "clipIgnoreEmpty": "尚未新增忽略應用"
+  "clipIgnoreEmpty": "尚未新增忽略應用",
+  "pluginKindMode": "模式",
+  "pluginKindService": "服務",
+  "pluginKindProvider": "搜尋提供",
+  "pluginBuiltin": "內建",
+  "pluginDisk": "磁碟"
 }

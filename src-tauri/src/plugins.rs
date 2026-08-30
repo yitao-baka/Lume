@@ -39,6 +39,9 @@ pub struct PluginManifest {
     /// Reserved for the future permission model.
     #[serde(default)]
     pub permissions: Vec<String>,
+    /// Entry JS file for disk provider plugins (relative to the plugin dir).
+    #[serde(default)]
+    pub entry: String,
 }
 
 fn default_kind() -> String {
@@ -58,6 +61,10 @@ pub struct PluginInfo {
     pub builtin: bool,
     /// True unless the id is in `settings.plugins.disabled`.
     pub enabled: bool,
+    /// Entry JS file (disk provider plugins).
+    pub entry: String,
+    /// Absolute plugin directory (disk plugins; empty for built-ins).
+    pub dir: String,
 }
 
 /// The compiled-in first-party plugins. Their UI/logic lives under
@@ -129,9 +136,12 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             permissions: Vec::new(),
             builtin: true,
             enabled: enabled(id),
+            entry: String::new(),
+            dir: String::new(),
         })
         .collect();
     for m in scan_disk_plugins(base) {
+        let dir = plugins_dir(base).join(&m.id);
         out.push(PluginInfo {
             id: m.id.clone(),
             name: m.name,
@@ -141,6 +151,8 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             permissions: m.permissions,
             builtin: false,
             enabled: enabled(&m.id),
+            entry: m.entry,
+            dir: dir.to_string_lossy().into_owned(),
         });
     }
     out
@@ -151,11 +163,6 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
 pub fn get_plugins(state: State<SettingsState>) -> Result<Vec<PluginInfo>, String> {
     let snapshot = settings::snapshot(&state);
     Ok(list_plugins(&base_dir(), &snapshot.plugins.disabled))
-}
-
-/// The ids currently switched off (the frontend registry filters on this).
-pub fn disabled_ids(state: &State<SettingsState>) -> Vec<String> {
-    settings::snapshot(state).plugins.disabled
 }
 
 #[cfg(test)]

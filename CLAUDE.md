@@ -156,8 +156,14 @@ component={activeMode().View}>`）。**新约定**：新增模式 = 写一个
 `create*Plugin(services)` 并 `definePlugin`，壳零改动；右键菜单的剪贴板
 动作经 `clipMenuActions()` 窄接口供给；ModeInstance 的 `search` 自带
 stale-token 守卫（根 `requestSeq` 即令牌）。验证：cargo test 77、截图 5 组
-judge 等价、三套 CDP 冒烟全过。v1 未做：第三方 JS 动态加载、插件管理页、
-provider 搜索贡献。
+judge 等价、三套 CDP 冒烟全过。**第二轮（同日）**：provider 搜索贡献
+（`ProviderInstance.search` → 结果追加原生后，path 去重封顶 20）、第三方
+JS 动态加载（磁盘清单 `kind=provider` + `entry` → asset 协议 + blob
+`import()`，默认导出 `{search}`；每插件只加载一次；信任模型=显式放置即
+信任，`permissions` 预留）、设置第 8 分区「插件」（PluginsPane，启停经
+`set_plugin_enabled`，关闭活动模式自动回导航页）。示例
+`examples/plugins/web-search/` + `docs/PLUGINS.md`。settings 冒烟断言
+更新为 8 分区。
 
 **Prior: 拆分 App.tsx 为 launcher 模块（零行为变化 refactor, complete) — as of
 2026-08-30**: 2510 行的单文件拆为 `src/launcher/` 11 个模块（types/clipData/

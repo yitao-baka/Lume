@@ -170,6 +170,21 @@ Business logic belongs to Rust.
   named pipe as a bridge for future SYSTEM features
 - Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows
+- Automation (自动动作) — when a configured program opens a new window and takes
+  the foreground, Lume presses a configured hotkey once in it (shell-hook
+  watcher + `SendInput`; Alt+Tabbing back to an already-running instance does
+  not re-trigger; background/minimized launches not covered). Each rule carries
+  its own 延迟触发 delay (0–60000 ms) so slow-starting apps can finish building
+  their UI; if the foreground moves elsewhere during the delay the key is not
+  sent (an off-by-default 抢回焦点 switch instead makes Lume best-effort pull
+  the program's window back to the front first — Windows blocks background
+  processes from stealing focus in some cases, and that is logged). Rules live
+  in the settings 自动化 pane, and the program field has a
+  选择 button that lists the programs currently running with windows
+  (`EnumWindows`, deduped per executable, Lume excluded) so you can pick one
+  instead of typing its name. Each rule also has a 测试 button that presses its
+  shortcut on demand — bypassing the new-window trigger and the delay — so a
+  rule can be checked against a program that is already running.
 
 ## Planned
 
@@ -197,8 +212,11 @@ Due to network problems, You should always use mirror sources to download the re
 
 ## Run
 
-- **Development**: `npm run tauri dev` (loads the frontend from the vite dev
+The frontend is managed with **pnpm** (`pnpm install`; see `.npmrc`,
+`pnpm-workspace.yaml`, `package.json` → `packageManager`). Commands:
+
+- **Development**: `pnpm run tauri dev` (loads the frontend from the vite dev
   server; run from a terminal — the debug exe needs `localhost:1420`).
-- **Standalone**: `npm run tauri build -- --no-bundle`, then run
+- **Standalone**: `pnpm run tauri build --no-bundle`, then run
   `src-tauri/target/release/lume.exe` — it embeds the frontend and shows no
   console window.

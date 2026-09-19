@@ -86,6 +86,25 @@ export interface SettingsData {
     /** 记住勾选 — persist each multi-file entry's checked files across sessions. */
     remember_checks: boolean;
   };
+  /** 自动动作 — send a hotkey when a configured program comes to the foreground. */
+  automation: {
+    /** Master switch for the whole watcher. */
+    enabled: boolean;
+    /** 延迟到点后前台已移开时的策略: false = skip the send (safe default),
+     * true = best-effort pull the target window back to the foreground first. */
+    force_focus: boolean;
+    actions: {
+      /** Executable to match — full path or bare file name (case-insensitive). */
+      process: string;
+      /** Hotkey combo to inject, e.g. "Ctrl+Alt+S" (must include a modifier). */
+      combo: string;
+      /** Per-rule switch. */
+      enabled: boolean;
+      /** 延迟触发 — ms to wait after the window takes focus before injecting
+       * (0 = immediately, max 60000). */
+      delay_ms: number;
+    }[];
+  };
 }
 
 /** Mirrors the Rust `impl Default for Settings` (src-tauri/src/settings.rs) —
@@ -139,4 +158,5 @@ export const DEFAULT_SETTINGS: SettingsData = {
     dedup: true,
     remember_checks: true,
   },
+  automation: { enabled: true, force_focus: false, actions: [] },
 };

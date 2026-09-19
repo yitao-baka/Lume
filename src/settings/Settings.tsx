@@ -17,6 +17,7 @@ import ClipboardPane from "./ClipboardPane";
 import HotkeysPane from "./HotkeysPane";
 import SearchPane from "./SearchPane";
 import SystemPane from "./SystemPane";
+import AutomationPane from "./AutomationPane";
 import PluginsPane from "./PluginsPane";
 import AboutPane from "./AboutPane";
 import appearanceIcon from "../../res/icons/platte.svg";
@@ -25,6 +26,7 @@ import clipboardIcon from "../../res/icons/clipboard.svg";
 import hotkeysIcon from "../../res/icons/keyboard.svg";
 import searchIcon from "../../res/icons/search.svg";
 import systemIcon from "../../res/icons/system.svg";
+import automationIcon from "../../res/icons/automation.svg";
 import pluginsIcon from "../../res/icons/plugins.svg";
 import aboutIcon from "../../res/icons/about.svg";
 import { DEFAULT_SETTINGS, type SettingsData } from "./types";
@@ -36,6 +38,7 @@ type Section =
   | "hotkeys"
   | "search"
   | "system"
+  | "automation"
   | "plugins"
   | "about";
 
@@ -46,6 +49,7 @@ const SECTIONS: Section[] = [
   "hotkeys",
   "search",
   "system",
+  "automation",
   "plugins",
   "about",
 ];
@@ -57,6 +61,7 @@ const SECTION_ICONS: Record<Section, string> = {
   hotkeys: hotkeysIcon,
   search: searchIcon,
   system: systemIcon,
+  automation: automationIcon,
   plugins: pluginsIcon,
   about: aboutIcon,
 };
@@ -68,6 +73,7 @@ const SECTION_LABELS: Record<Section, keyof Messages> = {
   hotkeys: "navHotkeys",
   search: "navSearch",
   system: "system",
+  automation: "automation",
   plugins: "plugins",
   about: "about",
 };
@@ -91,6 +97,7 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
   hotkeys: ["settingsHotkeys", "settingsToggleLauncher", "settingsSwitchMode"],
   search: ["settingsIndexDirs", "settingsSystemIndex", "settingsUserIndex", "settingsCacheRefresh"],
   system: ["settingsAutostart", "settingsSystemService", "settingsImportExport"],
+  automation: ["autoEnabled", "autoHint", "autoProcessLabel", "autoComboLabel", "autoAdd"],
   plugins: ["plugins", "pluginKindMode", "pluginKindService", "pluginKindProvider", "pluginBuiltin"],
   about: ["aboutTagline", "aboutVersion", "aboutLicense", "aboutAuthor", "aboutHomepage"],
 };
@@ -165,6 +172,14 @@ export default function Settings() {
   function updateClipboard(patch: Partial<SettingsData["clipboard"]>) {
     setSettings((s) =>
       s ? { ...s, clipboard: { ...s.clipboard, ...patch } } : s
+    );
+    setDirty(true);
+  }
+
+  /** Update the working copy of the 自动化 settings and mark dirty. */
+  function updateAutomation(patch: Partial<SettingsData["automation"]>) {
+    setSettings((s) =>
+      s ? { ...s, automation: { ...s.automation, ...patch } } : s
     );
     setDirty(true);
   }
@@ -253,6 +268,7 @@ export default function Settings() {
                           onUpdateHotkeys={updateHotkeys}
                           onUpdateIndex={updateIndex}
                           onUpdateClipboard={updateClipboard}
+                          onUpdateAutomation={updateAutomation}
                           onReload={reloadSettings}
                         />
                       </div>
@@ -267,6 +283,7 @@ export default function Settings() {
                   onUpdateHotkeys={updateHotkeys}
                   onUpdateIndex={updateIndex}
                   onUpdateClipboard={updateClipboard}
+                  onUpdateAutomation={updateAutomation}
                   onReload={reloadSettings}
                 />
               </Show>
@@ -303,6 +320,7 @@ function SectionBody(props: {
   onUpdateHotkeys: (patch: Partial<SettingsData["hotkeys"]>) => void;
   onUpdateIndex: (patch: Partial<SettingsData["index"]>) => void;
   onUpdateClipboard: (patch: Partial<SettingsData["clipboard"]>) => void;
+  onUpdateAutomation: (patch: Partial<SettingsData["automation"]>) => void;
   onReload: () => void;
 }) {
   return (
@@ -324,6 +342,9 @@ function SectionBody(props: {
       </Match>
       <Match when={props.section === "system"}>
         <SystemPane settings={props.settings} onReload={props.onReload} />
+      </Match>
+      <Match when={props.section === "automation"}>
+        <AutomationPane settings={props.settings} onChange={props.onUpdateAutomation} />
       </Match>
       <Match when={props.section === "plugins"}>
         <PluginsPane />

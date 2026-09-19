@@ -1,5 +1,6 @@
 mod apps;
 pub mod cache;
+mod automation;
 mod clipboard;
 mod dirwatch;
 mod envwatch;
@@ -73,6 +74,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(apps::AppIndex::default())
         .manage(hotkey::ActiveHotkey::default())
+        .manage(automation::AutomationState::default())
         .manage(window::FocusState::default())
         .manage(dirwatch::DirWatchState::default())
         .manage(window::PreviewState::default())
@@ -266,6 +268,9 @@ pub fn run() {
             }
             // Alt+Space toggles the launcher (docs/ARCHITECTURE.md).
             hotkey::register(app);
+            // 自动动作 — send a configured hotkey when a configured program
+            // takes the foreground with a fresh window (shell hook, event-driven).
+            automation::init(app);
             // Keep our process env block in sync with system env changes
             // (WM_SETTINGCHANGE + registry notify) so launched apps inherit a
             // fresh PATH / variables. Event-driven, zero CPU when idle.
@@ -309,6 +314,9 @@ pub fn run() {
             filesearch::file_search,
             hotkey::get_hotkey,
             hotkey::validate_hotkey,
+            automation::validate_auto_combo,
+            automation::list_window_programs,
+            automation::test_automation_rule,
             i18n::load_language_files,
             clipboard::search_clipboard,
             clipboard::copy_clipboard,

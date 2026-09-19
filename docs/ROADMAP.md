@@ -1258,3 +1258,179 @@ E: 26.4 万 = **82.1 万文件**，全量扫描秒级；`readme`/`lume`/`usnidx`
 journal watcher 捕获并可搜到。诊断基建沉淀：管道 `debug` 动词（每卷计数 +
 样本路径 + 扫描遥测）+ `status` 携带失败原因（SCM 下服务 stderr 不可见，
 错误必须走管道回传）。
+
+## 21. 自动动作（Automation，已实现）
+
+**状态：已实现（2026-09-19）。触发语义经用户拍板 =「新窗口出现并聚焦时触发一次」。**
+
+背景：用户需要一个「程序 X 启动后 → 自动按特定快捷键」的能力（如打开某应用后
+自动 Ctrl+Alt+S）。现有代码已具备两块拼图且被验证过：`send_ctrl_v`
+（`clipboard.rs:1655`）用 `SendInput` 注入按键；`envwatch.rs` 示范了
+message-only 窗口的零轮询事件驱动监听。`validate_hotkey` 已用
+`tauri_plugin_global_shortcut::Shortcut::from_str` 解析组合键。
+
+### 21.1 触发语义（用户拍板）
+
+**只在该程序的新顶层窗口首次创建并成为前台焦点时，发送一次快捷键。**
+Alt+Tab 切回已运行实例**不**重复触发；后台/最小化启动**不**保证（要发给无焦点
+窗口必须抢焦点，Windows 对后台进程抢焦点不可靠，故不做）；前台账面提示此边界。
+
+### 21.2 Rust：`src-tauri/src/automation.rs`
+
+- 检测用 **`RegisterShellHookWindow`** + message-only 窗口，`GetMessageW` 泵消息
+  （同 envwatch 风格、零轮询），**无需新增依赖/feature**（相关 Win32 API 已在
+  Cargo features 里启用）。
+- `HSHELL_WINDOWCREATED`：解析窗口属主 exe（`GetWindowThreadProcessId →
+  OpenProcess → QueryFullProcessImageNameW`，复用剪贴板 `foreground_process_name`
+  的既证调用）；命中启用规则 → 窗口作废 key 挂入 `pending`（记 combo）。
+- `HSHELL_WINDOWACTIVATED`：命中且该窗口在 `pending` → 出队，在独立短线程里
+  `send_combo` 注入一次（120ms 触摸后发送；不阻塞消息泵）。`HSHELL_WINDOWDESTROYED`
+  清理。每次触发读最新 settings（保存即生效，无需重挂 hook）。
+- **`send_combo`**：泛化 `send_ctrl_v` 为「修饰键↓ + 主键↓/↑ + 修饰键↑」的
+  `SendInput` 序列；`Shortcut::from_str` 解析，`key_to_vk` 把 `Code` 映射为 VK
+  （字母/数字/F1–F24/空格/方向键/常用键）。可选补充：`settings.rs` 的
+  `Automation { enabled, actions: Vec<AutoAction { process, combo, enabled }> }`
+  组（`#[serde(default)]`，随设置保存/备份/导入导出）。
+- 命令 `validate_auto_combo(combo)` → `{ ok, reason }`（仅解析，不注册，供设置页
+  内联校验 reason：`need_modifier` | `unsupported` | `invalid`）。
+
+### 21.3 设置页「自动化」
+
+`AutomationPane.tsx`（结构化数组编辑，照 `SearchPane` 的 `user_index` 模式）：
+主开关（master `enabled`）+ 规则列表（程序 + 快捷键 + 单条 toggle + 删除）+
+底部添加行（程序文本框 + 快捷键**录制按钮**）。快捷键采集复用「快捷键」页的
+按键录制交互（`ComboRecorder`，共享 `hotkeyCapture.ts` 的 keydown→组合键解析）：
+点一下按钮再按组合键，经 `validate_auto_combo` 校验通过才提交，Esc 取消，被拒
+显示原因并保持录制；已有规则也可点其快捷键重录。**录制器的 keydown 监听挂在
+按钮自身（不是 window）并在失焦时取消**——窗口级监听需对每个按键
+`preventDefault`，会连带掐掉旁边程序名输入框的输入。接线 `Settings.tsx`
+（Section 联合 + 图标 `automation.svg` + 标签 `automation` + 搜索键 + `Match`）；
+i18n ×3 语言。
+
+### 已知边界
+
+- 触发 = 新窗口聚焦，故目标需在前台（与粘贴的一致）；同一进程若快速创建多个
+  各自聚焦的顶层窗口，v1 按「新窗口」各触发一次（pending 表已把同一窗口压到
+  一次）。
+- 快捷键键集受 `key_to_vk` 限制（字母/数字/F 键/空格/方向键等），其余被
+  `validate_auto_combo` 拒。
+- 前台进程探查在 `HSHELL_*` 事件的同一线程内完成（短调用，不阻塞泵）。
+
+### 21.4 延迟触发（用户追加需求，已实现）
+
+规则的等待时间可自定义：`AutoAction.delay_ms`（默认 **120**，即此前的固定
+settle 时间；`#[serde(default)]` 保证旧 settings.toml 可读）。设置页每条规则
+一个窄数字输入 + 「毫秒」单位，**添加行也有**（默认 120，添加后复位），输入即
+钳制到 0–60000；Rust 侧 `AutoAction::effective_delay_ms()` 以
+`MAX_ACTION_DELAY_MS = 60000` 再钳一次（防手改文件写进荒谬值）。
+
+触发路径改为 `PendingAction { combo, delay_ms }` 入 pending；激活出队后在
+`send_later(rule, pid)` 里 `sleep(delay_ms)`（0 = 立即）。**因为延迟可能很长，
+发送前用 `foreground_pid()` 复核前台仍是目标 pid**（awake 时记下 `pid_of_hwnd`），
+不符则跳过并打日志——否则延迟期间用户切走窗口会把快捷键打进无关程序。
+
+### 21.5 「选择」程序选择器（用户追加需求，已实现）
+
+程序名输入框右侧新增 **「选择」** 按钮：弹出当前有窗口的程序列表，点一条即回填，
+免手打 exe 名。
+
+- **命令 `list_window_programs`**（`automation.rs`，async + `spawn_blocking`——
+  枚举会触碰其它进程的窗口，不能跑主线程）：`EnumWindows` 回调里按 **Alt+Tab 的
+  规则集**筛窗口——`IsWindowVisible` + 有标题（`GetWindowTextLengthW > 0`）+
+  非 `WS_EX_TOOLWINDOW`；再经既有 `exe_of_hwnd` 解析属主 exe。标题用
+  `GetWindowTextW`——**对其它进程的窗口读的是缓存 caption，不会因对方卡死而阻塞**。
+- **聚合**（`aggregate_window_programs`，纯函数、单测）：按 exe 全路径
+  （小写）去重、累加窗口数、**剔除 Lume 自身进程**、按文件名排序。返回
+  `{ path, name, title, windows }`。
+- **UI**（`ProgramPicker.tsx`，设置窗内的遮罩弹层而非新建 WebView2 窗口——省一个
+  renderer）：标题 + 筛选框 + 列表（每行 文件名 / 窗口数或标题 / 完整路径），
+  点选把 **exe 文件名**写进规则（`matches_rule` 接受裸文件名，跨程序更新更稳），
+  Esc 或点遮罩关闭。**Esc 监听只拦 Escape 键**，其余按键照常进筛选框。
+- **已知边界**：UWP 应用的窗口属主常显示为 `ApplicationFrameHost.exe`（Windows
+  行为，标题可作辨认）；只看**当前有窗口**的程序，后台无窗口进程不列出。
+
+### 21.6 抢回焦点 + 详细日志（用户追加需求，已实现）
+
+**背景**：延迟到点若前台已移开，v1 直接跳过（安全但用户会莫名其妙"没反应"）。
+本次给出可选策略与可诊断的日志。
+
+- **抢回焦点（全局策略 `automation.force_focus`，默认关）**：开启后，延迟结束时若
+  目标已不在前台，先尽力把目标窗口拉回前台再发送，失败则跳过。Windows 默认
+  **禁止后台进程抢前台**，故用两招标准变通：**ALT 轻敲**（`SendInput` VK_MENU
+  down/up，使自己成为"最后输入"进程，解锁 `SetForegroundWindow`）+
+  **`AttachThreadInput`** 把自身输入队列挂到当前前台线程（用完即解挂）。目标窗口
+  = 记录的那个（仍存活且属主 pid 一致）否则用 `EnumWindows` 找该 pid 的任一可见有
+  标题窗口；`IsIconic` 时先 `ShowWindow(SW_RESTORE)`。**结果以
+  `GetForegroundWindow()` 实测判定**（不是调用返回值），60ms 让 shell 稳定。
+  已知拒绝情形：前台是提权窗口（UAC）等——日志如实记录"`Windows refused the
+  foreground change`"。
+- **更详细的日志**（`eprintln` → stderr）：规则身份统一为 **`程序 → 快捷键`**
+  （规则按 process 去重，故唯一；不新增自定义名称字段）。三处埋点：
+  - **挂起**：`rule "notepad.exe → Ctrl+Alt+S": armed for window 0x…(Notepad3.exe
+    (pid N)), delay 3000 ms, force-focus on`
+  - **发送**：`… sent after 3000 ms to Notepad3.exe (pid N)`
+  - **跳过/抢回**：`… skipped after 3000 ms — foreground is chrome.exe (pid M),
+    expected Notepad3.exe (pid N) (enable 抢回焦点 to force it back)`；抢回分支依次
+    记录 "forcing it back" → "foreground restored, sending" 或
+    "Windows refused the foreground change; skipped" / "no usable … window is left"。
+  进程一律以 `名字 (pid N)` 呈现（`exe_of_pid` 从 `exe_of_hwnd` 中抽出复用）。
+- **设置页**：自动化页新增「延迟结束后抢回焦点」开关 + 说明（默认关，界面提示
+  尽力而为与拒绝情形）。
+- **测试**：`Automation` 往返含 `force_focus`（默认 false）；CDP 冒烟加一项
+  （默认关、可开、开=脏状态）；**端到端真机实测**（隔离临时目录跑 release exe 的
+  副本，不碰便携版真实数据）：正常送出、抢走前台后跳过、开抢回焦点后强制拉回再
+  送出——三段日志全部符合预期。要点：**规则只在「窗口激活」时触发，而从后台进程
+  启动的窗口拿不到前台**（Windows 前台锁），所以测试必须自己用 ALT 轻敲 +
+  `SetForegroundWindow` 把目标拉到前台，否则只会看到 armed、看不到后续。
+  实测日志样例：
+  ```
+  rule "Notepad3.exe → Ctrl+Alt+S": armed for window 0x140e4a (Notepad3.exe (pid 28868)), delay 6000 ms, force-focus on
+  rule "Notepad3.exe → Ctrl+Alt+S": foreground is mspaint.exe (pid 21844), expected Notepad3.exe (pid 28868) — forcing it back
+  rule "Notepad3.exe → Ctrl+Alt+S": foreground restored, sending
+  rule "Notepad3.exe → Ctrl+Alt+S": sent after 6000 ms to Notepad3.exe (pid 28868)
+  ```
+  （抢回焦点分支以 `GetForegroundWindow()` 实测判定，故 "foreground restored" 是
+  真·拉回成功，而非调用返回成功。）
+
+### 21.7 「测试」按钮（用户追加需求，已实现）
+
+**背景**：规则只在新窗口「创建并激活」时触发，想验证一条规则就得反复重启目标程序，
+调试体验差。本次给每条规则加一个**「测试」**按钮：点一下立刻按一次该规则的快捷键。
+
+- **命令 `test_automation_rule(process, combo) -> TestRuleResult`**（async +
+  `spawn_blocking`）：**刻意绕过**正常触发条件——不要求新窗口、不看主开关、
+  **跳过该规则的延迟触发**——因为目的是"立刻验证一次发送"。先按 Alt+Tab 式枚举
+  （可见 + 有标题）找到 `process` 命中的窗口（复用 `matches_rule`，全路径/文件名/
+  去扩展名都可），再 `force_foreground` 把它拉到前台，最后 `send_combo`。
+  返回 `{ ok, reason, detail }`，成功时 `detail` = `名字 (pid N)`。
+- **为什么必须先抢前台**：按键只到**有焦点**的窗口，测试绝不能把快捷键打进当时
+  碰巧在前台的程序。此处抢焦点成功率较高——点击按钮时设置窗（属 lume.exe）正是
+  前台进程，`SetForegroundWindow` 对本进程允许。
+- **失败语义**（前端各自映射成提示）：`not_running`（没有该程序的窗口，先启动再
+  测）、`focus_failed`（Windows 拒绝前台切换）、`invalid_combo`（组合键发不出去）。
+- **UI**：规则行新增「测试」按钮（`程序 | 快捷键 | 测试 | 延迟 | 开关 | 删除`），
+  结果用设置页底部 toast 呈现（含目标 `名字 (pid N)`）。
+- **已知边界**：规则行的**程序名只读**（要改程序名需删掉重加）——「选择」只回填
+  添加行；测试不发延迟，故它验证的是"发送链路"而非"延迟时长"。
+
+### 测试
+
+- 单元（**106 通过**，+11）：`matches_rule`（文件名/全路径/大小写/去扩展名 stem/
+  空规则）、`key_to_vk`、`validate_auto_combo` 三态、`Automation` settings 往返
+  （含 `delay_ms`）、延迟旧文件默认 120 / 120000 钳到 60000 / 0 = 立即、
+  `aggregate_window_programs`（按路径去重含大小写变体、窗口计数、剔除自身进程、
+  按名排序、无自身提示时不过滤）。
+- CDP（`scripts/cdp_automation_smoke.mjs`，30 项全过）：分区渲染、快捷键是录制
+  按钮而非文本框、**程序名可输入**、Ctrl+Alt+S 被录制并提交、**录制器待命时仍能
+  输入程序名**（失焦即取消录制）、**「抢回焦点」开关默认关/可开/开即脏**、延迟
+  字段存在且默认 120、>60000 被钳制、添加成行并保留每规则延迟、添加行延迟复位为
+  默认、规则延迟可改、无修饰键被拒并保持录制、Esc 取消；**「选择」选择器**（真机
+  实测列出带窗口程序、每行有完整路径、真实启动 notepad 被检出、筛选收窄、点选回填
+  并关闭、Esc 关闭）；**「测试」按钮**（命令级：命中运行中的目标返回
+  `{ok:true, detail:"Notepad3.exe (pid 36600)"}`、未运行返回 `not_running`、
+  非法组合键返回 `invalid_combo`；按钮点击后 toast 显示"已测试：向 Notepad3.exe
+  (pid 36600) 发送 Ctrl+Alt+S"）。设置页冒烟（`cdp_settings_smoke.mjs`）同步到 9 个
+  导航项。
+- 手工（运行时行为）：配一条规则 → 启动目标程序 → 窗口聚焦后按设置的延迟收到
+  一次快捷键；延迟期间切走窗口则跳过（开「抢回焦点」后窗口会被拉回并发送）；
+  Alt+Tab 切回不重复；master 关闭不触发；保存后即时生效。

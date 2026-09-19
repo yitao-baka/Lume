@@ -32,6 +32,9 @@ pub struct Settings {
     /// Plugin management (ROADMAP #7) — ids switched off by the user.
     #[serde(default)]
     pub plugins: Plugins,
+    /// 自动动作 — send a hotkey when a configured program comes to the foreground.
+    #[serde(default)]
+    pub automation: Automation,
 }
 
 /// Plugin enable/disable state. Plugins not listed are enabled; the ids here
@@ -278,6 +281,61 @@ pub struct Clipboard {
     pub remember_checks: bool,
 }
 
+/// 自动动作 (settings.tsx 自动化 pane) — a master switch plus a list of
+/// "when this program comes to the foreground, send this hotkey" rules.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Automation {
+    /// Master switch for the whole watcher (quick on/off without deleting rules).
+    #[serde(default = "default_automation_enabled")]
+    pub enabled: bool,
+    /// 延迟到点后前台已移开时的策略: false = 跳过发送（安全，默认），
+    /// true = 尽力把目标窗口抢回前台再发送（Windows 允许后台抢前台的情况有限，
+    /// 属尽力而为）。
+    #[serde(default)]
+    pub force_focus: bool,
+    #[serde(default)]
+    pub actions: Vec<AutoAction>,
+}
+
+fn default_automation_enabled() -> bool {
+    true
+}
+
+/// One 自动动作 rule: launch the hotkey `combo` when an app whose executable
+/// is `process` creates a new top-level window that takes the foreground.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AutoAction {
+    /// Executable to match — full path or just the file name (case-insensitive).
+    pub process: String,
+    /// Hotkey combo to inject, e.g. "Ctrl+Alt+S" (must include a modifier).
+    pub combo: String,
+    /// Per-rule switch.
+    #[serde(default)]
+    pub enabled: bool,
+    /// 延迟触发 — milliseconds to wait after the window takes the foreground
+    /// before injecting (0 = immediately). Defaults to the settle time the
+    /// watcher always used.
+    #[serde(default = "default_action_delay")]
+    pub delay_ms: u64,
+}
+
+/// Default 延迟触发: 120 ms (a short settle time so the freshly-focused window
+/// is ready to receive synthetic input).
+fn default_action_delay() -> u64 {
+    120
+}
+
+/// Longest accepted 延迟触发 (60 s) — a typo like 120000 must not park the
+/// injection for two minutes.
+pub const MAX_ACTION_DELAY_MS: u64 = 60_000;
+
+impl AutoAction {
+    /// The rule's delay, clamped to the supported range.
+    pub fn effective_delay_ms(&self) -> u64 {
+        self.delay_ms.min(MAX_ACTION_DELAY_MS)
+    }
+}
+
 /// Default clipboard history cap (200 entries).
 fn default_history_cap() -> i64 {
     200
@@ -346,6 +404,11 @@ impl Default for Settings {
             },
             plugins: Plugins {
                 disabled: Vec::new(),
+            },
+            automation: Automation {
+                enabled: true,
+                force_focus: false,
+                actions: Vec::new(),
             },
             clipboard: Clipboard {
                 history_cap: 200,
@@ -784,6 +847,60 @@ mod tests {
         let mark = s.index.user_index.clone();
         s.index.migrate();
         assert_eq!(s.index.user_index, mark);
+    }
+
+    #[test]
+    fn automation_round_trips_list_and_defaults() {
+        let base = temp_base("automation");
+        ensure_settings_files(&base).unwrap();
+        let fallback = Settings::default();
+        // default.toml carries the defaults (master on, empty list).
+        let def = read_settings(&base);
+        assert!(def.automation.enabled, "automation master defaults to on");
+        assert!(!def.automation.force_focus, "抢回焦点 defaults to off (safe)");
+        assert!(def.automation.actions.is_empty());
+        // A rule with per-rule toggles round-trips through the file.
+        let mut s = read_settings(&base);
+        s.automation.actions.push(AutoAction {
+            process: "C:\\Games\\MyApp.exe".into(),
+            combo: "Ctrl+Alt+S".into(),
+            enabled: true,
+            delay_ms: 2500,
+        });
+        s.automation.force_focus = true;
+        s.automation.actions.push(AutoAction {
+            process: "PowerPoint.EXE".into(),
+            combo: "Alt+F5".into(),
+            enabled: false,
+            delay_ms: 120,
+        });
+        write_settings(&base, &s, &fallback).unwrap();
+        let on_disk = read_settings(&base);
+        assert_eq!(on_disk.automation.actions.len(), 2);
+        assert_eq!(on_disk.automation.actions[0].process, "C:\\Games\\MyApp.exe");
+        assert_eq!(on_disk.automation.actions[0].combo, "Ctrl+Alt+S");
+        assert_eq!(on_disk.automation.actions[0].delay_ms, 2500);
+        assert_eq!(on_disk.automation.actions[1].combo, "Alt+F5");
+        assert!(!on_disk.automation.actions[1].enabled);
+        assert!(on_disk.automation.force_focus, "抢回焦点 round-trips");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// A rule written before 延迟触发 existed must load with the default delay,
+    /// and an absurd value must clamp.
+    #[test]
+    fn automation_delay_defaults_and_clamps() {
+        let legacy: AutoAction = toml::from_str(
+            "process = \"notepad.exe\"\ncombo = \"Ctrl+S\"\nenabled = true\n",
+        )
+        .unwrap();
+        assert_eq!(legacy.delay_ms, 120, "missing delay falls back to 120 ms");
+        assert_eq!(legacy.effective_delay_ms(), 120);
+
+        let huge = AutoAction { delay_ms: 120_000, ..legacy.clone() };
+        assert_eq!(huge.effective_delay_ms(), MAX_ACTION_DELAY_MS);
+        let zero = AutoAction { delay_ms: 0, ..legacy };
+        assert_eq!(zero.effective_delay_ms(), 0, "0 = inject immediately");
     }
 
     #[test]

@@ -77,7 +77,7 @@ await sleep(600);
 
 // 1. Nav sections
 const nav = await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).map((b) => b.textContent.trim())`);
-check("8 nav sections in order", JSON.stringify(nav) === JSON.stringify(["外观", "导航页", "剪贴板", "快捷键", "搜索", "系统", "插件", "关于"]), JSON.stringify(nav));
+check("9 nav sections in order", JSON.stringify(nav) === JSON.stringify(["外观", "导航页", "剪贴板", "快捷键", "搜索", "系统", "自动化", "插件", "关于"]), JSON.stringify(nav));
 
 // 2. Footer buttons
 const footer = await s.evalJs(`Array.from(document.querySelectorAll('.settings-footer .settings-action')).map((b) => ({ text: b.textContent.trim(), disabled: b.disabled }))`);

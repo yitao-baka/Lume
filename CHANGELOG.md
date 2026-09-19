@@ -8,6 +8,35 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **自动化（自动动作）** — 新增设置「自动化」页：配置「某程序启动并取得前台
+  焦点 → 自动按一次指定快捷键」的规则列表（程序可填全路径或文件名，大小写
+  不敏感）。快捷键用与「快捷键」页同款的**按键录制**控件采集（点一下再按组合
+  键，`validate_auto_combo` 校验通过才提交；Esc 取消；录制器只监听自身按钮并
+  在失焦时取消，不会吞掉旁边程序名输入框的按键），已有规则也可点开重录。
+  Rust 侧新模块
+  `automation.rs` 用 message-only 窗口 + `RegisterShellHookWindow`（零轮询，
+  同 envwatch 风格）：`HSHELL_WINDOWCREATED` 命中规则的程序 → 挂起，
+  `HSHELL_WINDOWACTIVATED` 时经泛化的 `send_combo`（`SendInput`，复用
+  剪贴板 `send_ctrl_v` 骨架）注入组合键一次并出队——Alt+Tab 切回已运行实例
+  不重复触发；主开关 `automation.enabled` 一键关停。触发语义为「新窗口聚焦」，
+  后台/最小化启动不保证（前台账面提示）。**延迟触发**：每条规则可自定义
+  `delay_ms`（默认 120，界面 0–60000 钳制，Rust 侧 `effective_delay_ms` 兜底），
+  即窗口取得焦点后等待多久再按键——慢启动程序可留足 UI 构建时间；若延迟期间
+  前台已切到别的程序，则**跳过发送**（发送前按目标 pid 复核前台），避免快捷键
+  误发到无关窗口。**「选择」按钮**：程序名输入框右侧新增按钮，弹出当前**带窗口
+  正在运行的程序**列表（`list_window_programs` —— `EnumWindows` 取可见、有标题、
+  非工具窗口，按 exe 去重并排除 Lume 自身，汇总窗口数 + 代表性标题 + 完整路径），
+  支持筛选、点选即回填 exe 文件名、Esc 关闭。**抢回焦点**（全局开关，默认关）：
+  延迟到点时若目标已不在前台，默认跳过；开启后先用 ALT 轻敲 + `AttachThreadInput`
+  尽力把目标窗口拉回前台再发送，失败则跳过（Windows 禁止后台进程抢前台，属尽力而
+  为）。**详细日志**：规则以 `程序 → 快捷键` 标识，挂起/发送/跳过/抢回四个决策点
+  都记录，进程一律呈现为 `名字 (pid N)`，并指出当时的前台是谁。**「测试」按钮**：
+  每条规则可一键立即触发（`test_automation_rule`）——刻意绕过"新窗口才触发"、
+  主开关与该规则的延迟，先把目标程序拉到前台再发送，结果以 toast 呈现（命中谁 /
+  程序没在运行 / 无法切前台 / 组合键发不出去）。无新增依赖/feature，
+  106 单测通过（`matches_rule` / `key_to_vk` / 组合校验 / 延迟默认与钳制 / 窗口程序
+  聚合去重 / settings 往返含抢回焦点）。
+
 - **文件秒搜 mode 插件 + 宿主 search 能力** — 统一文件搜索 API 以宿主能力
   `search.files(q, max?)` 开放给插件（桥接 `window.lume.search.files`）；磁盘
   mode 新增 `lume.on.key` 按键转发事件（模式页自实现 ↑↓/Enter 导航）。示例

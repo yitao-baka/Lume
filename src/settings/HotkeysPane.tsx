@@ -8,30 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { t, type Messages } from "../i18n";
 import type { SettingsData } from "./types";
 import { Chip, Row } from "./controls";
-
-/** Keyboard `code` → the shortcut name the Rust parser accepts ("KeyK" → "K"). */
-function codeToKey(code: string): string {
-  if (code.startsWith("Key")) return code.slice(3);
-  if (code.startsWith("Digit")) return code.slice(5);
-  return code;
-}
-
-const MODIFIER_CODES = new Set([
-  "ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
-  "AltLeft", "AltRight", "MetaLeft", "MetaRight",
-]);
-
-/** Build a shortcut string from a keydown event ("Ctrl+Alt+K"). */
-function comboFromEvent(e: KeyboardEvent): string | null {
-  if (MODIFIER_CODES.has(e.code)) return null; // modifier alone — keep waiting
-  const mods: string[] = [];
-  if (e.ctrlKey) mods.push("Ctrl");
-  if (e.altKey) mods.push("Alt");
-  if (e.shiftKey) mods.push("Shift");
-  if (e.metaKey) mods.push("Super");
-  const key = codeToKey(e.code);
-  return key ? [...mods, key].join("+") : null;
-}
+import { comboFromEvent } from "./hotkeyCapture";
 
 /** Machine reason codes from the Rust validator → localized message keys. */
 const REASON_KEY: Record<string, keyof Messages> = {

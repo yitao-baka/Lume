@@ -48,6 +48,13 @@ All notable changes to Lume are documented here. Format based on
   （未注册 / Run 失败 / 启动超时），回退到进程内 `SendInput` 时明确打印**具体原因**
   而非笼统的「no agent」；armed 日志附加目标完整性；进程内发送成功时注明目标是否
   已提权（`automation.rs`）。
+- **发布改为 zip 便携包（不再出 MSI/NSIS）** — 新增 `scripts/package-zip.sh` 作为
+  标准打包命令：构建 release（前端 + `lume.exe` / `lume-agent.exe` / `lume-svc.exe`
+  + `languages/` + `res/`）并打成 `target/release/Lume-<版本>-win-x64.zip`。同时
+  移除 `tauri.conf.json` 的 `externalBin` 并把 `bundle.targets` 置空——外置代理/服务
+  经 tauri 安装器打包有历史痛点（曾致 MSI ICE30；实测 externalBin 会把
+  `lume-agent.exe` 重复装入、使 WiX 链接失败），改为 zip 便携包后这些代理天然随包
+  携带（便携模式代理本就要求与 `lume.exe` 同目录）。
 
 ### Fixed
 

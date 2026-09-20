@@ -21,7 +21,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [],
     "resources": {
       "../languages/*.json": "languages/",
       "../res/icons/*": "res/icons/"

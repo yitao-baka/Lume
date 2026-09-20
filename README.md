@@ -220,3 +220,15 @@ The frontend is managed with **pnpm** (`pnpm install`; see `.npmrc`,
 - **Standalone**: `pnpm run tauri build --no-bundle`, then run
   `src-tauri/target/release/lume.exe` — it embeds the frontend and shows no
   console window.
+
+## Package
+
+The standard release is a **portable zip** (no MSI/NSIS), produced by:
+
+```bash
+bash scripts/package-zip.sh   # → target/release/Lume-<version>-win-x64.zip
+```
+
+It assembles `lume.exe` + `lume-agent.exe` + `lume-svc.exe` + `languages/` +
+`res/` into one portable folder and zips it, so the elevation agent and service
+ship next to the main exe as the portable model expects.

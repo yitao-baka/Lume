@@ -86,6 +86,9 @@ function App() {
   /** Settings-driven: custom search placeholder per mode ("" = default text). */
   const [placeholderApps, setPlaceholderApps] = createSignal(_a?.search_placeholder_apps || "");
   const [placeholderClipboard, setPlaceholderClipboard] = createSignal(_a?.search_placeholder_clipboard || "");
+  /** Plugin-driven placeholders keyed by plugin id (app.setPlaceholder) —
+   * shown while that plugin's mode page is active, "" = default text. */
+  const [modePlaceholders, setModePlaceholders] = createSignal<Record<string, string>>({});
   /** Settings-driven: 记住上次所在页面 — restore the last page (mode + clipboard
    * category) on the next summon instead of always starting on Navigate. */
   const [rememberLastPage, setRememberLastPage] = createSignal(_a?.remember_last_page ?? false);
@@ -259,6 +262,14 @@ function App() {
     requestMode: (id) => void switchMode(id),
     runSearch,
     setQuery,
+    setModePlaceholder: (pluginId, text) => {
+      // Scoped to the caller's own mode id (createHostApi supplies the id) —
+      // one plugin can never restyle another's search box.
+      setModePlaceholders((prev) => {
+        if ((prev[pluginId] ?? "") === text) return prev; // avoid a churn write
+        return { ...prev, [pluginId]: text };
+      });
+    },
     resizeWindow: (size) => {
       // Logical px; omitted axes keep the current size. Height is clamped to
       // the launcher minimum; the size holds until the next content-driven
@@ -718,7 +729,9 @@ function App() {
           placeholder={
             mode() === APPS_MODE
               ? placeholderApps() || t("searchApps")
-              : placeholderClipboard() || t("searchClipboard")
+              : mode() === "clipboard"
+                ? placeholderClipboard() || t("searchClipboard")
+                : modePlaceholders()[mode()] || t("searchGeneric")
           }
           spellcheck={false}
           autocomplete="off"

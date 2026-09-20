@@ -319,6 +319,29 @@ hello-mode/` 演示了 `height = 560` 与 `app.resize` 按钮。
 
 ---
 
+## 5C. 插件自定搜索框占位文字（`app.setPlaceholder`）
+
+模式页可以运行时自定搜索框的占位文字（placeholder）——iframe 页里
+（桥接 `window.lume`）或工厂 `ctx.app` 上：
+
+```js
+lume.app.setPlaceholder("在 My Mode 里搜点什么…"); // 自定
+lume.app.setPlaceholder("");                        // 传 "" 恢复默认
+```
+
+- **作用域按插件 id 隔离**：宿主把文字存进以调用方插件 id 为键的表，
+  仅当**该插件自己的模式页激活**时显示（provider/service 插件调用无害，
+  但只有存在同 id 模式页时才会被看到）——一个插件永远改不了别的模式
+  （含导航页/剪贴板）的搜索框。
+- **回退链**：本插件自定文字 → 通用占位 `搜索…`（`searchGeneric`）。
+  导航页/剪贴板两个内置模式不受影响（各自的设置项照旧优先）。
+- 无持久化——每次会话由插件在 `onShow`/`onQuery` 里自行设置；典型用法
+  是按页面状态切换提示语（如「输入关键字」→「正在索引…」）。
+
+示例 `examples/plugins/hello-mode/` 演示了设置与恢复两个按钮。
+
+---
+
 ## 6C. 磁盘 mode 桥接契约（`window.lume`）
 
 mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise RPC 对象
@@ -327,7 +350,7 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 
 | 组 | 方法 | 说明 |
 |---|---|---|
-| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `openPath(path)` / `resize({width?, height?})` | 同 §6B.0 的组合根能力；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」 |
+| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `resize({width?, height?})` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」 |
 | `clipboard` | `readText()` / `writeText(text)` | 系统剪贴板文本 |
 | `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV（`<base>/plugins/<id>/storage.json`） |
 | `search` | `files(q, max?)` | **全盘文件搜索** — 统一门面 `file_search`（Everything 在运行则走它的 IPC，否则 LumeSVC 自研 USN 索引）。返回 `{backend: "everything"\|"svc"\|"none", status: "ready"\|"building"\|"unavailable", entries: [{id,name,path}]}`；`max` 默认 12、钳制 1..=100。完整示例 `examples/plugins/file-search/` |
@@ -390,6 +413,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 | `openMenu(m)` | 打开共享右键菜单（根渲染；`m` 为 `MenuState` 结构：`{kind, x, y, app?/item?/idx?}`）。 |
 | `mode()` | 当前活动模式 id（`"apps"` 或插件模式 id）。 |
 | `requestMode(id)` | 请求切模式（等价于用户点 pill → `switchMode`）。 |
+| `setModePlaceholder(pluginId, text)` | 设置某插件模式的搜索框占位文字（`""` = 默认；按插件 id 隔离，见 §5C）。内置插件一般用不到——`createHostApi` 会自动带上调用方自己的 id。 |
 
 ### 6B.1 `ModeInstance` — 整页模式契约
 
@@ -509,19 +533,33 @@ pluginBuiltin`。
 
 ## 10. 调试与测试
 
-- **控制台日志**（WebView2 DevTools / CDP）：
-  - `[plugins] loaded provider: <id>` — 加载成功
-  - `[plugins] bad default export …` — 默认导出缺少 `search` 函数
-  - `[plugins] load failed: <id>` — 文件缺失 / HTTP / 语法错误
-  - `[plugins] skipping …` — Rust 侧清单解析失败
-  - `provider search failed: <id>` — 运行期 search 抛错
+- **控制台日志**（WebView2 DevTools / CDP；Rust 侧行 stderr——dev 终端
+  或重定向可见）。前端统一走 `src/plugins/log.ts` 的 `plog`：宿主侧前缀
+  `[plugins]`，带插件 id 时为 `[plugins(id)]`；iframe 页内桥接错误前缀
+  `[lume bridge]`。分层：
+  - `debug` — 逐调用细节（默认 DevTools 不显示，需勾选 Verbose）：
+    `rpc → app.toast {…}`（每次桥接 RPC 及参数）、`event → query`（下发
+    给页面的事件）、`app.setQuery/setPlaceholder/resize/…`、清单逐条
+    明细、加载跳过原因（`already loaded this session` / `disabled in
+    settings` / `no dir`）、`register: mode/navBars`（注册的贡献）。
+  - `info` — 生命周期：`manifests refreshed: N (builtin X, disk Y)`、
+    `loaded provider/mode/service (…明细)`、`mode view fetching/ready`、
+    磁盘插件刷新完成。
+  - `warn/error` — 需要处理的：`load failed`（文件缺失/HTTP/语法错误）、
+    `provider needs search()`、`unusable manifest`（含缺哪个字段的说明）、
+    `unknown lume rpc`、`bad navBars entry`、钩子抛错。
+  - Rust 侧（`[plugins]` 前缀）：`scanning <dir>` / `scan: found "<id>"
+    (kind=…, version=…)` / `scan: skipping …`（无清单/解析失败）/
+    `"<id>" enabled=…` / `list: N plugin(s) total` / `storage get/set/
+    remove (<id>) <key> → …`（值只记大小不记内容）。
 - **CDP 连接**：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
   启动后连 `127.0.0.1:9222`。现成脚本：
   - `scripts/cdp_plugin_verify.mjs` — provider 行 + 插件面板截图
   - `scripts/cdp_settings_smoke.mjs` — 8 分区设置冒烟
   - `scripts/cdp_launcher_shots.mjs` — 启动器截图（前后对比）
 - **手工验证清单**：放入插件 → 重启 → 设置/插件可见 → 搜索出现结果行 →
-  启停 toggle 即时生效 → 关闭活动模式插件自动回导航页。
+  启停 toggle 即时生效 → 关闭活动模式插件自动回导航页；mode 页可另验
+  `setPlaceholder` 按钮（§5C）与 DevTools Verbose 下的 RPC 轨迹。
 
 ---
 

@@ -30,7 +30,7 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   完整文件搜索模式见 `examples/plugins/file-search/`）
 - `service` — 无 UI 生命周期钩子（`onShow`/`onHide`/`onQuery`）
 
-宿主能力 API（`ctx` / `window.lume`）：`app.hide/toast/setQuery/openPath/
+宿主能力 API（`ctx` / `window.lume`）：`app.hide/toast/setQuery/setPlaceholder/openPath/
 resize`、`clipboard.readText/writeText`、`storage.get/set/remove`（插件私有
 KV）、`search.files(q, max?)`（全盘文件秒搜 = `file_search` 门面，Everything /
 LumeSVC 引擎自动选择）。mode 桥接 iframe 还会收到 `lume.on.key` 按键事件

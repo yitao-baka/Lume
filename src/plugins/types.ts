@@ -51,6 +51,11 @@ export interface PluginHostApi {
     toast(text: string, opts?: { undo?: () => void; duration?: number }): void;
     /** Overwrite the launcher search-box query. */
     setQuery(q: string): void;
+    /** Customize the search box placeholder shown while this plugin's mode
+     * page is active. `""` restores the default text. Non-mode plugins may
+     * call it, but the text is only ever displayed for a mode with the
+     * plugin's own id. */
+    setPlaceholder(text: string): void;
     /** Open a file path or URL via launch_app (ShellExecuteW). */
     openPath(path: string): void;
     /** Resize the launcher window (logical px). Omitted axes keep their
@@ -126,6 +131,10 @@ export interface PluginServices {
   requestMode(id: string): void;
   /** Overwrite the launcher search-box query (the active mode's query). */
   setQuery(q: string): void;
+  /** Set the search box placeholder for one plugin's mode page ("" =
+   * default). The plugin id is the caller's own — `createHostApi` supplies
+   * it — so one plugin can never restyle another's mode. */
+  setModePlaceholder(pluginId: string, text: string): void;
   /** Resize the launcher window (logical px; omitted axes keep their size).
    * Backs the disk-plugin `app.resize` bridge RPC. */
   resizeWindow(size: { width?: number; height?: number }): void;

@@ -14,6 +14,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginManifest, PluginServices } from "./types";
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
+import { plog } from "./log";
 export {
   APPS_MODE,
   type LauncherPlugin,
@@ -28,6 +29,15 @@ const [manifests, setManifests] = createSignal<PluginManifest[]>([]);
 
 /** Register a plugin. Call once per plugin at composition time. */
 export function definePlugin(plugin: LauncherPlugin) {
+  plog.debug(plugin.id, "register:", [
+    plugin.mode && "mode",
+    plugin.provider && "provider",
+    plugin.preview && "preview",
+    plugin.lifecycle && "lifecycle",
+    plugin.navBars && "navBars",
+  ]
+    .filter(Boolean)
+    .join("/"));
   plugins.push(plugin);
 }
 
@@ -35,10 +45,25 @@ export function definePlugin(plugin: LauncherPlugin) {
  * load any newly discovered disk plugins. */
 export async function refreshPlugins() {
   try {
-    setManifests(await invoke<PluginManifest[]>("get_plugins"));
+    const list = await invoke<PluginManifest[]>("get_plugins");
+    plog.info(
+      null,
+      `manifests refreshed: ${list.length} (builtin ${list.filter((m) => m.builtin).length}, ` +
+        `disk ${list.filter((m) => !m.builtin).length})`
+    );
+    for (const m of list) {
+      plog.debug(
+        m.id,
+        `manifest: kind=${m.kind} enabled=${m.enabled} builtin=${m.builtin}` +
+          (m.entry ? ` entry=${m.entry}` : "") +
+          (m.view ? ` view=${m.view}` : "") +
+          (m.keywords.length ? ` keywords=[${m.keywords.join(",")}]` : "")
+      );
+    }
+    setManifests(list);
     await loadDiskPlugins();
-  } catch {
-    // Keep the previous state — plugins are optional by design.
+  } catch (err) {
+    plog.error(null, "get_plugins failed — keeping previous state:", err);
   }
 }
 
@@ -117,13 +142,13 @@ function resolveLogic(def: unknown, api: ReturnType<typeof createHostApi>): Reco
   return (def && typeof def === "object" ? def : {}) as Record<string, unknown>;
 }
 
-function callHook(logic: Record<string, unknown>, name: string, ...args: unknown[]) {
+function callHook(id: string, logic: Record<string, unknown>, name: string, ...args: unknown[]) {
   const fn = logic[name];
   if (typeof fn === "function") {
     try {
       return (fn as (...a: unknown[]) => unknown)(...args);
     } catch (err) {
-      console.error(`[plugins] ${name} failed:`, err);
+      plog.error(id, `hook ${name} failed:`, err);
     }
   }
   return undefined;
@@ -152,7 +177,7 @@ function normalizeNavBarContributions(pluginId: string, raw: unknown): NavBarCon
       typeof b.title !== "string" ||
       !Array.isArray(b.items)
     ) {
-      console.error("[plugins] bad navBars entry:", pluginId);
+      plog.error(pluginId, "bad navBars entry (dropped):", b);
       continue;
     }
     const items = b.items
@@ -200,6 +225,7 @@ async function execHostRpc(
   method: string,
   args: Record<string, unknown>
 ): Promise<unknown> {
+  plog.debug(id, "rpc →", method, args);
   const api = createHostApi(id, pluginServices!);
   const a = args as Record<string, string>;
   switch (method) {
@@ -209,6 +235,8 @@ async function execHostRpc(
       return api.app.toast(a.text, a.opts as never);
     case "app.setQuery":
       return api.app.setQuery(a.q);
+    case "app.setPlaceholder":
+      return api.app.setPlaceholder(a.text);
     case "app.openPath":
       return api.app.openPath(a.path);
     case "app.resize":
@@ -229,6 +257,7 @@ async function execHostRpc(
     case "search.files":
       return api.search.files(a.q, args.max as number | undefined);
     default:
+      plog.error(id, "unknown lume rpc:", method);
       throw new Error(`unknown lume rpc: ${method}`);
   }
 }
@@ -241,21 +270,29 @@ function createDiskModeInstance(
 ): ModeInstance {
   const [query, setQuerySig] = createSignal("");
   const [selected, setSelected] = createSignal(0);
-  const hook = (name: string, ...args: unknown[]) => callHook(logic, name, ...args);
+  const hook = (name: string, ...args: unknown[]) => callHook(m.id, logic, name, ...args);
   const { View, post } = createIframeView((method, args) => execHostRpc(m.id, method, args));
+  // Events (query/show/hide) mirror into the plugin log so a silent page is
+  // distinguishable from one that never received anything.
+  const postEv = (type: string, payload?: unknown) => {
+    plog.debug(m.id, `event → ${type}`, payload ?? "");
+    post(type, payload);
+  };
   let viewReady = false;
 
   // Fetch + bridge the view page, then mark ready and deliver the current
   // query (the page may already have assigned lume.on.query).
+  plog.info(m.id, "mode view fetching:", m.view);
   void fetchDiskFile(m.dir + "\\" + m.view)
     .then((html) => {
+      plog.info(m.id, "mode view ready (html", html.length, "bytes)");
       viewReady = true;
       View.setHtml(injectBridge(html));
-      post("query", query());
-      post("show");
+      postEv("query", query());
+      postEv("show");
     })
     .catch((err) => {
-      console.error("[plugins] view load failed:", m.id, err);
+      plog.error(m.id, "view load failed:", err);
       View.setHtml(
         `<body style="font:13px sans-serif;color:#f66;padding:16px">plugin view load failed: ${String(
           err
@@ -267,11 +304,11 @@ function createDiskModeInstance(
     query,
     setQuery: (q) => {
       setQuerySig(q);
-      if (viewReady) post("query", q);
+      if (viewReady) postEv("query", q);
       hook("onQuery", q);
     },
     search: async (q) => {
-      if (viewReady) post("query", q);
+      if (viewReady) postEv("query", q);
       hook("onQuery", q);
       // ModeInstance contract: every search ends with a resize request —
       // without it the window keeps the previous page's size after a mode
@@ -280,7 +317,7 @@ function createDiskModeInstance(
     },
     reset: () => {
       setSelected(0);
-      if (viewReady) post("show");
+      if (viewReady) postEv("show");
       hook("onShow");
       services.scheduleResize();
     },
@@ -312,7 +349,7 @@ function createDiskModeInstance(
     restorePage: () => {},
     applySettings: () => {},
     onHide: () => {
-      if (viewReady) post("hide");
+      if (viewReady) postEv("hide");
       hook("onHide");
     },
     View,
@@ -324,9 +361,19 @@ export async function loadDiskPlugins() {
   const services = pluginServices;
   let loadedAny = false;
   for (const m of manifests()) {
-    if (loadedDiskIds.has(m.id)) continue;
+    if (loadedDiskIds.has(m.id)) {
+      plog.debug(m.id, "skip load: already loaded this session");
+      continue;
+    }
     loadedDiskIds.add(m.id); // mark regardless of outcome — never retry-spam
-    if (m.builtin || !m.enabled || !m.dir) continue;
+    if (m.builtin || !m.enabled || !m.dir) {
+      plog.debug(
+        m.id,
+        "skip load:",
+        m.builtin ? "builtin" : !m.enabled ? "disabled in settings" : "no dir"
+      );
+      continue;
+    }
 
     try {
       if (m.kind === "provider" && m.entry) {
@@ -334,7 +381,7 @@ export async function loadDiskPlugins() {
         const logic = resolveLogic(def, createHostApi(m.id, services!));
         const search = logic.search;
         if (typeof search !== "function") {
-          console.error("[plugins] provider needs search():", m.id);
+          plog.error(m.id, "provider needs search() — got", typeof search);
           continue;
         }
         const navBars = navBarsContribution(m.id, logic);
@@ -354,7 +401,7 @@ export async function loadDiskPlugins() {
           ...(navBars ? { navBars } : {}),
         });
         loadedAny = true;
-        console.log("[plugins] loaded provider:", m.id);
+        plog.info(m.id, `loaded provider (entry=${m.entry}${navBars ? ", navBars" : ""})`);
       } else if (m.kind === "mode" && m.view) {
         const logic = m.entry
           ? resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!))
@@ -375,7 +422,11 @@ export async function loadDiskPlugins() {
           ...(navBars ? { navBars } : {}),
         });
         loadedAny = true;
-        console.log("[plugins] loaded mode:", m.id);
+        plog.info(
+          m.id,
+          `loaded mode (view=${m.view}${m.entry ? `, entry=${m.entry}` : ""}` +
+            `${m.height != null ? `, height=${m.height}` : ""}${navBars ? ", navBars" : ""})`
+        );
       } else if (m.kind === "service" && m.entry) {
         const def = await importDiskModule(m.dir, m.entry);
         const logic = resolveLogic(def, createHostApi(m.id, services!));
@@ -383,21 +434,28 @@ export async function loadDiskPlugins() {
         definePlugin({
           id: m.id,
           lifecycle: {
-            onShow: () => void callHook(logic, "onShow"),
-            onHide: () => void callHook(logic, "onHide"),
-            onQuery: (q) => void callHook(logic, "onQuery", q),
+            onShow: () => void callHook(m.id, logic, "onShow"),
+            onHide: () => void callHook(m.id, logic, "onHide"),
+            onQuery: (q) => void callHook(m.id, logic, "onQuery", q),
           },
           ...(navBars ? { navBars } : {}),
         });
         loadedAny = true;
-        console.log("[plugins] loaded service:", m.id);
+        plog.info(m.id, `loaded service (entry=${m.entry}${navBars ? ", navBars" : ""})`);
       } else {
-        console.error("[plugins] unusable manifest (kind/entry/view):", m.id, m.kind);
+        plog.error(
+          m.id,
+          `unusable manifest: kind=${m.kind}` +
+            (m.kind === "provider" && !m.entry ? " — provider requires `entry`" : "") +
+            (m.kind === "mode" && !m.view ? " — mode requires `view`" : "") +
+            (m.kind === "service" && !m.entry ? " — service requires `entry`" : "")
+        );
       }
     } catch (err) {
-      console.error("[plugins] load failed:", m.id, err);
+      plog.error(m.id, "load failed:", err);
     }
   }
+  if (loadedAny) plog.info(null, "disk plugins loaded; manifests signal refreshed");
   // The `plugins` array is plain — clone the manifests signal so reactive
   // consumers (mode pills, provider merge) re-run after disk loads.
   if (loadedAny) setManifests((prev) => [...prev]);

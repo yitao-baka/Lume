@@ -31,6 +31,10 @@
     <button id="back">回导航页（setQuery）</button>
     <button id="grow">窗口长高 120px（app.resize）</button>
   </div>
+  <div class="row">
+    <button id="ph">自定搜索框占位文字（setPlaceholder）</button>
+    <button id="phReset">恢复默认占位文字</button>
+  </div>
   <script>
     var n = 0;
     var $ = function (id) { return document.getElementById(id); };
@@ -49,6 +53,14 @@
     // 内容驱动的 resize（切模式 / 导航页自动适配会恢复配置值）。
     $("grow").onclick = function () {
       lume.app.resize({ height: document.documentElement.clientHeight + 120 });
+    };
+
+    // 运行时自定搜索框占位文字：只在本模式页激活时显示；传 "" 恢复默认。
+    $("ph").onclick = function () {
+      lume.app.setPlaceholder("在 Hello Mode 里搜点什么…");
+    };
+    $("phReset").onclick = function () {
+      lume.app.setPlaceholder("");
     };
 
     lume.storage.get("count").then(function (v) { n = v || 0; render(); });

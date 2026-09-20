@@ -111,15 +111,24 @@ fn scan_disk_plugins(base: &Path) -> Vec<PluginManifest> {
     let dir = plugins_dir(base);
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(&dir) else {
-        return out;
+        return out; // no plugins dir yet — the quiet, normal case
     };
+    eprintln!("[plugins] scanning {}", dir.display());
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
+            eprintln!(
+                "[plugins] scan: skipping non-directory {}",
+                path.display()
+            );
             continue;
         }
         let manifest = path.join("plugin.toml");
         let Ok(text) = fs::read_to_string(&manifest) else {
+            eprintln!(
+                "[plugins] scan: skipping {} (no readable plugin.toml)",
+                path.display()
+            );
             continue;
         };
         match parse_manifest(&text) {
@@ -127,17 +136,25 @@ fn scan_disk_plugins(base: &Path) -> Vec<PluginManifest> {
                 if m.id.is_empty() {
                     m.id = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
                 }
+                eprintln!(
+                    "[plugins] scan: found \"{}\" (kind={}, version={}) at {}",
+                    m.id,
+                    m.kind,
+                    if m.version.is_empty() { "-" } else { &m.version },
+                    path.display()
+                );
                 out.push(m);
             }
             Err(err) => {
                 eprintln!(
-                    "[plugins] skipping {}: {err}",
+                    "[plugins] scan: skipping {} — invalid plugin.toml: {err}",
                     path.file_name().unwrap_or_default().to_string_lossy()
                 );
             }
         }
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
+    eprintln!("[plugins] scan: {} disk plugin(s) discovered", out.len());
     out
 }
 
@@ -162,8 +179,15 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             dir: String::new(),
         })
         .collect();
-    for m in scan_disk_plugins(base) {
+    let disk = scan_disk_plugins(base);
+    for m in disk {
         let dir = plugins_dir(base).join(&m.id);
+        eprintln!(
+            "[plugins] \"{}\" enabled={} (disabled list: {:?})",
+            m.id,
+            enabled(&m.id),
+            disabled
+        );
         out.push(PluginInfo {
             id: m.id.clone(),
             name: m.name,
@@ -180,6 +204,13 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             dir: dir.to_string_lossy().into_owned(),
         });
     }
+    eprintln!(
+        "[plugins] list: {} plugin(s) total ({} builtin + {} disk, {} disabled)",
+        out.len(),
+        BUILTIN_PLUGINS.len(),
+        out.len() - BUILTIN_PLUGINS.len(),
+        disabled.len()
+    );
     out
 }
 
@@ -231,7 +262,15 @@ fn plugin_storage_get_for(
     key: String,
 ) -> Result<Option<String>, String> {
     let path = plugin_storage_path(base, id)?;
-    Ok(read_storage(&path).get(&key).cloned())
+    let value = read_storage(&path).get(&key).cloned();
+    match &value {
+        Some(v) => eprintln!(
+            "[plugins] storage get ({id}) {key} → hit ({} bytes)",
+            v.len()
+        ),
+        None => eprintln!("[plugins] storage get ({id}) {key} → miss"),
+    }
+    Ok(value)
 }
 
 /// Write one key (value = JSON text; null deletes). Atomic-ish: the whole
@@ -257,10 +296,26 @@ fn plugin_storage_set_for(
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let mut map = read_storage(&path);
+    match &value {
+        // Writes log the payload size only — values may hold user data.
+        Some(v) => eprintln!(
+            "[plugins] storage set ({id}) {key} = <{} bytes> ({} key(s) before write)",
+            v.len(),
+            map.len()
+        ),
+        None => eprintln!(
+            "[plugins] storage remove ({id}) {key} ({} key(s) before write)",
+            map.len()
+        ),
+    }
     match value {
-        Some(v) => map.insert(key, v),
-        None => map.remove(&key),
-    };
+        Some(v) => {
+            map.insert(key, v);
+        }
+        None => {
+            map.remove(&key);
+        }
+    }
     fs::write(&path, serde_json::to_string(&map).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
 }

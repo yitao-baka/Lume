@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { FileSearchOut, PluginHostApi, PluginServices } from "./types";
+import { plog } from "./log";
 
 /** Build the capability surface for one plugin id. `services` comes from the
  * composition root; every storage call is scoped by the plugin id (the Rust
@@ -11,16 +12,33 @@ import type { FileSearchOut, PluginHostApi, PluginServices } from "./types";
 export function createHostApi(id: string, services: PluginServices): PluginHostApi {
   return {
     app: {
-      hide: () => services.resetAndHide(),
-      toast: (text, opts) => services.showToast(text, opts),
-      setQuery: (q) => services.setQuery(q),
+      hide: () => {
+        plog.debug(id, "app.hide");
+        services.resetAndHide();
+      },
+      toast: (text, opts) => {
+        plog.debug(id, "app.toast:", text);
+        services.showToast(text, opts);
+      },
+      setQuery: (q) => {
+        plog.debug(id, "app.setQuery:", q);
+        services.setQuery(q);
+      },
+      setPlaceholder: (text) => {
+        plog.debug(id, "app.setPlaceholder:", text);
+        services.setModePlaceholder(id, text);
+      },
       openPath: (path) => {
+        plog.debug(id, "app.openPath:", path);
         services.markEntryOpened(); // opening a target = using an entry
         void invoke("launch_app", { path, name: path, elevated: false }).catch((err) =>
-          console.error("[plugins] openPath failed:", id, err)
+          plog.error(id, "app.openPath failed:", err)
         );
       },
-      resize: (size) => services.resizeWindow(size ?? {}),
+      resize: (size) => {
+        plog.debug(id, "app.resize:", size);
+        services.resizeWindow(size ?? {});
+      },
     },
     clipboard: {
       readText: () => invoke<string | null>("get_clipboard_text"),
@@ -33,10 +51,10 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         const raw = await invoke<string | null>("plugin_storage_get", { id, key });
         return raw == null ? null : (JSON.parse(raw) as T);
       },
-      set: async (key: string, value: unknown) => {
+      set: async (key, value) => {
         await invoke("plugin_storage_set", { id, key, value: JSON.stringify(value ?? null) });
       },
-      remove: async (key: string) => {
+      remove: async (key) => {
         await invoke("plugin_storage_set", { id, key, value: null });
       },
     },

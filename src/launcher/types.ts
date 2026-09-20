@@ -16,15 +16,33 @@ export interface AppEntry {
   path: string;
 }
 
+/** One `file_search` hit — the AppEntry fields plus file metadata. The
+ * metadata fields are absent (`undefined`) when the backend can't provide
+ * them (the USN index stats on demand; a vanished file keeps its entry). */
+export interface FileEntry extends AppEntry {
+  isFolder: boolean;
+  /** Last-modified time, Unix epoch ms. */
+  mtime?: number;
+  /** Size in bytes. */
+  size?: number;
+}
+
 /** Reply of the Rust `file_search` command — the unified file-search facade
  * (backend "everything" = voidtools Everything via its WM_COPYDATA IPC; "svc"
  * = the LumeSVC self-hosted USN index; "none" = neither backend available).
  * `status` "building" means the service index is still scanning and the
- * results are partial. */
+ * results are partial. `total`/`sort` are absent when the backend can't
+ * provide them (svc truncates mid-scan; legacy Everything replies lack them;
+ * sort is page-internal for svc). */
 export interface FileSearchOut {
   backend: "everything" | "svc" | "none";
   status: "ready" | "building" | "unavailable";
-  entries: AppEntry[];
+  /** Engine-reported total hit count. */
+  total?: number;
+  /** Effective sort, echoed back ("name" | "path" | "size" | "mtime" |
+   * "name_desc" | "path_desc" | "size_desc" | "mtime_desc"). */
+  sort?: string;
+  entries: FileEntry[];
 }
 
 /** A history entry as returned by the Rust `search_clipboard` command. */

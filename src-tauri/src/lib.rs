@@ -309,6 +309,7 @@ pub fn run() {
             explorer::get_foreground_context,
             explorer::open_terminal_in_folder,
             explorer::copy_path,
+            explorer::trash_to_recycle,
             explorer::get_terminal_icons,
             apps::search_apps,
             apps::refresh_index,

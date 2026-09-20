@@ -239,11 +239,23 @@ async function execHostRpc(
       return api.app.setPlaceholder(a.text);
     case "app.openPath":
       return api.app.openPath(a.path);
+    case "app.revealPath":
+      return api.app.revealPath(a.path);
+    case "app.trash":
+      return api.app.trash(args.paths as string[]);
     case "app.resize":
       return api.app.resize({
         width: args.width as number | undefined,
         height: args.height as number | undefined,
       });
+    case "fs.readText":
+      return api.fs.readText(a.path);
+    case "fs.thumb":
+      return api.fs.thumb(a.path);
+    case "fs.videoPoster":
+      return api.fs.videoPoster(a.path);
+    case "fs.icon":
+      return api.fs.icon(args.paths as string[]);
     case "clipboard.readText":
       return api.clipboard.readText();
     case "clipboard.writeText":
@@ -254,8 +266,11 @@ async function execHostRpc(
       return api.storage.set(a.key, (args as { value: unknown }).value);
     case "storage.remove":
       return api.storage.remove(a.key);
-    case "search.files":
-      return api.search.files(a.q, args.max as number | undefined);
+    case "search.files": {
+      // Second arg: legacy number (= max) or { offset, max, sort }.
+      const o = args.opts as { offset?: number; max?: number; sort?: string } | undefined;
+      return api.search.files(a.q, o);
+    }
     default:
       plog.error(id, "unknown lume rpc:", method);
       throw new Error(`unknown lume rpc: ${method}`);

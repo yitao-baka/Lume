@@ -126,6 +126,59 @@ pub fn copy_path(path: String) -> Result<(), String> {
     cb.set_text(&path).map_err(|e| e.to_string())
 }
 
+/// Move files/folders to the Recycle Bin. No permanent-delete fallback: any
+/// shell failure is an Err. One batched `SHFileOperationW` (pFrom carries all
+/// paths) — the shell cost, and any progress UI, is paid once.
+#[tauri::command]
+pub async fn trash_to_recycle(paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    // Fail fast on missing paths (message carries the path) — no shell call.
+    for p in &paths {
+        if std::fs::symlink_metadata(p).is_err() {
+            return Err(format!("path not found: {p}"));
+        }
+    }
+    // Non-blocking: the shell op can pop progress UI and block a while.
+    tauri::async_runtime::spawn_blocking(move || {
+        use windows_sys::Win32::UI::Shell::{
+            SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
+            FO_DELETE, SHFILEOPSTRUCTW,
+        };
+        // pFrom is a list of NUL-separated paths, double-NUL terminated.
+        let mut from: Vec<u16> = Vec::new();
+        for p in &paths {
+            from.extend(p.encode_utf16());
+            from.push(0);
+        }
+        from.push(0);
+        let mut op = SHFILEOPSTRUCTW {
+            hwnd: std::ptr::null_mut(),
+            wFunc: FO_DELETE as u32,
+            pFrom: from.as_ptr(),
+            pTo: std::ptr::null(),
+            // FOF_ALLOWUNDO is the recycle-bin semantic itself; the other
+            // flags suppress confirmation/error dialogs — the host never
+            // shows one (the plugin owns confirmation).
+            fFlags: (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI) as u16,
+            fAnyOperationsAborted: 0,
+            hNameMappings: std::ptr::null_mut(),
+            lpszProgressTitle: std::ptr::null(),
+        };
+        let code = unsafe { SHFileOperationW(&mut op) };
+        if code != 0 {
+            return Err(format!("SHFileOperationW failed with code {code:#x}"));
+        }
+        if op.fAnyOperationsAborted != 0 {
+            return Err("user aborted".into());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn empty_context() -> ForegroundContext {
     ForegroundContext {
         hwnd: 0,
@@ -335,5 +388,35 @@ pub async fn get_terminal_icons() -> Result<TerminalIcons, String> {
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Live round trip: create a temp file, trash it, verify it left the disk
+    /// (it then sits in the Recycle Bin). `#[ignore]`d so regular test runs
+    /// don't touch the shell / recycle bin — run with `-- --ignored`.
+    #[test]
+    #[ignore]
+    fn trash_moves_file_to_recycle_bin() {
+        let path = std::env::temp_dir().join("lume-trash-test-9f3a.txt");
+        std::fs::write(&path, "trash me").unwrap();
+        assert!(path.exists());
+        tauri::async_runtime::block_on(trash_to_recycle(vec![path.to_string_lossy().into_owned()]))
+            .expect("trash_to_recycle");
+        assert!(!path.exists());
+    }
+
+    /// A missing path must fail fast with the path in the message — no shell
+    /// call, no silent success.
+    #[test]
+    fn trash_rejects_missing_path() {
+        let err = tauri::async_runtime::block_on(trash_to_recycle(vec![
+            r"C:\definitely\missing\9f3a.bin".into(),
+        ]))
+        .unwrap_err();
+        assert!(err.contains("9f3a.bin"), "error should carry the path: {err}");
+    }
 }
 

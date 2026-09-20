@@ -35,6 +35,22 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
           plog.error(id, "app.openPath failed:", err)
         );
       },
+      revealPath: (path) => {
+        plog.debug(id, "app.revealPath:", path);
+        // No markEntryOpened, no hide: after "open location" the user usually
+        // keeps searching — the plugin decides when to hide itself.
+        void invoke("reveal_in_folder", { path }).catch((err) =>
+          plog.error(id, "app.revealPath failed:", err)
+        );
+      },
+      trash: (paths) => {
+        plog.debug(id, "app.trash:", paths.length, "path(s)");
+        // The plugin owns the confirmation (toast / UI double-confirm); the
+        // host shows none. Recycle-bin only — no permanent-delete fallback.
+        void invoke("trash_to_recycle", { paths }).catch((err) =>
+          plog.error(id, "app.trash failed:", err)
+        );
+      },
       resize: (size) => {
         plog.debug(id, "app.resize:", size);
         services.resizeWindow(size ?? {});
@@ -58,9 +74,41 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         await invoke("plugin_storage_set", { id, key, value: null });
       },
     },
+    fs: {
+      readText: (path: string) => {
+        plog.debug(id, "fs.readText:", path);
+        // >512KB rejects (Rust side) — the plugin shows a "preview first
+        // 512KB" message; binary content comes back lossy-UTF8 decoded.
+        return invoke<string>("get_file_text", { path });
+      },
+      thumb: (path: string) => {
+        plog.debug(id, "fs.thumb:", path);
+        return invoke<string>("get_file_thumb", { path }); // base64 PNG data URI
+      },
+      videoPoster: (path: string) => {
+        plog.debug(id, "fs.videoPoster:", path);
+        return invoke<string>("get_video_thumb", { path }); // base64 PNG data URI
+      },
+      icon: (paths: string[]) => {
+        plog.debug(id, "fs.icon:", paths.length, "path(s)");
+        return invoke<{ path: string; icon: string | null }[]>("get_app_icons", { paths });
+      },
+    },
     search: {
-      files: (q: string, max?: number) =>
-        invoke<FileSearchOut>("file_search", { query: q, max }),
+      files: (
+        q: string,
+        opts?: number | { offset?: number; max?: number; sort?: string }
+      ) => {
+        // Legacy callers pass a bare number (max); new callers an object.
+        const o = typeof opts === "number" ? { max: opts } : (opts ?? {});
+        plog.debug(id, "search.files:", q, o);
+        return invoke<FileSearchOut>("file_search", {
+          query: q,
+          max: o.max,
+          offset: o.offset,
+          sort: o.sort,
+        });
+      },
     },
   };
 }

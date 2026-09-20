@@ -58,6 +58,15 @@ export interface PluginHostApi {
     setPlaceholder(text: string): void;
     /** Open a file path or URL via launch_app (ShellExecuteW). */
     openPath(path: string): void;
+    /** Reveal a file/folder in Explorer (located and selected). Unlike
+     * openPath this does NOT mark the entry opened and does NOT hide the
+     * launcher — after "open location" the user usually keeps searching;
+     * the plugin hides itself when it wants. */
+    revealPath(path: string): void;
+    /** Move files/folders to the Recycle Bin (fire-and-forget; failures are
+     * logged). No permanent-delete fallback. The host shows no confirmation
+     * — the plugin owns it (toast / UI double-confirm) before calling. */
+    trash(paths: string[]): void;
     /** Resize the launcher window (logical px). Omitted axes keep their
      * current size; height is clamped to the launcher minimum. The size
      * holds until the next content-driven resize (Navigate auto-fit or a
@@ -77,11 +86,34 @@ export interface PluginHostApi {
     set(key: string, value: unknown): Promise<void>;
     remove(key: string): Promise<void>;
   };
+  /** Filesystem reads for preview-style plugins. Arbitrary-path access is
+   * part of the v1 trust model (§9 安全模型: 显式放置即信任); the future
+   * permissions enforcement layer will gate it. */
+  fs: {
+    /** Text file preview, lossy-UTF8 decoded; rejects for files > 512KB —
+     * show a "preview first 512KB" style message on rejection. */
+    readText(path: string): Promise<string>;
+    /** Shell thumbnail as a base64 PNG data URI (usable in `<img src>`).
+     * Rejects when the shell has no thumbnail provider for the file. */
+    thumb(path: string): Promise<string>;
+    /** Video poster frame as a base64 PNG data URI. Rejects without a
+     * shell thumbnail provider. */
+    videoPoster(path: string): Promise<string>;
+    /** Shell icons for a batch of paths — same shape as `get_app_icons`
+     * (`icon` is a data/asset URI or null when extraction failed). */
+    icon(paths: string[]): Promise<{ path: string; icon: string | null }[]>;
+  };
   /** Whole-drive file search — the unified `file_search` facade (ROADMAP
    * #20): a running Everything when present, the LumeSVC self-hosted USN
-   * index otherwise. `max` defaults to 12, clamped 1..=100. */
+   * index otherwise. `max` defaults to 12, clamped 1..=100. Legacy callers
+   * pass a bare number (max); opts objects add `offset` (0-based page start)
+   * and `sort` ("name" | "path" | "size" | "mtime" | "name_desc" |
+   * "path_desc" | "size_desc" | "mtime_desc"; invalid = engine default). */
   search: {
-    files(q: string, max?: number): Promise<FileSearchOut>;
+    files(
+      q: string,
+      opts?: number | { offset?: number; max?: number; sort?: string }
+    ): Promise<FileSearchOut>;
   };
 }
 

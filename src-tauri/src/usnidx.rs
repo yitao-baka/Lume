@@ -235,10 +235,14 @@ impl Engine {
                     &vol.names[node.name_off as usize..node.name_off as usize + node.name_len as usize],
                 )
                 .into_owned();
+                // USN records carry no reliable size/mtime — the caller stats
+                // the result page if it needs metadata (filesearch.rs).
                 Some(FileHit {
                     name,
                     path,
                     is_folder: node.dir,
+                    mtime: None,
+                    size: None,
                 })
             })
             .collect();

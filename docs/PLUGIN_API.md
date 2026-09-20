@@ -350,10 +350,11 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 
 | 组 | 方法 | 说明 |
 |---|---|---|
-| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `resize({width?, height?})` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」 |
+| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现） |
 | `clipboard` | `readText()` / `writeText(text)` | 系统剪贴板文本 |
+| `fs` | `readText(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` | 文件读取能力：`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`thumb` / `videoPoster` 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null） |
 | `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV（`<base>/plugins/<id>/storage.json`） |
-| `search` | `files(q, max?)` | **全盘文件搜索** — 统一门面 `file_search`（Everything 在运行则走它的 IPC，否则 LumeSVC 自研 USN 索引）。返回 `{backend: "everything"\|"svc"\|"none", status: "ready"\|"building"\|"unavailable", entries: [{id,name,path}]}`；`max` 默认 12、钳制 1..=100。完整示例 `examples/plugins/file-search/` |
+| `search` | `files(q, opts?)` | **全盘文件搜索** — 统一门面 `file_search`（Everything 在运行则走它的 IPC，否则 LumeSVC 自研 USN 索引）。返回 `{backend: "everything"\|"svc"\|"none", status: "ready"\|"building"\|"unavailable", total?, sort?, entries: [{id,name,path,isFolder,mtime?,size?}]}`。`opts` 兼容旧调用：**数字 = max**；对象 = `{offset, max, sort}`——`max` 默认 12、钳制 1..=100；`offset` 从第 offset 条开始（0 起，Everything 全量有效，svc 引擎无偏移由宿主取页后裁剪）；`sort` 取 `"name" \| "path" \| "size" \| "mtime" \| "name_desc" \| "path_desc" \| "size_desc" \| "mtime_desc"`（非法值 = 引擎默认序；svc 无全局排序，对返回页做页内排序并如实回显）。`total` 为引擎报告的总命中数（svc / 老版 Everything 拿不到时缺省）；条目的 `mtime`/`size`（ms epoch / 字节）拿不到时缺省，UI 按字段存在与否自适应隐藏列。完整示例 `examples/plugins/file-search/` |
 
 事件（页面赋值 `window.lume.on.<type> = fn`）：
 
@@ -526,6 +527,9 @@ pluginBuiltin`。
 - **动态加载 = 任意代码执行**。v1 的信任模型是**显式放置即信任**：用户
   自己把插件放进 `<base>/plugins/`。清单 `permissions` 字段只是声明位，
   v1 不校验、不隔离——插件代码与启动器同权限（可达 Tauri IPC）。
+- **`fs.readText`/`thumb`/`icon`（及 `app.trash`）暴露任意路径的文件读取
+  与删除能力**，与 v1 信任模型（显式放置即信任）一致；`permissions`
+  强制层落地后纳入白名单。
 - 内置插件与磁盘插件在注册表/启停上无差别，但内置代码经编译审计随包发布。
 - 后续方向：`permissions` 强制层（IPC 白名单）、插件沙箱、签名校验。
 

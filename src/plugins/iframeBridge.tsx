@@ -37,9 +37,17 @@ export const BRIDGE_SCRIPT = `
       setQuery: function (q) { return call("app.setQuery", { q: q }); },
       setPlaceholder: function (t) { return call("app.setPlaceholder", { text: t }); },
       openPath: function (p) { return call("app.openPath", { path: p }); },
+      revealPath: function (p) { return call("app.revealPath", { path: p }); },
+      trash: function (paths) { return call("app.trash", { paths: paths }); },
       resize: function (size) {
         return call("app.resize", { width: size && size.width, height: size && size.height });
       },
+    },
+    fs: {
+      readText: function (p) { return call("fs.readText", { path: p }); },
+      thumb: function (p) { return call("fs.thumb", { path: p }); },
+      videoPoster: function (p) { return call("fs.videoPoster", { path: p }); },
+      icon: function (paths) { return call("fs.icon", { paths: paths }); },
     },
     clipboard: {
       readText: function () { return call("clipboard.readText"); },
@@ -51,7 +59,8 @@ export const BRIDGE_SCRIPT = `
       remove: function (k) { return call("storage.remove", { key: k }); },
     },
     search: {
-      files: function (q, max) { return call("search.files", { q: q, max: max }); },
+      // opts: legacy number = max, or { offset, max, sort }
+      files: function (q, opts) { return call("search.files", { q: q, opts: opts }); },
     },
     on: {}, // the page assigns: lume.on.query / .show / .hide / .key = function(payload)
   };

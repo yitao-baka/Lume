@@ -263,8 +263,9 @@ pub fn svc_uninstall() -> Result<(), String> {
 }
 
 /// Launch a program elevated via `ShellExecuteW("runas")`. The UAC prompt is
-/// the only interaction; cancel maps to a friendly "canceled" error.
-fn launch_elevated(exe: &std::path::Path, arg: &str) -> Result<(), String> {
+/// the only interaction; cancel maps to a friendly "canceled" error. Shared
+/// with the injection agent's install/uninstall verbs (`agent.rs`).
+pub(crate) fn launch_elevated(exe: &std::path::Path, arg: &str) -> Result<(), String> {
     use windows_sys::Win32::Foundation::{ERROR_CANCELLED, HWND};
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
@@ -439,8 +440,9 @@ pub fn uninstall() -> Result<(), String> {
     Ok(())
 }
 
-/// Refuse to run install/uninstall unless the token is elevated.
-fn ensure_elevated() -> Result<(), String> {
+/// Refuse to run install/uninstall unless the token is elevated. Shared with
+/// `agent.rs` (its `--install-task` / `--uninstall-task` verbs).
+pub(crate) fn ensure_elevated() -> Result<(), String> {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION};
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -826,80 +828,7 @@ fn handle_message(shared: &Shared, payload: &str) -> String {
 /// bounded by `timeout` (a hung service must never stall the search path —
 /// the worker thread is abandoned on timeout and dies with its next pipe op).
 pub fn pipe_transact(payload: &str, timeout: Duration) -> Result<String, String> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let owned = payload.to_string();
-    std::thread::Builder::new()
-        .name("svc-pipe-client".into())
-        .spawn(move || {
-            let _ = tx.send(pipe_transact_blocking(&owned));
-        })
-        .map_err(|e| e.to_string())?;
-    rx.recv_timeout(timeout)
-        .map_err(|_| "svc pipe timeout".to_string())?
-}
-
-fn pipe_transact_blocking(payload: &str) -> Result<String, String> {
-    use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, GetLastError};
-    use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, OPEN_EXISTING};
-    use windows::Win32::Foundation::ERROR_PIPE_BUSY;
-    let name = wide(PIPE_NAME);
-    let mut handle = None;
-    for attempt in 0..3 {
-        handle = unsafe {
-            CreateFileW(
-                PCWSTR(name.as_ptr()),
-                GENERIC_READ.0 | GENERIC_WRITE.0,
-                windows::Win32::Storage::FileSystem::FILE_SHARE_MODE(0),
-                None,
-                OPEN_EXISTING,
-                windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
-                None,
-            )
-        }
-        .ok();
-        if handle.is_some() {
-            break;
-        }
-        if unsafe { GetLastError() } != ERROR_PIPE_BUSY || attempt == 2 {
-            return Err("connect pipe: busy/failed".into());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let handle = handle.ok_or("connect pipe failed")?;
-    let result = (|| {
-        let mut message = Vec::with_capacity(payload.len() + 4);
-        message.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        message.extend_from_slice(payload.as_bytes());
-        unsafe {
-            WriteFile(handle, Some(&message), None, None).map_err(|e| format!("write pipe: {e}"))?;
-        }
-        // Length-prefixed reply; byte-mode reads accumulate the message.
-        let mut head = [0u8; 4];
-        read_exact(handle, &mut head)?;
-        let len = u32::from_le_bytes(head) as usize;
-        if len > 1024 * 1024 {
-            return Err("svc reply too large".into());
-        }
-        let mut body = vec![0u8; len];
-        read_exact(handle, &mut body)?;
-        String::from_utf8(body).map_err(|e| format!("svc reply utf8: {e}"))
-    })();
-    let _ = unsafe { CloseHandle(handle) };
-    result
-}
-
-fn read_exact(handle: windows::Win32::Foundation::HANDLE, buf: &mut [u8]) -> Result<(), String> {
-    use windows::Win32::Storage::FileSystem::ReadFile;
-    let mut done = 0usize;
-    while done < buf.len() {
-        let mut n: u32 = 0;
-        let ok = unsafe { ReadFile(handle, Some(&mut buf[done..]), Some(&mut n), None) };
-        if ok.is_err() || n == 0 {
-            return Err("short pipe read".into());
-        }
-        done += n as usize;
-    }
-    Ok(())
+    crate::pipe::transact(PIPE_NAME, payload, timeout)
 }
 
 #[cfg(test)]

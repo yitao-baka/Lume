@@ -96,8 +96,16 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
   ],
   hotkeys: ["settingsHotkeys", "settingsToggleLauncher", "settingsSwitchMode"],
   search: ["settingsIndexDirs", "settingsSystemIndex", "settingsUserIndex", "settingsCacheRefresh"],
-  system: ["settingsAutostart", "settingsSystemService", "settingsImportExport"],
-  automation: ["autoEnabled", "autoHint", "autoProcessLabel", "autoComboLabel", "autoAdd"],
+  system: ["settingsAutostart", "settingsSystemService", "settingsAgentGroup", "settingsImportExport"],
+  automation: [
+    "autoEnabled",
+    "autoHint",
+    "autoProcessLabel",
+    "autoComboLabel",
+    "autoAdd",
+    "autoUseAgent",
+    "autoAgentResident",
+  ],
   plugins: ["plugins", "pluginKindMode", "pluginKindService", "pluginKindProvider", "pluginBuiltin"],
   about: ["aboutTagline", "aboutVersion", "aboutLicense", "aboutAuthor", "aboutHomepage"],
 };

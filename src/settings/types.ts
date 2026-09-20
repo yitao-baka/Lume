@@ -93,6 +93,13 @@ export interface SettingsData {
     /** 延迟到点后前台已移开时的策略: false = skip the send (safe default),
      * true = best-effort pull the target window back to the foreground first. */
     force_focus: boolean;
+    /** 使用提权代理 — route the send through the elevated helper, the only way
+     * to reach a target running as administrator (`SendInput` is subject to
+     * UIPI). On by default; the helper must be registered in 系统 first. */
+    use_agent: boolean;
+    /** 登录后常驻代理 — keep the helper alive past its idle timeout, instead
+     * of letting it exit and re-triggering it on demand. */
+    agent_resident: boolean;
     actions: {
       /** Executable to match — full path or bare file name (case-insensitive). */
       process: string;
@@ -158,5 +165,11 @@ export const DEFAULT_SETTINGS: SettingsData = {
     dedup: true,
     remember_checks: true,
   },
-  automation: { enabled: true, force_focus: false, actions: [] },
+  automation: {
+    enabled: true,
+    force_focus: false,
+    use_agent: true,
+    agent_resident: false,
+    actions: [],
+  },
 };

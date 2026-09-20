@@ -8,6 +8,65 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **提权注入代理（Elevation agent）** — 新增第三个二进制 `lume-agent.exe`：一个
+  极小的**高完整性**助手，唯一能力是「向指定前台窗口发送一次配置好的组合键」。
+  解决的是自动动作对**以管理员权限运行的目标程序**永远不生效——根因是 UIPI
+  （`SendInput` 只投递给同级或更低完整性级别的窗口，且失败无法从返回值读出），
+  而完整性级别是**进程级**属性，所以只能拆进程：主进程保持中 IL，特权代码只在
+  这个助手里。启动方式为预先注册的计划任务 `Lume\LumeAgent`
+  （`RunLevel=HighestAvailable`，注册时一次 UAC，之后 `schtasks /Run` 静默拉起；
+  XML 定义以保证 `ExecutionTimeLimit=PT0S`（否则 72 小时杀常驻）与
+  `MultipleInstancesPolicy=IgnoreNew`），空闲 60s 自动退出，除非客户端请求常驻。
+  **安全边界**：`\\.\pipe\LumeAgent` 的 DACL 只授予**安装者本人的 SID** + SYSTEM
+  （刻意不用 `AU`，否则同机任何用户的进程都能驱动一个高 IL 按键注入器；SID 取不到
+  即拒绝服务），并要求同会话、客户端镜像是同目录的 `lume.exe`、目标窗口必须当前
+  前台且属主 pid 匹配；不接受任意命令、不启动进程、不写文件。新增设置「使用提权
+  代理」（默认开）与「登录后常驻代理」（默认关），系统页新增「提权代理」组
+  （状态 + 注册/卸载，UAC 取消有提示，状态查询不会拉起代理）。「测试」按钮同样
+  优先经代理执行——设置窗自身不是提权的，否则永远无法验证提权目标。
+  Rust 侧新模块 `agent.rs`（协议/管道服务端/客户端/任务注册）、`input.rs`
+  （合成按键与窗口/进程探针，两条注入路径共用）、`pipe.rs`（管道客户端从 `svc.rs`
+  抽出泛化）；**未新增任何 crate 或 `windows` feature**
+  （`src-tauri/src/{agent,input,pipe}.rs`, `src-tauri/src/bin/lume-agent.rs`）。
+- i18n 新增 23 键 × 3 语言（`autoUseAgent{,Hint}`、`autoAgentResident{,Hint}`、
+  `autoTest{NeedsAgent,AgentUnavailable,Blocked,FocusMoved}`、`settingsAgent*`），
+  三语言键集一致（253 键）。
+
+### Fixed
+
+- **自动动作的发送结果是假的** — `send_combo` 过去丢弃 `SendInput` 的返回值并无
+  条件返回成功，因此日志总是打印「sent」，即使输入被 UIPI 静默丢弃。现在检查实际
+  插入的事件数（0 = 被拦截），并在发送前比较目标与自身的令牌：目标以管理员权限
+  运行时记 `needs_agent` 并提示去注册代理，不再假报成功。
+- **`settings.toml` 缺少整张 `[automation]` 表时默认值错误** — `Automation` 原先是
+  `#[derive(Default)]`，而 `#[serde(default = "…")]` 只在「表存在但缺键」时生效；
+  **整表缺失**（功能上线前写的配置文件）会走派生 `Default`，把 `enabled` 与新的
+  `use_agent` 静默关掉。改为手写 `impl Default for Automation`，并加回归测试
+  `automation_defaults_apply_when_the_table_is_absent` 钉住。
+- **扩展键缺 `KEYEVENTF_EXTENDEDKEY`** — 方向键 / Ins / Del / Home / End / PgUp /
+  PgDn / 右 Ctrl / 右 Alt / NumLock / 小键盘 `/` / PrintScreen 属于 0xE0 扩展键，
+  合成时必须带该标志。列表严格取 MSDN 的扩展键集合（**不含**通用的左 Ctrl/左 Alt）。
+  另按参照实现填充 `wScan`，但**刻意不设 `KEYEVENTF_SCANCODE`**——实机可在原神工作
+  的参照实现并不设置该标志。
+
+### Tests
+
+- 122 单测通过（+16）：`input.rs`（`key_to_vk` 覆盖集、扩展键 = 0xE0 集合且不含通用
+  Ctrl/Alt、不可合成组合键拒绝、无效 pid 不 panic）；`agent.rs`（四动词解析、
+  `inject` 可选字段默认、`inject_ack` 全 reason 往返、畸形回复 = `unavailable`、
+  回复 `t` 标签、`AgentInfo` 缺字段默认、**SDDL 只给用户 + SYSTEM**（断言不含
+  `AU`/`WD`）、任务 XML 承重设置与路径引号规则、`<UserId>` 出现两次）；`pipe.rs`
+  （`wide` NUL 结尾、管道缺失报错）；`settings.rs`（两个新字段默认/往返、整表缺失
+  回归）。
+- 新增 `scripts/cdp_agent_smoke.mjs`（14 项：设置页两个开关默认值与脏状态、系统页
+  代理组、`agent_status` 结构、状态查询无拉起副作用；截图
+  `test/agent_{automation,system}.png`）与 `scripts/cdp_agent_verify.mjs`
+  （端到端 9 项：自行拉起非提权代理 + release Lume，经 `test_automation_rule` 发送
+  **Alt+F4**，断言 **Notepad3 真的被关掉**、`sent_total` 0→4）。
+- `cargo test -- --ignored live_agent` 实测：代理答复 `status`（同用户 DACL 放行），
+  且非姊妹 `lume.exe` 的客户端被 `denied_client` 拒绝（身份门有效）。空闲自杀亦
+  实测（最后一次请求后 >60s 进程自行退出）。
+
 - **自动化（自动动作）** — 新增设置「自动化」页：配置「某程序启动并取得前台
   焦点 → 自动按一次指定快捷键」的规则列表（程序可填全路径或文件名，大小写
   不敏感）。快捷键用与「快捷键」页同款的**按键录制**控件采集（点一下再按组合

@@ -148,17 +148,35 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   `HKCU\...\CurrentVersion\Run`（注册表为唯一事实源，即时生效不走脏状态）。
 - 组「系统服务」：状态文本（未安装 / 运行中 / 已安装未运行）+
   注册/卸载按钮（UAC `runas`；取消给友好提示；2s 后重查状态）。
+- 组「提权代理」（`agent_status` / `agent_install` / `agent_uninstall`）：状态文本
+  （代理未注册 / 已注册未运行 / 运行中（已提权）/ 运行中但未取得管理员权限）+
+  注册/卸载按钮 + 能力边界说明。与「系统服务」同款：OS 是唯一事实源、即时生效、
+  不走脏状态、UAC 取消给友好提示、2s 后重查。**状态查询不会拉起代理**。
 - 组「导入导出」：导出（save 对话框，默认 settings.toml）、导入（open
   对话框 + 重载工作副本）、**恢复备份设置**（双击确认——main 版保留项，
   Flutter 版已删）。`backup.toml` 由每次保存自动写。
 
-### 7. 插件（`plugins`）
+### 7. 自动化（`automation`）
+
+- 主开关 `automation.enabled`（默认开）；`automation.force_focus`
+  （「延迟结束后抢回焦点」，默认关）。
+- **`automation.use_agent`（「使用提权代理」，默认开）** —— 自动动作是否经提权
+  代理 `lume-agent.exe` 发送。`SendInput` 受 UIPI 限制只能投递给同级或更低完整性
+  级别的窗口，因此以管理员运行的目标程序必须走这条通道。代理本身要在「系统」页
+  注册；未注册或关闭时 Lume 仍在自身进程内发送，并在日志中如实说明失败原因。
+- **`automation.agent_resident`（「登录后常驻代理」，默认关）** —— 关：代理按需
+  拉起、空闲 60s 自灭；开：常驻（几 MB），注入零延迟。
+- 规则列表：每条 = 程序 | 快捷键（录制按钮）| 测试 | 延迟 | 开关 | 删除；底部添加
+  行（程序输入 + 选择 + 快捷键 + 延迟 + 添加）。「测试」优先经代理执行——设置窗
+  自身不是提权的，否则无法验证一个提权目标。
+
+### 8. 插件（`plugins`）
 
 内置 + 磁盘插件一览（`get_plugins`）：每行 = 名称 + 类型/来源/版本 chips +
 启停 toggle（写 `settings.plugins.disabled`，`settings-applied` 后启动器
 重读注册表；关闭活动模式插件自动回导航页）。格式与开发见 `docs/PLUGINS.md`。
 
-### 8. 关于（`about`）
+### 9. 关于（`about`）
 
 行式布局（对齐 Flutter）：描述（`aboutTagline`）、版本（`APP_VERSION_LABEL`，
 无 v 前缀）、许可证 Apache License 2.0、作者 yitao-baka、主页
@@ -166,7 +184,6 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 旧的大图标居中头部移除。
 
 ## 实现说明（2026-08-30 重排）
-
 - 壳：`src/settings/Settings.tsx`（顶栏 / 搜索过滤 / 7 导航 / 底栏）；
   分区组件 `AppearancePane` / `LauncherPane` / `ClipboardPane` / `HotkeysPane`
   / `SearchPane` / `SystemPane` / `AboutPane`；共享控件 `controls.tsx`
@@ -177,3 +194,33 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   about* / clipIgnoreEmpty），三语言同步。
 - 验证：`cargo test` 74 通过（含 `legacy_user_dirs_migrate_to_key_value_index`）、
   `tsc --noEmit` + `vite build` 干净。
+
+## 实现说明（2026-09-19 提权代理）
+
+> **变更（2026-09-19）**：自动化页新增 `automation.use_agent`（使用提权代理，
+> 默认开）与 `automation.agent_resident`（登录后常驻代理，默认关）；系统页新增
+> 「提权代理」组。导航项 9 个不变（无新分区）。**默认值坑**：`Automation` 原先
+> `#[derive(Default)]`，整张 `[automation]` 表缺失时（功能上线前写的
+> settings.toml）派生 Default 会把 `enabled`/`use_agent` 静默关掉 →
+> 改为手写 `impl Default for Automation`，并由
+> `automation_defaults_apply_when_the_table_is_absent` 钉住。
+
+- 自动化页：`AutomationPane.tsx` 两个新 `Row`+`Toggle`+`settings-hint`（走壳的
+  脏状态，随「保存并应用」落盘）；「测试」的失败原因分支补 `needs_agent` /
+  `unavailable` / `blocked`（含 `uipi`）/ `focus_moved`。
+- 系统页：`SystemPane.tsx` 新增 `AgentStatus` 接口 + `agent`/`agentBusy`/
+  `agentMsg` 三个信号 + `agentText()` + `toggleAgent()`（UAC 取消识别 `canceled`、
+  2s 后复查），与既有「系统服务」组同构。
+- `src/settings/types.ts`：`SettingsData.automation` 与 `DEFAULT_SETTINGS` 同步
+  两个字段（无编译期校验，四处手改成对）。
+- 设置搜索：`SECTION_SEARCH_KEYS.automation` 补 `autoUseAgent` /
+  `autoAgentResident`，`system` 补 `settingsAgentGroup`。
+- i18n 新增 23 键 × 3 语言（`autoUseAgent{,Hint}` / `autoAgentResident{,Hint}` /
+  `autoTest{NeedsAgent,AgentUnavailable,Blocked,FocusMoved}` / `settingsAgent*` 共
+  15 键），三语言键集完全一致（253 键）。
+- 命令 `agent_status` / `agent_install` / `agent_uninstall`（注册进
+  `lib.rs` 的 `generate_handler!`）。
+- 验证：`cargo test` 122 通过（+16，含两个新字段默认/往返与「整表缺失」回归）、
+  `tsc --noEmit` + `vite build` 干净、
+  `scripts/cdp_agent_smoke.mjs` 14 项 + `scripts/cdp_agent_verify.mjs`
+  端到端 9 项全过（截图 `test/agent_automation.png`、`test/agent_system.png`）。

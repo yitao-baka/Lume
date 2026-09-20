@@ -1,4 +1,5 @@
 mod apps;
+pub mod agent;
 pub mod cache;
 mod automation;
 mod clipboard;
@@ -10,7 +11,9 @@ mod filesearch;
 mod hotkey;
 mod i18n;
 mod icons;
+pub mod input;
 pub mod paths;
+pub mod pipe;
 mod plugins;
 mod pins;
 pub mod recent;
@@ -359,6 +362,9 @@ pub fn run() {
             svc::svc_uninstall,
             svc::autostart_get,
             svc::autostart_set,
+            agent::agent_status,
+            agent::agent_install,
+            agent::agent_uninstall,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Lume")

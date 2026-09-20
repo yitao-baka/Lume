@@ -15,7 +15,7 @@ cargo test
 The frontend build catches TypeScript / SolidJS errors:
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 ## Manual verification
@@ -23,8 +23,8 @@ npm run build
 Run the app:
 
 ```bash
-npm run tauri dev          # dev (needs the vite dev server)
-npm run tauri build -- --no-bundle   # standalone release exe
+pnpm run tauri dev          # dev (needs the vite dev server)
+pnpm run tauri build --no-bundle   # standalone release exe
 ```
 
 The standalone release exe (`src-tauri/target/release/lume.exe`) embeds the
@@ -156,8 +156,46 @@ dev server.
    value.
 8. **Dev loopback** — `lume-svc.exe --foreground` runs dormant (Ctrl+C quits);
    the service holds `\\.\pipe\LumeSVC` ready for a future client.
-9. **Bundle** — `npm run tauri build` puts `lume-svc.exe` next to `lume.exe`
+9. **Bundle** — `pnpm run tauri build` puts `lume-svc.exe` next to `lume.exe`
    in the installer (lume-svc 作为 cargo bin 随包安装，无需 externalBin).
+
+### Elevation agent (ROADMAP #22)
+
+> Registering/unregistering the agent pops a UAC prompt, so those steps are
+> manual only. `cargo test` never registers the task.
+> Two CDP scripts cover everything that does **not** need UAC:
+> `node scripts/cdp_agent_smoke.mjs` (14 assertions: the settings UI, the
+> status command, defaults) and `node scripts/cdp_agent_verify.mjs` (9
+> assertions: it starts `lume-agent.exe --serve` unelevated itself and proves a
+> real injection lands, by sending Alt+F4 to Notepad and checking it closed).
+> The steps below are the ones that need a human at the UAC prompt.
+
+1. **Register** — 设置→系统→「注册代理」→ accept UAC → the status line switches
+   from 代理未注册 to 代理已注册，未运行 and the button to 「卸载代理」;
+   `schtasks /query /tn Lume\LumeAgent` shows the task and its state is Ready.
+2. **UAC cancel** — click 注册代理 then choose 否 → the UI shows 操作已取消 and
+   the state is unchanged (still 代理未注册).
+3. **On-demand start** — with the task registered, configure an auto action for a
+   program, launch that program: the helper starts by itself (no prompt, no
+   window), the log line reads `… via the agent (4 events)`, and the rule's
+   shortcut arrives. Leave it alone ~1 minute: `lume-agent.exe` exits by itself
+   (idle timeout) and the next injection starts it again on demand.
+4. **Resident mode** — turn on 登录后常驻代理, then log off/on (or trigger the
+   task): the helper is already running and `agent_status` reports
+   `running:true`. Turn it off and it exits at the next idle check.
+5. **An elevated target — the actual point of the feature** — launch the target
+   as administrator (右键 → 以管理员身份运行) and press 测试 on its rule: the toast
+   reads 已测试… and the key really arrives in the elevated window.
+6. **The contrast case** — turn 使用提权代理 off and press 测试 again: with the
+   target elevated it now reports 「…以管理员权限运行 —— 请开启提权代理才能送达」
+   instead of claiming success, and with logging on the rule logs `needs_agent`.
+7. **The ACL holds** — run the ignored live test while the helper is up:
+   `cargo test -- --ignored live_agent`. It must answer `status` (proving the
+   per-user DACL admits this user) and **refuse** the test harness with
+   `denied_client` (proving only the sibling `lume.exe` may drive it).
+8. **Unregister** — 「卸载代理」→ UAC → the task disappears
+   (`schtasks /query /tn Lume\LumeAgent` → not found), any running helper quits,
+   and the status line returns to 代理未注册.
 
 ### Environment sync (envwatch)
 
@@ -184,7 +222,7 @@ dev server.
 ### Recent + pinned bars (ROADMAP #10)
 
 > `cargo test` covers the recent store (upsert / dedupe / pruning); the UI is
-> manual-only. Requires a dev build (`npm run tauri dev`).
+> manual-only. Requires a dev build (`pnpm run tauri dev`).
 
 1. **Recording** — launch a few apps/files from Lume (search, grid, context
    menu, 管理员). Re-open the main menu → 「最近使用」 shows them newest-first.

@@ -19,17 +19,28 @@ Read `README.md`, `docs/RULES.md`, `docs/ARCHITECTURE.md`,
 
 ## Commands
 
+The frontend uses **pnpm** (not npm). Config: `.npmrc` pins the registry to a
+mirror, `pnpm-workspace.yaml` allows the esbuild build script, and
+`package.json`'s `packageManager` pins the pnpm version. The lockfile is
+`pnpm-lock.yaml` (no `package-lock.json`); install with `pnpm install`.
+
 ```bash
-npm run dev          # vite dev server (used by tauri dev)
-npm run build        # frontend production build → dist/
-npm run tauri dev    # run the desktop app (dev, needs the vite dev server)
-npm run tauri build  # release bundle (installers)
-npm run tauri build -- --no-bundle  # standalone release exe only
+pnpm run dev          # vite dev server (used by tauri dev)
+pnpm run build        # frontend production build → dist/
+pnpm exec tsc --noEmit    # (or pnpm run build covers type-checking)
+pnpm run tauri dev    # run the desktop app (dev, needs the vite dev server)
+pnpm run tauri build  # release bundle (installers)
+pnpm run tauri build --no-bundle  # standalone release exe only
 cargo check          # (in src-tauri/) type-check the Rust core
 cargo test           # (in src-tauri/) run the Rust unit tests
 ```
 
-**Dev vs standalone**: `npm run tauri dev` loads the frontend from
+**pnpm arg forwarding**: pass extra flags directly after the script name
+(`pnpm run tauri build --no-bundle`); unlike npm, do **not** add a `--`
+separator — pnpm forwards a literal `--` to the underlying command, which
+breaks tauri (`cargo: error: unexpected argument '--no-bundle'`).
+
+**Dev vs standalone**: `pnpm run tauri dev` loads the frontend from
 `http://localhost:1420` and shows a console window — run it from a terminal,
 not by double-clicking. The **release** binary
 (`src-tauri/target/release/lume.exe`) embeds the frontend and has no console;
@@ -143,15 +154,60 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   features (`src-tauri/src/svc.rs`, `src-tauri/src/bin/lume-svc.rs`)
 - Run as administrator — app-entry right-click menu launches via the `runas`
   verb (`apps.rs::launch_app`); the launcher itself stays non-elevated
+- Elevation agent — companion `lume-agent.exe` (ROADMAP #22): a **minimal**
+  elevated helper whose only capability is "send one configured hotkey to the
+  foreground window it was named", needed because `SendInput` is subject to UIPI
+  so an administrator-run target is otherwise unreachable. Started silently by
+  the scheduled task `Lume\LumeAgent` (`RunLevel=HighestAvailable`, one UAC to
+  register), triggered on demand via `schtasks /Run`, exits when idle unless a
+  client sent `stay`. Owns `\\.\pipe\LumeAgent` scoped to **the installing
+  user's SID** + SYSTEM (never `AU`) and additionally requires the sibling
+  `lume.exe`, same session, and a currently-foreground target
+  (`src-tauri/src/agent.rs`, `input.rs`, `pipe.rs`,
+  `src-tauri/src/bin/lume-agent.rs`)
 - Auto-start at logon — settings toggle writes/removes the
   `HKCU\...\CurrentVersion\Run` `Lume` value (registry is the source of truth)
 - Single instance — a named mutex (`lib.rs` `acquire_single_instance`) held for
   the process lifetime; a second launch of `lume.exe` exits immediately
 
 ## Current iteration
-## Current iteration
 
-**自研引擎实机修复（ROADMAP #20.1, complete) — as of 2026-08-30**: 用户实测
+**提权注入代理（ROADMAP #22, complete) — as of 2026-09-19**: 自动动作对**以管理员
+权限运行的目标程序**永远不生效，根因是 UIPI（`SendInput` 只投递给同级或更低完整性
+级别的窗口，且微软文档明确**失败无法从 `GetLastError`/返回值读出**）。完整性级别是
+**进程级**属性（线程 impersonation 无法升 IL，UIAccess 文档亦写明无法穿越 IL 边界），
+故唯一正确形态是**拆进程**：新增第三个二进制 `lume-agent.exe`（高 IL、无 UI、
+只做「向指定前台窗口发一次组合键」），主进程保持中 IL。**零新增依赖/feature**
+（`GetNamedPipeClientProcessId`/`MapVirtualKeyW`/`ConvertSidToStringSidW`/
+`TOKEN_USER` 所需 feature 全部已在 `Cargo.toml`）。启动靠预先注册的计划任务
+`Lume\LumeAgent`（`RunLevel=HighestAvailable`，注册时一次 UAC，之后 `schtasks /Run`
+静默，**用 XML 而非 `/SC`** 才能表达 `ExecutionTimeLimit=PT0S`（否则 72 小时杀常驻）与
+`MultipleInstancesPolicy=IgnoreNew`）。**安全边界是功能本身**：管道 DACL 只给安装者
+SID + SYSTEM（**绝不照抄 `svc.rs` 的 `AU`**，那等于把高 IL 注入器开放给本机所有用户；
+SID 取不到就 fail closed）+ 同会话 + 客户端必须是同目录 `lume.exe` + 目标必须是当前
+前台且属主 pid 匹配；能力面只有"一次一个组合键"。协议与 LumeSVC 同线格式
+（`hello`/`inject`/`stay`/`status`/`shutdown`），失败返回机器 reason
+（`uipi`/`blocked`/`not_elevated`/`focus_moved`/`focus_failed`/`no_window`/
+`bad_combo`/`unsupported`/`denied_session`/`denied_client`；`needs_agent` 由 Lume 侧产生）。
+**顺带修掉两个真实缺陷**：`send_combo` 过去丢弃 `SendInput` 返回值并无条件报成功
+（`let _ = …; true`），现在如实记录插入事件数；发送前比较令牌，目标更高 IL 时记
+`needs_agent` 而**不再假报成功**；并补 `KEYEVENTF_EXTENDEDKEY`（0xE0 集合；**刻意不加
+`KEYEVENTF_SCANCODE`** —— 实机可在原神工作的参照实现并不设该标志）。设置页：自动化页
+两个开关（`use_agent` 默认开 / `agent_resident` 默认关，走脏状态）+ 系统页「提权代理」
+组（照「系统服务」：OS 为唯一事实源、即时执行、UAC 取消提示、2s 复查；`agent_status`
+**只报告不启动**）。**实机抓到的坑**：`Automation` 原为 `#[derive(Default)]`，**整张
+`[automation]` 表缺失**（功能上线前写的 settings.toml，本机 dev 文件正是此形态）时走
+派生 Default → `enabled` 与新的 `use_agent` 被静默关掉；`#[serde(default = "…")]` 只在
+"表存在但缺键"时生效 → 改手写 `impl Default for Automation` + 回归测试。验证：
+`cargo test` **122 通过（+16）**、`tsc --noEmit` + `vite build` 干净、
+`scripts/cdp_agent_smoke.mjs` **14 项全过**（截图 `test/agent_{automation,system}.png`）、
+`scripts/cdp_agent_verify.mjs` **端到端 9 项全过**（自行拉起非提权代理，用
+`test_automation_rule` 发 **Alt+F4**，断言 **Notepad3 真的被关掉** +
+`sent_total` 0→4）、`cargo test -- --ignored live_agent` 实测过（同用户 DACL 放行 +
+非姊妹 exe 被 `denied_client` 拒绝）、并实测到**空闲自杀**（最后一次请求后 >60s 进程自行
+退出）。`lume-svc` 代拉与 UIAccess/驱动级方案均记录为明确不做（见 ROADMAP #22.10）。
+
+**Prior: 自研引擎实机修复（ROADMAP #20.1, complete) — as of 2026-08-30**: 用户实测
 「Everything UI 关闭后 SVC 引擎无结果」暴露五个连环 bug，全部修复并实机验证：
 ① 休眠探针被 Everything 无头服务实例（会话 0，无 UI 不响应 IPC）骗成「在
 用」→ 改 `ProcessIdToSessionId` 只认交互会话（会话查询失败也偏向建索引）；
@@ -178,7 +234,7 @@ upsert 同 FRN）重复 order 条目 → `ordered: HashSet` 成员判定。实�
 `lume.search.files(q, 50)` 列表页 + ↑↓/Enter 打开/Ctrl+Enter 复制路径 +
 building/backend 状态徽标）。**坑**：`custom-protocol` 在 Cargo.toml 无条件
 启用 → **debug exe 也内嵌构建时的 dist/（页面 URL = tauri.localhost）**，
-改前端后必须重跑 `npm run build` 再 `cargo build`，否则跑的是旧前端
+改前端后必须重跑 `pnpm run build` 再 `cargo build`，否则跑的是旧前端
 （冒烟表现为 iframe 里桥接缺新方法）。验证：cargo test 93、tsc/build 干净、
 `scripts/cdp_filesearch_mode_smoke.mjs`（关键字「秒搜」进入 → iframe 50 行
 （meta `everything · 50 项`）→ 窗口 ArrowDown 驱动 iframe 选中 → 截图）。

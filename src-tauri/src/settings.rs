@@ -283,7 +283,13 @@ pub struct Clipboard {
 
 /// 自动动作 (settings.tsx 自动化 pane) — a master switch plus a list of
 /// "when this program comes to the foreground, send this hotkey" rules.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+///
+/// `Default` is written out rather than derived: the whole `[automation]` table
+/// can be **absent** from an older `settings.toml`, and a derived default would
+/// then turn the master switch (and 使用提权代理) off for every existing user —
+/// the per-field `#[serde(default = "...")]` functions only apply once the table
+/// itself is present.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Automation {
     /// Master switch for the whole watcher (quick on/off without deleting rules).
     #[serde(default = "default_automation_enabled")]
@@ -293,12 +299,42 @@ pub struct Automation {
     /// 属尽力而为）。
     #[serde(default)]
     pub force_focus: bool,
+    /// 使用提权代理 (`lume-agent.exe`): route the send through the elevated
+    /// helper so a target running as administrator can receive it. `SendInput`
+    /// is subject to UIPI, so without this a higher-integrity target is out of
+    /// reach. On by default; the helper still has to be registered (设置/系统)
+    /// before it can be used, and the in-process path is the fallback.
+    #[serde(default = "default_use_agent")]
+    pub use_agent: bool,
+    /// 登录后常驻代理: keep the helper alive past its idle timeout instead of
+    /// letting it exit and be re-triggered on demand.
+    #[serde(default)]
+    pub agent_resident: bool,
     #[serde(default)]
     pub actions: Vec<AutoAction>,
 }
 
 fn default_automation_enabled() -> bool {
     true
+}
+
+fn default_use_agent() -> bool {
+    true
+}
+
+/// See the struct's doc comment: this must agree with the per-field
+/// `default_*` functions above so a missing `[automation]` table behaves
+/// exactly like a partial one.
+impl Default for Automation {
+    fn default() -> Self {
+        Self {
+            enabled: default_automation_enabled(),
+            force_focus: false,
+            use_agent: default_use_agent(),
+            agent_resident: false,
+            actions: Vec::new(),
+        }
+    }
 }
 
 /// One 自动动作 rule: launch the hotkey `combo` when an app whose executable
@@ -408,6 +444,8 @@ impl Default for Settings {
             automation: Automation {
                 enabled: true,
                 force_focus: false,
+                use_agent: true,
+                agent_resident: false,
                 actions: Vec::new(),
             },
             clipboard: Clipboard {
@@ -884,6 +922,63 @@ mod tests {
         assert!(!on_disk.automation.actions[1].enabled);
         assert!(on_disk.automation.force_focus, "抢回焦点 round-trips");
         fs::remove_dir_all(&base).ok();
+    }
+
+    /// The elevation-agent switches: on by default (so a freshly installed
+    /// helper is actually used), resident off, and a file written before they
+    /// existed still loads with those same defaults.
+    #[test]
+    fn automation_agent_switches_default_and_round_trip() {
+        let base = temp_base("automation-agent");
+        ensure_settings_files(&base).unwrap();
+        let fallback = Settings::default();
+        let def = read_settings(&base);
+        assert!(def.automation.use_agent, "使用提权代理 defaults to on");
+        assert!(!def.automation.agent_resident, "登录后常驻 defaults to off");
+
+        let mut s = read_settings(&base);
+        s.automation.use_agent = false;
+        s.automation.agent_resident = true;
+        write_settings(&base, &s, &fallback).unwrap();
+        let on_disk = read_settings(&base);
+        assert!(!on_disk.automation.use_agent, "使用提权代理 round-trips");
+        assert!(on_disk.automation.agent_resident, "登录后常驻 round-trips");
+
+        // A pre-agent settings.toml (no such keys) must still deserialize.
+        let legacy: Automation = toml::from_str("enabled = true\nforce_focus = false\n").unwrap();
+        assert!(legacy.use_agent, "missing use_agent falls back to on");
+        assert!(!legacy.agent_resident, "missing agent_resident falls back to off");
+        assert!(legacy.actions.is_empty());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// A `settings.toml` written **before** the 自动化 feature has no
+    /// `[automation]` table at all, so the whole struct comes from `Default`.
+    /// That default must be the documented one (watcher on, agent on) — a
+    /// derived `Default` would silently ship the feature switched off to every
+    /// existing user, which is exactly the bug this pins.
+    #[test]
+    fn automation_defaults_apply_when_the_table_is_absent() {
+        // Build a realistic legacy file: the shipped defaults with the whole
+        // `[automation]` table removed — what a settings.toml written before
+        // the feature looks like (the live dev file is exactly this shape).
+        let full = toml::to_string_pretty(&Settings::default()).unwrap();
+        let start = full.find("[automation]").expect("defaults include the table");
+        let end = full[start..]
+            .find("\n[")
+            .map(|i| start + i + 1)
+            .unwrap_or(full.len());
+        let legacy = format!("{}{}", &full[..start], &full[end..]);
+        assert!(!legacy.contains("[automation]"), "the table must be gone");
+
+        let parsed: Settings = toml::from_str(&legacy).expect("a legacy file must still load");
+        assert!(parsed.automation.enabled, "watcher must default on without the table");
+        assert!(parsed.automation.use_agent, "使用提权代理 must default on without the table");
+        assert!(!parsed.automation.force_focus);
+        assert!(!parsed.automation.agent_resident);
+        assert!(parsed.automation.actions.is_empty());
+        // …and the two spellings of "no automation table" must agree.
+        assert_eq!(parsed.automation, Automation::default());
     }
 
     /// A rule written before 延迟触发 existed must load with the default delay,

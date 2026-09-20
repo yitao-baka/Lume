@@ -89,12 +89,22 @@ export default function AutomationPane(props: {
         showToast(t("autoTestSent", { combo: action.combo, target: res.detail }));
         return;
       }
+      // Every failure gets its own wording: the elevation reasons are the ones
+      // a user can actually act on (register the helper, or enable it).
       const key =
         res.reason === "not_running"
           ? "autoTestNotRunning"
           : res.reason === "focus_failed"
             ? "autoTestFocusFailed"
-            : "autoTestInvalid";
+            : res.reason === "needs_agent"
+              ? "autoTestNeedsAgent"
+              : res.reason === "unavailable"
+                ? "autoTestAgentUnavailable"
+                : res.reason === "blocked" || res.reason === "uipi"
+                  ? "autoTestBlocked"
+                  : res.reason === "focus_moved"
+                    ? "autoTestFocusMoved"
+                    : "autoTestInvalid";
       showToast(t(key, { process: res.detail, combo: action.combo }));
     } catch (err) {
       showToast(String(err));
@@ -142,6 +152,20 @@ export default function AutomationPane(props: {
           />
         </Row>
         <p class="settings-hint">{t("autoForceFocusHint")}</p>
+        <Row label={t("autoUseAgent")}>
+          <Toggle
+            checked={automation().use_agent ?? true}
+            onChange={(v) => props.onChange({ use_agent: v })}
+          />
+        </Row>
+        <p class="settings-hint">{t("autoUseAgentHint")}</p>
+        <Row label={t("autoAgentResident")}>
+          <Toggle
+            checked={automation().agent_resident ?? false}
+            onChange={(v) => props.onChange({ agent_resident: v })}
+          />
+        </Row>
+        <p class="settings-hint">{t("autoAgentResidentHint")}</p>
         <p class="settings-hint">{t("autoHint")}</p>
 
         <div class="settings-blocktitle">{t("groupAutomation")}</div>

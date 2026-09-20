@@ -1434,3 +1434,219 @@ settle 时间；`#[serde(default)]` 保证旧 settings.toml 可读）。设置�
 - 手工（运行时行为）：配一条规则 → 启动目标程序 → 窗口聚焦后按设置的延迟收到
   一次快捷键；延迟期间切走窗口则跳过（开「抢回焦点」后窗口会被拉回并发送）；
   Alt+Tab 切回不重复；master 关闭不触发；保存后即时生效。
+
+## 22. 提权注入代理（Elevation Agent，已实现）
+
+**状态：已实现（2026-09-19）。**
+
+**背景**：自动动作对**以管理员权限运行的目标程序**永远不生效。根因是 UIPI：
+`SendInput` 只能把输入投递给**同级或更低**完整性级别的窗口，而且微软文档明确
+「This function fails when it is blocked by UIPI. Note that neither GetLastError
+nor the return value will indicate the failure was caused by UIPI blocking」——
+失败是静默的，第 21 节的实现连"到底发没发出去"都无法判断（旧代码
+`let _ = SendInput(...); true` 无条件报成功）。
+
+**关键结论**：完整性级别是**进程级**属性（线程 impersonation 无法升 IL，
+UIAccess 文档也写明「UIAccess is not enough for a process to move up through
+the IL boundary」），所以"局部提权"只能靠**拆进程**：把唯一需要特权的动作
+隔离进一个极小的提权二进制，主进程保持中 IL（CLAUDE.md 的既定不变量
+「the launcher itself stays non-elevated」得以保留）。
+
+**参照实现**：`babalae/better-genshin-impact`（实机能在原神工作）走的就是这条路
+——启动即检测 `IsElevated`，非管理员就用 `runas` 重启自身，并且**检查
+`SendInput` 返回值**并在失败时抛出「未以管理员权限运行 / 安全软件拦截」。它
+另外提供 PostMessage 后台通道，但那个解决的是"不需要前台焦点"，**不能**替代
+提权（UIPI 对窗口消息同样拦截）。它不设置 `KEYEVENTF_SCANCODE`，也没有任何
+驱动级/硬件级注入——即"用户态 + 提权"就是可行解。
+
+### 22.1 架构
+
+```
+lume.exe (中 IL · UI/热键/剪贴板)  —— 保持非提权
+   │  \\.\pipe\LumeAgent（u32 LE 长度前缀 + JSON，与 LumeSVC 同一线格式）
+   ▼
+lume-agent.exe (高 IL · 无 UI · 只做「向指定前台窗口发一次组合键」)
+   ▲  计划任务 Lume\LumeAgent（RunLevel=HighestAvailable，注册时一次 UAC）
+   └─ schtasks /Run → 静默拉起（无 UAC）
+```
+
+### 22.2 新增文件
+
+- **`src-tauri/src/agent.rs`**（`pub mod`，供 bin 调用）：协议两端 + 客户端 +
+  管道服务端 + 计划任务安装卸载 + 三个 Tauri 命令。
+- **`src-tauri/src/input.rs`**（`pub mod`）：合成按键与窗口/进程探针
+  （`key_to_vk` / `is_extended_key` / `send_combo` / `force_foreground` /
+  `is_process_elevated` …）。两条注入路径（进程内回落与提权代理）共用它，
+  区别只在令牌。
+- **`src-tauri/src/pipe.rs`**（`pub mod`）：长度前缀 JSON 管道客户端从 `svc.rs`
+  抽出泛化，`svc::pipe_transact` 变成一行委派（行为不变，`live_pipe_status` 照旧）。
+- **`src-tauri/src/bin/lume-agent.rs`**：`--serve`（默认）/`--install-task` /
+  `--uninstall-task`。`#![cfg_attr(not(debug_assertions), windows_subsystem =
+  "windows")]`——任务启动无控制台闪现，代价是 stderr 不可见，故**错误一律走管道
+  回传**（同 ROADMAP #20.1 的教训）。Cargo 自动发现，**未加 `[[bin]]`、未改
+  `tauri.conf.json`**，与 `lume-svc.exe` 一样"与主 exe 同目录"。
+
+### 22.3 协议（`\\.\pipe\LumeAgent`）
+
+| 动词 | 请求 | 回复 |
+|---|---|---|
+| `hello` | `{"t":"hello"}` | `{"t":"hello_ack","ok":true,"elevated":bool,"session":N}` |
+| `inject` | `{"t":"inject","combo","pid","hwnd","delay_ms","force_focus"}` | `{"t":"inject_ack","ok":true,"sent":N}` 或 `{"ok":false,"reason":"…"}` |
+| `stay` | `{"t":"stay"}` | `{"t":"stay_ack","ok":true}`（常驻模式由客户端点灯） |
+| `status` | `{"t":"status"}` | `{"t":"status","elevated","session","sent_total","uptime_s"}` |
+| `shutdown` | `{"t":"shutdown"}` | `{"t":"shutdown_ack","ok":true}`，随后进程退出 |
+
+失败原因是机器键（前端映射 i18n）：`uipi` · `blocked` · `not_elevated` ·
+`focus_moved` · `focus_failed` · `no_window` · `bad_combo` · `unsupported` ·
+`denied_session` · `denied_client`；`needs_agent` / `unavailable` 由 **Lume 侧**
+产生。`inject` 的延迟在**代理内部**执行（前台复核发生在真正发送的那一刻），
+每条连接一个线程，所以一个长延迟不会挡住并发的「测试」。
+
+### 22.4 安全边界（本方案最关键的约束）
+
+一个高 IL 的按键注入器本身就是攻击面，ACL 不是细节而是功能：
+
+- 管道 DACL **只给安装者本人的 SID + SYSTEM**（`D:(A;;GA;;;<SID>)(A;;GA;;;SY)`）。
+  **刻意不照抄 `svc.rs` 的 `AU`**——那会让同机任何已认证用户的进程驱动一个高 IL
+  按键注入器。SID 取不到时**拒绝服务**（fail closed），不退回更宽的 ACL。
+- 强制**同会话**（`GetNamedPipeClientSessionId` == 自身会话）。
+- **客户端镜像必须是同目录的 `lume.exe`**（`GetNamedPipeClientProcessId` +
+  `QueryFullProcessImageNameW`，纵深防御）。
+- 目标窗口必须是**当前前台**且属主 pid 等于请求里的 `pid`；**不接受**"给后台窗口
+  发键"。
+- 能力面最小化：一次一个组合键；不接受任意命令、不启动进程、不写任何文件。
+- 空闲退出：无请求 60s 且无在途请求即自行退出，除非客户端发过 `stay`
+  （`IDLE_EXIT_SECS` 必须大于 `MAX_INJECT_DELAY_MS`，否则可能掐断在途注入——
+  看门狗因此还要求 `active == 0`）。
+
+### 22.5 计划任务（一条固定定义，设置切换不重建任务）
+
+由提升后的 `lume-agent.exe --install-task` 生成 XML → 临时文件 →
+`schtasks /Create /XML <f> /TN Lume\LumeAgent /F`。**用 XML 而非 `/SC`** 是为了
+精确控制三项命令行表达不了的设置：
+
+- `<RunLevel>HighestAvailable</RunLevel>` —— 静默提权的关键（用户注册时授权一次）；
+- `<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>` —— **不限时**，否则默认 72 小时
+  会把常驻代理杀掉；
+- `<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>` —— 绝不出现两个
+  代理抢同一个管道。
+
+另含一个 `<LogonTrigger>`（常驻模式的启动来源）与
+`<Principal><UserId>{SID}</UserId><LogonType>InteractiveToken</LogonType>`。
+
+### 22.6 常驻模型（用户拍板：两者都做，做成设置项）
+
+- `automation.use_agent`（默认**开**）—— 是否启用提权通道；
+- `automation.agent_resident`（默认**关**）—— 登录后是否常驻。
+
+代理空闲 `IDLE_EXIT_SECS`（60s）无请求即自灭，**除非**客户端发过 `stay`。
+常驻模式 = Lume 每次连上后发一次 `stay`；按需模式 = 不发 → 用完自灭，需要时由
+Lume `schtasks /Run` 静默拉起（`ensure()` 先 ping，再触发任务，再轮询等待）。
+**切换设置不需要重建任务、不额外弹 UAC。**
+
+### 22.7 自动动作的发送链（含既有缺陷修复）
+
+`send_later` 现在按序：
+
+1. **提权代理**（开关打开且 `ensure()` 成功）—— 把延迟与抢焦点策略整条交给代理，
+   成功/失败都按规则身份记日志；
+2. **进程内 `SendInput`**（原行为）—— 但**修掉了两个真实缺陷**：
+   - `SendInput` 返回值过去被丢弃（`let _ = …; true`），现在检查插入事件数，
+     0 = 被拦截，如实记录；
+   - 发送前比较目标与自身的令牌（复用 `TokenElevation`），目标更高 IL 时记
+     `needs_agent` 并提示去注册代理，**不再假报成功**。
+
+`test_automation_rule` 同样优先走代理——设置窗本身不是提权的，否则「测试」按钮
+**永远无法验证**一个提权目标；新增 `needs_agent` / `unavailable` / `blocked` /
+`focus_moved` 四种失败原因。
+
+**扩展键**：补 `KEYEVENTF_EXTENDEDKEY`（右 Ctrl/右 Alt/Ins/Del/Home/End/PgUp/
+PgDn/方向键/NumLock/小键盘 `/`/PrintScreen，即 MSDN 的 0xE0 集合），并像参照实现
+一样填 `wScan`。**刻意不加 `KEYEVENTF_SCANCODE`**——实机可在原神工作的参照实现
+并不设置该标志，无证据支持。
+
+**默认值坑（本次实机抓到）**：`Automation` 原先是 `#[derive(Default)]`，于
+**整张 `[automation]` 表缺失**（功能上线前写的 settings.toml）时走派生 Default →
+所有 bool 为 false，即用户的 `enabled` 与新的 `use_agent` 都会被静默关掉——
+`#[serde(default = "…")]` 只在"表存在但缺键"时生效。改为手写
+`impl Default for Automation`（enabled/use_agent 为 true）并加测试
+`automation_defaults_apply_when_the_table_is_absent` 钉住。
+
+### 22.8 设置页
+
+- **自动化页**新增两个开关 + 说明：使用提权代理、登录后常驻代理（走
+  `AutomationPane` 的脏状态，随保存落盘）。
+- **系统页**新增「提权代理」组（状态行 + 注册/卸载按钮 + UAC 取消提示 + 2s 后复查），
+  照「系统服务」的既有做法——**OS 是唯一事实源，即时生效、不走脏状态**。
+- 新命令 `agent_status` / `agent_install` / `agent_uninstall`（`agent_status`
+  只报告不启动——状态查询不能有拉起高 IL 进程的副作用）；`AgentStatus
+  { installed, running, elevated, session, sent_total, bin_path, task_name,
+  idle_exit_secs }`。`svc.rs` 的 `launch_elevated` / `ensure_elevated` 放宽为
+  `pub(crate)` 复用。
+- i18n 新增 23 键 × 3 语言（`autoUseAgent*` / `autoAgentResident*` /
+  `autoTest{NeedsAgent,AgentUnavailable,Blocked,FocusMoved}` / `settingsAgent*`），
+  并把两个新标签加进设置搜索键表。
+
+### 22.9 已知边界
+
+- **反作弊的内核级输入过滤依然无解**：本方案解决的是 UIPI/权限，不是
+  `mhyprot` 这类内核驱动对合成输入的静默丢弃。界面与文档必须如实说明这条边界，
+  不要让用户反复调延迟。
+- 提权通道一旦存在就**对所有高权限窗口有效** → 用 `use_agent` 开关 + 界面说明，
+  **不做"按程序自动提权"**。
+- 注册需要一次 UAC；未注册时代理不可用，对高权限目标只如实报 `needs_agent`。
+- 代理的客户端镜像校验要求"与代理同目录的 lume.exe"；把 Lume 单独拷走后注入会被
+  拒（`denied_client`），这是刻意的。
+- 计划任务是**每用户**的（`<UserId>` 为注册者），换用户需重新注册。
+
+### 22.10 明确不做
+
+- **Lume 自身以管理员自启动**（用户拍板排除）：主进程保持中 IL，否则拖放失效、
+  子进程继承高 IL。
+- **UIAccess**：需要 Authenticode 签名 + 装进 Program Files + 政策上仅限辅助技术，
+  且它本身仍是高 IL，帮不上"不让整个 Lume 提权"。
+- **内核驱动 / 硬件级注入**：违反游戏条款、封号风险、需签名驱动维护。
+- **LumeSVC 代拉**：服务在 session 0，文档明确不能与用户桌面交互（`SendInput`
+  到不了用户输入队列），只能 `CreateProcessAsUser` 到用户会话；而"SYSTEM 静默拉起
+  高 IL 进程"与 UAC 绕过同形 → 留作二期可替换点（`agent::ensure` 是唯一入口）。
+- **`KEYEVENTF_SCANCODE`**：无证据支持（见 22.7）。
+
+### 22.11 依赖
+
+**未新增任何 crate 或 `windows` feature**：`GetNamedPipeClientProcessId` /
+`GetNamedPipeClientSessionId`（`Win32_System_Pipes`）、`MapVirtualKeyW`
+（`Win32_UI_Input`）、`ConvertSidToStringSidW`（`Win32_Security_Authorization`）、
+`TOKEN_USER` / `GetTokenInformation`（`Win32_Security`）全部已在 `Cargo.toml`
+启用。二期若走 LumeSVC 通道，`WTSQueryUserToken` / `CreateProcessAsUserW` /
+`DuplicateTokenEx` / `CreateEnvironmentBlock` 也**已经启用**。
+
+### 测试
+
+- 单元（**122 通过，+16**）：`input.rs`（`key_to_vk` 覆盖集、扩展键集合 = 0xE0
+  集合且**不含**通用 Ctrl/Alt、不可合成组合键拒绝、无效 pid 不 panic）；
+  `agent.rs`（四动词解析、`inject` 可选字段默认、`inject_ack` 全 reason 往返、
+  畸形回复 = `unavailable`、回复 `t` 标签、`AgentInfo` 缺字段默认、**SDDL 只给
+  用户 + SYSTEM**（断言不含 `AU`/`WD`）、任务 XML 四项承重设置 + 含空格的路径
+  加引号/不含空格的不加、`<UserId>` 出现两次）；`pipe.rs`（`wide` NUL 结尾、
+  管道缺失报错不 panic）；`settings.rs`（两个新字段默认与往返、
+  **`[automation]` 整表缺失时默认开**）。
+- `#[ignore]`（`cargo test -- --ignored live_agent`）：**需先注册代理**。实测已过
+  ——`status` 答复 `elevated=false session=6`，且**非姊妹 `lume.exe` 的客户端
+  （测试 harness）被 `denied_client` 拒绝**，即同用户 DACL 放行 + 身份门失效两件事
+  同时被验证。
+- CDP（`scripts/cdp_agent_smoke.mjs`，**14 项全过**）：自动化页两个开关存在且
+  默认开/关正确（含"启用自动动作读作开"的探针自检）、UIPI 说明可见、切换即脏、
+  系统页「提权代理」组渲染、状态行 + 注册/卸载按钮、能力边界文案、
+  `agent_status` 结构完整、**状态查询不产生拉起副作用**、未注册时
+  `installed:false` 而不抛错。截图 `test/agent_automation.png`、
+  `test/agent_system.png`。
+- CDP 端到端（`scripts/cdp_agent_verify.mjs`，**9 项全过**）：脚本自行拉起
+  `lume-agent.exe --serve`（**非提权**，绕开 UAC）+ release Lume，通过
+  `test_automation_rule` 向真实目标发送 **Alt+F4**——断言 **Notepad3 真的被关掉**
+  （注入确实抵达目标，而不是"调用成功"）、`agent_status.sent_total` 由 0 → 4
+  （Ctrl/Alt 修饰 + 主键的 4 个事件）。附带实测到**空闲自杀**：最后一次请求后
+  >60s，进程自行退出。
+- 手工（`docs/TESTING.md`「Elevation agent」节，需 UAC）：注册任务 → UAC →
+  `schtasks /query /tn Lume\LumeAgent` 显示 Ready；对一个**以管理员运行**的目标
+  配规则 → 触发 → 按键送达；关掉代理时同一规则只记 `needs_agent`；UAC 取消 →
+  界面提示取消且状态不变。

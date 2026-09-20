@@ -25,54 +25,17 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
+use tauri_plugin_global_shortcut::Shortcut;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Input::KeyboardAndMouse::INPUT;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetMessageW, GetWindowThreadProcessId, RegisterClassExW,
-    RegisterShellHookWindow, RegisterWindowMessageW, HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED,
-    HSHELL_WINDOWDESTROYED, HWND_MESSAGE, WINDOW_STYLE, WINDOW_EX_STYLE, WNDCLASS_STYLES,
-    WNDCLASSEXW, HCURSOR, HICON, MSG,
+    CreateWindowExW, DefWindowProcW, GetMessageW, RegisterClassExW, RegisterShellHookWindow,
+    RegisterWindowMessageW, HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED,
+    HWND_MESSAGE, WINDOW_STYLE, WINDOW_EX_STYLE, WNDCLASS_STYLES, WNDCLASSEXW, HCURSOR, HICON, MSG,
 };
 
-/// Windows virtual-key codes used by `send_combo` (the `VK_*` names are not all
-/// exported, so the numeric values are spelled out here next to their meaning).
-mod vk {
-    pub const CONTROL: u16 = 0x11;
-    pub const SHIFT: u16 = 0x10;
-    pub const MENU: u16 = 0x12; // Alt
-    pub const LWIN: u16 = 0x5B;
-    pub const A: u16 = 0x41;
-    pub const DIGIT0: u16 = 0x30;
-    pub const F1: u16 = 0x70;
-    pub const SPACE: u16 = 0x20;
-    pub const RETURN: u16 = 0x0D;
-    pub const ESCAPE: u16 = 0x1B;
-    pub const TAB: u16 = 0x09;
-    pub const BACK: u16 = 0x08;
-    pub const DELETE: u16 = 0x2E;
-    pub const HOME: u16 = 0x24;
-    pub const END: u16 = 0x23;
-    pub const PRIOR: u16 = 0x21; // PageUp
-    pub const NEXT: u16 = 0x22; // PageDown
-    pub const INSERT: u16 = 0x2D;
-    pub const LEFT: u16 = 0x25;
-    pub const UP: u16 = 0x26;
-    pub const RIGHT: u16 = 0x27;
-    pub const DOWN: u16 = 0x28;
-    pub const OEM_COMMA: u16 = 0xBC;
-    pub const OEM_PERIOD: u16 = 0xBE;
-    pub const OEM_MINUS: u16 = 0xBD;
-    pub const OEM_PLUS: u16 = 0xBB;
-    pub const OEM_1: u16 = 0xBA; // ; 
-    pub const OEM_7: u16 = 0xDE; // '
-    pub const OEM_5: u16 = 0xDC; // \
-    pub const OEM_2: u16 = 0xBF; // /
-    pub const OEM_3: u16 = 0xC0; // `
-    pub const OEM_4: u16 = 0xDB; // [
-    pub const OEM_6: u16 = 0xDD; // ]
-}
+use crate::agent::{self, reason};
+use crate::input;
 
 /// Pending "created but not yet activated" windows that matched a rule. Keyed
 /// by the raw HWND; the value is the hotkey to fire when it activates.
@@ -89,6 +52,12 @@ pub struct PendingAction {
     delay_ms: u64,
     /// 延迟到点若前台已移开：尽力抢回焦点再发送（全局策略，见 settings 自动化）。
     force_focus: bool,
+    /// Send through the elevated agent when it is available (settings 自动化 →
+    /// 使用提权代理). Snapshot at trigger time, like the rest of the rule.
+    use_agent: bool,
+    /// Keep the agent alive past its idle timeout (settings 自动化 →
+     /// 登录后常驻代理).
+    agent_resident: bool,
 }
 
 impl PendingAction {
@@ -217,47 +186,6 @@ fn watch_thread(app: AppHandle) {
     }
 }
 
-/// Resolve a window's owning executable to its full image path and file name.
-/// Returns `(full_path, file_name)` or `None` when the process can't be opened.
-unsafe fn exe_of_hwnd(hwnd: HWND) -> Option<(String, String)> {
-    unsafe { exe_of_pid(pid_of_hwnd(hwnd)?) }
-}
-
-/// Resolve a process id to its executable's full image path and file name.
-/// Returns `(full_path, file_name)` or `None` when the process can't be opened.
-unsafe fn exe_of_pid(pid: u32) -> Option<(String, String)> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-        PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-
-    if pid == 0 {
-        return None;
-    }
-    let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-        return None;
-    };
-    let mut buf = vec![0u16; 4096];
-    let mut len = buf.len() as u32;
-    let ok = QueryFullProcessImageNameW(
-        handle,
-        PROCESS_NAME_WIN32,
-        windows::core::PWSTR(buf.as_mut_ptr()),
-        &mut len,
-    );
-    let _ = CloseHandle(handle);
-    if ok.is_err() {
-        return None;
-    }
-    let full = String::from_utf16_lossy(&buf[..len as usize]);
-    let name = std::path::Path::new(&full)
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| full.clone());
-    Some((full, name))
-}
-
 /// Distribute one `HSHELL_*` notification to the pending/fire bookkeeping.
 unsafe fn handle_shell(app: &AppHandle, accessor: u32, raw_hwnd: isize) {
     let hwnd = HWND(raw_hwnd as *mut _);
@@ -270,14 +198,15 @@ unsafe fn handle_shell(app: &AppHandle, accessor: u32, raw_hwnd: isize) {
             if settings_off(app) {
                 return;
             }
-            let Some((exe_path, exe_name)) = exe_of_hwnd(hwnd) else { return };
+            let Some((exe_path, exe_name)) = input::exe_of_hwnd(hwnd) else { return };
             let Some(rule) = rules_for(app, &exe_path, &exe_name) else { return };
             eprintln!(
-                "[automation] rule \"{}\": armed for window {raw_hwnd:#x} ({}), delay {} ms{}",
+                "[automation] rule \"{}\": armed for window {raw_hwnd:#x} ({}), delay {} ms{}{}",
                 rule.label(),
-                describe_process(pid_of_hwnd(hwnd)),
+                describe_process(input::pid_of_hwnd(hwnd)),
                 rule.delay_ms,
-                if rule.force_focus { ", force-focus on" } else { "" }
+                if rule.force_focus { ", force-focus on" } else { "" },
+                if rule.use_agent { ", agent on" } else { "" }
             );
             state.pending.lock().unwrap().insert(raw_hwnd, rule);
         }
@@ -293,7 +222,7 @@ unsafe fn handle_shell(app: &AppHandle, accessor: u32, raw_hwnd: isize) {
             // Remember which process owns the window: with a user-set delay the
             // foreground may have moved on by the time we inject, and a hotkey
             // must never land in an unrelated application.
-            let pid = pid_of_hwnd(hwnd);
+            let pid = input::pid_of_hwnd(hwnd);
             send_later(rule, pid, raw_hwnd);
         }
         HSHELL_WINDOWDESTROYED => {
@@ -313,6 +242,8 @@ fn settings_off(app: &AppHandle) -> bool {
 fn rules_for(app: &AppHandle, exe_path: &str, exe_name: &str) -> Option<PendingAction> {
     let settings = app.state::<crate::settings::SettingsState>().current();
     let force_focus = settings.automation.force_focus;
+    let use_agent = settings.automation.use_agent;
+    let agent_resident = settings.automation.agent_resident;
     settings
         .automation
         .actions
@@ -324,34 +255,73 @@ fn rules_for(app: &AppHandle, exe_path: &str, exe_name: &str) -> Option<PendingA
             combo: a.combo.clone(),
             delay_ms: a.effective_delay_ms(),
             force_focus,
+            use_agent,
+            agent_resident,
         })
 }
 
 /// Inject the rule's combo after its 延迟触发, on a short-lived thread so the
 /// message pump's shell notifications are never blocked while waiting.
 ///
-/// At the end of the delay the foreground is re-checked against the process that
-/// triggered the rule:
-/// - still the same (or undeterminable) → send;
-/// - moved on → skip, or (when 抢回焦点 is on) best-effort pull the target back
-///   and send. Every outcome is logged with the rule's identity.
+/// Two paths, in order of preference:
+/// 1. **The elevated agent** (`agent.rs`) when the user has it switched on and
+///    registered — the only path that can reach a higher-integrity target,
+///    because `SendInput` is subject to UIPI. It applies the delay itself and
+///    re-checks the foreground at the moment of sending.
+/// 2. **In-process `SendInput`** (the original behaviour) when the agent is
+///    off or unavailable. This path is now honest about failure: a blocked
+///    `SendInput` reports zero events, and a target that runs elevated while
+///    we do not is logged as `needs_agent` instead of a bare "sent".
+///
+/// Every outcome is logged with the rule's identity.
 fn send_later(rule: PendingAction, owner_pid: Option<u32>, raw_hwnd: isize) {
     let _ = std::thread::Builder::new()
         .name("auto-send".into())
         .spawn(move || {
             let label = rule.label();
+            let target = describe_process(owner_pid);
+            let Some(pid) = owner_pid else {
+                eprintln!("[automation] rule \"{label}\": the target process is gone; skipped");
+                return;
+            };
+
+            // `ensure` pings first, so an already-running agent is used even if
+            // the task is not registered (e.g. one started by hand for testing).
+            if rule.use_agent && agent::ensure(agent::STARTUP_WAIT) {
+                if rule.agent_resident {
+                    // 常驻 mode: keep the helper alive past its idle timeout.
+                    agent::stay();
+                }
+                match agent::inject(&rule.combo, pid, raw_hwnd, rule.delay_ms, rule.force_focus) {
+                    Ok(sent) => eprintln!(
+                        "[automation] rule \"{label}\": sent after {} ms to {target} via the agent ({sent} events)",
+                        rule.delay_ms
+                    ),
+                    Err(key) => eprintln!(
+                        "[automation] rule \"{label}\": not sent after {} ms to {target} via the agent — {key}",
+                        rule.delay_ms
+                    ),
+                }
+                return;
+            }
+            if rule.use_agent {
+                eprintln!(
+                    "[automation] rule \"{label}\": no elevation agent available — falling back to an in-process send \
+                     (register it in 设置/系统 to reach elevated programs)"
+                );
+            }
+
             if rule.delay_ms > 0 {
                 std::thread::sleep(Duration::from_millis(rule.delay_ms));
             }
 
-            let target = describe_process(owner_pid);
-            let same = match (owner_pid, foreground_pid()) {
+            let same = match (Some(pid), input::foreground_pid()) {
                 (Some(expected), Some(current)) => expected == current,
                 // If either side can't be resolved, don't block the send.
                 _ => true,
             };
             if !same {
-                let current = describe_process(foreground_pid());
+                let current = describe_process(input::foreground_pid());
                 if !rule.force_focus {
                     eprintln!(
                         "[automation] rule \"{label}\": skipped after {} ms — foreground is {current}, expected {target} \
@@ -363,13 +333,13 @@ fn send_later(rule: PendingAction, owner_pid: Option<u32>, raw_hwnd: isize) {
                 eprintln!(
                     "[automation] rule \"{label}\": foreground is {current}, expected {target} — forcing it back"
                 );
-                let Some(window) = target_window(raw_hwnd, owner_pid) else {
+                let Some(window) = input::target_window(raw_hwnd, Some(pid)) else {
                     eprintln!(
                         "[automation] rule \"{label}\": no usable {target} window is left; skipped"
                     );
                     return;
                 };
-                if !force_foreground(window) {
+                if !input::force_foreground(window) {
                     eprintln!(
                         "[automation] rule \"{label}\": Windows refused the foreground change; skipped"
                     );
@@ -378,13 +348,35 @@ fn send_later(rule: PendingAction, owner_pid: Option<u32>, raw_hwnd: isize) {
                 eprintln!("[automation] rule \"{label}\": foreground restored, sending");
             }
 
-            if unsafe { send_combo(&rule.combo) } {
-                eprintln!(
-                    "[automation] rule \"{label}\": sent after {} ms to {target}",
+            match input::send_combo(&rule.combo) {
+                Ok(0) => {
+                    // `SendInput` inserts nothing when the input is blocked —
+                    // UIPI against a higher-integrity foreground window is the
+                    // usual cause and cannot be told apart from other blocks.
+                    if input::is_process_elevated(pid).unwrap_or(false) {
+                        eprintln!(
+                            "[automation] rule \"{label}\": {target} runs elevated and this process does not, \
+                             so Windows dropped the input ({}) — register the elevation agent in 设置/系统",
+                            reason::NEEDS_AGENT
+                        );
+                    } else {
+                        eprintln!(
+                            "[automation] rule \"{label}\": Windows blocked the input ({})",
+                            reason::BLOCKED
+                        );
+                    }
+                }
+                Ok(sent) => eprintln!(
+                    "[automation] rule \"{label}\": sent after {} ms to {target} ({sent} events)",
                     rule.delay_ms
-                );
-            } else {
-                eprintln!("[automation] rule \"{label}\": not sent (unusable shortcut)");
+                ),
+                Err(input::ComboError::BadCombo) => {
+                    eprintln!("[automation] rule \"{label}\": not sent ({})", reason::BAD_COMBO)
+                }
+                Err(input::ComboError::Unsupported) => eprintln!(
+                    "[automation] rule \"{label}\": not sent ({})",
+                    reason::UNSUPPORTED
+                ),
             }
         });
 }
@@ -392,142 +384,10 @@ fn send_later(rule: PendingAction, owner_pid: Option<u32>, raw_hwnd: isize) {
 /// "name.exe (pid 1234)" for logs — falls back to the bare pid.
 fn describe_process(pid: Option<u32>) -> String {
     let Some(pid) = pid else { return "an unknown process".into() };
-    match unsafe { exe_of_pid(pid) } {
+    match input::exe_of_pid(pid) {
         Some((_, name)) => format!("{name} (pid {pid})"),
         None => format!("pid {pid}"),
     }
-}
-
-/// The window to pull back: the recorded one while it is still alive and owned
-/// by `pid`, otherwise any visible titled window of that process.
-fn target_window(raw_hwnd: isize, pid: Option<u32>) -> Option<HWND> {
-    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
-
-    let hwnd = HWND(raw_hwnd as *mut _);
-    if unsafe { IsWindow(Some(hwnd)) }.as_bool() && (pid.is_none() || pid_of_hwnd(hwnd) == pid) {
-        return Some(hwnd);
-    }
-    pid.and_then(find_window_of_pid)
-}
-
-/// The first visible, titled top-level window owned by `pid`.
-fn find_window_of_pid(pid: u32) -> Option<HWND> {
-    use windows::Win32::Foundation::LPARAM;
-    use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
-
-    let mut search = PidSearch { pid, found: None };
-    let ptr: *mut PidSearch = &mut search;
-    unsafe {
-        let _ = EnumWindows(Some(enum_pid_window), LPARAM(ptr as isize));
-    }
-    search.found
-}
-
-/// State passed through `EnumWindows` while looking for a pid's window.
-struct PidSearch {
-    pid: u32,
-    found: Option<HWND>,
-}
-
-/// `EnumWindows` callback: stop at the first visible, titled window of the pid.
-unsafe extern "system" fn enum_pid_window(
-    hwnd: HWND,
-    lparam: windows::Win32::Foundation::LPARAM,
-) -> windows::core::BOOL {
-    use windows::Win32::Foundation::{FALSE, TRUE};
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, IsWindowVisible};
-
-    let search = unsafe { &mut *(lparam.0 as *mut PidSearch) };
-    if search.found.is_some() {
-        return FALSE;
-    }
-    if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
-        return TRUE;
-    }
-    if pid_of_hwnd(hwnd) != Some(search.pid) {
-        return TRUE;
-    }
-    if unsafe { GetWindowTextLengthW(hwnd) } <= 0 {
-        return TRUE;
-    }
-    search.found = Some(hwnd);
-    FALSE
-}
-
-/// Best-effort foreground steal.
-///
-/// Windows refuses `SetForegroundWindow` from a background process unless it
-/// looks like the "last input" owner, so two standard workarounds are applied:
-/// an ALT tap (which makes this process the last-input one) and attaching our
-/// input queue to the current foreground thread. This is best-effort by design
-/// — an elevated foreground window (a UAC prompt) will still refuse, which is
-/// reported to the caller.
-fn force_foreground(hwnd: HWND) -> bool {
-    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
-    };
-
-    unsafe {
-        if GetForegroundWindow() == hwnd {
-            return true;
-        }
-        tap_alt();
-        let foreground = GetForegroundWindow();
-        let fg_thread = GetWindowThreadProcessId(foreground, None);
-        let our_thread = GetCurrentThreadId();
-        let attached = fg_thread != 0
-            && fg_thread != our_thread
-            && AttachThreadInput(our_thread, fg_thread, true).as_bool();
-        if IsIconic(hwnd).as_bool() {
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-        }
-        let _ = SetForegroundWindow(hwnd);
-        if attached {
-            let _ = AttachThreadInput(our_thread, fg_thread, false);
-        }
-        // Let the shell settle, then report the truth rather than the call result.
-        std::thread::sleep(Duration::from_millis(60));
-        GetForegroundWindow() == hwnd
-    }
-}
-
-/// A bare ALT tap: harmless in practice, and it makes this process the
-/// "last input" owner so the following `SetForegroundWindow` is allowed.
-fn tap_alt() {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY,
-    };
-
-    let mut inputs: [INPUT; 2] = unsafe { std::mem::zeroed() };
-    for (i, up) in [(0usize, false), (1usize, true)] {
-        inputs[i].r#type = INPUT_KEYBOARD;
-        inputs[i].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(vk::MENU),
-            wScan: 0,
-            dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
-            time: 0,
-            dwExtraInfo: 0,
-        };
-    }
-    let _ = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-}
-
-/// The pid owning a window, or `None` when it can't be resolved.
-fn pid_of_hwnd(hwnd: HWND) -> Option<u32> {
-    let mut pid = 0u32;
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-    (pid != 0).then_some(pid)
-}
-
-/// The pid owning the current foreground window.
-fn foreground_pid() -> Option<u32> {
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.0.is_null() {
-        return None;
-    }
-    pid_of_hwnd(hwnd)
 }
 
 /// Match a configured `process` (full path or bare file name) against an app's
@@ -550,169 +410,6 @@ fn matches_rule(process: &str, exe_path: &str, exe_name: &str) -> bool {
     false
 }
 
-/// Map a parsed hotkey `Code` to a Windows `VIRTUAL_KEY`, for the key set the
-/// settings pane accepts. `None` = a key we can't synthesize (mark it
-/// unsupported at validation time so we never accept a combo we can't send).
-fn key_to_vk(code: Code) -> Option<u16> {
-    use Code::*;
-    let c = match code {
-        KeyA => vk::A,
-        KeyB => vk::A + 1,
-        KeyC => vk::A + 2,
-        KeyD => vk::A + 3,
-        KeyE => vk::A + 4,
-        KeyF => vk::A + 5,
-        KeyG => vk::A + 6,
-        KeyH => vk::A + 7,
-        KeyI => vk::A + 8,
-        KeyJ => vk::A + 9,
-        KeyK => vk::A + 10,
-        KeyL => vk::A + 11,
-        KeyM => vk::A + 12,
-        KeyN => vk::A + 13,
-        KeyO => vk::A + 14,
-        KeyP => vk::A + 15,
-        KeyQ => vk::A + 16,
-        KeyR => vk::A + 17,
-        KeyS => vk::A + 18,
-        KeyT => vk::A + 19,
-        KeyU => vk::A + 20,
-        KeyV => vk::A + 21,
-        KeyW => vk::A + 22,
-        KeyX => vk::A + 23,
-        KeyY => vk::A + 24,
-        KeyZ => vk::A + 25,
-        Digit0 => vk::DIGIT0,
-        Digit1 => vk::DIGIT0 + 1,
-        Digit2 => vk::DIGIT0 + 2,
-        Digit3 => vk::DIGIT0 + 3,
-        Digit4 => vk::DIGIT0 + 4,
-        Digit5 => vk::DIGIT0 + 5,
-        Digit6 => vk::DIGIT0 + 6,
-        Digit7 => vk::DIGIT0 + 7,
-        Digit8 => vk::DIGIT0 + 8,
-        Digit9 => vk::DIGIT0 + 9,
-        F1 => vk::F1,
-        F2 => vk::F1 + 1,
-        F3 => vk::F1 + 2,
-        F4 => vk::F1 + 3,
-        F5 => vk::F1 + 4,
-        F6 => vk::F1 + 5,
-        F7 => vk::F1 + 6,
-        F8 => vk::F1 + 7,
-        F9 => vk::F1 + 8,
-        F10 => vk::F1 + 9,
-        F11 => vk::F1 + 10,
-        F12 => vk::F1 + 11,
-        F13 => vk::F1 + 12,
-        F14 => vk::F1 + 13,
-        F15 => vk::F1 + 14,
-        F16 => vk::F1 + 15,
-        F17 => vk::F1 + 16,
-        F18 => vk::F1 + 17,
-        F19 => vk::F1 + 18,
-        F20 => vk::F1 + 19,
-        F21 => vk::F1 + 20,
-        F22 => vk::F1 + 21,
-        F23 => vk::F1 + 22,
-        F24 => vk::F1 + 23,
-        Space => vk::SPACE,
-        Enter => vk::RETURN,
-        Escape => vk::ESCAPE,
-        Tab => vk::TAB,
-        Backspace => vk::BACK,
-        Delete => vk::DELETE,
-        Home => vk::HOME,
-        End => vk::END,
-        PageUp => vk::PRIOR,
-        PageDown => vk::NEXT,
-        Insert => vk::INSERT,
-        ArrowLeft => vk::LEFT,
-        ArrowUp => vk::UP,
-        ArrowRight => vk::RIGHT,
-        ArrowDown => vk::DOWN,
-        Comma => vk::OEM_COMMA,
-        Period => vk::OEM_PERIOD,
-        Minus => vk::OEM_MINUS,
-        Equal => vk::OEM_PLUS,
-        Semicolon => vk::OEM_1,
-        Quote => vk::OEM_7,
-        Backslash => vk::OEM_5,
-        Slash => vk::OEM_2,
-        Backquote => vk::OEM_3,
-        BracketLeft => vk::OEM_4,
-        BracketRight => vk::OEM_6,
-        _ => return None,
-    };
-    Some(c)
-}
-
-/// A modifier bit → its synthetic `VIRTUAL_KEY`.
-fn mod_vk(m: Modifiers) -> u16 {
-    if m == Modifiers::CONTROL {
-        vk::CONTROL
-    } else if m == Modifiers::ALT {
-        vk::MENU
-    } else if m == Modifiers::SHIFT {
-        vk::SHIFT
-    } else {
-        vk::LWIN // SUPER / META (Windows key)
-    }
-}
-
-/// Inject an arbitrary hotkey combo (parsed like the global-toggle shortcut)
-/// into the current foreground window via `SendInput`. Down/up ordering mirrors
-/// `clipboard::send_ctrl_v`: modifiers down, main key down/up, modifiers up.
-unsafe fn send_combo(combo: &str) -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::SendInput;
-
-    let Ok(sc) = Shortcut::from_str(combo) else { return false };
-    let Some(main_vk) = key_to_vk(sc.key) else {
-        return false;
-    };
-    let modifiers = [Modifiers::CONTROL, Modifiers::ALT, Modifiers::SHIFT, Modifiers::SUPER];
-
-    let mut inputs: Vec<INPUT> = Vec::with_capacity(modifiers.len() * 2 + 2);
-    let keydown = |inputs: &mut Vec<INPUT>, vkk: u16| push_key(inputs, vkk, false);
-    let keyup = |inputs: &mut Vec<INPUT>, vkk: u16| push_key(inputs, vkk, true);
-
-    for m in modifiers {
-        if sc.mods.contains(m) {
-            keydown(&mut inputs, mod_vk(m));
-        }
-    }
-    keydown(&mut inputs, main_vk);
-    keyup(&mut inputs, main_vk);
-    for m in modifiers.iter().rev() {
-        if sc.mods.contains(*m) {
-            keyup(&mut inputs, mod_vk(*m));
-        }
-    }
-
-    let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-    true
-}
-
-unsafe fn push_key(inputs: &mut Vec<INPUT>, vkk: u16, up: bool) {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY,
-    };
-    let mut input: INPUT = std::mem::zeroed();
-    input.r#type = INPUT_KEYBOARD;
-    input.Anonymous.ki = KEYBDINPUT {
-        wVk: VIRTUAL_KEY(vkk),
-        wScan: 0,
-        dwFlags: if up {
-            KEYEVENTF_KEYUP
-        } else {
-            KEYBD_EVENT_FLAGS(0)
-        },
-        time: 0,
-        dwExtraInfo: 0,
-    };
-    inputs.push(input);
-}
-
 /// Validate a 自动动作 hotkey in the settings page: parse it, require at least
 /// one modifier, and reject keys we cannot synthesize. No OS probe, not a
 /// global-hotkey registration.
@@ -725,7 +422,7 @@ pub fn validate_auto_combo(combo: String) -> AutoComboCheck {
     if sc.mods.is_empty() {
         return AutoComboCheck { ok: false, reason: Some("need_modifier".into()) };
     }
-    if key_to_vk(sc.key).is_none() {
+    if input::key_to_vk(sc.key).is_none() {
         return AutoComboCheck { ok: false, reason: Some("unsupported".into()) };
     }
     AutoComboCheck { ok: true, reason: None }
@@ -739,7 +436,9 @@ pub fn validate_auto_combo(combo: String) -> AutoComboCheck {
 #[derive(serde::Serialize)]
 pub struct TestRuleResult {
     pub ok: bool,
-    /// Machine key when `!ok`: `not_running` | `focus_failed` | `invalid_combo`.
+    /// Machine key when `!ok`: `not_running` | `focus_failed` | `invalid_combo`,
+    /// plus every `agent::reason` key the send path can report (notably
+    /// `needs_agent` when the target runs elevated and the agent is absent).
     pub reason: Option<String>,
     /// What the test resolved to — the matched window (`name (pid N)`) on
     /// success, otherwise the configured program.
@@ -754,9 +453,22 @@ pub struct TestRuleResult {
 /// already running. The target window is brought to the foreground first: a
 /// keystroke only reaches the focused window, and a test must never type into
 /// whatever happens to be in front.
+///
+/// The agent is tried first when it is switched on: the settings window is
+/// **not** elevated, so an in-process fallback can never verify a rule whose
+/// target runs elevated.
 #[tauri::command]
-pub async fn test_automation_rule(process: String, combo: String) -> TestRuleResult {
-    tauri::async_runtime::spawn_blocking(move || test_rule_blocking(process, combo))
+pub async fn test_automation_rule(
+    app: AppHandle,
+    process: String,
+    combo: String,
+) -> TestRuleResult {
+    let use_agent = app
+        .state::<crate::settings::SettingsState>()
+        .current()
+        .automation
+        .use_agent;
+    tauri::async_runtime::spawn_blocking(move || test_rule_blocking(process, combo, use_agent))
         .await
         .unwrap_or_else(|_| TestRuleResult {
             ok: false,
@@ -765,10 +477,10 @@ pub async fn test_automation_rule(process: String, combo: String) -> TestRuleRes
         })
 }
 
-fn test_rule_blocking(process: String, combo: String) -> TestRuleResult {
+fn test_rule_blocking(process: String, combo: String, use_agent: bool) -> TestRuleResult {
     // A combo we cannot synthesize can never be tested.
     let sendable = match Shortcut::from_str(&combo) {
-        Ok(sc) => !sc.mods.is_empty() && key_to_vk(sc.key).is_some(),
+        Ok(sc) => !sc.mods.is_empty() && input::key_to_vk(sc.key).is_some(),
         Err(_) => false,
     };
     if !sendable {
@@ -788,21 +500,57 @@ fn test_rule_blocking(process: String, combo: String) -> TestRuleResult {
     };
     let target = format!("{name} (pid {pid})");
 
-    if !force_foreground(hwnd) {
+    // The agent focuses the target itself, so `force_focus` is always true
+    // here — a test must not depend on the user having focused the window.
+    if use_agent && agent::ensure(agent::STARTUP_WAIT) {
+        return match agent::inject(&combo, pid, hwnd.0 as isize, 0, true) {
+            Ok(_) => TestRuleResult { ok: true, reason: None, detail: target },
+            Err(key) => TestRuleResult {
+                ok: false,
+                reason: Some(key),
+                detail: target,
+            },
+        };
+    }
+
+    // No agent: the original in-process path, now reporting a block honestly.
+    let elevated_target = input::is_process_elevated(pid).unwrap_or(false);
+    if elevated_target && use_agent {
+        // The agent is wanted but could not be started — say so rather than
+        // reporting a failure the user cannot act on.
+        return TestRuleResult {
+            ok: false,
+            reason: Some(reason::UNAVAILABLE.into()),
+            detail: target,
+        };
+    }
+    if elevated_target {
+        return TestRuleResult {
+            ok: false,
+            reason: Some(reason::NEEDS_AGENT.into()),
+            detail: target,
+        };
+    }
+
+    if !input::force_foreground(hwnd) {
         return TestRuleResult {
             ok: false,
             reason: Some("focus_failed".into()),
             detail: target,
         };
     }
-    if unsafe { send_combo(&combo) } {
-        TestRuleResult { ok: true, reason: None, detail: target }
-    } else {
-        TestRuleResult {
+    match input::send_combo(&combo) {
+        Ok(0) => TestRuleResult {
+            ok: false,
+            reason: Some(reason::BLOCKED.into()),
+            detail: target,
+        },
+        Ok(_) => TestRuleResult { ok: true, reason: None, detail: target },
+        Err(_) => TestRuleResult {
             ok: false,
             reason: Some("invalid_combo".into()),
             detail: target,
-        }
+        },
     }
 }
 
@@ -844,10 +592,10 @@ unsafe extern "system" fn enum_match_window(
     if unsafe { GetWindowTextLengthW(hwnd) } <= 0 {
         return TRUE;
     }
-    let Some(pid) = pid_of_hwnd(hwnd) else {
+    let Some(pid) = input::pid_of_hwnd(hwnd) else {
         return TRUE;
     };
-    let Some((path, name)) = (unsafe { exe_of_pid(pid) }) else {
+    let Some((path, name)) = input::exe_of_pid(pid) else {
         return TRUE;
     };
     if matches_rule(search.process, &path, &name) {
@@ -964,7 +712,7 @@ unsafe extern "system" fn enum_window(hwnd: HWND, lparam: windows::Win32::Founda
         return TRUE;
     }
     let title = String::from_utf16_lossy(&buf[..written]);
-    let Some((path, name)) = (unsafe { exe_of_hwnd(hwnd) }) else {
+    let Some((path, name)) = input::exe_of_hwnd(hwnd) else {
         return TRUE;
     };
     found.push(RawWindow { path, name, title });
@@ -1008,20 +756,8 @@ mod tests {
         assert_eq!(matches_rule("", r"C:\a.exe", "a.exe"), false);
     }
 
-    #[test]
-    fn key_to_vk_covers_supported_set() {
-        assert_eq!(key_to_vk(Code::KeyA), Some(0x41));
-        assert_eq!(key_to_vk(Code::KeyZ), Some(0x5A));
-        assert_eq!(key_to_vk(Code::Digit0), Some(0x30));
-        assert_eq!(key_to_vk(Code::Digit9), Some(0x39));
-        assert_eq!(key_to_vk(Code::F1), Some(0x70));
-        assert_eq!(key_to_vk(Code::F12), Some(0x70 + 11));
-        assert_eq!(key_to_vk(Code::Space), Some(0x20));
-        assert_eq!(key_to_vk(Code::ArrowUp), Some(0x26));
-        // Unsupported keys the settings pane must reject.
-        assert_eq!(key_to_vk(Code::MediaPlayPause), None);
-    }
-
+    /// The key table itself now lives with the injection primitives
+    /// (`input.rs`), which owns its own coverage test.
     #[test]
     fn validate_requires_modifier() {
         let r = validate_auto_combo("V".into());

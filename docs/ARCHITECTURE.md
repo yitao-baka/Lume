@@ -21,14 +21,23 @@ Rust Core (src-tauri/src/)
   ├─ tray.rs     — system tray icon, Restart/Exit menu, left-click toggle
   ├─ hotkey.rs   — toggle shortcut: Alt+Space preferred, fallback chain
   ├─ svc.rs      — LumeSVC SYSTEM service (SCM + IPC pipe + index dormancy)
+  ├─ agent.rs    — elevation-agent client, `\\.\pipe\LumeAgent` server, task
+  ├─ input.rs    — synthetic keys (SendInput) + window/process/token probes
+  ├─ pipe.rs     — length-prefixed JSON pipe client (svc + agent share it)
   ├─ everything.rs— Everything voidtools WM_COPYDATA IPC client (no DLL)
   ├─ filesearch.rs— unified file-search facade (Everything / LumeSVC backends)
   ├─ usnidx.rs   — self-hosted NTFS USN/MFT full-drive index (runs in lume-svc)
   └─ envwatch.rs — keep the process env block in sync with system env changes
         ▼
 Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
-             IShellItemImageFactory, Acrylic window effects, WM_SETTINGCHANGE)
+             IShellItemImageFactory, Acrylic window effects, WM_SETTINGCHANGE,
+             SendInput, Task Scheduler via schtasks)
 ```
+
+There are **three binaries**, all sitting side by side in the exe directory and
+reaching each other by path rather than by name: `lume.exe` (the launcher,
+medium integrity), `lume-svc.exe` (the SYSTEM file-index service) and
+`lume-agent.exe` (the elevated input-injection helper, ROADMAP #22).
 
 ## Modules
 
@@ -89,6 +98,35 @@ backends have timeouts).
   no index (no duplicate full-drive index on the machine); when it disappears
   the watcher builds lazily. The service cannot see user-session windows, so
   the probe is a toolhelp process-name check, not FindWindow.
+
+### `agent.rs` / `input.rs` / `pipe.rs` (ROADMAP #22)
+
+- **The problem**: `SendInput` is subject to UIPI — only same-or-lower integrity
+  windows receive synthetic input, and MSDN is explicit that a UIPI block cannot
+  be read from `GetLastError` or the return value. An integrity level belongs to
+  a *process*, so "partially elevate" is impossible: the only fix is to inject
+  from a process that already holds the right token.
+- **The split**: `input.rs` owns the primitives (`send_combo`, extended-key
+  flags, `pid_of_hwnd`, `exe_of_pid`, `is_process_elevated`, `force_foreground`)
+  and `agent.rs` owns the protocol, the pipe server, the client and the
+  scheduled-task plumbing. Both injection paths — the in-process fallback in
+  `automation.rs` and the elevated helper — call the same primitives; only the
+  token differs.
+- **The helper** is a third binary (`bin/lume-agent.rs`). It answers
+  `hello`/`inject`/`stay`/`status`/`shutdown` on `\\.\pipe\LumeAgent` using the
+  same wire framing as LumeSVC, and its whole capability is one combo into one
+  foreground window (see the pipe-ownership rule above for the ACL).
+- **How it starts**: a registered Task Scheduler task (`Lume\LumeAgent`,
+  `RunLevel=HighestAvailable`) — one UAC prompt when registering, silent
+  afterwards. Lume triggers it on demand with `schtasks /Run`; the helper exits
+  by itself once idle unless a client sent `stay`. `lume-agent.exe --serve` also
+  runs fine by hand for testing, and `agent_status` never starts it as a side
+  effect.
+- **Failure honesty**: an injection reports the events `SendInput` actually
+  inserted (`sent`), so zero is a real, visible failure — `uipi`/`blocked`/
+  `not_elevated`/`needs_agent` instead of a silent no-op. See ROADMAP #22 for the
+  full reason set and the known ceiling (kernel-level anti-cheat filtering is
+  out of reach).
 
 ### `icons.rs`
 - **Extraction**: `extract_icon_png` calls `IShellItemImageFactory` (via
@@ -230,6 +268,17 @@ every save / apply / import / restore-default. All fields are
 `#[serde(default)]`, so an older `settings.toml` loads unchanged and new fields
 pick up their defaults.
 
+Two distinct "missing" cases, and they resolve differently — worth knowing
+before adding a field:
+
+- **the table exists but a key is missing** → the key's
+  `#[serde(default = "…")]` function runs;
+- **the whole table is missing** (a file written before the feature landed) →
+  the field's own `Default` runs, so a *derived* `Default` silently turns every
+  bool off regardless of the per-key defaults. `Automation` therefore writes its
+  `Default` out by hand, and
+  `automation_defaults_apply_when_the_table_is_absent` pins it.
+
 ### Rules
 
 - **Business logic lives in Rust** — the webview only calls `invoke` commands;
@@ -241,6 +290,18 @@ pick up their defaults.
 - The SYSTEM service (`lume-svc.exe`) owns the **self-hosted USN index**
   (`usnidx.rs`, in memory only — rebuilt from the MFT on service start, no
   database) and answers `search`/`status` over `\\.\pipe\LumeSVC`.
+- **Pipe ownership and ACLs** — each pipe is owned by the process that can
+  actually serve it, and its DACL is scoped to the smallest audience that
+  works. `\\.\pipe\LumeSVC` grants `Authenticated Users` + SYSTEM (any local
+  process may ask for file-search results). `\\.\pipe\LumeAgent` grants **the
+  installing user's SID** + SYSTEM only: it is a high-integrity key injector, so
+  widening it would make it a local privilege-escalation primitive. The agent
+  additionally refuses callers from another session or from any image other than
+  the sibling `lume.exe` (ROADMAP #22).
+- **Nothing higher-integrity runs in the launcher process.** `lume.exe` stays at
+  medium integrity; the only privileged code lives in `lume-agent.exe`, whose
+  entire capability is "send one configured hotkey to the foreground window it
+  was told about".
 
 ## Frontend
 

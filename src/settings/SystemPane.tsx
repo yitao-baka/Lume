@@ -16,6 +16,19 @@ interface SvcStatus {
   bin_path: string | null;
 }
 
+/** Status of the elevated injection helper (`agent_status`). `installed` means
+ * the scheduled task is registered; `running` means it answers on its pipe. */
+interface AgentStatus {
+  installed: boolean;
+  running: boolean;
+  elevated: boolean;
+  session: number | null;
+  sent_total: number;
+  bin_path: string | null;
+  task_name: string;
+  idle_exit_secs: number;
+}
+
 /** A button that requires a second click to confirm (restore backup). */
 function ConfirmButton(props: {
   label: string;
@@ -60,6 +73,20 @@ export default function SystemPane(props: {
   const [svcBusy, setSvcBusy] = createSignal(false);
   const [svcMsg, setSvcMsg] = createSignal<{ ok: boolean; text: string } | null>(null);
 
+  // 提权代理 — same "the OS is the source of truth" model as the service.
+  const [agent, setAgent] = createSignal<AgentStatus>({
+    installed: false,
+    running: false,
+    elevated: false,
+    session: null,
+    sent_total: 0,
+    bin_path: null,
+    task_name: "",
+    idle_exit_secs: 0,
+  });
+  const [agentBusy, setAgentBusy] = createSignal(false);
+  const [agentMsg, setAgentMsg] = createSignal<{ ok: boolean; text: string } | null>(null);
+
   onMount(() => {
     void (async () => {
       try {
@@ -71,6 +98,11 @@ export default function SystemPane(props: {
         setSvc(await invoke<SvcStatus>("svc_status"));
       } catch (err) {
         setSvcMsg({ ok: false, text: String(err) });
+      }
+      try {
+        setAgent(await invoke<AgentStatus>("agent_status"));
+      } catch (err) {
+        setAgentMsg({ ok: false, text: String(err) });
       }
     })();
   });
@@ -136,6 +168,59 @@ export default function SystemPane(props: {
     if (!s.installed) return t("settingsServiceNotInstalled");
     return s.running ? t("settingsServiceRunning") : t("settingsServiceStopped");
   };
+
+  /** 提权代理: installed = the scheduled task exists, running = it answers. */
+  const agentText = () => {
+    const a = agent();
+    if (!a.installed) return t("settingsAgentNotInstalled");
+    if (!a.running) return t("settingsAgentRegistered");
+    return a.elevated ? t("settingsAgentRunning") : t("settingsAgentNotElevated");
+  };
+
+  async function toggleAgent() {
+    if (agentBusy()) return;
+    setAgentBusy(true);
+    setAgentMsg(null);
+    const installing = !agent().installed;
+    let accepted = false;
+    try {
+      // Blocks through the UAC prompt; returns "canceled" when dismissed.
+      await invoke(installing ? "agent_install" : "agent_uninstall");
+      accepted = true;
+      setAgentMsg({
+        ok: true,
+        text: t(installing ? "settingsAgentInstalling" : "settingsAgentUninstalling"),
+      });
+    } catch (err) {
+      const msg = String(err);
+      setAgentMsg({
+        ok: false,
+        text: msg.includes("canceled") ? t("settingsAgentUacCanceled") : msg,
+      });
+    }
+    // The elevated lume-agent.exe works after UAC is accepted. Re-query and
+    // report a definitive result so the transient message does not linger.
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const a = await invoke<AgentStatus>("agent_status");
+          setAgent(a);
+          if (accepted) {
+            const ok = installing ? a.installed : !a.installed;
+            setAgentMsg({
+              ok,
+              text: installing
+                ? t(ok ? "settingsAgentInstalled" : "settingsAgentInstallFailed")
+                : t(ok ? "settingsAgentUninstalled" : "settingsAgentUninstallFailed"),
+            });
+          }
+        } catch (err) {
+          setAgentMsg({ ok: false, text: String(err) });
+        }
+        setAgentBusy(false);
+      })();
+    }, 2000);
+  }
 
   async function importSettings() {
     const file = await open({
@@ -211,6 +296,30 @@ export default function SystemPane(props: {
             classList={{ "settings-status": true, error: !svcMsg()!.ok }}
           >
             {svcMsg()!.text}
+          </span>
+        </Show>
+      </div>
+
+      <h2 class="settings-grouptitle">{t("settingsAgentGroup")}</h2>
+      <div class="settings-group">
+        <div class="settings-row-between">
+          <span class="settings-path">{agentText()}</span>
+          <button
+            class="settings-action"
+            disabled={agentBusy()}
+            onClick={() => void toggleAgent()}
+          >
+            {agent().installed
+              ? t("settingsAgentUninstall")
+              : t("settingsAgentInstall")}
+          </button>
+        </div>
+        <p class="settings-hint">{t("settingsAgentHint")}</p>
+        <Show when={agentMsg()}>
+          <span
+            classList={{ "settings-status": true, error: !agentMsg()!.ok }}
+          >
+            {agentMsg()!.text}
           </span>
         </Show>
       </div>

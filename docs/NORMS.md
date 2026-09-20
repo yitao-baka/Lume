@@ -75,12 +75,12 @@ dev 为 `src-tauri/target/debug/` 下）。Lume 因此可以整体拷贝带走�
 
 - **每完成一处改动，立即编译验证**，交付时必须是「可直接运行测试」的状态，
   方便用户马上验证：Rust 侧跑 `cargo check` + 相关单测；前端改动跑
-  `npm run build` + `npx tsc --noEmit`；大改动/收尾时用
-  `npm run tauri build -- --no-bundle` 出独立 exe 并启动冒烟测试。
+  `pnpm run build` + `pnpm exec tsc --noEmit`；大改动/收尾时用
+  `pnpm run tauri build --no-bundle` 出独立 exe 并启动冒烟测试。
 - **编译或测试失败不允许声称完成**——如实报告失败输出，修复通过后再交付。
 - 涉及新 i18n 文案时，编译前确认 en / zh-CN / zh-TW 三语键已同步（`Messages`
   类型以 en.json 为准，缺键会导致 tsc 报错）。
 - **每次同步 GitHub 后必须编译测试**——拉取远程提交（快进/合并/清理）后，
-  对新状态立即验证：`cargo check` + `cargo test` + `npx tsc --noEmit`
+  对新状态立即验证：`cargo check` + `cargo test` + `pnpm exec tsc --noEmit`
   （必要时再跑前端 build），确认远程改动在本机可编译、测试通过后再交付测试。
   若失败，如实报告并定位后再继续。

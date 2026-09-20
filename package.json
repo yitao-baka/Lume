@@ -11,6 +11,7 @@
     "tauri": "tauri"
   },
   "license": "MIT",
+  "packageManager": "pnpm@12.3.4",
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.2",

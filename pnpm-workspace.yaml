@@ -1,0 +1,5 @@
+# Allow pnpm to run package build scripts. Only esbuild needs one here (its
+# postinstall verifies the platform binary); everything else defaults to no
+# postinstall. See pnpm 12 settings → `allowBuilds`.
+allowBuilds:
+  esbuild: true

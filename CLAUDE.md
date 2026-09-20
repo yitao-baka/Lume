@@ -172,7 +172,29 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**提权注入代理（ROADMAP #22, complete) — as of 2026-09-19**: 自动动作对**以管理员
+**提权代理后续修理与生命周期（ROADMAP #22 follow-up, complete) — as of 2026-09-20**:
+四个问题的实机修复与一个生命周期改动。
+① **注册失败的根因**：`schtasks /Create /XML` 拒绝带 `encoding=` 属性的 XML 声明
+（`<?xml… encoding="UTF-8"?>`），报 `错误: 任务 XML 格式错误 (1,40) 无法切换编码`；
+`task_xml` 去掉 XML 声明后同一内容即可正常注册（实测带声明一律失败、不带一律成功，
+与文件编码无关）。
+② **注册失败的原因可见**：提权代理经 `ShellExecuteW(runas)` 分离运行、无控制台，
+出错时错误被吞、设置页只显示笼统「注册失败」。现在 `--install-task` / `--uninstall-task`
+把结果写 `%TEMP%\lume-agent-install.result`，主进程等回传并展示**真实错误**；
+`agent_install`/`agent_uninstall` 改 async + `spawn_blocking` 不卡 UI。
+③ **debug 版代理弹黑窗口抢焦点**：只有 release 是 Windows 子系统；改**所有构建**都用
+`windows_subsystem="windows"`（GUI 子系统进程不获得控制台）。
+④ **更详细的日志**：`agent::ensure_reason` 返回 `AgentUnavailable{NotInstalled,RunFailed,TimedOut}`，
+回退到进程内发送时打印具体原因；armed 日志带目标完整性；进程内发送标注目标是否提权。
+⑤ **代理用完即灭活（非驻留）**：规则经代理发送完成后立即 `agent::shutdown()`；`shutdown`
+改为优雅退出（置 `should_exit`，等 `active==0` 才走），在途注入绝不会被掐断；「登录后
+常驻代理」仍保持存活。**权衡**：非驻留每次触发多一轮冷启动（~100–300ms），且与常驻互斥。
+验证：cargo test **125 通过（+3）** 全 target 编译干净；实机 UAC 复现并确认修复
+（原样 XML 失败 → 去声明后 `Lume\LumeAgent` 注册成功、pe 子系统 = GUI）。
+**遗留**：`clipboard::tests::merge_skips_duplicate_last_piece` 是既有 flaky
+（1500ms 合并窗口计时，偶发），没碰。
+
+**Prior: 提权注入代理（ROADMAP #22, complete) — as of 2026-09-19**: 自动动作对**以管理员
 权限运行的目标程序**永远不生效，根因是 UIPI（`SendInput` 只投递给同级或更低完整性
 级别的窗口，且微软文档明确**失败无法从 `GetLastError`/返回值读出**）。完整性级别是
 **进程级**属性（线程 impersonation 无法升 IL，UIAccess 文档亦写明无法穿越 IL 边界），

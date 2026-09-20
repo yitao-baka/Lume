@@ -53,6 +53,19 @@ pub const STARTUP_WAIT: Duration = Duration::from_millis(2500);
 const PING_TIMEOUT: Duration = Duration::from_millis(500);
 /// Timeout for `inject` — the agent may be sleeping its 延迟触发 first.
 const INJECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long the launcher waits for the elevated install/uninstall verb to
+/// report its result after the UAC prompt has been accepted.
+const INSTALL_WAIT: Duration = Duration::from_secs(15);
+/// Where the elevated agent records the outcome of `--install-task` /
+/// `--uninstall-task`, read back by the medium-IL launcher so a registration
+/// failure is not silent. Lives in `%TEMP%` — both processes are the same user
+/// (the elevated token is a split token of the same identity), so the medium
+/// launcher can read what the elevated one wrote.
+pub const RESULT_FILE_NAME: &str = "lume-agent-install.result";
+
+fn result_file_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(RESULT_FILE_NAME)
+}
 
 /// Machine reason keys reported by [`inject`] / [`inject_via_agent`] and mapped
 /// to localized messages by the settings UI.
@@ -256,8 +269,7 @@ fn task_xml(exe: &Path, user_sid: &str) -> String {
         path.into_owned()
     };
     format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+        r#"<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>Lume elevation agent - injects a configured hotkey into higher-integrity windows (input only; no UI, no files).</Description>
     <URI>{TASK_PATH}</URI>
@@ -390,23 +402,99 @@ pub fn shutdown() -> bool {
     crate::pipe::transact(AGENT_PIPE, r#"{"t":"shutdown"}"#, PING_TIMEOUT).is_ok()
 }
 
+/// Why [`ensure`] could not bring the agent up. Lets the caller log the *real*
+/// cause instead of a bare "no agent", so an elevated target is not a mystery
+/// when it falls back to an in-process send.
+#[derive(Debug)]
+pub enum AgentUnavailable {
+    /// The scheduled task `Lume\LumeAgent` does not exist — the one-time
+    /// registration (设置/系统 → 提权代理 → 注册) was never done.
+    NotInstalled,
+    /// The task exists but `schtasks /Run` refused or errored.
+    RunFailed(String),
+    /// The task ran but the agent did not answer on the pipe within `wait`.
+    TimedOut,
+}
+
 /// Make sure an agent is reachable, triggering the scheduled task when not.
 /// Returns `false` when the agent is not installed or would not come up.
 pub fn ensure(wait: Duration) -> bool {
+    ensure_reason(wait).is_ok()
+}
+
+/// [`ensure`] with the specific reason on failure, so callers can log it.
+pub fn ensure_reason(wait: Duration) -> Result<(), AgentUnavailable> {
     if ping().is_some() {
-        return true;
+        return Ok(());
     }
-    if !task_installed() || run_task().is_err() {
-        return false;
+    if !task_installed() {
+        return Err(AgentUnavailable::NotInstalled);
+    }
+    if let Err(e) = run_task() {
+        return Err(AgentUnavailable::RunFailed(e));
     }
     let deadline = Instant::now() + wait;
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(60));
         if ping().is_some() {
-            return true;
+            return Ok(());
         }
     }
-    false
+    Err(AgentUnavailable::TimedOut)
+}
+
+// ---------------------------------------------------------------------------
+// Install / uninstall result handoff
+// ---------------------------------------------------------------------------
+
+/// Parse the elevated agent's one-line outcome record. Pure — unit-tested.
+/// Format: `ok\n` on success, `err <message>\n` on failure.
+fn parse_install_result(data: &str) -> Result<(), String> {
+    let t = data.trim_end();
+    if t == "ok" {
+        return Ok(());
+    }
+    if let Some(rest) = t.strip_prefix("err ") {
+        return Err(rest.to_string());
+    }
+    Err("unexpected result record".into())
+}
+
+/// The elevated agent records its install/uninstall outcome for the launcher
+/// to read (`wait_install_result`). Best effort — a failed write must not
+/// change the exit behaviour, the launcher simply times out.
+pub fn write_install_result(result: &Result<(), String>) {
+    let record = match result {
+        Ok(()) => "ok\n".to_string(),
+        Err(e) => {
+            // Keep it one line so the reader's `strip_prefix` is unambiguous.
+            let msg = e.replace(['\r', '\n'], " | ");
+            format!("err {msg}\n")
+        }
+    };
+    let _ = std::fs::write(result_file_path(), record.as_bytes());
+}
+
+/// Wait for the elevated install/uninstall verb to record its outcome (it
+/// runs detached after the UAC prompt, so the launcher must poll). Returns the
+/// agent's result verbatim — an `Err` message is the exact reason the
+/// registration failed, which the UI shows instead of a blank "注册失败".
+fn wait_install_result(timeout: Duration) -> Result<Result<(), String>, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(data) = std::fs::read(result_file_path()) {
+            let text = String::from_utf8_lossy(&data);
+            let outcome = parse_install_result(&text);
+            return Ok(outcome);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "the elevated agent did not report within {} s",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// Send one inject request through the agent.
@@ -453,6 +541,10 @@ struct Ctx {
     active: AtomicU32,
     /// Set by a client that wants the agent to stay after it goes idle.
     stay: AtomicBool,
+    /// Set by a `shutdown` request. The agent exits as soon as no request is
+    /// in flight (so an in-flight injection is never killed mid-send), instead
+    /// of waiting out the 60 s idle window.
+    should_exit: AtomicBool,
 }
 
 fn now_millis() -> u64 {
@@ -515,6 +607,7 @@ pub fn serve() -> Result<(), String> {
         last_activity: AtomicU64::new(now_millis()),
         active: AtomicU32::new(0),
         stay: AtomicBool::new(false),
+        should_exit: AtomicBool::new(false),
     });
 
     spawn_idle_watchdog(&ctx);
@@ -622,20 +715,12 @@ fn serve_connection(wrapper: SendHandle, ctx: &Arc<Ctx>) {
 
     let reply = match read_request(pipe) {
         Some(payload) => {
-            let (reply, shutdown) = dispatch(pipe, ctx, &payload);
+            let reply = dispatch(pipe, ctx, &payload);
             let wire = reply.to_wire();
             let mut out = Vec::with_capacity(wire.len() + 4);
             out.extend_from_slice(&(wire.len() as u32).to_le_bytes());
             out.extend_from_slice(wire.as_bytes());
             let _ = unsafe { WriteFile(pipe, Some(&out), None, None) };
-            if shutdown {
-                // Give the client time to read the reply before the process
-                // goes away; the socket closing first would lose it.
-                std::thread::spawn(|| {
-                    std::thread::sleep(Duration::from_millis(250));
-                    std::process::exit(0);
-                });
-            }
             true
         }
         None => false,
@@ -653,6 +738,13 @@ fn serve_connection(wrapper: SendHandle, ctx: &Arc<Ctx>) {
 
     ctx.active.fetch_sub(1, Ordering::SeqCst);
     ctx.last_activity.store(now_millis(), Ordering::SeqCst);
+    // A request asked to tear the agent down: exit the moment this was the
+    // last request in flight (the reply above is already delivered, so nothing
+    // the client is waiting on is lost). If another injection is still active,
+    // `active > 0` keeps us alive until it finishes.
+    if ctx.should_exit.load(Ordering::SeqCst) && ctx.active.load(Ordering::SeqCst) == 0 {
+        std::process::exit(0);
+    }
     let _ = unsafe { DisconnectNamedPipe(pipe) };
     let _ = unsafe { CloseHandle(pipe) };
 }
@@ -673,48 +765,45 @@ fn read_request(pipe: windows::Win32::Foundation::HANDLE) -> Option<String> {
     Some(String::from_utf8_lossy(&buf[4..4 + len]).into_owned())
 }
 
-/// Handle one request. Returns the reply and whether the agent should exit.
+/// Handle one request. Returns the reply to send back.
 fn dispatch(
     pipe: windows::Win32::Foundation::HANDLE,
     ctx: &Arc<Ctx>,
     payload: &str,
-) -> (AgentReply, bool) {
+) -> AgentReply {
     let request: AgentRequest = match serde_json::from_str(payload) {
         Ok(r) => r,
         Err(_) => {
-            return (
-                AgentReply::Error {
-                    message: "bad json".into(),
-                },
-                false,
-            );
+            return AgentReply::Error {
+                message: "bad json".into(),
+            };
         }
     };
 
     let session = ctx.session.unwrap_or(u32::MAX);
     match request {
-        AgentRequest::Hello => (
-            AgentReply::HelloAck {
-                ok: true,
-                elevated: ctx.elevated,
-                session,
-            },
-            false,
-        ),
-        AgentRequest::Status => (
-            AgentReply::Status {
-                elevated: ctx.elevated,
-                session,
-                sent_total: ctx.sent_total.load(Ordering::Relaxed),
-                uptime_s: ctx.started.elapsed().as_secs(),
-            },
-            false,
-        ),
+        AgentRequest::Hello => AgentReply::HelloAck {
+            ok: true,
+            elevated: ctx.elevated,
+            session,
+        },
+        AgentRequest::Status => AgentReply::Status {
+            elevated: ctx.elevated,
+            session,
+            sent_total: ctx.sent_total.load(Ordering::Relaxed),
+            uptime_s: ctx.started.elapsed().as_secs(),
+        },
         AgentRequest::Stay => {
             ctx.stay.store(true, Ordering::SeqCst);
-            (AgentReply::StayAck { ok: true }, false)
+            AgentReply::StayAck { ok: true }
         }
-        AgentRequest::Shutdown => (AgentReply::ShutdownAck { ok: true }, true),
+        AgentRequest::Shutdown => {
+            // Not an immediate `exit(0)`: the watchdog exits once `active`
+            // drops to zero, so a concurrent injection still in flight is
+            // allowed to finish (a hotkey must never be cut off mid-send).
+            ctx.should_exit.store(true, Ordering::SeqCst);
+            AgentReply::ShutdownAck { ok: true }
+        }
         AgentRequest::Inject {
             combo,
             pid,
@@ -725,12 +814,9 @@ fn dispatch(
             // Gate on who is asking before doing any work: a session mismatch
             // or a foreign client is refused outright.
             if let Some(reason_key) = deny_reason(pipe, ctx) {
-                return (AgentReply::inject_fail(reason_key), false);
+                return AgentReply::inject_fail(reason_key);
             }
-            (
-                inject_one(ctx, &combo, pid, hwnd, delay_ms, force_focus),
-                false,
-            )
+            inject_one(ctx, &combo, pid, hwnd, delay_ms, force_focus)
         }
     }
 }
@@ -822,8 +908,13 @@ fn spawn_idle_watchdog(ctx: &Arc<Ctx>) {
         .name("agent-idle".into())
         .spawn(move || loop {
             std::thread::sleep(Duration::from_secs(5));
+            // `stay` (常驻) or an in-flight request keep the process alive.
             if ctx.stay.load(Ordering::Relaxed) || ctx.active.load(Ordering::Relaxed) > 0 {
                 continue;
+            }
+            // A `shutdown` was requested: exit now, not just at the idle mark.
+            if ctx.should_exit.load(Ordering::Relaxed) {
+                std::process::exit(0);
             }
             let idle = now_millis().saturating_sub(ctx.last_activity.load(Ordering::Relaxed));
             if idle >= IDLE_EXIT_SECS * 1000 {
@@ -854,24 +945,45 @@ pub fn agent_status() -> Result<AgentStatus, String> {
 }
 
 /// Register the helper's scheduled task (one UAC prompt). The elevated
-/// `lume-agent.exe --install-task` does the actual work and exits.
+/// `lume-agent.exe --install-task` does the actual work and writes its outcome
+/// to a temp file; we wait for it so a real failure (schtasks error, SID, …)
+/// reaches the user instead of being silently discarded by the detached
+/// elevated process.
+///
+/// Async + `spawn_blocking`: the UAC prompt and the up-to-`INSTALL_WAIT` poll
+/// must never block the main thread (the UI would freeze).
 #[tauri::command]
-pub fn agent_install() -> Result<(), String> {
+pub async fn agent_install() -> Result<(), String> {
     let exe = agent_exe_path();
     if !exe.exists() {
         return Err(format!("{AGENT_EXE} not found next to the launcher"));
     }
-    crate::svc::launch_elevated(&exe, "--install-task")
+    // Drop a stale record from a previous attempt so a fresh result is never
+    // confused with an old one.
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = std::fs::remove_file(result_file_path());
+        crate::svc::launch_elevated(&exe, "--install-task")?;
+        wait_install_result(INSTALL_WAIT)?
+    })
+    .await
+    .map_err(|_| "registration task panicked".to_string())?
 }
 
-/// Remove the task and stop the helper (one UAC prompt).
+/// Remove the task and stop the helper (one UAC prompt). Same result-handoff
+/// as [`agent_install`].
 #[tauri::command]
-pub fn agent_uninstall() -> Result<(), String> {
+pub async fn agent_uninstall() -> Result<(), String> {
     let exe = agent_exe_path();
     if !exe.exists() {
         return Err(format!("{AGENT_EXE} not found next to the launcher"));
     }
-    crate::svc::launch_elevated(&exe, "--uninstall-task")
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = std::fs::remove_file(result_file_path());
+        crate::svc::launch_elevated(&exe, "--uninstall-task")?;
+        wait_install_result(INSTALL_WAIT)?
+    })
+    .await
+    .map_err(|_| "uninstall task panicked".to_string())?
 }
 
 #[cfg(test)]
@@ -985,6 +1097,48 @@ mod tests {
         assert!(!sddl.contains(";;;WD)"), "must not grant Everyone: {sddl}");
     }
 
+    /// The elevated install/uninstall outcome record round-trips, newlines in
+    /// the message collapse so the on-disk record stays one line, and a
+    /// malformed record is reported rather than misread as success.
+    #[test]
+    fn install_result_parses_ok_and_err() {
+        assert_eq!(parse_install_result("ok\n"), Ok(()));
+        assert_eq!(parse_install_result("ok"), Ok(()), "trailing newline is optional");
+        assert_eq!(
+            parse_install_result("err cannot resolve the current user SID\n"),
+            Err("cannot resolve the current user SID".into())
+        );
+        assert!(parse_install_result("garbage\n").is_err());
+    }
+
+    #[test]
+    fn install_result_round_trips_through_the_file() {
+        let path = result_file_path();
+        let _ = std::fs::remove_file(&path);
+
+        write_install_result(&Err("schtasks /Create failed: denied".to_string()));
+        let data = std::fs::read(&path).unwrap();
+        let text = String::from_utf8_lossy(&data);
+        assert_eq!(
+            parse_install_result(&text),
+            Err("schtasks /Create failed: denied".into())
+        );
+
+        write_install_result(&Ok(()));
+        let data = std::fs::read(&path).unwrap();
+        assert!(parse_install_result(&String::from_utf8_lossy(&data)).is_ok());
+
+        // A multi-line message collapses to one line so the reader's prefix
+        // match is unambiguous.
+        write_install_result(&Err("first\nsecond".to_string()));
+        let data = std::fs::read(&path).unwrap();
+        let text = String::from_utf8_lossy(&data);
+        assert_eq!(text.lines().count(), 1);
+        assert!(parse_install_result(&text).is_err());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// The task definition carries the four settings the whole design rests on.
     #[test]
     fn task_xml_carries_the_load_bearing_settings() {
@@ -1000,6 +1154,19 @@ mod tests {
         let plain = task_xml(Path::new(r"C:\Lume\lume-agent.exe"), "S-1-5-21-1-2-3-1001");
         assert!(plain.contains(r"<Command>C:\Lume\lume-agent.exe</Command>"));
         assert!(!plain.contains(r#""C:\Lume"#));
+    }
+
+    /// `schtasks /Create /XML` refuses a declaration that carries an
+    /// `encoding=` attribute — we measured `错误: 任务 XML 格式错误 (1,40)
+    /// 无法切换编码` for exactly this XML while the same body *without* the
+    /// declaration registers cleanly. The generated XML must therefore open
+    /// with `<Task …>` and never carry a `<?xml …?>` declaration.
+    #[test]
+    fn task_xml_omits_the_declaration_schtasks_rejects() {
+        let xml = task_xml(Path::new(r"C:\Lume\lume-agent.exe"), "S-1-5-21-1-2-3-1001");
+        assert!(xml.starts_with("<Task "), "must open with <Task>, was: {}", &xml[..xml.len().min(40)]);
+        assert!(!xml.contains("<?xml"), "an encoding declaration breaks schtasks /Create /XML");
+        assert!(!xml.contains("encoding="), "the encoding attribute is what schtasks rejects");
     }
 
     /// The trigger and principal must both name the installing user.

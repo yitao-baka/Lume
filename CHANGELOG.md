@@ -32,7 +32,40 @@ All notable changes to Lume are documented here. Format based on
   `autoTest{NeedsAgent,AgentUnavailable,Blocked,FocusMoved}`、`settingsAgent*`），
   三语言键集一致（253 键）。
 
+### Changed
+
+- **代理用完即灭活（非驻留）** — 「登录后常驻代理」关闭时，一条规则的快捷键经
+  提权代理发送**完成**后立即关闭代理，而不是让它再闲置约 60s 才自灭。为兼容并发
+  规则，`shutdown` 改为**优雅退出**：代理收到 `shutdown` 只置 `should_exit`，等
+  **没有任何请求在途**（`active == 0`）才真正退出——正在发送中的另一条规则不会
+  被掐断；常驻模式仍保持代理存活。对应 `agent.rs`（`Ctx.should_exit`、
+  `dispatch` 的 `Shutdown` 分支、`serve_connection` 收尾检查、
+  `spawn_idle_watchdog`）与 `automation.rs`（`send_later` 注入完成后
+  `agent::shutdown()`）。**代价**：每次非驻留触发都有一轮冷启动（`schtasks /Run`
+  + 起提权进程，约 100–300ms），且与「登录后常驻代理」互相矛盾（要 0 冷启动就开
+  常驻，要即杀就关常驻）。
+- **更详细的自动动作日志** — `agent::ensure_reason` 返回 `AgentUnavailable`
+  （未注册 / Run 失败 / 启动超时），回退到进程内 `SendInput` 时明确打印**具体原因**
+  而非笼统的「no agent」；armed 日志附加目标完整性；进程内发送成功时注明目标是否
+  已提权（`automation.rs`）。
+
 ### Fixed
+
+- **提权代理注册失败（根因）** — `schtasks /Create /XML` 拒绝我们生成的 XML，
+  因为声明行 `<?xml version="1.0" encoding="UTF-8"?>` 带 `encoding=` 属性，报
+  `错误: 任务 XML 格式错误 (1,40) 无法切换编码`。去掉 XML 声明后同一内容即可正常
+  注册（实测：带 `encoding=` 声明的一律失败、不带的一律成功，与文件编码无关）。
+  （`agent.rs` `task_xml`）
+- **注册失败的原因被吞掉** — 提权代理经 `ShellExecuteW(runas)` 分离运行且无
+  控制台，一旦 `--install-task` 出错，错误不可见，设置页只显示笼统「注册失败」。
+  现在 `--install-task` / `--uninstall-task` 把结果写入
+  `%TEMP%\lume-agent-install.result`，主进程等待并读回，把**真实错误**（如
+  schtasks 报错）直接抛给设置页；`agent_install` / `agent_uninstall` 改为
+  async + `spawn_blocking` 以免等待期间卡 UI。
+- **debug 版代理弹出黑窗口抢焦点且不自动关** — `lume-agent.exe` 之前只有 release
+  用 Windows 子系统，debug 是控制台子系统，计划任务拉起 `--serve` 时会弹出一个
+  抢焦点的黑窗口、在代理存活期间不关。现改为**所有构建**都用
+  `windows_subsystem="windows"`（GUI 子系统进程不会获得控制台）。
 
 - **自动动作的发送结果是假的** — `send_combo` 过去丢弃 `SendInput` 的返回值并无
   条件返回成功，因此日志总是打印「sent」，即使输入被 UIPI 静默丢弃。现在检查实际
@@ -112,6 +145,13 @@ All notable changes to Lume are documented here. Format based on
   永不拖住键入。管道协议升级为长度前缀 JSON 多动词（hello/search/status）。
   新增 `scripts/cdp_filesearch_smoke.mjs` 实机冒烟与三个 `#[ignore]` 集成
   测试（Everything 实查 / 管道往返 / 管理员 MFT 实扫）。
+
+- **125 单测通过（+3）** — `agent.rs` 新增 `install_result_parses_ok_and_err` /
+  `install_result_round_trips_through_the_file`（安装结果文件解析与往返）、
+  `task_xml_omits_the_declaration_schtasks_rejects`（钉住 schtasks 拒绝
+  `encoding=` 声明的回归）。注意：`clipboard::tests::merge_skips_duplicate_
+  last_piece` 是**既有的间歇性 flaky**（依赖 1500ms 合并窗口计时，偶发失败），
+  与本次改动无关（未触碰 clipboard.rs）。
 
 ### Fixed
 

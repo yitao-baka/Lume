@@ -34,7 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     HWND_MESSAGE, WINDOW_STYLE, WINDOW_EX_STYLE, WNDCLASS_STYLES, WNDCLASSEXW, HCURSOR, HICON, MSG,
 };
 
-use crate::agent::{self, reason};
+use crate::agent::{self, reason, AgentUnavailable};
 use crate::input;
 
 /// Pending "created but not yet activated" windows that matched a rule. Keyed
@@ -200,10 +200,19 @@ unsafe fn handle_shell(app: &AppHandle, accessor: u32, raw_hwnd: isize) {
             }
             let Some((exe_path, exe_name)) = input::exe_of_hwnd(hwnd) else { return };
             let Some(rule) = rules_for(app, &exe_path, &exe_name) else { return };
+            let owner_pid = input::pid_of_hwnd(hwnd);
+            let elev = match owner_pid {
+                Some(p) => match input::is_process_elevated(p) {
+                    Some(true) => ", target elevated",
+                    Some(false) => ", target not elevated",
+                    None => "",
+                },
+                None => "",
+            };
             eprintln!(
-                "[automation] rule \"{}\": armed for window {raw_hwnd:#x} ({}), delay {} ms{}{}",
+                "[automation] rule \"{}\": armed for window {raw_hwnd:#x} ({}), delay {} ms{elev}{}{}",
                 rule.label(),
-                describe_process(input::pid_of_hwnd(hwnd)),
+                describe_process(owner_pid),
                 rule.delay_ms,
                 if rule.force_focus { ", force-focus on" } else { "" },
                 if rule.use_agent { ", agent on" } else { "" }
@@ -287,28 +296,58 @@ fn send_later(rule: PendingAction, owner_pid: Option<u32>, raw_hwnd: isize) {
 
             // `ensure` pings first, so an already-running agent is used even if
             // the task is not registered (e.g. one started by hand for testing).
-            if rule.use_agent && agent::ensure(agent::STARTUP_WAIT) {
-                if rule.agent_resident {
-                    // 常驻 mode: keep the helper alive past its idle timeout.
-                    agent::stay();
-                }
-                match agent::inject(&rule.combo, pid, raw_hwnd, rule.delay_ms, rule.force_focus) {
-                    Ok(sent) => eprintln!(
-                        "[automation] rule \"{label}\": sent after {} ms to {target} via the agent ({sent} events)",
-                        rule.delay_ms
-                    ),
-                    Err(key) => eprintln!(
-                        "[automation] rule \"{label}\": not sent after {} ms to {target} via the agent — {key}",
-                        rule.delay_ms
-                    ),
-                }
-                return;
-            }
             if rule.use_agent {
-                eprintln!(
-                    "[automation] rule \"{label}\": no elevation agent available — falling back to an in-process send \
-                     (register it in 设置/系统 to reach elevated programs)"
-                );
+                match agent::ensure_reason(agent::STARTUP_WAIT) {
+                    Ok(()) => {
+                        if rule.agent_resident {
+                            // 常驻 mode: keep the helper alive past its idle timeout.
+                            agent::stay();
+                        }
+                        match agent::inject(&rule.combo, pid, raw_hwnd, rule.delay_ms, rule.force_focus)
+                        {
+                            Ok(sent) => eprintln!(
+                                "[automation] rule \"{label}\": sent after {} ms to {target} via the elevation agent ({sent} events)",
+                                rule.delay_ms
+                            ),
+                            Err(key) => eprintln!(
+                                "[automation] rule \"{label}\": not sent after {} ms to {target} via the elevation agent — {key}",
+                                rule.delay_ms
+                            ),
+                        }
+                        // 每次规则触发用完后立刻灭活(非常驻)。Agent::inject already
+                        // returned, so *this* rule is done; `shutdown` tells the agent
+                        // to exit the moment no other injection is in flight — a
+                        // concurrent rule is never cut off mid-send. 常驻 mode opts
+                        // out and deliberately keeps the helper warm instead.
+                        if !rule.agent_resident {
+                            agent::shutdown();
+                            eprintln!(
+                                "[automation] rule \"{label}\": elevation agent torn down (non-resident)"
+                            );
+                        }
+                        return;
+                    }
+                    Err(why) => {
+                        // Log the *specific* reason the agent is unavailable, so
+                        // a fallback to in-process SendInput is not a mystery.
+                        let why = match why {
+                            AgentUnavailable::NotInstalled => {
+                                "the scheduled task Lume\\LumeAgent is not registered".to_string()
+                            }
+                            AgentUnavailable::RunFailed(e) => {
+                                format!("the scheduled task Lume\\LumeAgent failed to start ({e})")
+                            }
+                            AgentUnavailable::TimedOut => format!(
+                                "the agent was started but did not answer within {} ms",
+                                agent::STARTUP_WAIT.as_millis()
+                            ),
+                        };
+                        eprintln!(
+                            "[automation] rule \"{label}\": elevation agent unavailable — {why}; falling back to an in-process send \
+                             (register it in 设置/系统 to reach elevated programs)"
+                        );
+                    }
+                }
             }
 
             if rule.delay_ms > 0 {
@@ -348,12 +387,13 @@ fn send_later(rule: PendingAction, owner_pid: Option<u32>, raw_hwnd: isize) {
                 eprintln!("[automation] rule \"{label}\": foreground restored, sending");
             }
 
+            let elevated = input::is_process_elevated(pid).unwrap_or(false);
             match input::send_combo(&rule.combo) {
                 Ok(0) => {
                     // `SendInput` inserts nothing when the input is blocked —
                     // UIPI against a higher-integrity foreground window is the
                     // usual cause and cannot be told apart from other blocks.
-                    if input::is_process_elevated(pid).unwrap_or(false) {
+                    if elevated {
                         eprintln!(
                             "[automation] rule \"{label}\": {target} runs elevated and this process does not, \
                              so Windows dropped the input ({}) — register the elevation agent in 设置/系统",
@@ -366,10 +406,17 @@ fn send_later(rule: PendingAction, owner_pid: Option<u32>, raw_hwnd: isize) {
                         );
                     }
                 }
-                Ok(sent) => eprintln!(
-                    "[automation] rule \"{label}\": sent after {} ms to {target} ({sent} events)",
-                    rule.delay_ms
-                ),
+                Ok(sent) => {
+                    let note = if elevated {
+                        " (target runs elevated — in-process SendInput cannot reliably reach it)"
+                    } else {
+                        " (target not elevated)"
+                    };
+                    eprintln!(
+                        "[automation] rule \"{label}\": sent after {} ms to {target} via in-process SendInput ({sent} events){note}",
+                        rule.delay_ms
+                    );
+                }
                 Err(input::ComboError::BadCombo) => {
                     eprintln!("[automation] rule \"{label}\": not sent ({})", reason::BAD_COMBO)
                 }

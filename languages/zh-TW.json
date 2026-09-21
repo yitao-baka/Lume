@@ -254,5 +254,6 @@
   "pluginBuiltin": "內建",
   "pluginDisk": "磁碟",
   "pluginReload": "重載",
-  "pluginDev": "開發"
+  "pluginDev": "開發",
+  "pluginActionUnavailable": "外掛無法處理該動作：{id}"
 }

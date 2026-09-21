@@ -3,6 +3,7 @@
 //! pages reach the same surface through the postMessage bridge (§ iframe).
 
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "../i18n";
 import type {
   DialogOptions,
   DisplayInfo,
@@ -93,6 +94,27 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       notify: async (title, body) => {
         plog.debug(id, "app.notify:", title);
         await invoke("plugin_notify", { title, body, pluginId: id });
+      },
+      setSubInput: (opts) => {
+        plog.debug(id, "app.setSubInput:", opts?.placeholder ?? "");
+        services.setSubInput(id, opts ?? {});
+      },
+      removeSubInput: () => {
+        plog.debug(id, "app.removeSubInput");
+        services.setSubInput(id, null);
+      },
+      redirect: (pluginId, opts) => {
+        plog.debug(id, "app.redirect →", pluginId, opts?.code ?? "");
+        const target = String(pluginId ?? "");
+        const ok = services.enterPlugin(target, {
+          code: opts?.code ?? "",
+          type: "redirect",
+          payload: opts?.payload ?? "",
+        });
+        if (!ok) {
+          plog.warn(id, `redirect target unavailable: ${target}`);
+          services.showToast(t("pluginActionUnavailable", { id: target }));
+        }
       },
     },
     clipboard: {

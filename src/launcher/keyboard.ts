@@ -27,6 +27,9 @@ export interface KeyDeps {
   activeMode: () => ModeInstance | undefined;
   /** Let the active mode consume Esc (multi-select) before hiding. */
   onModeEscape: () => boolean;
+  /** Root-level transient layers (a provider drill-down level) pop here,
+   * ahead of the mode's own Esc handling. True = consumed. */
+  onGridEscape?: () => boolean;
   gridCols: () => number;
   moveSelection: (delta: number) => void;
   activate: () => void;
@@ -59,6 +62,8 @@ export function createKeyRouter(deps: KeyDeps) {
       e.preventDefault();
       if (deps.menu()) {
         deps.closeMenu();
+      } else if (deps.onGridEscape?.()) {
+        // A root-level transient layer (drill-down) consumed Esc — stay open.
       } else if (deps.onModeEscape()) {
         // The active mode consumed Esc (e.g. leave multi-select) — stay open.
       } else if (deps.currentPreview()) {

@@ -22,6 +22,7 @@ import {
   TOAST_MS,
   TOAST_UNDO_MS,
 } from "./launcher/types";
+import type { ProviderInstance, ProviderResult } from "./plugins/types";
 import { createIconStore } from "./launcher/icons";
 import { createWindowSizer } from "./launcher/sizing";
 import { createNavigateStore, type ContributedBar } from "./launcher/navigate";
@@ -32,10 +33,14 @@ import {
   APPS_MODE,
   allPlugins,
   definePlugin,
+  deliverFeature,
+  deliverSubInput,
+  featureMatches,
   modeById,
   modeKeywordMatches,
   modePlugins,
   navBarPlugins,
+  pluginKind,
   providerPlugins,
   refreshPlugins,
   reloadDiskPlugin,
@@ -90,6 +95,18 @@ function App() {
   /** Plugin-driven placeholders keyed by plugin id (app.setPlaceholder) —
    * shown while that plugin's mode page is active, "" = default text. */
   const [modePlaceholders, setModePlaceholders] = createSignal<Record<string, string>>({});
+  /** Search-box ownership (P2.3): the plugin currently receiving keystrokes
+   * instead of a normal search. Cleared on every summon, mode switch and
+   * plugin reload — ownership is session state, never persisted. */
+  const [subInput, setSubInput] = createSignal<{ pluginId: string; placeholder: string } | null>(null);
+  /** Provider drill-down level (P2.4): the row we descended into plus the
+   * rows of the level above, so Esc can pop back. */
+  const [drill, setDrill] = createSignal<{
+    pluginId: string;
+    item: unknown;
+    parent: AppEntry[];
+    filterable: boolean;
+  } | null>(null);
   /** Settings-driven: 记住上次所在页面 — restore the last page (mode + clipboard
    * category) on the next summon instead of always starting on Navigate. */
   const [rememberLastPage, setRememberLastPage] = createSignal(_a?.remember_last_page ?? false);
@@ -184,6 +201,9 @@ function App() {
     nav.setRecentExpanded(false); // don't persist the expanded state across shows
     nav.setPinnedExpanded(expandPinned());
     setMenu(null);
+    // 子输入框与下钻层都是「本次呼出」级状态：新的一次召唤由宿主拥有搜索框。
+    setSubInput(null);
+    setDrill(null);
     for (const p of allPlugins()) p.mode?.reset();
     nav.setNavHidden(false); // fresh show always starts with the nav box visible
     sizer.invalidate(); // force a re-measure on the next show (mode may have changed)
@@ -284,6 +304,33 @@ function App() {
         .then(() => invoke("apply_position"))
         .catch((err) => console.error("resize failed:", err));
     },
+    setSubInput: (pluginId, opts) => {
+      // P2.3 — one owner at a time; `null` releases. Releasing is a no-op when
+      // some other plugin holds the box (a plugin can never steal or drop
+      // another's ownership by accident).
+      setSubInput((prev) => {
+        if (!opts) return prev?.pluginId === pluginId ? null : prev;
+        if (prev && prev.pluginId !== pluginId) return prev;
+        return { pluginId, placeholder: opts.placeholder ?? "" };
+      });
+      if (opts && typeof opts.value === "string") {
+        setQuery(opts.value);
+        if (pluginId === mode()) deliverSubInput(pluginId, opts.value);
+      }
+    },
+    subInputOwner: () => subInput()?.pluginId ?? null,
+    enterPlugin: (pluginId, info) => {
+      const kind = pluginKind(pluginId);
+      if (!kind) return false;
+      if (kind === "mode") {
+        // Switch first (the mode's page must exist), then deliver the payload.
+        void switchMode(pluginId).then(() => {
+          deliverFeature(pluginId, info);
+        });
+        return true;
+      }
+      return deliverFeature(pluginId, info);
+    },
   };
   setPluginServices(services);
   // Plugin registration — first-party plugins exercise every v1 contract.
@@ -325,6 +372,7 @@ function App() {
     nav,
     activeMode,
     onModeEscape: () => activeMode()?.onEscape() ?? false,
+    onGridEscape: () => popDrill(),
     gridCols: () => sizer.gridCols(),
     moveSelection,
     activate,
@@ -363,11 +411,69 @@ function App() {
     await invoke("hide_launcher");
   }
 
+  /** Convert one provider result into a grid entry — shared by the search
+   * merge and by drilled levels (P2.4). `seq` only feeds the synthetic dedup
+   * key used for rows that open nothing. */
+  function providerRowToEntry(
+    pluginId: string,
+    instance: ProviderInstance,
+    it: ProviderResult,
+    seq: number
+  ): AppEntry | null {
+    if (!it?.name) return null;
+    const key = it.path || `lume-plugin://${pluginId}/${seq}`;
+    return {
+      id: 0,
+      name: it.name,
+      path: key,
+      ...(it.description ? { description: it.description } : {}),
+      ...(it.icon ? { icon: it.icon } : {}),
+      ...(it.enter ? { providerEnter: { pluginId, item: it } } : {}),
+      ...(it.drill && instance.select
+        ? {
+            providerDrill: {
+              pluginId,
+              item: it,
+              filterable: typeof instance.filter === "function",
+            },
+          }
+        : {}),
+    };
+  }
+
+  /** Provider rows → grid entries (drop malformed ones). */
+  function rowsToEntries(
+    pluginId: string,
+    instance: ProviderInstance,
+    rows: ProviderResult[]
+  ): AppEntry[] {
+    const out: AppEntry[] = [];
+    rows.forEach((r, i) => {
+      const e = providerRowToEntry(pluginId, instance, r, i);
+      if (e) out.push(e);
+    });
+    return out;
+  }
+
+  /** Leave a drilled level (P2.4): restore the parent rows, release the
+   * search box if this provider claimed it. Returns false when not drilled. */
+  function popDrill(): boolean {
+    const d = drill();
+    if (!d) return false;
+    setDrill(null);
+    setApps(d.parent);
+    if (subInput()?.pluginId === d.pluginId) services.setSubInput(d.pluginId, null);
+    setActiveSelected(0);
+    sizer.scheduleResize();
+    return true;
+  }
+
   /** Search the active mode's index, dropping stale responses. */
   async function runSearch(q: string) {
     setActiveSelected(0);
     nav.setNavHidden(false); // typing reveals the first entry's highlight
     nav.setZone("grid");
+    if (drill()) setDrill(null); // a fresh search leaves the drilled level
     const id = ++requestSeq;
     if (mode() === "apps") {
       if (q.trim() === "") {
@@ -394,6 +500,18 @@ function App() {
         for (const kw of modeKeywordMatches(q)) {
           extra.push({ id: -1, name: `进入 ${kw.name}`, path: `lume-mode://${kw.id}` });
         }
+        // 声明式进入（features，P2.1）：正则/任意文本命中 → 「<label>」行，
+        // 激活把当前查询作为 payload 投递给插件（mode 先切页再 onEnter）。
+        // 与关键字行同级：都在文件命中与 provider 之前，不被挤掉。
+        for (const f of featureMatches(q)) {
+          extra.push({
+            id: -1,
+            name: f.label,
+            path: `lume-feature://${f.pluginId}/${f.code}`,
+            ...(f.icon ? { icon: f.icon } : {}),
+            featureEnter: { pluginId: f.pluginId, code: f.code, type: f.type, payload: f.payload },
+          });
+        }
         for (const f of files?.entries ?? []) {
           if (res.length + extra.length >= 20) break;
           if (!f?.name || !f?.path || seen.has(f.path)) continue;
@@ -406,20 +524,12 @@ function App() {
             if (id !== requestSeq) return;
             for (const it of items ?? []) {
               if (res.length + extra.length >= 20) break;
-              if (!it?.name) continue;
-              // `enter` rows don't open anything — synthesize a stable dedup
-              // key (path stays required in the grid's entry model).
               const key = it.path || `lume-plugin://${p.id}/${extra.length}`;
               if (seen.has(key)) continue;
+              const entry = providerRowToEntry(p.id, p.instance, it, extra.length);
+              if (!entry) continue;
               seen.add(key);
-              extra.push({
-                id: 0,
-                name: it.name,
-                path: key,
-                ...(it.description ? { description: it.description } : {}),
-                ...(it.icon ? { icon: it.icon } : {}),
-                ...(it.enter ? { providerEnter: { pluginId: p.id, item: it } } : {}),
-              });
+              extra.push(entry);
             }
           } catch (err) {
             console.error("provider search failed:", p.id, err);
@@ -429,7 +539,9 @@ function App() {
         setApps(merged);
         // Rows with an explicit icon or a plugin-enter action don't go through
         // the icon pipeline (icon is already resolved / path is synthetic).
-        void icons.loadIcons(merged.filter((a) => !a.icon && !a.providerEnter));
+        void icons.loadIcons(
+          merged.filter((a) => !a.icon && !a.providerEnter && !a.featureEnter)
+        );
         sizer.scheduleResize();
       }
     } else {
@@ -458,6 +570,32 @@ function App() {
   async function onInput(e: Event) {
     const q = (e.currentTarget as HTMLInputElement).value;
     setQuery(q);
+    // 子输入框（P2.3）：拥有者接管搜索框——输入走它的 onSubInput，不再
+    // 触发常规搜索（模式页自行过滤）。只有「拥有者 = 当前模式」时生效，
+    // 切模式/重载会释放所有权。
+    const owner = subInput()?.pluginId ?? null;
+    if (owner && owner === mode() && mode() !== APPS_MODE) {
+      deliverSubInput(owner, q);
+      return;
+    }
+    // 下钻过滤（P2.4）：provider 声明了 filter 时，输入喂给当前层。
+    const d = drill();
+    if (d?.filterable && d.pluginId === owner) {
+      const p = providerPlugins().find((x) => x.id === d.pluginId);
+      const token = ++requestSeq;
+      void (async () => {
+        try {
+          const rows = await p?.instance.filter?.(d.item as never, q);
+          if (token !== requestSeq) return;
+          setApps(rowsToEntries(d.pluginId, p!.instance, rows ?? []));
+          setActiveSelected(0);
+          sizer.scheduleResize();
+        } catch (err) {
+          console.error("provider filter failed:", d.pluginId, err);
+        }
+      })();
+      return;
+    }
     // Disk service plugins see every Navigate keystroke (non-empty).
     if (q.trim()) for (const p of allPlugins()) p.lifecycle?.onQuery?.(q);
     await runSearch(q);
@@ -518,6 +656,9 @@ function App() {
   async function switchMode(m: ModeId) {
     if (m === mode()) return;
     setMode(m);
+    // 搜索框所有权与下钻层属于上一个页面：切模式即交还宿主（P2.3/P2.4）。
+    setSubInput(null);
+    setDrill(null);
     // A plugin mode always starts from a clean page (All category, no
     // multi-select) with its own (independent) query.
     const inst = modeById(m);
@@ -554,6 +695,38 @@ function App() {
       }
       const item = apps()[selected()];
       if (!item) return;
+      // 声明式进入行（features/P2.1）：把查询作为 payload 投递给插件。
+      // mode 目标先切页再 onEnter；provider/service 直接 onFeature。
+      if (item.featureEnter) {
+        const ok = services.enterPlugin(item.featureEnter.pluginId, {
+          code: item.featureEnter.code,
+          type: item.featureEnter.type,
+          payload: item.featureEnter.payload,
+        });
+        if (!ok) showToast(t("pluginActionUnavailable", { id: item.featureEnter.pluginId }));
+        return;
+      }
+      // 二级下钻行（P2.4）：provider.select 的返回行替换网格，Esc 回上一级。
+      if (item.providerDrill) {
+        const d = item.providerDrill;
+        const p = providerPlugins().find((x) => x.id === d.pluginId);
+        if (!p?.instance.select) return;
+        const parent = apps();
+        void (async () => {
+          try {
+            const rows = await p.instance.select!(d.item as never);
+            setApps(rowsToEntries(d.pluginId, p.instance, rows ?? []));
+            setDrill({ pluginId: d.pluginId, item: d.item, parent, filterable: d.filterable });
+            if (d.filterable) services.setSubInput(d.pluginId, { placeholder: t("searchGeneric") });
+            setActiveSelected(0);
+            sizer.scheduleResize();
+          } catch (err) {
+            console.error("provider select failed:", d.pluginId, err);
+            showToast(t("pluginActionUnavailable", { id: d.pluginId }));
+          }
+        })();
+        return;
+      }
       // Provider action row (manifest of `enter`): hand the original result
       // object back to the plugin's onEnter instead of launching anything.
       // The launcher stays open — the plugin hides itself when done.
@@ -762,11 +935,13 @@ function App() {
           value={query()}
           onInput={onInput}
           placeholder={
-            mode() === APPS_MODE
-              ? placeholderApps() || t("searchApps")
-              : mode() === "clipboard"
-                ? placeholderClipboard() || t("searchClipboard")
-                : modePlaceholders()[mode()] || t("searchGeneric")
+            subInput()?.pluginId === mode() && subInput()?.placeholder
+              ? subInput()!.placeholder
+              : mode() === APPS_MODE
+                ? placeholderApps() || t("searchApps")
+                : mode() === "clipboard"
+                  ? placeholderClipboard() || t("searchClipboard")
+                  : modePlaceholders()[mode()] || t("searchGeneric")
           }
           spellcheck={false}
           autocomplete="off"

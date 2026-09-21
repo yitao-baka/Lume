@@ -97,6 +97,7 @@ export default {
 | `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
+| `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。 |
 | `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。 |
 
@@ -432,7 +433,7 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 
 | 组 | 方法 | 说明 |
 |---|---|---|
-| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（P1.2，§6D） |
+| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（P1.2，§6D）；`setSubInput`/`removeSubInput` 接管/交还搜索框（P2.3，§6E.2）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（P2.5，§6E.4） |
 | `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（P1.3，§6D） |
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**（P1.1）——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated` |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框（P1.4）。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
@@ -448,7 +449,15 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 | `query` | `string` | 模式激活期间的每次搜索框输入（含清空） |
 | `show` | — | 模式切入 / 每次呼出（reset） |
 | `hide` | — | 启动器隐藏且本模式活动 |
+| `enter` | `{code, type, payload}` | 声明式进入规则命中本模式（P2.1）或别的插件 `app.redirect` 过来（P2.5）。`type` = `"regex" \| "over" \| "redirect"`，`payload` = 命中的查询文本（redirect 时为发送方给的 payload）。**页面在 `load` 之后才会收到状态重放**（见下） |
+| `subInput` | `string` | 本模式调 `app.setSubInput` 接管搜索框后，每一次按键（P2.3） |
 | `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。焦点在插件 iframe 内时同样送达：iframe 的 keydown（冒泡阶段、目标非可编辑、未被插件 `preventDefault`）由宿主回投 window 路由后经本事件回流。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
+
+**状态重放（重要）**：桥接脚本在 `<head>`、页面自己的 `lume.on.*` 赋值在 `</body>`
+之前——所以宿主**不会**在 iframe 一挂载就推事件。页面 `load` 后桥接发
+`__lumeReady`，宿主随即重放当前状态：`query` → `show` → 本次进入载荷
+`enter`（若有）。含义：① 页面脚本请同步赋值 `lume.on.*`（异步赋值会错过首播）；
+② 重复收到同一 `show`/`query` 是正常的，处理器应幂等。
 
 Esc 默认不经过 `key` 事件（根统一处理：菜单 → 模式 onEscape → 卫星预览 → 隐藏）。**插件要消费 Esc**：在自己的 document 上挂冒泡 keydown 监听并 `preventDefault`（须在宿主转发监听之前注册——页面自身脚本先于桥接转发执行，天然满足）——被消费的按键不再回流根路由。iframe 内非可编辑目标的按键在转发后同样经过根 `blockBrowserKeys`（Ctrl/Alt 组合被拦，与宿主非输入区行为一致）；可编辑目标（input/textarea/contenteditable）的按键完全归插件。另外，iframe 内非可编辑区域的点击会把焦点交还宿主搜索框（宿主统一兜底，插件无需自行实现 focus hand-off）。
 
@@ -682,6 +691,98 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 > **现状**：v1 的信任模型是「显式放置即信任」，`permissions` 是声明位、尚未
 > 强制（§9）。本表是 P1 起新增命令的登记处：P3.2 的权限强制层照着它落实现，
 > 插件作者现在就该按表声明。
+
+---
+
+## 6E. P2 入口矩阵与搜索链路
+
+> `docs/PLUGIN_GAP_ANALYSIS.md` 的 P2 阶段（2026-09-21 落地）。这一阶段把插件
+> 从「能被关键字唤起」变成「能被用户此刻的输入自然触发」。示例
+> `examples/plugins/text-tools/`（features + 下钻 + filter + redirect）。
+
+### 6E.1 声明式进入规则（`[[features]]`）
+
+```toml
+[[features]]
+code = "upper"          # 必填 — 进入时下发（payload.code）
+label = "文本工具：转为大写"   # 结果行文案（省略 = 插件名）
+over = true             # 匹配任意非空文本
+min_length = 2          # 可选长度界（字符数）
+max_length = 200
+
+[[features]]
+code = "open-url"
+label = "文本工具：打开这个网址"
+regex = "^https?://"    # 正则匹配输入（与 over 二选一；两者都有时 regex 优先）
+```
+
+- **匹配时机**：导航模式（apps）每次非空查询；命中即在结果里追加「<label>」行，
+  位置与「进入 <插件>」关键字行同级（原生结果之后、文件命中与 provider 之前）。
+- **正则语义**：大小写不敏感，**在前端编译**（按插件+规则缓存）。**匹配空串的
+  正则被忽略**（`.*`、`a?` 等——否则每次按键都出一行，uTools 同样忽略）；非法
+  正则会记 error 并跳过该条规则。`over` 与 `regex` 都没声明的规则永不命中。
+- **激活**：把当前查询作为 payload 投递——
+  - `kind = "mode"`：先切到该模式，再调它的 `onEnter({code, type, payload})`
+    （页面同时收到 `lume.on.enter`）；
+  - `kind = "provider"` / `"service"`：调其 `onFeature({code, type, payload})`。
+  - 三种都没实现处理函数时：宿主记 warn 并 toast「插件无法处理该动作」，启动器
+    不隐藏。
+- **无 UI 的用法**：service 插件 + `over` + `onFeature` 就能做「选中文本 → 转
+  换 → 写剪贴板」这类零 UI 工具。
+
+### 6E.2 子输入框（`app.setSubInput` / `removeSubInput`）
+
+```js
+lume.app.setSubInput({ placeholder: "在此输入要过滤的内容…" });  // 接管
+lume.on.subInput = function (text) { /* 每次按键 */ };
+lume.app.removeSubInput();                                       // 交还
+```
+
+- 接管后主搜索框的输入**不再触发常规搜索**，而是逐字送到插件的 `onSubInput`
+  （磁盘 mode 页面收 `lume.on.subInput`，工厂逻辑收到同名钩子，service 亦可）。
+- `placeholder` 在此期间替换搜索框提示语；`value` 可写一个初始文本（会一并
+  投递给接管者）。
+- **一次只有一个拥有者**：别的插件调 `setSubInput` 不会抢走；`removeSubInput`
+  只有拥有者自己有效。
+- **自动释放**：切模式、再次呼出（clearSearch）、插件被重载/关闭都会把搜索框
+  交还宿主（所有权是会话级状态，不持久化）。
+- 与「搜索记忆」的关系：接管期间输入的文字仍写入该模式的 query（宿主照常显示），
+  但不会触发 `search`。
+
+### 6E.3 provider 二级下钻（`drill` + `select` + `filter`）
+
+```js
+export default {
+  async search(q) {
+    return [{ name: "选择转换方式…", drill: true }];   // 声明下钻行
+  },
+  async select(item) {
+    return [{ name: "大写", enter: true }, { name: "小写", enter: true }];  // 下一层
+  },
+  async filter(item, query) {
+    return rows.filter((r) => r.name.includes(query));  // 可选：层内过滤
+  },
+};
+```
+
+- 激活带 `drill: true` 的行 → 调 `select(item)`，返回的行**替换网格**；Esc
+  回上一级（恢复父层行，并释放搜索框）。只支持一层（v2 不做多层栈）。
+- 实现 `filter` 时，宿主在下钻期间把按键喂给它（`filter(item, query)`），层级
+  行随输入刷新；**没实现 `filter`** 则搜索框保持常规语义——一旦继续输入会运行
+  普通搜索并离开下钻层（行为可预期，不静默）。
+- 下钻行同样支持 `enter`/`icon`/`description`；`select`/`filter` 抛错只记日志
+  并 toast，不影响其它 provider。
+
+### 6E.4 插件互跳（`app.redirect`）
+
+```js
+lume.app.redirect("hello-mode", { code: "from-x", payload: "要带过去的内容" });
+```
+
+- 目标为 mode：切页并投递 `onEnter({code, type: "redirect", payload})`
+  （页面收 `lume.on.enter`）；目标为 provider/service：投递 `onFeature(...)`。
+- 目标不存在 / 未启用 / 未加载 → **宿主 toast 提示**（`pluginActionUnavailable`），
+  不做静默失败（市场跳转是远期，暂不提供）。
 
 ---
 

@@ -43,6 +43,15 @@ export const BRIDGE_SCRIPT = `
         return call("app.resize", { width: size && size.width, height: size && size.height });
       },
       notify: function (title, body) { return call("app.notify", { title: title, body: body }); },
+      setSubInput: function (opts) { return call("app.setSubInput", { opts: opts }); },
+      removeSubInput: function () { return call("app.removeSubInput"); },
+      redirect: function (pluginId, opts) {
+        return call("app.redirect", {
+          pluginId: pluginId,
+          code: opts && opts.code,
+          payload: opts && opts.payload,
+        });
+      },
     },
     fs: {
       readText: function (p) { return call("fs.readText", { path: p }); },
@@ -98,7 +107,7 @@ export const BRIDGE_SCRIPT = `
       // opts: legacy number = max, or { offset, max, sort, exts, folder }
       files: function (q, opts) { return call("search.files", { q: q, opts: opts }); },
     },
-    on: {}, // the page assigns: lume.on.query / .show / .hide / .key = function(payload)
+    on: {}, // the page assigns: lume.on.query / .show / .hide / .key / .enter / .subInput = function(payload)
   };
   window.addEventListener("message", function (e) {
     var d = e.data || {};
@@ -116,7 +125,20 @@ export const BRIDGE_SCRIPT = `
       if (typeof h === "function") h(ev.payload);
     }
   });
-  parent.postMessage({ __lumeReady: { frame: window.name } }, "*");
+  // Announce readiness on the window's load event, NOT immediately: this
+  // script sits in <head>, so an immediate post would reach the host before
+  // the page's own scripts assigned lume.on.* handlers — the host's state
+  // push (query/show/enter) would then be delivered into a page that has no
+  // handler yet and silently dropped. After load, classic and module scripts
+  // have all run.
+  var announced = false;
+  function announce() {
+    if (announced) return;
+    announced = true;
+    parent.postMessage({ __lumeReady: { frame: window.name } }, "*");
+  }
+  if (document.readyState === "complete") announce();
+  else window.addEventListener("load", announce);
 })();
 `;
 
@@ -183,10 +205,16 @@ function attachKeyForwarding(frame: HTMLIFrameElement) {
 }
 
 /** Build the mode View for a disk mode plugin: renders the prepared HTML in
- * an iframe and answers the bridge RPCs. Events (query/show/hide) flow out
- * through the returned `post` handle. */
+ * an iframe and answers the bridge RPCs. Events (query/show/hide/enter) flow
+ * out through the returned `post` handle.
+ *
+ * `onReady` fires when the plugin page's bridge script announces itself
+ * (`__lumeReady`). The host must (re)deliver the current page state there:
+ * `post` before that point reaches a document that has no listener yet, so
+ * anything sent while the iframe was still loading would be lost. */
 export function createIframeView(
   onRpc: (method: string, args: Record<string, unknown>) => Promise<unknown>,
+  onReady?: () => void,
 ): { View: Component & { setHtml(html: string): void }; post: (type: string, payload?: unknown) => void } {
   let frame: HTMLIFrameElement | undefined;
   const [srcdoc, setSrcdoc] = createSignal("");
@@ -199,7 +227,16 @@ export function createIframeView(
         if (e.source !== frame?.contentWindow) return;
         const d = (e.data || {}) as {
           __lumeRpc?: { id: number; method: string; args: Record<string, unknown> };
+          __lumeReady?: unknown;
         };
+        if (d.__lumeReady) {
+          // The page's bridge is live — safe to (re)send state now.
+          try {
+            onReady?.();
+          } catch (err) {
+            console.error("[plugins] onReady failed:", err);
+          }
+        }
         if (d.__lumeRpc) {
           const { id, method, args } = d.__lumeRpc;
           onRpc(method, args)
@@ -216,7 +253,6 @@ export function createIframeView(
               )
             );
         }
-        // __lumeReady needs no reply — the loader already fired onShow.
       };
       window.addEventListener("message", handler);
       onCleanup(() => window.removeEventListener("message", handler));

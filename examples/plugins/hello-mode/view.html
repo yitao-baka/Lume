@@ -35,6 +35,12 @@
     <button id="ph">自定搜索框占位文字（setPlaceholder）</button>
     <button id="phReset">恢复默认占位文字</button>
   </div>
+  <div class="row">
+    <button id="sub">接管搜索框（setSubInput）</button>
+    <button id="subEnd">交还搜索框（removeSubInput）</button>
+    <span>子输入收到：<code id="subView">（未接管）</code></span>
+  </div>
+  <div class="row">进入载荷：<code id="enterView">（无）</code></div>
   <script>
     var n = 0;
     var $ = function (id) { return document.getElementById(id); };
@@ -42,6 +48,12 @@
 
     lume.on.query = function (q) { $("q").textContent = q || "（空）"; };
     lume.on.show = function () { /* 每次呼出 */ };
+    // 接管搜索框后，宿主把每一次按键送到这里（不再触发常规搜索）。
+    lume.on.subInput = function (text) { $("subView").textContent = text || "（空）"; };
+    // 声明式进入（features）或 redirect 带过来的载荷。
+    lume.on.enter = function (info) {
+      $("enterView").textContent = info.code + " · " + info.type + " · " + info.payload;
+    };
 
     $("toast").onclick = function () { lume.app.toast("来自 hello-mode 的问候 👋"); };
     $("clip").onclick = function () { lume.clipboard.writeText("hello from hello-mode"); };
@@ -61,6 +73,14 @@
     };
     $("phReset").onclick = function () {
       lume.app.setPlaceholder("");
+    };
+    $("sub").onclick = function () {
+      lume.app.setSubInput({ placeholder: "子输入框：输入会送到插件（Esc 退出模式）" });
+      $("subView").textContent = "（已接管）";
+    };
+    $("subEnd").onclick = function () {
+      lume.app.removeSubInput();
+      $("subView").textContent = "（未接管）";
     };
 
     lume.storage.get("count").then(function (v) { n = v || 0; render(); });

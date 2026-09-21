@@ -301,7 +301,21 @@ Lume 的既定架构约束（`docs/ARCHITECTURE.md`）：业务逻辑归 Rust、
   现有 `app.resize`。
 - 验收：单测 + CDP 脚本断言返回值在主屏范围内。
 
-### P2 入口矩阵与搜索链路（对齐 uTools 核心体验）
+### P2 入口矩阵与搜索链路（对齐 uTools 核心体验）✅ 核心已实现（2026-09-21）
+
+> **落地情况**：`[[features]]` 声明式进入（regex/over + payload 投递）、
+> 子输入框（`app.setSubInput`）、provider 二级下钻（`drill`/`select`/`filter`）、
+> 插件互跳（`app.redirect`）四项已实现并有实机脚本
+> `scripts/cdp_p2_verify.mjs`（21 项）。API 文档 `docs/PLUGIN_API.md` §6E，
+> 示例 `examples/plugins/text-tools/`。
+> **顺带修掉一个真实竞态**：mode 页的 `enter`/`query` 曾在 iframe 文档加载完成
+> 前投递而被丢弃——现在桥接在页面 `load` 后握手，宿主重放状态（§6E 文档已写明
+> 「状态重放」语义）。
+> **本阶段未做**（留待后续）：`type = "files"` 文件拖入与 `img` 剪贴板图片进入
+> （见 P2.2）、`template = "list"` 官方列模板（免 view.html 的轻插件形态）、
+> 活动窗口匹配（P3+ 单独立项）。
+
+
 
 **P2.1 regex/over 文本匹配进入**
 

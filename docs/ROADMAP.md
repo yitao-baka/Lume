@@ -1730,3 +1730,42 @@ tsc/vite build 干净、`scripts/cdp_p1_verify.mjs` **14 项全过**（CORS 对�
 通知投递、图片/文件剪贴板往返、对话框 ESC 取消、屏幕几何、paste 隐藏启动器 +
 日志证明走完整路径）；新工具 `scripts/ps_lume_windows.ps1`（OS 侧窗口可见性探测
 ——WebView2 隐藏时 `document.visibilityState` 不变，这条实测结论已写进脚本注释）。
+
+## 25. 插件系统 P2：入口矩阵与搜索链路（已实现）
+
+**状态：核心已实现（2026-09-21）。** 差距分析见 `docs/PLUGIN_GAP_ANALYSIS.md` P2，
+API 文档见 `docs/PLUGIN_API.md` §6E。四项：
+
+- **声明式进入（`[[features]]`，任意 kind）**：manifest 子表声明 `code` /
+  `label` / `regex` / `over` / `min_length` / `max_length` / `icon`；命中即在
+  导航结果追加「<label>」行（与「进入 <插件>」关键字行同级），激活把查询作为
+  payload 投递给 mode 的 `onEnter` 或 provider/service 的 `onFeature`。
+  正则**在前端**编译并按插件+规则缓存；**匹配空串的正则被忽略**（`.*` 之类，
+  否则每次按键都出行——uTools 同款守卫），非法正则记 error 跳过。Rust 侧用
+  serde 定向 rename 让 TOML 保持 snake_case、JSON 下发 camelCase。
+- **子输入框（P2.3）**：`app.setSubInput({placeholder?, value?})` 接管主搜索框，
+  按键逐字送到插件的 `onSubInput`（mode 页面收 `lume.on.subInput`），期间不触发
+  常规搜索；`removeSubInput` 交还，且切模式/再次呼出/插件重载都会自动释放
+  （单拥有者，非拥有者调用无效）。
+- **provider 二级下钻（P2.4）**：行上加 `drill: true` → 激活调 `select(item)`，
+  返回行替换网格；Esc 回上一级（新增根级 `onGridEscape` 分层，先于模式 Esc）；
+  实现 `filter` 时下钻期间按键喂给它做层内过滤，没实现则输入离开下钻层。
+- **插件互跳（P2.5）**：`app.redirect(pluginId, {code?, payload?})` → mode 切页 +
+  `onEnter({type:"redirect"})`，provider/service 走 `onFeature`；目标不可用时
+  宿主 toast（新 i18n 键 `pluginActionUnavailable`）。
+
+**顺带修掉一个真实竞态**（P0/P1 遗留）：mode 页的 `query`/`show`/`enter` 曾在
+iframe 文档加载完成前投递而**静默丢失**。根因有两层：① 桥接脚本在 `<head>`，
+页面自己的 `lume.on.*` 赋值在 `</body>`；② `viewReady` 只表示 HTML 已取回，
+不表示文档已加载。现在桥接在页面 **`load`** 后发 `__lumeReady` 握手，宿主随即
+重放 `query` → `show` → 本次进入载荷；`enter` 载荷在模式 `reset()` 前一直保留
+以便新文档重放。文档写明「状态重放」语义（处理器需幂等、同步赋值）。
+
+**验证**：cargo test **151**（+2 features 解析/下发；另 1 个 ignored live 过）、
+tsc/vite build 干净、`scripts/cdp_p2_verify.mjs` **21 项全过**（over/regex 命中
+与 min_length 边界、catch-all 守卫、payload 投递到剪贴板、下钻/过滤/Esc 回退、
+subInput 接管与自动释放、redirect 载荷回显），P0/P1 两套冒烟无回归；
+截图 `test/p2_redirect_enter.png`、`test/p2_subinput.png`。
+
+**未做**（留待后续）：`files` 文件拖入与 `img` 剪贴板图片进入、`template = "list"`
+官方列模板。

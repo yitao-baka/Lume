@@ -33,6 +33,37 @@ pub struct KeywordPinyin {
     pub initials: String,
 }
 
+/// One declarative entry rule (uTools-style feature, ROADMAP #25): a query the
+/// rule matches offers an 「<label>」 row in Navigate whose activation enters
+/// the plugin with the query text as payload.
+///
+/// The `regex` pattern is matched by the **frontend** (JS `RegExp`, compiled
+/// once per plugin/rule) — the backend only carries it. TOML spelling is
+/// snake_case (`min_length`), the JSON the frontend sees is camelCase.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PluginFeature {
+    /// Unique code inside the plugin; delivered on enter (payload `code`).
+    #[serde(default)]
+    pub code: String,
+    /// Row label. Empty → the plugin name is used.
+    #[serde(default)]
+    pub label: String,
+    /// Regex matched against the query text (case-insensitive).
+    #[serde(default)]
+    pub regex: String,
+    /// Match any non-empty text (used when `regex` is empty).
+    #[serde(default)]
+    pub over: bool,
+    /// Optional query-length bounds (chars).
+    #[serde(default, rename(serialize = "minLength", deserialize = "min_length"))]
+    pub min_length: Option<usize>,
+    #[serde(default, rename(serialize = "maxLength", deserialize = "max_length"))]
+    pub max_length: Option<usize>,
+    /// Optional row icon (relative to the plugin dir; resolved like `icon`).
+    #[serde(default)]
+    pub icon: String,
+}
+
 /// A plugin manifest, parsed from `<base>/plugins/<id>/plugin.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -71,6 +102,10 @@ pub struct PluginManifest {
     /// Mode plugins: pill icon, relative to the plugin dir.
     #[serde(default)]
     pub icon: String,
+    /// Declarative entry rules (any kind) — a matched query offers an
+    /// 「<label>」 row that enters the plugin with the query as payload.
+    #[serde(default)]
+    pub features: Vec<PluginFeature>,
     /// Development flag: the frontend registry reloads the plugin from disk
     /// on every refresh (settings-applied), so editing its code takes effect
     /// without a restart. Plugin authors opt in via the manifest.
@@ -112,6 +147,8 @@ pub struct PluginInfo {
     /// has no keywords. Backend-computed (the frontend has no pinyin table).
     #[serde(rename = "keywordsPinyin")]
     pub keywords_pinyin: Vec<KeywordPinyin>,
+    /// Declarative entry rules (any plugin kind).
+    pub features: Vec<PluginFeature>,
     /// Absolute plugin directory (disk plugins; empty for built-ins).
     pub dir: String,
 }
@@ -224,6 +261,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             icon: String::new(),
             development: false,
             keywords_pinyin: Vec::new(),
+            features: Vec::new(),
             dir: String::new(),
         })
         .collect();
@@ -260,6 +298,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             icon: m.icon,
             development: m.development,
             keywords_pinyin,
+            features: m.features,
             dir: dir.to_string_lossy().into_owned(),
         });
     }
@@ -525,8 +564,7 @@ height = 560
     }
 
     #[test]
-    fn entry_directory_resolves_to_index_js() {
-        let root = std::env::temp_dir().join(format!("lume-plugins-entry-{}", std::process::id()));
+    fn entry_directory_resolves_to_index_js() {        let root = std::env::temp_dir().join(format!("lume-plugins-entry-{}", std::process::id()));
         let base = root.join("plugins");
         let dist = base.join("demo").join("dist");
         fs::create_dir_all(&dist).unwrap();
@@ -539,6 +577,54 @@ height = 560
         let all = list_plugins(&root, &[]);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(demo.entry.ends_with("dist/index.js"), "entry: {}", demo.entry);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn features_parse_with_snake_case_and_serialize_camel_case() {
+        let m = parse_manifest(
+            "id = \"demo\"\n\
+             [[features]]\n\
+             code = \"open-url\"\n\
+             label = \"在浏览器打开\"\n\
+             regex = \"^https?://\"\n\
+             min_length = 8\n\
+             \n\
+             [[features]]\n\
+             code = \"upper\"\n\
+             over = true\n\
+             max_length = 40\n",
+        )
+        .unwrap();
+        assert_eq!(m.features.len(), 2);
+        assert_eq!(m.features[0].code, "open-url");
+        assert_eq!(m.features[0].label, "在浏览器打开");
+        assert_eq!(m.features[0].regex, "^https?://");
+        assert_eq!(m.features[0].min_length, Some(8));
+        assert_eq!(m.features[1].over, true);
+        assert_eq!(m.features[1].max_length, Some(40));
+        // The frontend sees camelCase (directional serde rename).
+        let json = serde_json::to_string(&m.features[0]).unwrap();
+        assert!(json.contains("\"minLength\":8"), "{json}");
+        assert!(!json.contains("min_length"), "{json}");
+    }
+
+    #[test]
+    fn features_are_reported_to_the_frontend() {
+        let root = std::env::temp_dir().join(format!("lume-plugins-feat-{}", std::process::id()));
+        let base = root.join("plugins");
+        let demo = base.join("demo");
+        fs::create_dir_all(&demo).unwrap();
+        fs::write(
+            demo.join("plugin.toml"),
+            "id = \"demo\"\n[[features]]\ncode = \"hi\"\nover = true\n",
+        )
+        .unwrap();
+        let all = list_plugins(&root, &[]);
+        let demo = all.iter().find(|p| p.id == "demo").unwrap();
+        assert_eq!(demo.features.len(), 1);
+        assert_eq!(demo.features[0].code, "hi");
+        assert!(all.iter().find(|p| p.id == "clipboard").unwrap().features.is_empty());
         fs::remove_dir_all(&root).ok();
     }
 }

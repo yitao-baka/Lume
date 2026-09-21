@@ -172,7 +172,29 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**插件系统 P1 宿主能力面（HTTP / 通知 / 剪贴板 / 对话框 / 屏幕，complete)
+**插件系统 P2 入口矩阵与搜索链路（complete) — as of 2026-09-21**: 差距分析
+（`docs/PLUGIN_GAP_ANALYSIS.md`）第三阶段核心，ROADMAP #25、API 文档
+`docs/PLUGIN_API.md` §6E。四项：① **声明式进入 `[[features]]`**（任意 kind）——
+`code`/`label`/`regex`/`over`/`min_length`/`max_length`/`icon`，命中在导航结果
+追加「<label>」行（与关键字行同级），激活把查询作为 payload 投递给 mode 的
+`onEnter` 或 provider/service 的 `onFeature`；正则在**前端**编译缓存，**匹配空串
+的规则被忽略**（`.*` 之类，否则每次按键出行），非法正则记 error 跳过；Rust 用
+serde 定向 rename 保持 TOML snake_case / JSON camelCase。② **子输入框**——
+`app.setSubInput({placeholder,value})` 接管主搜索框（按键进 `onSubInput`，不再触发
+常规搜索），单拥有者、切模式/呼出/重载自动释放。③ **provider 二级下钻**——
+行标 `drill: true` → `select(item)` 的行替换网格，Esc 回上一级（新增根级
+`onGridEscape` 分层，先于模式 Esc），实现 `filter` 则层内输入过滤。④ **插件互跳
+`app.redirect`**——mode 切页 + `onEnter({type:"redirect"})`，目标不可用 toast。
+**顺带修掉 P0/P1 遗留的真实竞态**：mode 页 `query`/`show`/`enter` 曾在 iframe 文档
+就绪前投递而静默丢失（根因：桥接脚本在 `<head>` 而页面 `lume.on.*` 赋值在
+`</body>`；`viewReady` 只表示 HTML 已取回）——现在桥接在页面 `load` 后发
+`__lumeReady` 握手，宿主重放 `query`→`show`→本次进入载荷，`enter` 载荷保留到
+`reset()` 以便新文档重放（文档已写明「状态重放 / 处理器需幂等」）。验证：cargo
+test **151**（+2）、tsc/build 干净、`scripts/cdp_p2_verify.mjs` **21 项全过**、
+P0/P1 冒烟无回归；示例 `examples/plugins/text-tools/`（features+下钻+filter+
+redirect）与 hello-mode 新增 subInput/enter 演示按钮。
+
+**Prior: 插件系统 P1 宿主能力面（HTTP / 通知 / 剪贴板 / 对话框 / 屏幕，complete)
 — as of 2026-09-21**: 差距分析（`docs/PLUGIN_GAP_ANALYSIS.md`）第二阶段，
 ROADMAP #24、API 文档 `docs/PLUGIN_API.md` §6D。**零新增 crate**：HTTP 用
 `windows` crate 的 WinHTTP（新增 feature `Win32_Networking_WinHttp`），通知用

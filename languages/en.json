@@ -254,5 +254,6 @@
   "pluginBuiltin": "Built-in",
   "pluginDisk": "Disk",
   "pluginReload": "Reload",
-  "pluginDev": "Dev"
+  "pluginDev": "Dev",
+  "pluginActionUnavailable": "Plugin can't handle this action: {id}"
 }

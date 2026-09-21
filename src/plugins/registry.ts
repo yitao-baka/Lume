@@ -11,7 +11,7 @@
 
 import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import type { LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
+import type { FeatureEnterInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
 import { plog } from "./log";
@@ -354,6 +354,15 @@ async function execHostRpc(
       });
     case "app.notify":
       return api.app.notify(a.title, a.body);
+    case "app.setSubInput":
+      return api.app.setSubInput(args.opts as { placeholder?: string; value?: string } | undefined);
+    case "app.removeSubInput":
+      return api.app.removeSubInput();
+    case "app.redirect":
+      return api.app.redirect(String((args as { pluginId?: string }).pluginId ?? ""), {
+        code: (args as { code?: string }).code,
+        payload: (args as { payload?: string }).payload,
+      });
     case "clipboard.writeImage":
       return api.clipboard.writeImage(a.data);
     case "clipboard.writeFiles":
@@ -423,7 +432,23 @@ function createDiskModeInstance(
   const [query, setQuerySig] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   const hook = (name: string, ...args: unknown[]) => callHook(m.id, logic, name, ...args);
-  const { View, post } = createIframeView((method, args) => execHostRpc(m.id, method, args));
+  // How this page was entered (`[[features]]` payload / redirect). Kept until
+  // the mode resets and REPLAYED on every ready handshake: the View mounts
+  // (and the srcdoc document loads) only when the mode becomes active, so an
+  // enter delivered while the document is still loading would be lost — and
+  // a fresh document needs the payload again the way it needs query/show.
+  let enterPayload: FeatureEnterInfo | null = null;
+  const { View, post } = createIframeView(
+    (method, args) => execHostRpc(m.id, method, args),
+    () => {
+      // The page's bridge is live and its handlers are assigned: push the
+      // current state (this also covers the initial load, where the loader
+      // raced the srcdoc document).
+      postEv("query", query());
+      postEv("show");
+      if (enterPayload) postEv("enter", enterPayload);
+    }
+  );
   // Events (query/show/hide) mirror into the plugin log so a silent page is
   // distinguishable from one that never received anything.
   const postEv = (type: string, payload?: unknown) => {
@@ -440,8 +465,9 @@ function createDiskModeInstance(
       plog.info(m.id, "mode view ready (html", html.length, "bytes)");
       viewReady = true;
       View.setHtml(injectBridge(html));
-      postEv("query", query());
-      postEv("show");
+      // query/show are NOT posted here: setting the srcdoc only starts the
+      // document load, so the bridge has no listener yet. The ready handshake
+      // (see the onReady callback above) delivers the page state once live.
     })
     .catch((err) => {
       plog.error(m.id, "view load failed:", err);
@@ -469,6 +495,9 @@ function createDiskModeInstance(
     },
     reset: () => {
       setSelected(0);
+      // A fresh summon starts a new page state — the previous entry payload
+      // no longer describes how this round began.
+      enterPayload = null;
       if (viewReady) postEv("show");
       hook("onShow");
       services.scheduleResize();
@@ -503,6 +532,15 @@ function createDiskModeInstance(
     onHide: () => {
       if (viewReady) postEv("hide");
       hook("onHide");
+    },
+    onEnter: (info) => {
+      enterPayload = info;
+      if (viewReady) postEv("enter", info);
+      hook("onEnter", info);
+    },
+    onSubInput: (text) => {
+      if (viewReady) postEv("subInput", text);
+      hook("onSubInput", text);
     },
     View,
   };
@@ -572,8 +610,13 @@ export async function loadDiskPlugins() {
         }
         const navBars = navBarsContribution(m.id, logic);
         const rawOnEnter = logic.onEnter;
+        const rawOnFeature = logic.onFeature;
+        const rawSelect = logic.select;
+        const rawFilter = logic.filter;
         definePlugin({
           id: m.id,
+          features: m.features ?? [],
+          dir: m.dir,
           provider: {
             search: (q) => {
               try {
@@ -595,6 +638,40 @@ export async function loadDiskPlugins() {
                   },
                 }
               : {}),
+            ...(typeof rawOnFeature === "function"
+              ? {
+                  onFeature: (info: FeatureEnterInfo) => {
+                    try {
+                      (rawOnFeature as (i: FeatureEnterInfo) => void)(info);
+                    } catch (err) {
+                      plog.error(m.id, "provider onFeature failed:", err);
+                    }
+                  },
+                }
+              : {}),
+            ...(typeof rawSelect === "function"
+              ? {
+                  select: async (item: ProviderResult) => {
+                    const rows = await (
+                      rawSelect as (it: ProviderResult) => Promise<ProviderResult[]> | ProviderResult[]
+                    )(item);
+                    return Array.isArray(rows) ? rows : [];
+                  },
+                }
+              : {}),
+            ...(typeof rawFilter === "function"
+              ? {
+                  filter: async (item: ProviderResult, q: string) => {
+                    const rows = await (
+                      rawFilter as (
+                        it: ProviderResult,
+                        q: string
+                      ) => Promise<ProviderResult[]> | ProviderResult[]
+                    )(item, q);
+                    return Array.isArray(rows) ? rows : [];
+                  },
+                }
+              : {}),
           },
           ...(navBars ? { navBars } : {}),
         });
@@ -603,7 +680,11 @@ export async function loadDiskPlugins() {
         plog.info(
           m.id,
           `loaded provider (entry=${m.entry}${navBars ? ", navBars" : ""}` +
-            `${typeof rawOnEnter === "function" ? ", onEnter" : ""})`
+            `${typeof rawOnEnter === "function" ? ", onEnter" : ""}` +
+            `${typeof rawOnFeature === "function" ? ", onFeature" : ""}` +
+            `${typeof rawSelect === "function" ? ", select" : ""}` +
+            `${typeof rawFilter === "function" ? ", filter" : ""}` +
+            `${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
         );
       } else if (m.kind === "mode" && m.view) {
         const logic = m.entry
@@ -621,6 +702,8 @@ export async function loadDiskPlugins() {
           },
           keywords: m.keywords,
           keywordsPinyin: m.keywordsPinyin ?? [],
+          features: m.features ?? [],
+          dir: m.dir,
           pluginName: m.name || m.id,
           mode: instance,
           ...(navBars ? { navBars } : {}),
@@ -642,7 +725,11 @@ export async function loadDiskPlugins() {
             onShow: () => void callHook(m.id, logic, "onShow"),
             onHide: () => void callHook(m.id, logic, "onHide"),
             onQuery: (q) => void callHook(m.id, logic, "onQuery", q),
+            onFeature: (info) => void callHook(m.id, logic, "onFeature", info),
+            onSubInput: (text) => void callHook(m.id, logic, "onSubInput", text),
           },
+          features: m.features ?? [],
+          dir: m.dir,
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
@@ -729,6 +816,136 @@ export function modePlugins(): {
   return plugins
     .filter((p) => p.mode && isEnabled(p.id))
     .map((p) => ({ id: p.id, instance: p.mode!, modeMeta: p.modeMeta }));
+}
+
+// ── Declarative entry rules (P2.1: `[[features]]` in the manifest) ──
+//
+// A feature matches the query text and offers an 「<label>」 row whose
+// activation enters the plugin with the text as payload. Matching happens
+// here (JS RegExp); the manifest only carries the pattern. Compiled patterns
+// are cached per plugin+index; a pattern matching the empty string is
+// dropped (it would fire on every keystroke — the same rule uTools applies).
+
+const featureRegexCache = new Map<string, RegExp | null>();
+
+function compileFeatureRegex(pluginId: string, idx: number, pattern: string): RegExp | null {
+  const key = `${pluginId}#${idx}`;
+  const hit = featureRegexCache.get(key);
+  if (hit !== undefined) return hit;
+  let out: RegExp | null = null;
+  try {
+    const re = new RegExp(pattern, "i");
+    if (re.test("")) {
+      plog.warn(pluginId, `feature[${idx}] regex matches the empty string — ignored`);
+    } else {
+      out = re;
+    }
+  } catch (err) {
+    plog.error(pluginId, `feature[${idx}] bad regex "${pattern}":`, err);
+  }
+  featureRegexCache.set(key, out);
+  return out;
+}
+
+/** A fired entry rule: the row data + what the plugin receives on enter. */
+export interface FeatureMatch extends FeatureEnterInfo {
+  pluginId: string;
+  label: string;
+  icon?: string;
+}
+
+/** Entry rules of enabled plugins matching a query (empty query → none). */
+export function featureMatches(q: string): FeatureMatch[] {
+  const query = q.trim();
+  if (!query) return [];
+  const out: FeatureMatch[] = [];
+  for (const p of plugins) {
+    if (!isEnabled(p.id)) continue;
+    const feats = (p as { features?: PluginFeature[] }).features ?? [];
+    feats.forEach((f, i) => {
+      if (!f?.code) return;
+      const len = query.length;
+      if (f.minLength != null && len < f.minLength) return;
+      if (f.maxLength != null && len > f.maxLength) return;
+      let type: FeatureEnterInfo["type"] = "over";
+      if (f.regex) {
+        const re = compileFeatureRegex(p.id, i, f.regex);
+        if (!re || !re.test(query)) return;
+        type = "regex";
+      } else if (!f.over) {
+        return; // a rule with neither regex nor over never matches
+      }
+      out.push({
+        pluginId: p.id,
+        code: f.code,
+        type,
+        payload: query,
+        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+      });
+    });
+  }
+  return out;
+}
+
+/** Route a declarative entry payload to its plugin: a mode receives
+ * `onEnter` (the root switches to it first), a provider/service its
+ * `onFeature`. Returns false when nothing consumed it (unknown id or no
+ * handler) so the caller can tell the user. */
+export function deliverFeature(pluginId: string, info: FeatureEnterInfo): boolean {
+  const p = plugins.find((x) => x.id === pluginId);
+  if (!p || !isEnabled(pluginId)) return false;
+  const label = (p as { pluginName?: string }).pluginName ?? pluginId;
+  try {
+    if (p.mode?.onEnter) {
+      p.mode.onEnter(info);
+      return true;
+    }
+    if (p.provider?.onFeature) {
+      p.provider.onFeature(info);
+      return true;
+    }
+    if (p.lifecycle?.onFeature) {
+      p.lifecycle.onFeature(info);
+      return true;
+    }
+  } catch (err) {
+    plog.error(pluginId, "feature enter failed:", err);
+    return true; // the handler ran (and threw) — not an "unhandled" case
+  }
+  plog.warn(pluginId, `no feature handler for code="${info.code}" (${label})`);
+  return false;
+}
+
+/** Deliver one keystroke to the plugin owning the search box (P2.3). */
+export function deliverSubInput(pluginId: string, text: string): boolean {
+  const p = plugins.find((x) => x.id === pluginId);
+  if (!p || !isEnabled(pluginId)) return false;
+  try {
+    if (p.mode?.onSubInput) {
+      p.mode.onSubInput(text);
+      return true;
+    }
+    if (p.lifecycle?.onSubInput) {
+      p.lifecycle.onSubInput(text);
+      return true;
+    }
+  } catch (err) {
+    plog.error(pluginId, "onSubInput failed:", err);
+    return true;
+  }
+  plog.warn(pluginId, "sub-input text dropped: no onSubInput handler");
+  return false;
+}
+
+/** The contribution kind a plugin registered (for feature/redirect targets). */
+export function pluginKind(id: string): "mode" | "provider" | "service" | null {
+  const p = plugins.find((x) => x.id === id);
+  if (!p || !isEnabled(id)) return null;
+  if (p.mode) return "mode";
+  if (p.provider) return "provider";
+  if (p.lifecycle) return "service";
+  return null;
 }
 
 /** Find a plugin's mode instance by id (undefined when disabled/absent). */

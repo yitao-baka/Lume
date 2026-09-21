@@ -1,0 +1,28 @@
+id = "text-tools"
+name = "文本工具 (Text Tools)"
+kind = "provider"
+description = "P2 示例：声明式进入（over/regex）+ 二级下钻（select/filter）+ 插件互跳（redirect）"
+entry = "main.js"
+
+# 声明式进入规则（ROADMAP #25）：
+#   over  —— 任意非空文本命中（2..200 字符）
+#   regex —— 形如 URL 的输入命中
+[[features]]
+code = "upper"
+label = "文本工具：转为大写"
+over = true
+min_length = 2
+max_length = 200
+
+[[features]]
+code = "open-url"
+label = "文本工具：打开这个网址"
+regex = "^https?://"
+min_length = 12
+
+# catch-all 正则被宿主忽略（否则每次按键都出一行）——这条规则刻意留着，
+# 用来验证那条守卫：它的 label 永远不该出现在结果里。
+[[features]]
+code = "never"
+label = "文本工具：catch-all（不应出现）"
+regex = ".*"

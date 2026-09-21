@@ -254,5 +254,6 @@
   "pluginBuiltin": "内置",
   "pluginDisk": "磁盘",
   "pluginReload": "重载",
-  "pluginDev": "开发"
+  "pluginDev": "开发",
+  "pluginActionUnavailable": "插件无法处理该动作：{id}"
 }

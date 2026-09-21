@@ -104,6 +104,25 @@ export default function create(ctx) {
 栏不可越过。每次呼出与插件刷新时重新拉取（可按 `ctx.storage` 动态返回）。
 完整示例 `examples/plugins/nav-bar/`。
 
+## 声明式进入与搜索链路（P2）
+
+除关键字外，插件还能用**声明式规则**被输入自然触发（完整契约见
+`docs/PLUGIN_API.md` §6E，示例 `examples/plugins/text-tools/`）：
+
+```toml
+[[features]]
+code = "upper"
+label = "转为大写"
+over = true            # 任意非空文本命中（regex = "^https?://" 则按正则命中）
+min_length = 2
+```
+
+模带来四件事：① `features` 命中出「<label>」行，激活把查询作为 payload 投递给
+`onEnter`（mode）/`onFeature`（provider/service）；② `app.setSubInput`
+让模式接管搜索框逐字过滤（`lume.on.subInput`）；③ provider 用 `drill` +
+`select`（可选 `filter`）做二级下钻，Esc 回上一级；④ `app.redirect(插件id,
+{code, payload})` 跳到另一个插件并带数据。
+
 ## 安全模型（v1）
 
 加载第三方 JS = 在启动器 webview 里执行任意代码。v1 的信任模型是

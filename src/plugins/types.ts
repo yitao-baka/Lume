@@ -48,8 +48,43 @@ export interface PluginManifest {
    * match "miao"/"ms" against the Chinese keyword 「秒搜」 without a pinyin
    * library. Empty entries when the plugin has no keywords. */
   keywordsPinyin: { full: string; initials: string }[];
+  /** Declarative entry rules (`[[features]]` in the manifest, any kind):
+   * a query the rule matches offers an 「<label>」 row that enters the plugin
+   * with the query text as payload. See `PluginFeature`. */
+  features: PluginFeature[];
   /** Absolute plugin directory (disk plugins; empty for built-ins). */
   dir: string;
+}
+
+/** One declarative entry rule (uTools-style feature). `regex` is compiled and
+ * matched **in the frontend** (JS `RegExp`, case-insensitive, cached per
+ * plugin+rule); a pattern that matches the empty string is ignored (it would
+ * fire on every keystroke — the same rule uTools applies to catch-all
+ * patterns). */
+export interface PluginFeature {
+  /** Unique code inside the plugin — delivered on enter. */
+  code: string;
+  /** Row label; empty → the plugin name is used. */
+  label: string;
+  /** Regex matched against the query text. */
+  regex: string;
+  /** Match any non-empty text (used when `regex` is empty). */
+  over: boolean;
+  /** Optional query-length bounds (characters). */
+  minLength: number | null;
+  maxLength: number | null;
+  /** Optional row icon (relative to the plugin dir). */
+  icon: string;
+}
+
+/** Payload delivered when a declarative entry rule fires. */
+export interface FeatureEnterInfo {
+  /** The rule's `code`. */
+  code: string;
+  /** How the entry was reached: a manifest rule, or `app.redirect`. */
+  type: "regex" | "over" | "redirect";
+  /** The matched query text (or the redirect payload). */
+  payload: string;
 }
 
 /** The capability surface handed to disk plugin factories (v2, uTools-
@@ -88,6 +123,17 @@ export interface PluginHostApi {
      * notification area; title/body are truncated by the shell's field
      * widths. */
     notify(title: string, body: string): Promise<void>;
+    /** Take over the launcher's search box (P2.3): subsequent keystrokes are
+     * delivered to this plugin's `onSubInput` instead of running a search.
+     * `placeholder` replaces the box's hint while owned; `value` writes an
+     * initial text. The host clears ownership on mode switch / next summon. */
+    setSubInput(opts?: { placeholder?: string; value?: string }): void;
+    /** Give the search box back to the host. */
+    removeSubInput(): void;
+    /** Jump to another plugin (P2.5): a mode is switched to and receives an
+     * `enter` with `type: "redirect"`; providers/services get
+     * `onFeature(info)`. Unknown ids are reported with a toast. */
+    redirect(pluginId: string, opts?: { code?: string; payload?: string }): void;
   };
   clipboard: {
     /** Current system clipboard text (null = non-text/empty). */
@@ -238,6 +284,12 @@ export interface ServiceHooks {
   onHide?(): void;
   /** Every Navigate keystroke (non-empty query). */
   onQuery?(q: string): void;
+  /** A declarative entry rule of this plugin fired (P2.1) — the headless
+   * handler runs without any UI (e.g. transform the text and copy it). */
+  onFeature?(info: FeatureEnterInfo): void;
+  /** The service took over the search box (`app.setSubInput`) — keystrokes
+   * arrive here (P2.3). */
+  onSubInput?(text: string): void;
 }
 
 /** What a disk **mode** plugin's factory returns. The page UI lives in
@@ -285,6 +337,15 @@ export interface PluginServices {
   /** Resize the launcher window (logical px; omitted axes keep their size).
    * Backs the disk-plugin `app.resize` bridge RPC. */
   resizeWindow(size: { width?: number; height?: number }): void;
+  /** Search-box ownership (P2.3): `opts` claims it for `pluginId`, `null`
+   * releases it. Only the active mode's owner receives keystrokes. */
+  setSubInput(pluginId: string, opts: { placeholder?: string; value?: string } | null): void;
+  /** The plugin id currently owning the search box (null = the host owns it). */
+  subInputOwner(): string | null;
+  /** Switch to a plugin's mode and/or deliver a declarative entry payload
+   * (P2.1 features + P2.5 redirect). Returns false when the target is
+   * unknown or unloaded. */
+  enterPlugin(pluginId: string, info: FeatureEnterInfo): boolean;
 }
 
 /** Structural subset of the shared MenuState (avoids a launcher import). */
@@ -318,6 +379,12 @@ export interface ModeInstance {
   activate(): void;
   /** Handle a key while this mode is active; true = consumed. */
   onKey(e: KeyboardEvent, ctx: ModeKeyContext): boolean;
+  /** A declarative entry rule targeted this mode (P2.1) — the payload is the
+   * matched query text. Called after the mode is switched to. */
+  onEnter?(info: FeatureEnterInfo): void;
+  /** The mode took over the search box (`app.setSubInput`): every keystroke
+   * arrives here instead of running the mode's own search (P2.3). */
+  onSubInput?(text: string): void;
   /** Consume Esc (e.g. leave multi-select); true = handled, root won't hide. */
   onEscape(): boolean;
   /** Satellite preview request for the selected row (null = hide). */
@@ -379,6 +446,10 @@ export interface ProviderResult {
    * instead of launch_app. The launcher stays open — the plugin decides
    * when to hide itself (ctx.app.hide). */
   enter?: boolean;
+  /** Marker: activating this row drills down — calls the provider's
+   * `select(item)` and replaces the grid with its rows (Esc returns to the
+   * parent level). Requires the provider to implement `select`. */
+  drill?: boolean;
 }
 
 /** A Navigate-page bar (栏目) contributed by a plugin — rendered on the
@@ -407,6 +478,16 @@ export interface ProviderInstance {
    * result object `search` returned comes back (extra plugin fields are
    * preserved). Exceptions are logged and isolated like search errors. */
   onEnter?(item: ProviderResult): void;
+  /** Called when a declarative entry rule of this plugin fires (P2.1). */
+  onFeature?(info: FeatureEnterInfo): void;
+  /** Drill-down (P2.4): the rows one level below `item`. Activating a row
+   * marked `drill` calls this; its rows become the grid content and Esc
+   * returns to the previous level. */
+  select?(item: ProviderResult): Promise<ProviderResult[]> | ProviderResult[];
+  /** Optional: while drilled into `item`, typing in the search box asks for
+   * matching rows instead of running a normal search. Without it the box
+   * keeps its usual meaning and typing leaves the drilled level. */
+  filter?(item: ProviderResult, query: string): Promise<ProviderResult[]> | ProviderResult[];
 }
 
 /** A plugin: manifest identity + its already-created contributions.
@@ -435,6 +516,11 @@ export interface LauncherPlugin {
    * `modeKeywordMatches` for the tiered (exact → prefix → initials → full
    * pinyin) matching. */
   keywordsPinyin?: { full: string; initials: string }[];
+  /** Declarative entry rules (P2.1) — consumed by `featureMatches`. */
+  features?: PluginFeature[];
+  /** Absolute plugin directory (disk plugins) — used to resolve relative
+   * feature icons. */
+  dir?: string;
   pluginName?: string;
   /** Headless lifecycle hooks (disk service plugins). */
   lifecycle?: ServiceHooks;

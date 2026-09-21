@@ -37,6 +37,9 @@ const MAX_DEPTH: usize = 128;
 const JOURNAL_MAX: u64 = 32 * 1024 * 1024;
 const JOURNAL_DELTA: u64 = 8 * 1024 * 1024;
 const ENUM_BUFFER: usize = 64 * 1024;
+/// Upper bound on the candidate heap (skip + max) — how deep one query can
+/// page. 2000 candidates ≈ 66 pages of 30 at a few hundred KiB of heap.
+const MAX_KEEP: usize = 2000;
 
 // USN reason bits we track (name-affecting changes only).
 const USN_REASON_FILE_CREATE: u32 = 0x0000_0100;
@@ -114,6 +117,111 @@ struct Node {
     lcase_off: u32,
     lcase_len: u16,
     dir: bool,
+}
+
+/// Name-level filter evaluated during the scan — the USN engine's answer to
+/// the Everything syntax the plugin's category sidebar sends (`ext:a;b`,
+/// `folder:`). Everything evaluates that syntax inside its own index; here it
+/// has to be tested per candidate, which is only possible while walking the
+/// names (resolving paths for every hit just to test them would cost far
+/// more than the scan itself).
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct NameFilter {
+    /// Lowercase extensions without the leading dot; empty = any extension.
+    pub exts: Vec<String>,
+    /// true = directories only.
+    pub folder: bool,
+}
+
+impl NameFilter {
+    pub fn is_empty(&self) -> bool {
+        self.exts.is_empty() && !self.folder
+    }
+
+    /// Build from the plugin-facing arguments (`exts` list, `folder` flag),
+    /// normalizing the way both callers rely on: leading dots dropped,
+    /// lowercased, deduped, blanks and absurdly long tokens discarded, the
+    /// list capped. Returns a filter for the engine plus the canonical
+    /// Everything-syntax string used as the "was it applied" echo.
+    pub fn from_parts(exts: Option<&[String]>, folder: bool) -> (Self, Option<String>) {
+        let mut seen = std::collections::HashSet::new();
+        let mut list: Vec<String> = Vec::new();
+        for raw in exts.unwrap_or(&[]) {
+            let e = raw.trim().trim_start_matches('.').to_ascii_lowercase();
+            if e.is_empty() || e.len() > 16 || !e.chars().all(|c| c.is_ascii_alphanumeric()) {
+                continue;
+            }
+            if seen.insert(e.clone()) {
+                list.push(e);
+            }
+        }
+        list.truncate(64);
+        let filter = Self { exts: list, folder };
+        let echo = filter.to_syntax();
+        (filter, echo)
+    }
+
+    /// Parse the pipe's wire form (`{"exts":[…],"folder":bool}` — both
+    /// optional). The service is the trust boundary for its own protocol, so
+    /// this normalizes instead of trusting the caller.
+    pub fn from_json(msg: &serde_json::Value) -> Self {
+        let exts: Vec<String> = msg
+            .get("exts")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let folder = msg.get("folder").and_then(|v| v.as_bool()).unwrap_or(false);
+        Self::from_parts(Some(&exts), folder).0
+    }
+
+    /// Canonical Everything-syntax form of this filter (`folder:` /
+    /// `ext:a;b`, space-joined) — what Everything understands natively, what
+    /// the plugin sends as its filter query, and what comes back as the echo
+    /// that tells the plugin the filter was really applied.
+    pub fn to_syntax(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if self.folder {
+            parts.push("folder:".into());
+        }
+        if !self.exts.is_empty() {
+            parts.push(format!("ext:{}", self.exts.join(";")));
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
+    }
+
+    /// Does a candidate pass? `lcase` is its lowercased name.
+    fn matches(&self, lcase: &[u8], dir: bool) -> bool {
+        if self.folder && !dir {
+            return false;
+        }
+        if self.exts.is_empty() {
+            return true;
+        }
+        let Some(ext) = extension_of(lcase) else {
+            return false;
+        };
+        self.exts.iter().any(|e| e.as_bytes() == ext)
+    }
+}
+
+/// Lowercased extension of a lowercased name — the slice after the last dot,
+/// `None` for dot-less names and dotfiles (`fileKind` in the plugin's lib.js
+/// makes the same call, so the two agree on what an extension is).
+fn extension_of(lcase: &[u8]) -> Option<&[u8]> {
+    let dot = lcase.iter().rposition(|&b| b == b'.')?;
+    if dot == 0 || dot + 1 >= lcase.len() {
+        return None;
+    }
+    Some(&lcase[dot + 1..])
 }
 
 impl Engine {
@@ -204,33 +312,54 @@ impl Engine {
     ///
     /// Ranking is by `(prefix match first, shorter name first, frn, volume)` —
     /// a total order, so the same query always returns the same page no matter
-    /// how the map iterates. The scan keeps only the best `max` candidates in
-    /// a bounded heap: a single character matches hundreds of thousands of
-    /// names, and collecting them all just to sort and truncate was the
-    /// query's second-largest cost after the match itself.
-    pub fn search(&self, query: &str, max: usize) -> (&'static str, Vec<FileHit>) {
+    /// how the map iterates. The scan keeps only the best `skip + max`
+    /// candidates in a bounded heap: a single character matches hundreds of
+    /// thousands of names, and collecting them all just to sort and truncate
+    /// was the query's second-largest cost after the match itself. `skip`
+    /// pages that stream here, in the engine — the caller must not fake deep
+    /// pages by fetching `offset + max` (its own request cap is 100, which
+    /// silently truncated every page past the third).
+    ///
+    /// `filter` is the name-level predicate the plugin's category sidebar
+    /// needs (`ext:` lists / `folder:`). Everything evaluates that syntax
+    /// itself; a USN index has to test it during the walk, and doing it here
+    /// is what makes a category hit files the raw name ranking buries far
+    /// below the first page (query "log" tops out at files literally named
+    /// `LOG` — a `*.png` match sits thousands of hits deep).
+    pub fn search(
+        &self,
+        query: &str,
+        max: usize,
+        skip: usize,
+        filter: &NameFilter,
+    ) -> (&'static str, Vec<FileHit>) {
         let query = query.trim();
-        if query.is_empty() {
+        if query.is_empty() && filter.is_empty() {
+            // Neither a needle nor a filter: nothing to scan for. A filter
+            // alone is legitimate — that is "every folder" / "every image".
             return ("ready", Vec::new());
         }
         let needle: Vec<u8> = query.to_lowercase().into_bytes();
         let matcher = Matcher::new(&needle);
         let inner = self.inner.lock().unwrap();
         let status = inner.state.as_str();
+        // Bounded at skip + max so both the skipped prefix and the page fit;
+        // capped so a deep page can't turn the heap into a full collection.
+        let keep = skip.saturating_add(max).min(MAX_KEEP);
         // (score, name_len, frn, vol) — a max-heap that never holds more than
-        // `max` entries, so popping the largest leaves the best `max`.
+        // `keep` entries, so popping the largest leaves the best `keep`.
         let mut best: std::collections::BinaryHeap<(u8, u16, u64, usize)> =
-            std::collections::BinaryHeap::with_capacity(max + 1);
+            std::collections::BinaryHeap::with_capacity(keep + 1);
         for (vi, vol) in inner.volumes.iter().enumerate() {
             for (&frn, node) in &vol.map {
                 let off = node.lcase_off as usize;
                 let hay = &vol.lcase[off..off + node.lcase_len as usize];
-                if !matcher.is_match(hay) {
+                if !matcher.is_match(hay) || !filter.matches(hay, node.dir) {
                     continue;
                 }
                 let score: u8 = if hay.starts_with(&needle) { 0 } else { 1 };
                 best.push((score, node.name_len, frn, vi));
-                if best.len() > max {
+                if best.len() > keep {
                     best.pop();
                 }
             }
@@ -238,6 +367,7 @@ impl Engine {
         let hits = best
             .into_sorted_vec()
             .into_iter()
+            .skip(skip)
             .filter_map(|(_, _, frn, vi)| {
                 let vol = &inner.volumes[vi];
                 let path = resolve_path(vol, frn)?;
@@ -848,16 +978,83 @@ mod tests {
                 generation: 1,
             }),
         };
-        let (status, hits) = engine.search("readme", 10);
+        let (status, hits) = engine.search("readme", 10, 0, &NameFilter::default());
         assert_eq!(status, "ready");
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].name, "Readme.txt"); // prefix match first
         assert_eq!(hits[1].name, "my-readme.txt");
-        let (_, hits) = engine.search("设置", 10);
+        let (_, hits) = engine.search("设置", 10, 0, &NameFilter::default());
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "C:\\设置指南.pdf");
-        let (_, hits) = engine.search("xyz", 10);
+        let (_, hits) = engine.search("xyz", 10, 0, &NameFilter::default());
         assert!(hits.is_empty());
+    }
+
+    /// The plugin's category sidebar asks for pages of a *filtered* stream:
+    /// `skip` pages inside the engine (the caller's own request cap is 100,
+    /// so it cannot fetch a deep page by asking for offset + max) and the
+    /// filter is evaluated per candidate, before ranking.
+    #[test]
+    fn search_pages_with_skip_and_name_filters() {
+        let mut v = vol();
+        upsert(&mut v, 10, 5, &name_u16("Log"), true);
+        upsert(&mut v, 11, 5, &name_u16("LOG"), false);
+        upsert(&mut v, 12, 5, &name_u16("logo.png"), false);
+        upsert(&mut v, 13, 5, &name_u16("logo.txt"), false);
+        upsert(&mut v, 14, 5, &name_u16("my-logo.PNG"), false);
+        let engine = Engine {
+            inner: Mutex::new(Inner {
+                state: State::Ready,
+                volumes: vec![v],
+                generation: 1,
+            }),
+        };
+        let names = |hits: &[FileHit]| hits.iter().map(|h| h.name.clone()).collect::<Vec<_>>();
+
+        // Ranked stream: prefix matches first, shorter name first.
+        let (_, page) = engine.search("logo", 10, 0, &NameFilter::default());
+        assert_eq!(names(&page), ["logo.png", "logo.txt", "my-logo.PNG"]);
+        let (_, page1) = engine.search("logo", 2, 0, &NameFilter::default());
+        assert_eq!(names(&page1), ["logo.png", "logo.txt"]);
+        let (_, page2) = engine.search("logo", 2, 2, &NameFilter::default());
+        assert_eq!(names(&page2), ["my-logo.PNG"]);
+        let (_, past) = engine.search("logo", 2, 4, &NameFilter::default());
+        assert!(past.is_empty(), "skipping past the end yields nothing");
+
+        // Extension filter — matched against the last-dot extension, both
+        // sides lowercased (the arena holds lowercased names).
+        let png = NameFilter {
+            exts: vec!["png".into()],
+            folder: false,
+        };
+        let (_, hits) = engine.search("logo", 10, 0, &png);
+        assert_eq!(names(&hits), ["logo.png", "my-logo.PNG"]);
+
+        // Folder filter.
+        let dirs = NameFilter {
+            exts: Vec::new(),
+            folder: true,
+        };
+        let (_, hits) = engine.search("log", 10, 0, &dirs);
+        assert_eq!(names(&hits), ["Log"]);
+
+        // A filter with no needle enumerates by name (what a bare category
+        // click means); without a filter an empty query stays empty.
+        let (_, hits) = engine.search("", 10, 0, &png);
+        assert_eq!(names(&hits), ["logo.png", "my-logo.PNG"]);
+        let (_, hits) = engine.search("   ", 10, 0, &NameFilter::default());
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn extension_of_handles_dotfiles_and_dotless_names() {
+        let ext =
+            |s: &str| extension_of(s.as_bytes()).map(|e| String::from_utf8_lossy(e).into_owned());
+        assert_eq!(ext("logo.png").as_deref(), Some("png"));
+        assert_eq!(ext("archive.tar.gz").as_deref(), Some("gz"));
+        assert_eq!(ext(".gitignore"), None, "a dotfile has no extension");
+        assert_eq!(ext("README"), None);
+        assert_eq!(ext("trailing."), None);
     }
 
     #[test]
@@ -913,7 +1110,7 @@ mod tests {
                 generation: 1,
             }),
         };
-        let (status, hits) = engine.search("windows", 10);
+        let (status, hits) = engine.search("windows", 10, 0, &NameFilter::default());
         eprintln!("search 'windows' ({status}): {:#?}", hits);
         assert_eq!(status, "ready");
         assert!(!hits.is_empty());
@@ -961,9 +1158,9 @@ mod tests {
         };
         for (q, max) in [("pptx", 50), ("a", 50), ("e", 50), ("doc", 50), ("main", 12)] {
             // One warm-up (page-in), then the measured run.
-            let _ = engine.search(q, max);
+            let _ = engine.search(q, max, 0, &NameFilter::default());
             let t = Instant::now();
-            let (_, hits) = engine.search(q, max);
+            let (_, hits) = engine.search(q, max, 0, &NameFilter::default());
             let ms = t.elapsed().as_secs_f64() * 1000.0;
             eprintln!("search {q:>6} max={max}: {ms:.1}ms ({} hits)", hits.len());
             assert!(ms < 400.0, "search {q} took {ms:.1}ms");

@@ -95,18 +95,17 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       },
     },
     search: {
-      files: (
-        q: string,
-        opts?: number | { offset?: number; max?: number; sort?: string }
-      ) => {
+      files: (q: string, opts?: number | PluginFileSearchOptions) => {
         // Legacy callers pass a bare number (max); new callers an object.
-        const o = typeof opts === "number" ? { max: opts } : (opts ?? {});
+        const o: PluginFileSearchOptions = typeof opts === "number" ? { max: opts } : (opts ?? {});
         plog.debug(id, "search.files:", q, o);
         return invoke<FileSearchOut>("file_search", {
           query: q,
           max: o.max,
           offset: o.offset,
           sort: o.sort,
+          exts: o.exts,
+          folder: o.folder,
         });
       },
     },

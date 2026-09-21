@@ -24,6 +24,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::everything::{self, FileHit};
+use crate::usnidx::NameFilter;
 
 /// File hits appended to the Navigate grid (total grid cap is the frontend's;
 /// native app results keep their slots).
@@ -61,6 +62,13 @@ pub struct FileSearchOut {
     /// sort was ignored (engine default order).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort: Option<String>,
+    /// The name filter that was really applied, as canonical Everything
+    /// syntax (`"ext:png;jpg"` / `"folder:"`); omitted when none was asked
+    /// for or the answering backend could not apply it. Callers must treat a
+    /// missing echo as "unfiltered" — that is how the plugin knows to filter
+    /// the page itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
     pub entries: Vec<FileEntry>,
 }
 
@@ -84,12 +92,20 @@ pub struct FileEntry {
 /// invalid values fall back to defaults (max clamped 1..=100; offset passes
 /// through to the engine, which truncates). An empty query is legitimate: it
 /// means "recent files" (see `run_search`).
+///
+/// `exts`/`folder` are the name-level filter the plugin's category sidebar
+/// sends: Everything gets it as its own `ext:`/`folder:` syntax, the USN
+/// engine tests it during the scan (see `usnidx::NameFilter`). The reply
+/// echoes it as `filter` only when a backend really applied it — callers must
+/// treat a missing echo as "not filtered" rather than trusting the request.
 #[tauri::command]
 pub async fn file_search(
     query: String,
     max: Option<u32>,
     offset: Option<u32>,
     sort: Option<String>,
+    exts: Option<Vec<String>>,
+    folder: Option<bool>,
 ) -> FileSearchOut {
     let max = max.unwrap_or(FILE_RESULTS_MAX).clamp(1, 100);
     let offset = offset.unwrap_or(0);
@@ -98,13 +114,16 @@ pub async fn file_search(
     let sort = sort
         .as_deref()
         .and_then(|s| SORTS.iter().copied().find(|k| *k == s));
+    let (filter, filter_echo) = NameFilter::from_parts(exts.as_deref(), folder.unwrap_or(false));
     // Blocking waits are fine here: this runs on the async runtime's workers.
-    tauri::async_runtime::spawn_blocking(move || run_search(&query, max, offset, sort))
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("[filesearch] join failed: {e}");
-            unavailable()
-        })
+    tauri::async_runtime::spawn_blocking(move || {
+        run_search(&query, max, offset, sort, &filter, filter_echo)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!("[filesearch] join failed: {e}");
+        unavailable()
+    })
 }
 
 /// The effective sort for a query. An empty query = "recent files": default
@@ -116,15 +135,38 @@ fn effective_sort<'a>(query: &str, sort: Option<&'a str>) -> Option<&'a str> {
     sort.or_else(|| query.trim().is_empty().then_some("mtime_desc"))
 }
 
-fn run_search(query: &str, max: u32, offset: u32, sort: Option<&str>) -> FileSearchOut {
+fn run_search(
+    query: &str,
+    max: u32,
+    offset: u32,
+    sort: Option<&str>,
+    filter: &NameFilter,
+    filter_echo: Option<String>,
+) -> FileSearchOut {
     let now = Instant::now();
     let sort = effective_sort(query, sort);
+    let text = query.trim();
+    // Everything takes the filter as its own syntax, AND-ed with the text by
+    // its parser — so the plugin sends a plain text query plus the filter, and
+    // never has to know which backend ends up answering.
+    let everything_query = match filter_echo.as_deref() {
+        Some(f) if !text.is_empty() => format!("{f} {text}"),
+        Some(f) => f.to_string(),
+        None => text.to_string(),
+    };
     // Everything first: its index is live and the IPC costs nothing when it
     // isn't running (FindWindow probe).
     if everything::available() && !cooled_down("everything", now) {
-        match everything::search(query, max, offset, sort, EVERYTHING_TIMEOUT) {
+        match everything::search(&everything_query, max, offset, sort, EVERYTHING_TIMEOUT) {
             Ok(outcome) => {
-                return to_out("everything", "ready", outcome.hits, outcome.total, outcome.sort);
+                return to_out(
+                    "everything",
+                    "ready",
+                    outcome.hits,
+                    outcome.total,
+                    outcome.sort,
+                    filter_echo,
+                );
             }
             Err(e) => {
                 eprintln!("[filesearch] everything failed: {}", e.message());
@@ -135,12 +177,24 @@ fn run_search(query: &str, max: u32, offset: u32, sort: Option<&str>) -> FileSea
         }
     }
     if !cooled_down("svc", now) {
-        // The svc engine knows neither offset nor total — fetch the page plus
-        // the skipped prefix and trim here, so offset pages don't overlap.
-        match svc_search(query, max.saturating_add(offset)) {
-            Ok((status, hits)) => {
-                let mut hits = hits;
-                hits.drain(..(offset as usize).min(hits.len()));
+        // The USN engine pages (`skip`) and filters during its scan, and
+        // echoes both. A service build older than this launcher ignores the
+        // fields — the echo's absence is how we know to fall back to the
+        // prefix-and-trim trick and to answer with NO filter claim, so the
+        // plugin filters the page itself instead of trusting it.
+        match svc_search(text, max, offset, filter) {
+            Ok(out) => {
+                let mut hits = out.hits;
+                // An older service ignored `skip`: for pages past the first,
+                // fetch the prefix and trim here (its own cap is 100, which is
+                // why this cannot page deep — service-side `skip` is what makes
+                // deep pages possible). Page 1 needs no re-fetch.
+                if !out.paged && offset > 0 {
+                    match svc_legacy_page(text, max, offset) {
+                        Ok(h) => hits = h,
+                        Err(e) => eprintln!("[filesearch] svc legacy page failed: {e}"),
+                    }
+                }
                 stat_page(&mut hits);
                 // No global sort — order the page in memory and echo it
                 // honestly (the plugin disables its sort menu for svc anyway).
@@ -148,7 +202,8 @@ fn run_search(query: &str, max: u32, offset: u32, sort: Option<&str>) -> FileSea
                     sort_page(&mut hits, s);
                     s.to_string()
                 });
-                return to_out("svc", &status, hits, None, sort);
+                let filter = if out.paged { out.filter_applied } else { None };
+                return to_out("svc", &out.status, hits, None, sort, filter);
             }
             Err(e) => {
                 eprintln!("[filesearch] svc failed: {e}");
@@ -159,11 +214,13 @@ fn run_search(query: &str, max: u32, offset: u32, sort: Option<&str>) -> FileSea
     unavailable()
 }
 
-fn unavailable() -> FileSearchOut {    FileSearchOut {
+fn unavailable() -> FileSearchOut {
+    FileSearchOut {
         backend: "none".into(),
         status: "unavailable".into(),
         total: None,
         sort: None,
+        filter: None,
         entries: Vec::new(),
     }
 }
@@ -186,24 +243,50 @@ fn mark_cooldown(backend: &'static str, now: Instant) {
     map.insert(backend, now);
 }
 
-fn svc_search(query: &str, max: u32) -> Result<(String, Vec<FileHit>), String> {
-    let request = format!(
-        r#"{{"t":"search","q":{},"max":{max}}}"#,
-        serde_json::to_string(query).map_err(|e| e.to_string())?
-    );
-    let reply = crate::svc::pipe_transact(&request, SVC_TIMEOUT)?;
-    #[derive(serde::Deserialize)]
-    struct SvcReply {
-        t: String,
-        #[serde(default)]
-        status: String,
-        #[serde(default)]
-        items: Vec<FileHit>,
-    }
+/// One `search` reply from the service (see `svc.rs::handle_message`).
+#[derive(serde::Deserialize)]
+struct SvcReply {
+    t: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    items: Vec<FileHit>,
+    /// Echo of the page start — present only from services that page.
+    #[serde(default)]
+    skip: Option<u64>,
+    /// Echo of the applied name filter (`"ext:png;jpg"`), `null` when none.
+    #[serde(default)]
+    filter: Option<String>,
+}
+
+/// One page from the service, with the two facts the caller needs to trust it.
+struct SvcPage {
+    status: String,
+    hits: Vec<FileHit>,
+    /// The service honoured `skip` (a service older than this build answers
+    /// the first page and no echo, whatever was asked).
+    paged: bool,
+    /// Set only when the service echoed back exactly the filter we asked for.
+    filter_applied: Option<String>,
+}
+
+fn svc_request(request: &str) -> Result<SvcReply, String> {
+    let reply = crate::svc::pipe_transact(request, SVC_TIMEOUT)?;
     let reply: SvcReply = serde_json::from_str(&reply).map_err(|e| format!("svc reply: {e}"))?;
     if reply.t != "results" {
         return Err(format!("unexpected svc reply type {}", reply.t));
     }
+    Ok(reply)
+}
+
+fn svc_search(query: &str, max: u32, offset: u32, filter: &NameFilter) -> Result<SvcPage, String> {
+    let request = format!(
+        r#"{{"t":"search","q":{},"max":{max},"skip":{offset},"exts":{},"folder":{}}}"#,
+        serde_json::to_string(query).map_err(|e| e.to_string())?,
+        serde_json::to_string(&filter.exts).map_err(|e| e.to_string())?,
+        filter.folder
+    );
+    let reply = svc_request(&request)?;
     // "off"/"failed" mean no usable index (Everything is running on the
     // machine, or the engine errored) — surface that honestly.
     let status = match reply.status.as_str() {
@@ -211,7 +294,39 @@ fn svc_search(query: &str, max: u32) -> Result<(String, Vec<FileHit>), String> {
         "ready" => "ready",
         _ => "unavailable",
     };
-    Ok((status.to_string(), reply.items))
+    let paged = reply.skip == Some(offset as u64);
+    // Trust the filter only on an exact echo: anything else means the service
+    // answered without applying it, and the caller must not claim otherwise.
+    let filter_applied = echo_confirms(filter, reply.filter.as_deref());
+    Ok(SvcPage {
+        status: status.to_string(),
+        hits: reply.items,
+        paged,
+        filter_applied,
+    })
+}
+
+/// Does the service's echoed filter prove it applied `filter`? Exact match
+/// only — a missing or different echo means it answered without it (a service
+/// build older than this launcher ignores the fields entirely).
+fn echo_confirms(filter: &NameFilter, echoed: Option<&str>) -> Option<String> {
+    match (filter.to_syntax(), echoed) {
+        (Some(want), Some(got)) if want == got => Some(got.to_string()),
+        _ => None,
+    }
+}
+
+/// Pre-echo service fallback: fetch `offset + max` hits from the start and
+/// trim here. Its own cap is 100, so this covers the first pages only — the
+/// service-side `skip` is what makes deep pages possible.
+fn svc_legacy_page(query: &str, max: u32, offset: u32) -> Result<Vec<FileHit>, String> {
+    let want = max.saturating_add(offset).min(100);
+    let request = format!(
+        r#"{{"t":"search","q":{},"max":{want}}}"#,
+        serde_json::to_string(query).map_err(|e| e.to_string())?
+    );
+    let reply = svc_request(&request)?;
+    Ok(reply.items.into_iter().skip(offset as usize).collect())
 }
 
 /// Fill in mtime/size for one result page with a cheap per-hit stat (≤100
@@ -258,12 +373,14 @@ fn to_out(
     hits: Vec<FileHit>,
     total: Option<u64>,
     sort: Option<String>,
+    filter: Option<String>,
 ) -> FileSearchOut {
     FileSearchOut {
         backend: backend.into(),
         status: status.into(),
         total,
         sort,
+        filter,
         entries: hits
             .into_iter()
             .map(|h| FileEntry {
@@ -320,6 +437,41 @@ mod tests {
         assert!(sort.is_none());
         let sort: Option<&str> = Some("size_desc").filter(|s| SORTS.contains(s));
         assert_eq!(sort, Some("size_desc"));
+    }
+
+    #[test]
+    fn filter_maps_to_everything_syntax_and_normalizes() {
+        // What the plugin sends as `exts`/`folder` becomes the canonical
+        // Everything syntax the Everything backend understands natively and
+        // the exact string the svc backend echoes back as "applied".
+        let (f, echo) = NameFilter::from_parts(
+            Some(&["PNG".into(), ".jpg".into(), "png".into(), "  ".into(), "weird!".into()]),
+            false,
+        );
+        assert_eq!(f.exts, vec!["png", "jpg"], "lowercased, deduped, dotted/dirty dropped");
+        assert_eq!(echo.as_deref(), Some("ext:png;jpg"));
+
+        let (f, echo) = NameFilter::from_parts(None, true);
+        assert!(f.exts.is_empty());
+        assert_eq!(echo.as_deref(), Some("folder:"));
+
+        let (_, echo) = NameFilter::from_parts(None, false);
+        assert_eq!(echo, None, "no filter → no echo, nothing to claim");
+    }
+
+    #[test]
+    fn filter_applied_requires_an_exact_echo() {
+        // The service is the only thing that knows whether the filter reached
+        // the scan; a reply without an echo (an older service build) must
+        // never be presented as filtered.
+        let filter = NameFilter {
+            exts: vec!["png".into()],
+            folder: false,
+        };
+        assert_eq!(echo_confirms(&filter, Some("ext:png")).as_deref(), Some("ext:png"));
+        assert_eq!(echo_confirms(&filter, None), None, "no echo → not applied");
+        assert_eq!(echo_confirms(&filter, Some("ext:jpg")), None, "a different filter");
+        assert_eq!(echo_confirms(&NameFilter::default(), None), None, "nothing asked, nothing claimed");
     }
 
     #[test]

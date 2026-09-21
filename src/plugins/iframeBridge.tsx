@@ -59,7 +59,7 @@ export const BRIDGE_SCRIPT = `
       remove: function (k) { return call("storage.remove", { key: k }); },
     },
     search: {
-      // opts: legacy number = max, or { offset, max, sort }
+      // opts: legacy number = max, or { offset, max, sort, exts, folder }
       files: function (q, opts) { return call("search.files", { q: q, opts: opts }); },
     },
     on: {}, // the page assigns: lume.on.query / .show / .hide / .key = function(payload)

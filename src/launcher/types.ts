@@ -42,6 +42,10 @@ export interface FileSearchOut {
   /** Effective sort, echoed back ("name" | "path" | "size" | "mtime" |
    * "name_desc" | "path_desc" | "size_desc" | "mtime_desc"). */
   sort?: string;
+  /** Name filter really applied by the backend, as canonical Everything
+   * syntax ("ext:png;jpg" / "folder:"). Absent means the answering backend
+   * could not apply the requested filter — the caller filters for itself. */
+  filter?: string;
   entries: FileEntry[];
 }
 

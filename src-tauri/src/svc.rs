@@ -31,6 +31,9 @@ const AUTOSTART_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const AUTOSTART_VALUE: &str = "Lume";
 /// How often the dormancy watcher re-checks whether Everything is running.
 const ENGINE_WATCH_INTERVAL: Duration = Duration::from_secs(60);
+/// Deepest page start the pipe accepts. The engine's candidate heap is
+/// bounded by skip + max, so this doubles as the cost cap for one query.
+const MAX_SKIP: u64 = 2000;
 
 /// Set by the control handler on STOP so the worker threads can exit and
 /// `service_main` reports STOPPED promptly (SCM gives ~30s).
@@ -817,9 +820,31 @@ fn handle_message(shared: &Shared, payload: &str) -> String {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(50)
                 .clamp(1, 100) as usize;
-            let (status, hits) = shared.engine.search(query, max);
+            // Paging and the name filter are evaluated inside the scan: the
+            // caller cannot ask for `offset + max` hits and trim (its own
+            // request cap is 100, which truncated every page past the third),
+            // and a category filter has to be tested per candidate because the
+            // name ranking buries matches thousands of hits deep.
+            let skip = msg
+                .get("skip")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                .min(MAX_SKIP) as usize;
+            let filter = crate::usnidx::NameFilter::from_json(&msg);
+            let (status, hits) = shared.engine.search(query, max, skip, &filter);
             let items = serde_json::to_string(&hits).unwrap_or_else(|_| "[]".into());
-            format!(r#"{{"t":"results","status":"{status}","items":{items}}}"#)
+            // Echo what was actually applied. Callers older than this build
+            // ignore `skip`/`exts`/`folder` entirely and send no echo — that
+            // absence is how the launcher tells "this service understood" and
+            // falls back to its own trimming/filtering instead of showing
+            // unfiltered hits as if they were filtered.
+            let filter_json = match filter.to_syntax() {
+                Some(s) => serde_json::to_string(&s).unwrap_or_else(|_| "null".into()),
+                None => "null".into(),
+            };
+            format!(
+                r#"{{"t":"results","status":"{status}","skip":{skip},"filter":{filter_json},"items":{items}}}"#
+            )
         }
         Some("debug") => {
             let n = msg.get("n").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
@@ -880,6 +905,26 @@ mod tests {
             .expect("search");
         eprintln!("search reply: {reply}");
         assert!(reply.contains(r#""t":"results""#));
+
+        // Paging and the name filter are applied inside the scan and echoed
+        // back — that echo is what tells the launcher the service really
+        // understood them (a pre-2026-09-21 service ignores both fields and
+        // echoes neither, and the launcher must not claim otherwise).
+        let reply = pipe_transact(
+            r#"{"t":"search","q":"log","max":5,"skip":0,"exts":["png"],"folder":false}"#,
+            Duration::from_secs(2),
+        )
+        .expect("filtered search");
+        eprintln!("filtered reply: {reply}");
+        assert!(reply.contains(r#""filter":"ext:png""#), "filter echo: {reply}");
+        assert!(reply.contains(r#""skip":0"#), "skip echo: {reply}");
+        let reply = pipe_transact(
+            r#"{"t":"search","q":"","max":5,"skip":0,"exts":["png"],"folder":false}"#,
+            Duration::from_secs(2),
+        )
+        .expect("filter-only search");
+        eprintln!("filter-only reply: {reply}");
+        assert!(reply.contains(r#""t":"results""#), "a filter alone scans: {reply}");
     }
 
     /// Regression: the serial single-instance accept loop made the second of

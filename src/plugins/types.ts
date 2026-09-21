@@ -111,13 +111,28 @@ export interface PluginHostApi {
    * index otherwise. `max` defaults to 12, clamped 1..=100. Legacy callers
    * pass a bare number (max); opts objects add `offset` (0-based page start)
    * and `sort` ("name" | "path" | "size" | "mtime" | "name_desc" |
-   * "path_desc" | "size_desc" | "mtime_desc"; invalid = engine default). */
+   * "path_desc" | "size_desc" | "mtime_desc"; invalid = engine default).
+   *
+   * `exts`/`folder` are the name-level filter a category sidebar sends.
+   * Everything receives it as its own `ext:`/`folder:` syntax; the USN engine
+   * tests it during the scan (its name ranking buries such matches thousands
+   * of hits deep, so a client-side filter over one page cannot find them).
+   * The reply echoes `filter` only when a backend really applied it — treat a
+   * missing echo as "not filtered". */
   search: {
-    files(
-      q: string,
-      opts?: number | { offset?: number; max?: number; sort?: string }
-    ): Promise<FileSearchOut>;
+    files(q: string, opts?: number | PluginFileSearchOptions): Promise<FileSearchOut>;
   };
+}
+
+/** Options for `search.files` (see the doc comment above). */
+export interface PluginFileSearchOptions {
+  offset?: number;
+  max?: number;
+  sort?: string;
+  /** Lowercase extensions without the dot (e.g. ["png", "jpg"]). */
+  exts?: string[];
+  /** Restrict to directories. */
+  folder?: boolean;
 }
 
 /** Optional lifecycle hooks for disk **service** plugins (headless). */

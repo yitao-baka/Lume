@@ -13,6 +13,12 @@
 uTools 的插件生态比 Lume 成熟一个量级，但差距不是均匀分布的。按「对 Lume
 用户价值 ÷ 实现代价」排序，真正的差距集中在六处：
 
+**进展（2026-09-21）**：P0 / P1 / P2 / P3 四阶段已实现并实机验收（详见文末
+各阶段小节与 `docs/ROADMAP.md` #23–#26）。第 1–3、5、6 项差距已闭合；第 4 项
+只做了热重载（`.lupx` 打包与市场属 P4）。**没有闭合的地方也要说清**：权限层是
+前端关卡而非沙箱（§P3 小节与 `PLUGIN_API.md` §9），文件拖入 / 图片进入 /
+list 模板仍是 P2 余项——下一阶段的起点。
+
 1. **进入方式太窄**——Lume 只有「精确关键字」，uTools 有关键字（拼音/子序列）、
    正则文本、任意文本、图片、文件拖入、活动窗口六类声明式匹配，外加运行时动态增删指令。
 2. **provider 结果模型太薄**——`{name, path}` 只能被 `launch_app` 打开；
@@ -90,6 +96,10 @@ uTools 基于 Electron（Chromium 91 + Node 14/16），插件 = `plugin.json` �
 ## 3. 逐域差距对比
 
 ### 3.1 总表
+
+> 下表是**分析当时（P0 之前）**的快照，保留原样以便回看判断依据；「建议阶段」
+> 里的 P0–P3 项均已实现（`docs/ROADMAP.md` #23–#26），未实现的是标 P3+ / 远期
+> 与「不做」的行。
 
 | 能力域 | uTools | Lume 现状 | 差距评估 | 建议阶段 |
 |---|---|---|---|---|
@@ -371,7 +381,33 @@ Lume 的既定架构约束（`docs/ARCHITECTURE.md`）：业务逻辑归 Rust、
   UI 样板（uTools `mode:list` 等价）。
 - 验收：两个示例插件互相 redirect；template:list 插件零 HTML 可运行。
 
-### P3 数据层与权限强制
+### P3 数据层与权限强制 ✅ 已实现（2026-09-21）
+
+> **落地情况**：四项全做（`docs/PLUGIN_API.md` §6F，ROADMAP #26，示例
+> `examples/plugins/notes/`，实机脚本 `scripts/cdp_p3_verify.mjs` 45 项）。
+> - **P3.1 文档库**：独立 `<base>/data/plugin_store.db`（不进 `lume.db`），
+>   `get/put/remove/allDocs/bulkDocs` + `_rev` 乐观锁，单文档 512 KB / 每插件
+>   2000 篇 / 单批 1000 篇；`__` 前缀是宿主内部文档，插件读写被拒。旧
+>   `storage.json` 进程首次访问时迁入 `__storage` 文档并把文件改名
+>   `.migrated`（只改名不删），`storage.*` 保留为垫片。
+> - **P3.2 权限强制**：台账（§6D.6）成为强制输入；校验点在 `createHostApi`
+>   返回的 API 上逐方法包一层，所以**插件逻辑（启动器窗口内直接持有 API）与
+>   mode 桥接两条路径都被覆盖**——初版只在桥接入口校验，被实机脚本当场抓出
+>   （provider 逻辑整层绕过）。fail-closed、拒绝文案带缺失能力词、设置页显示
+>   权限 chips + 「全部授权」逃生门。
+> - **P3.3 私有文件**：`<plugin>/files/`（无需权限，10 MiB/文件，文件名守卫含
+>   Windows 保留设备名）；任意路径写入 = `fs.write` 能力。
+> - **P3.4 声明式设置**：`[[settings]]` → 设置页自动渲染 → 存 `__settings`
+>   文档 → `ctx.settings.get/all` + `onSettings`；**manifest 即 schema**。
+>
+> **与计划的差异（更保守的地方）**：① 权限校验放在前端 API 工厂而不是
+> 「hostApi/桥接每个 RPC 入口」两处分别写——一处收口，逻辑与桥接同时覆盖；
+> ② 「全部授权」落到 `settings.plugins.trusted`（而不是逐项开关），保持最小。
+>
+> **必须说清的边界**：这仍是**前端关卡**。mode 页是同源 iframe，蓄意代码可直接
+> 触达 Tauri IPC，跳过整层；真正的隔离（沙箱 iframe + 命令侧白名单 + 签名）与
+> `.lupx` 安装确认一起留到 P4。今天这一层的价值是**知情同意 + 明确失败**，文档
+> 与设置页都照实写。
 
 **P3.1 storage → SQLite 文档库**
 

@@ -1769,3 +1769,60 @@ subInput 接管与自动释放、redirect 载荷回显），P0/P1 两套冒烟�
 
 **未做**（留待后续）：`files` 文件拖入与 `img` 剪贴板图片进入、`template = "list"`
 官方列模板。
+
+## 26. 插件系统 P3：数据层、权限强制层、私有文件与声明式设置（已实现）
+
+**状态：已实现（2026-09-21）。** 差距分析见 `docs/PLUGIN_GAP_ANALYSIS.md` P3，
+API 文档见 `docs/PLUGIN_API.md` §6F。四项：
+
+- **P3.1 文档库（`ctx.db`）**：独立的 `<base>/data/plugin_store.db`（**不进
+  `lume.db`**，卸载 = 删一个文件，插件写坏也波及不到剪贴板/固定项）。单表
+  `docs(plugin_id, id, rev, json)`，契约与 uTools/CouchDB 同形：
+  `get/put/remove/allDocs({idStartsWith,limit})/bulkDocs`，`_rev` 乐观锁
+  （无 `_rev` = 新建，撞已有文档即 `conflict:` 报错；`_rev` 不符即
+  `conflict:`；删除要求 rev 匹配，无 tombstone）。上限：单文档 512 KB、
+  每插件 2000 篇（= `allDocs` 上限）、`bulkDocs` 单批 1000 篇；`bulkDocs`
+  在一个事务里逐条返回结果（冲突只影响该条）。`__` 前缀文档是宿主内部
+  （`__settings` / `__storage`），`db.*` 读不到、写被拒。
+- **P3.1 迁移**：v1 的 `<plugin>/storage.json` 在**进程首次访问 store 时**搬进
+  该插件的 `__storage` 文档，文件改名 `storage.json.migrated`（只改名不删）。
+  幂等：db 里已有 `__storage` 则文件直接退场。`storage.*` 保留为兼容垫片
+  （整个 read-modify-write 走 IMMEDIATE 事务，两个并发调用不会互相丢键）。
+- **P3.2 权限强制层**：`permissions` 从「预留声明位」变成**强制门**。台账
+  （`PLUGIN_API.md` §6D.6）是单一事实源：`app.notify→notify`、
+  `clipboard.*→clipboard`、`http.request→network`、`dialog.*→dialog`、
+  `screen.*→screen`、`search.files→search.files`、`fs.read*→fs.read`、
+  `fs.writeFile→fs.write`、`app.trash→trash`；`app.*` 基础动作、插件的
+  自有数据（`storage/db/settings`）与私有目录无需声明。校验点是
+  `createHostApi` 返回的 API 对象（`guardHostApi` 逐方法包一层），所以
+  **插件逻辑（跑在启动器窗口、直接持有 API）与 iframe 桥接两条路径都被覆盖**
+  —— 这一点是实机脚本抓出来的：初版只在桥接入口校验，插件的 provider 逻辑
+  绕过整层。拒绝是 fail-closed（未知插件也拒），文案带缺失的能力词，
+  并写 `[plugins(id)] permission denied: …`。设置 → 插件每行显示权限 chips
+  与「全部授权」（`settings.plugins.trusted`，开发逃生门）。
+- **P3.3 私有文件（`ctx.fs.writeText/readPrivate/listPrivate/privatePath/
+  removePrivate`）**：`<plugin>/files/`，无需权限（属于插件自己）；
+  `fs.writeFile` 写任意绝对路径才是 `fs.write` 能力。文件名只能是名字
+  （无分隔符 / 不是 `.`/`..` / 不是 `NUL`、`CON` 等保留设备名 —— Windows 上
+  `<dir>\NUL` 是设备不是文件），单文件 10 MiB。
+- **P3.4 声明式设置（`[[settings]]` + `ctx.settings.get/all` + `onSettings`）**：
+  manifest 声明 `key/label/type(toggle|select|text)/default/options`，设置页
+  自动渲染（select 用 chip 组），值存在插件 `__settings` 文档里，**manifest 即
+  schema**（未声明的键写入被拒）。改动经 `plugin-settings` 事件从设置窗送到
+  启动器，再交给 mode 的 `onSettings` / provider / service 钩子与页面
+  `lume.on.settings`（页面加载后的握手会重放当前值）。
+
+**验证**：cargo test **168**（+17：store 的 rev 契约/上限/内部前缀/allDocs
+过滤/bulk 逐条结果/迁移幂等/settings 默认值合并；fs 私有目录的越界与设备名
+守卫；manifest settings 解析与 trusted 上报）、tsc/vite build 干净、
+`scripts/cdp_p3_verify.mjs` **45 项全过**（保存→库内容、乐观锁双向验证、
+bulkDocs、权限拒绝/放行各一次、私有文件落盘、迁移改名、设置改值后端到端、
+设置页 chips/开关/控件渲染）、P0/P1/P2 三套冒烟无回归（8/14/21）；
+截图 `test/p3_notes.png`、`test/p3_plugin_pane.png`。
+
+**踩坑（值得记）**：debug exe 的 `frontendDist` 资源是**编译期嵌进二进制**的
+——改完前端必须重新 `cargo build` 才能让 CDP 冒烟跑到新代码，否则测的是上一版
+bundle（本轮排查权限层「不生效」的真凶就是这个）。
+
+**未做**（留待 P4）：`.lupx` 打包、市场源、窗口匹配/超级面板、AI 宿主 API；
+`files` 拖入与 `img` 剪贴板图片进入、`template = "list"` 官方列模板（P2 余项）。

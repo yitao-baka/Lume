@@ -255,5 +255,10 @@
   "pluginDisk": "Disk",
   "pluginReload": "Reload",
   "pluginDev": "Dev",
-  "pluginActionUnavailable": "Plugin can't handle this action: {id}"
+  "pluginActionUnavailable": "Plugin can't handle this action: {id}",
+  "pluginPermissionDenied": "Plugin \"{id}\" did not declare the \"{perm}\" permission (plugin.toml: permissions = [\"{perm}\"])",
+  "pluginPermissions": "Permissions",
+  "pluginTrustAll": "Trust all",
+  "pluginSettings": "Settings",
+  "pluginNoPermissions": "no capabilities declared"
 }

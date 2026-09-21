@@ -9,5 +9,6 @@ kind = "mode"
 description = "示例模式插件：iframe 自由 UI + 插件存储 + toast + 剪贴板 + 自定窗口高度 + 自定搜索框占位文字"
 keywords = ["hello", "你好"]
 entry = "main.js"     # 可选 — 逻辑钩子（onQuery/onShow/onHide）
+permissions = ["clipboard"]   # P3.2 起强制：示例页要用剪贴板读写
 view = "view.html"    # 必填 — 桥接 iframe 渲染的自由 UI
 height = 560          # 可选 — 本模式页面的窗口高度（逻辑 px）；省略 = 全局设置高度

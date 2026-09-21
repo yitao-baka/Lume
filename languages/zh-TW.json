@@ -255,5 +255,10 @@
   "pluginDisk": "磁碟",
   "pluginReload": "重載",
   "pluginDev": "開發",
-  "pluginActionUnavailable": "外掛無法處理該動作：{id}"
+  "pluginActionUnavailable": "外掛無法處理該動作：{id}",
+  "pluginPermissionDenied": "外掛「{id}」未宣告「{perm}」權限（plugin.toml：permissions = [\"{perm}\"]）",
+  "pluginPermissions": "權限",
+  "pluginTrustAll": "全部授權",
+  "pluginSettings": "設定項",
+  "pluginNoPermissions": "未宣告任何能力"
 }

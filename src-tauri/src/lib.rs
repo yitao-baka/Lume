@@ -15,8 +15,10 @@ pub mod input;
 pub mod paths;
 pub mod pipe;
 mod notify;
+mod plugin_fs;
 mod plugin_host;
 mod plugin_net;
+mod plugin_store;
 mod plugins;
 mod pins;
 pub mod recent;
@@ -356,9 +358,23 @@ pub fn run() {
             settings::save_last_page,
             settings::set_remember_checks,
             plugins::get_plugins,
-            plugins::plugin_storage_get,
-            plugins::plugin_storage_set,
+            plugin_store::plugin_storage_get,
+            plugin_store::plugin_storage_set,
             plugins::reload_plugin,
+            plugin_store::plugin_db_get,
+            plugin_store::plugin_db_put,
+            plugin_store::plugin_db_remove,
+            plugin_store::plugin_db_all_docs,
+            plugin_store::plugin_db_bulk_docs,
+            plugin_store::plugin_settings_get,
+            plugin_store::plugin_settings_put,
+            plugin_fs::plugin_fs_private_write,
+            plugin_fs::plugin_fs_private_write_b64,
+            plugin_fs::plugin_fs_private_read,
+            plugin_fs::plugin_fs_private_list,
+            plugin_fs::plugin_fs_private_path,
+            plugin_fs::plugin_fs_private_remove,
+            plugin_fs::plugin_fs_write_any,
             plugin_net::plugin_http_fetch,
             notify::plugin_notify,
             clipboard::plugin_clipboard_write_image,
@@ -370,6 +386,7 @@ pub fn run() {
             plugin_host::plugin_cursor_pos,
             plugin_host::plugin_displays,
             settings::set_plugin_enabled,
+            settings::set_plugin_trusted,
             clipboard::get_clipboard_text,
             clipboard::set_clipboard_text,
             svc::svc_status,

@@ -44,6 +44,7 @@ import {
   providerPlugins,
   refreshPlugins,
   reloadDiskPlugin,
+  applyPluginSettings,
   setPluginServices,
   type ModeId,
   type PluginServices,
@@ -853,6 +854,14 @@ function App() {
       void reloadDiskPlugin(e.payload).then(() => refreshPluginBars());
     });
     onCleanup(() => unlistenPluginReload());
+
+    // Settings-pane plugin settings (plugin_store::plugin_settings_put →
+    // "plugin-settings"): the values changed in the settings window, hand the
+    // new set to the plugin instance living here (P3.4).
+    const unlistenPluginSettings = await listen<string>("plugin-settings", (e) => {
+      void applyPluginSettings(e.payload);
+    });
+    onCleanup(() => unlistenPluginSettings());
 
     // The launcher stays hidden between toggles. On every fresh show (hotkey /
     // tray toggle) reset to the Navigate main menu, re-focus the input, and

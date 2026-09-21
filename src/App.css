@@ -1800,6 +1800,40 @@ body.settings-window #root {
   white-space: nowrap;
 }
 
+/* Plugin row, second line: declared capabilities + the 全部授权 switch. */
+.settings-plugin-perms {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.settings-trust-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+/* A plugin's declared settings, indented under its row. */
+.settings-plugin-settings {
+  margin: 2px 0 8px 12px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+}
+
+.settings-plugin-settings .settings-row-between {
+  padding: 3px 0;
+}
+
+.settings-plugin-settings .settings-sub-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* 「关于」页 — description + version / license / author / homepage rows. */
 .settings-about-desc {
   display: block;

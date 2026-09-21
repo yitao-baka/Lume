@@ -17,7 +17,7 @@ name = "Web Search"        # 设置页显示名（可省）
 version = "1.0.0"          # 可省
 kind = "provider"          # provider（搜索提供）| mode | service
 description = "…"          # 可省
-permissions = ["network"]  # 预留字段 — v1 不强制
+permissions = ["network"]  # P3.2 起强制：用到的能力必须声明（见下）
 entry = "main.js"          # provider 的入口 JS（相对插件目录）
 ```
 
@@ -123,12 +123,90 @@ min_length = 2
 `select`（可选 `filter`）做二级下钻，Esc 回上一级；④ `app.redirect(插件id,
 {code, payload})` 跳到另一个插件并带数据。
 
+## 数据、私有文件与插件设置（P3）
+
+三件事一起补上（完整契约见 `docs/PLUGIN_API.md` §6F，示例
+`examples/plugins/notes/`）：
+
+**① 文档库 `ctx.db`** — 存在独立的 `<base>/data/plugin_store.db` 里，
+uTools/CouchDB 形状：
+
+```js
+const doc = await ctx.db.get("settings");            // null = 不存在
+const { _rev } = await ctx.db.put({ _id: "draft", text: "…" });   // 新建 → rev 1
+await ctx.db.put({ _id: "draft", text: "改一下", _rev });         // 覆盖要带读到的 rev
+const all = await ctx.db.allDocs({ idStartsWith: "note:" });      // 按 id 升序
+await ctx.db.bulkDocs([{ _id: "a", text: "1" }, { _id: "b", text: "2" }]);
+```
+
+并发写入靠 `_rev` 乐观锁：rev 不符时 reject，消息以 `conflict:` 开头，插件
+自己决定重读还是提示。旧的 `ctx.storage.*` 仍在（内部就是库里的 `__storage`
+文档，`storage.json` 已自动迁移并改名为 `storage.json.migrated`），新代码
+建议直接用 `db`。
+
+**② 私有文件 `ctx.fs`** — `<plugin>/files/`，**无需任何权限**（属于插件自己）：
+
+```js
+const path = await ctx.fs.writeText("export.txt", text);   // → 绝对路径
+await ctx.fs.writeBytes("shot.png", canvas.toDataURL());   // ≤10 MiB
+await ctx.fs.privatePath("export.txt");                    // 交给 openPath / paste
+```
+
+写**任意**绝对路径是 `ctx.fs.writeFile(path, text)`，需要在清单声明
+`fs.write`。
+
+**③ 插件设置** — 清单里声明，设置 → 插件 自动渲染，插件收 `onSettings`：
+
+```toml
+[[settings]]
+key = "sort"
+label = "排序"
+type = "select"        # toggle | select | text
+default = "newest"
+[[settings.options]]
+value = "newest"
+label = "最新在前"
+```
+
+```js
+const sort = await ctx.settings.get("sort");
+onSettings(values) { /* 面板一改，这里立刻拿到新值 */ }
+```
+
+## 权限（P3.2 起强制）
+
+`permissions` 不再是预留字段：**台账里的能力没声明就调用会被明确拒绝**
+（fail-closed），设置 → 插件 每行显示声明的 chips，并提供「全部授权」
+（开发用）。示例：
+
+```toml
+permissions = ["network", "clipboard", "fs.write"]
+```
+
+| 能力 | 声明词 |
+|---|---|
+| 宿主 HTTP（`http.request`） | `network` |
+| 剪贴板全部读写与粘贴 | `clipboard` |
+| 系统通知 | `notify` |
+| 文件对话框 | `dialog` |
+| 光标 / 显示器 | `screen` |
+| 全盘文件搜索 | `search.files` |
+| 文件读取（文本/缩略图/图标） | `fs.read` |
+| 任意路径写入 | `fs.write` |
+| 回收站删除 | `trash` |
+
+不用声明的：`app.hide/toast/setQuery/openPath/…` 这类基础动作、插件自有数据
+（`storage`/`db`/`settings`）与私有目录 `files/`。完整台账与边界（含「这是
+前端关卡、不是沙箱」的说明）见 `docs/PLUGIN_API.md` §6D.6 与 §9。
+
 ## 安全模型（v1）
 
-加载第三方 JS = 在启动器 webview 里执行任意代码。v1 的信任模型是
-**显式放置即信任**（用户自己把插件放进 plugins/ 目录），`permissions`
-清单字段为将来的权限强制层预留。内置插件（clipboard/preview）编译进
-二进制，与磁盘插件走同一注册表与启停路径。
+加载第三方 JS = 在启动器 webview 里执行任意代码。信任模型是
+**显式放置即信任**（用户自己把插件放进 plugins/ 目录）。`permissions`
+自 P3.2 起**被强制**（上表；未声明的能力调用即失败），但校验点在前端——
+mode 页是同源 iframe，蓄意代码仍可绕过，真正的沙箱留待生态阶段。内置插件
+（clipboard/preview）编译进二进制，与磁盘插件走同一注册表与启停路径，不参与
+权限表。
 
 ## 内置插件
 

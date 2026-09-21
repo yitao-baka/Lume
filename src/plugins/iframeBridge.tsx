@@ -30,6 +30,16 @@ export const BRIDGE_SCRIPT = `
       console.error("[lume bridge]", method, err);
     });
   };
+  // The store's bookkeeping fields are not part of a document's body: the
+  // host adds them back on every read (uTools-shaped docs, plain JSON rows in
+  // SQLite).
+  var stripMeta = function (doc) {
+    var out = {};
+    for (var k in doc) {
+      if (k !== "_id" && k !== "_rev" && Object.prototype.hasOwnProperty.call(doc, k)) out[k] = doc[k];
+    }
+    return out;
+  };
   window.lume = {
     app: {
       hide: function () { return call("app.hide"); },
@@ -58,6 +68,13 @@ export const BRIDGE_SCRIPT = `
       thumb: function (p) { return call("fs.thumb", { path: p }); },
       videoPoster: function (p) { return call("fs.videoPoster", { path: p }); },
       icon: function (paths) { return call("fs.icon", { paths: paths }); },
+      writeText: function (name, text) { return call("fs.writeText", { name: name, text: text }); },
+      writeBytes: function (name, data) { return call("fs.writeBytes", { name: name, data: data }); },
+      readPrivate: function (name) { return call("fs.readPrivate", { name: name }); },
+      listPrivate: function () { return call("fs.listPrivate"); },
+      privatePath: function (name) { return call("fs.privatePath", { name: name }); },
+      removePrivate: function (name) { return call("fs.removePrivate", { name: name }); },
+      writeFile: function (p, text) { return call("fs.writeFile", { path: p, text: text }); },
     },
     clipboard: {
       readText: function () { return call("clipboard.readText"); },
@@ -103,11 +120,35 @@ export const BRIDGE_SCRIPT = `
       set: function (k, v) { return call("storage.set", { key: k, value: v }); },
       remove: function (k) { return call("storage.remove", { key: k }); },
     },
+    db: {
+      get: function (id) { return call("db.get", { docId: id }); },
+      put: function (doc) {
+        var d = doc || {};
+        return call("db.put", { docId: d._id, rev: d._rev, json: JSON.stringify(stripMeta(d)) });
+      },
+      remove: function (docOrId, rev) {
+        if (docOrId && typeof docOrId === "object") {
+          return call("db.remove", { docId: docOrId._id, rev: docOrId._rev });
+        }
+        return call("db.remove", { docId: docOrId, rev: rev });
+      },
+      allDocs: function (opts) { return call("db.allDocs", { opts: opts }); },
+      bulkDocs: function (docs) {
+        var payload = (docs || []).map(function (d) {
+          return { docId: d && d._id, rev: d && d._rev, json: JSON.stringify(stripMeta(d || {})) };
+        });
+        return call("db.bulkDocs", { docs: payload });
+      },
+    },
+    settings: {
+      all: function () { return call("settings.all"); },
+      get: function (k) { return call("settings.get", { key: k }); },
+    },
     search: {
       // opts: legacy number = max, or { offset, max, sort, exts, folder }
       files: function (q, opts) { return call("search.files", { q: q, opts: opts }); },
     },
-    on: {}, // the page assigns: lume.on.query / .show / .hide / .key / .enter / .subInput = function(payload)
+    on: {}, // the page assigns: lume.on.query / .show / .hide / .key / .enter / .subInput / .settings = function(payload)
   };
   window.addEventListener("message", function (e) {
     var d = e.data || {};

@@ -15,6 +15,7 @@ import type { FeatureEnterInfo, LauncherPlugin, ModeId, ModeInstance, NavBarCont
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
 import { plog } from "./log";
+import { setPermissionSource } from "./permissions";
 export {
   APPS_MODE,
   type LauncherPlugin,
@@ -323,6 +324,15 @@ function navBarsContribution(
   };
 }
 
+// ── Capability permissions (P3.2) ──
+//
+// The ledger, the fail-closed check and the guard that applies it to every
+// host API live in `permissions.ts`; this module only wires the manifest
+// lookup the check consults (the manifests signal is owned here). The guard
+// runs inside `createHostApi`, so both paths a disk plugin has — its logic in
+// this window and its mode page over the bridge — are covered.
+setPermissionSource((id) => manifests().find((x) => x.id === id));
+
 /** Route a bridge RPC ("app.hide" / "storage.get" / …) to the host API. */
 async function execHostRpc(
   id: string,
@@ -412,6 +422,49 @@ async function execHostRpc(
       return api.storage.set(a.key, (args as { value: unknown }).value);
     case "storage.remove":
       return api.storage.remove(a.key);
+    // The bridge ships a document's body already stringified (it strips the
+    // `_id`/`_rev` bookkeeping on its side); these cases rebuild the document
+    // the host API takes, so the Rust command contract stays the only wire.
+    case "db.get":
+      return api.db.get(a.docId);
+    case "db.put":
+      return api.db.put({
+        ...(JSON.parse(String(args.json ?? "{}")) as Record<string, unknown>),
+        _id: a.docId,
+        ...(args.rev == null ? {} : { _rev: args.rev as number }),
+      });
+    case "db.remove":
+      return api.db.remove(a.docId, args.rev as number);
+    case "db.allDocs":
+      return api.db.allDocs(args.opts as { idStartsWith?: string; limit?: number } | undefined);
+    case "db.bulkDocs": {
+      const rows = (args.docs ?? []) as { docId: string; json: string; rev?: number | null }[];
+      return api.db.bulkDocs(
+        rows.map((r) => ({
+          ...(JSON.parse(r.json || "{}") as Record<string, unknown>),
+          _id: r.docId,
+          ...(r.rev == null ? {} : { _rev: r.rev }),
+        }))
+      );
+    }
+    case "settings.all":
+      return api.settings.all();
+    case "settings.get":
+      return api.settings.get(a.key);
+    case "fs.writeText":
+      return api.fs.writeText(a.name, a.text);
+    case "fs.writeBytes":
+      return api.fs.writeBytes(a.name, a.data);
+    case "fs.readPrivate":
+      return api.fs.readPrivate(a.name);
+    case "fs.listPrivate":
+      return api.fs.listPrivate();
+    case "fs.privatePath":
+      return api.fs.privatePath(a.name);
+    case "fs.removePrivate":
+      return api.fs.removePrivate(a.name);
+    case "fs.writeFile":
+      return api.fs.writeFile(a.path, a.text);
     case "search.files": {
       // Second arg: legacy number (= max) or { offset, max, sort }.
       const o = args.opts as { offset?: number; max?: number; sort?: string } | undefined;
@@ -438,6 +491,11 @@ function createDiskModeInstance(
   // enter delivered while the document is still loading would be lost — and
   // a fresh document needs the payload again the way it needs query/show.
   let enterPayload: FeatureEnterInfo | null = null;
+  // Declarative settings (P3.4) delivered to this page. Kept so the ready
+  // handshake can replay them: the pane may change a value while the mode is
+  // not active (the srcdoc document doesn't exist yet), and a fresh document
+  // needs the current values again.
+  let settingsValues: Record<string, unknown> | null = null;
   const { View, post } = createIframeView(
     (method, args) => execHostRpc(m.id, method, args),
     () => {
@@ -447,6 +505,7 @@ function createDiskModeInstance(
       postEv("query", query());
       postEv("show");
       if (enterPayload) postEv("enter", enterPayload);
+      if (settingsValues) postEv("settings", settingsValues);
     }
   );
   // Events (query/show/hide) mirror into the plugin log so a silent page is
@@ -542,6 +601,11 @@ function createDiskModeInstance(
       if (viewReady) postEv("subInput", text);
       hook("onSubInput", text);
     },
+    onSettings: (values) => {
+      settingsValues = values;
+      if (viewReady) postEv("settings", values);
+      hook("onSettings", values);
+    },
     View,
   };
 }
@@ -613,6 +677,7 @@ export async function loadDiskPlugins() {
         const rawOnFeature = logic.onFeature;
         const rawSelect = logic.select;
         const rawFilter = logic.filter;
+        const rawOnSettings = logic.onSettings;
         definePlugin({
           id: m.id,
           features: m.features ?? [],
@@ -672,10 +737,24 @@ export async function loadDiskPlugins() {
                   },
                 }
               : {}),
+            ...(typeof rawOnSettings === "function"
+              ? {
+                  onSettings: (values: Record<string, unknown>) => {
+                    try {
+                      (rawOnSettings as (v: Record<string, unknown>) => void)(values);
+                    } catch (err) {
+                      plog.error(m.id, "provider onSettings failed:", err);
+                    }
+                  },
+                }
+              : {}),
           },
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
+        // Declarative settings (P3.4): hand the plugin its effective values
+        // now, so a logic hook can act on them without waiting for a change.
+        void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(
           m.id,
@@ -709,6 +788,9 @@ export async function loadDiskPlugins() {
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
+        // Declarative settings (P3.4): hand the plugin its effective values
+        // now, so a logic hook can act on them without waiting for a change.
+        void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(
           m.id,
@@ -727,12 +809,16 @@ export async function loadDiskPlugins() {
             onQuery: (q) => void callHook(m.id, logic, "onQuery", q),
             onFeature: (info) => void callHook(m.id, logic, "onFeature", info),
             onSubInput: (text) => void callHook(m.id, logic, "onSubInput", text),
+            onSettings: (values) => void callHook(m.id, logic, "onSettings", values),
           },
           features: m.features ?? [],
           dir: m.dir,
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
+        // Declarative settings (P3.4): hand the plugin its effective values
+        // now, so a logic hook can act on them without waiting for a change.
+        void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(m.id, `loaded service (entry=${m.entry}${navBars ? ", navBars" : ""})`);
       } else {
@@ -752,6 +838,31 @@ export async function loadDiskPlugins() {
   // The `plugins` array is plain — clone the manifests signal so reactive
   // consumers (mode pills, provider merge) re-run after disk loads.
   if (loadedAny) setManifests((prev) => [...prev]);
+}
+
+/** Load a plugin's effective settings (P3.4) and hand them to its
+ * contribution hooks. Called when a disk plugin is loaded and whenever the
+ * settings window changes a value (the Rust `plugin-settings` event) — the
+ * plugin instance lives in this window, the pane lives in the settings one, so
+ * the values have to be pushed across. */
+export async function applyPluginSettings(id: string): Promise<void> {
+  const p = plugins.find((x) => x.id === id);
+  if (!p) return;
+  let values: Record<string, unknown>;
+  try {
+    values = (await invoke<Record<string, unknown>>("plugin_settings_get", { id })) ?? {};
+  } catch (err) {
+    plog.error(id, "settings load failed:", err);
+    return;
+  }
+  plog.debug(id, "settings →", values);
+  try {
+    p.mode?.onSettings?.(values);
+    p.provider?.onSettings?.(values);
+    p.lifecycle?.onSettings?.(values);
+  } catch (err) {
+    plog.error(id, "onSettings failed:", err);
+  }
 }
 
 /** Global keywords (uTools-style) of enabled mode plugins → Navigate offers

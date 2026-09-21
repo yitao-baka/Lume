@@ -64,6 +64,79 @@ pub struct PluginFeature {
     pub icon: String,
 }
 
+/// One `select` choice (P3.4). `label` falls back to `value`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct SettingsOption {
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+/// One declarative plugin setting (`[[settings]]` in the manifest, P3.4): the
+/// settings pane renders these automatically and the values live in the
+/// plugin's `__settings` document. **The manifest is the schema** — a key that
+/// is not declared here can never be written (`plugin_settings_put` refuses
+/// it), so a renamed key cannot leave stale values behind forever.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PluginSetting {
+    /// The key the plugin reads (`ctx.settings.get(key)`).
+    #[serde(default)]
+    pub key: String,
+    /// Pane label (author-localized; empty → the key is shown).
+    #[serde(default)]
+    pub label: String,
+    /// Input kind: `"toggle"` | `"select"` | `"text"`. Anything else is
+    /// treated as text by the pane.
+    #[serde(default = "default_setting_type", rename = "type")]
+    pub input: String,
+    /// Value used until the user changes it (any TOML value that maps to JSON).
+    #[serde(default)]
+    pub default: Option<toml::Value>,
+    /// `select` choices.
+    #[serde(default)]
+    pub options: Vec<SettingsOption>,
+}
+
+fn default_setting_type() -> String {
+    "text".into()
+}
+
+/// One setting as the frontend receives it: `default` converted to JSON so
+/// the pane (and the plugin) see a plain value.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PluginSettingInfo {
+    pub key: String,
+    pub label: String,
+    #[serde(rename = "type")]
+    pub input: String,
+    #[serde(rename = "default")]
+    pub default_value: serde_json::Value,
+    pub options: Vec<SettingsOption>,
+}
+
+impl PluginSetting {
+    /// Frontend shape (JSON `default`; a datetime default serializes as its
+    /// string form, which is what a text input can show anyway).
+    pub fn info(&self) -> PluginSettingInfo {
+        PluginSettingInfo {
+            key: self.key.clone(),
+            label: if self.label.is_empty() {
+                self.key.clone()
+            } else {
+                self.label.clone()
+            },
+            input: self.input.clone(),
+            default_value: self
+                .default
+                .as_ref()
+                .and_then(|v| serde_json::to_value(v).ok())
+                .unwrap_or(serde_json::Value::Null),
+            options: self.options.clone(),
+        }
+    }
+}
+
 /// A plugin manifest, parsed from `<base>/plugins/<id>/plugin.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -106,6 +179,10 @@ pub struct PluginManifest {
     /// 「<label>」 row that enters the plugin with the query as payload.
     #[serde(default)]
     pub features: Vec<PluginFeature>,
+    /// Declarative settings (P3.4) — the settings pane renders these and the
+    /// values live in the plugin's `__settings` document.
+    #[serde(default)]
+    pub settings: Vec<PluginSetting>,
     /// Development flag: the frontend registry reloads the plugin from disk
     /// on every refresh (settings-applied), so editing its code takes effect
     /// without a restart. Plugin authors opt in via the manifest.
@@ -125,9 +202,15 @@ pub struct PluginInfo {
     pub version: String,
     pub kind: String,
     pub description: String,
+    /// `permissions` as declared by the manifest (P3.2 enforces it: the
+    /// frontend refuses an RPC whose permission is missing here).
     pub permissions: Vec<String>,
     /// Built into lume.exe (vs discovered under `<base>/plugins/`).
     pub builtin: bool,
+    /// `settings.plugins.trusted` holds this id → every declared-capability
+    /// check passes even when `permissions` is incomplete (development
+    /// escape hatch, surfaced as 「全部授权」 in the settings pane).
+    pub trusted: bool,
     /// True unless the id is in `settings.plugins.disabled`.
     pub enabled: bool,
     /// Entry JS file (disk provider plugins).
@@ -149,6 +232,8 @@ pub struct PluginInfo {
     pub keywords_pinyin: Vec<KeywordPinyin>,
     /// Declarative entry rules (any plugin kind).
     pub features: Vec<PluginFeature>,
+    /// Declarative settings (P3.4) with JSON defaults.
+    pub settings: Vec<PluginSettingInfo>,
     /// Absolute plugin directory (disk plugins; empty for built-ins).
     pub dir: String,
 }
@@ -160,9 +245,45 @@ pub const BUILTIN_PLUGINS: &[(&str, &str, &str)] = &[
     ("preview", "卫星预览", "service"),
 ];
 
-/// The plugins directory: `<base>/plugins/`.
+/// Plugins directory: `<base>/plugins/`.
 fn plugins_dir(base: &Path) -> std::path::PathBuf {
     base.join("plugins")
+}
+
+/// Plugin ids are directory names under `plugins/` (and the path component of
+/// every store/doc key): keep them to a conservative character set so an id
+/// can never escape its own directory.
+pub(crate) fn valid_plugin_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The id a plugin directory belongs to: the manifest's `id` when set, else
+/// the directory name. This is the same key the plugin is registered under, so
+/// store/migration code paths agree with the frontend.
+pub(crate) fn manifest_id_of(dir: &Path) -> String {
+    let name = dir
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    fs::read_to_string(dir.join("plugin.toml"))
+        .ok()
+        .and_then(|text| parse_manifest(&text).ok())
+        .map(|m| if m.id.is_empty() { name.clone() } else { m.id })
+        .unwrap_or(name)
+}
+
+/// One plugin's declared settings (empty when the manifest is unreadable or
+/// declares none) — the schema `plugin_settings_*` validates against.
+pub(crate) fn manifest_settings(base: &Path, id: &str) -> Vec<PluginSettingInfo> {
+    scan_disk_plugins(base)
+        .into_iter()
+        .find(|m| m.id == id)
+        .map(|m| m.settings.iter().map(|s| s.info()).collect())
+        .unwrap_or_default()
 }
 
 /// Parse one `plugin.toml` (small standalone parse so tests don't need the
@@ -240,9 +361,11 @@ fn resolve_entry(dir: &Path, entry: &str) -> String {
     entry.into()
 }
 
-/// Built-ins + on-disk plugins, annotated with the effective enabled state.
-pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
+/// Built-ins + on-disk plugins, annotated with the effective enabled state and
+/// the `trusted` flag (`settings.plugins.trusted`).
+pub fn list_plugins(base: &Path, disabled: &[String], trusted: &[String]) -> Vec<PluginInfo> {
     let enabled = |id: &str| !disabled.iter().any(|d| d == id);
+    let is_trusted = |id: &str| trusted.iter().any(|t| t == id);
     let mut out: Vec<PluginInfo> = BUILTIN_PLUGINS
         .iter()
         .map(|(id, name, kind)| PluginInfo {
@@ -253,6 +376,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             description: String::new(),
             permissions: Vec::new(),
             builtin: true,
+            trusted: false, // built-ins are compiled in, not granted anything
             enabled: enabled(id),
             entry: String::new(),
             view: String::new(),
@@ -262,6 +386,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             development: false,
             keywords_pinyin: Vec::new(),
             features: Vec::new(),
+            settings: Vec::new(),
             dir: String::new(),
         })
         .collect();
@@ -290,6 +415,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             description: m.description,
             permissions: m.permissions,
             builtin: false,
+            trusted: is_trusted(&m.id),
             enabled: enabled(&m.id),
             entry: resolve_entry(&dir, &m.entry),
             view: m.view,
@@ -299,6 +425,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             development: m.development,
             keywords_pinyin,
             features: m.features,
+            settings: m.settings.iter().map(|s| s.info()).collect(),
             dir: dir.to_string_lossy().into_owned(),
         });
     }
@@ -316,7 +443,11 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
 #[tauri::command]
 pub fn get_plugins(state: State<SettingsState>) -> Result<Vec<PluginInfo>, String> {
     let snapshot = settings::snapshot(&state);
-    Ok(list_plugins(&base_dir(), &snapshot.plugins.disabled))
+    Ok(list_plugins(
+        &base_dir(),
+        &snapshot.plugins.disabled,
+        &snapshot.plugins.trusted,
+    ))
 }
 
 /// Settings-pane 重载 button: ask the launcher webview to reload one disk
@@ -328,104 +459,12 @@ pub fn reload_plugin(id: String, app: tauri::AppHandle) -> Result<(), String> {
     app.emit("plugin-reload", id).map_err(|e| e.to_string())
 }
 
-// ── Plugin-scoped key/value storage (uTools db 风格, ROADMAP #7) ──
+// ── Plugin data (P3.1) ──
 //
-// Each disk plugin gets `<base>/plugins/<id>/storage.json` — a flat
-// string→JSON map only its own id can address. Values arrive as JSON text
-// (the frontend JSON-stringifies); the backend never interprets them.
-
-fn plugin_storage_path(base: &Path, id: &str) -> Result<std::path::PathBuf, String> {
-    // Path-traversal guard: storage lives INSIDE the plugin's own dir.
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err("invalid plugin id".into());
-    }
-    Ok(plugins_dir(base).join(id).join("storage.json"))
-}
-
-fn read_storage(path: &Path) -> std::collections::BTreeMap<String, String> {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-/// Read one key (None = unset). `key` is the exact map key.
-#[tauri::command]
-pub fn plugin_storage_get(
-    id: String,
-    key: String,
-    _state: State<SettingsState>,
-) -> Result<Option<String>, String> {
-    plugin_storage_get_for(&base_dir(), &id, key)
-}
-
-fn plugin_storage_get_for(
-    base: &Path,
-    id: &str,
-    key: String,
-) -> Result<Option<String>, String> {
-    let path = plugin_storage_path(base, id)?;
-    let value = read_storage(&path).get(&key).cloned();
-    match &value {
-        Some(v) => eprintln!(
-            "[plugins] storage get ({id}) {key} → hit ({} bytes)",
-            v.len()
-        ),
-        None => eprintln!("[plugins] storage get ({id}) {key} → miss"),
-    }
-    Ok(value)
-}
-
-/// Write one key (value = JSON text; null deletes). Atomic-ish: the whole
-/// map is rewritten each time (plugin storage is small by design).
-#[tauri::command]
-pub fn plugin_storage_set(
-    id: String,
-    key: String,
-    value: Option<String>,
-    _state: State<SettingsState>,
-) -> Result<(), String> {
-    plugin_storage_set_for(&base_dir(), &id, key, value)
-}
-
-fn plugin_storage_set_for(
-    base: &Path,
-    id: &str,
-    key: String,
-    value: Option<String>,
-) -> Result<(), String> {
-    let path = plugin_storage_path(base, id)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut map = read_storage(&path);
-    match &value {
-        // Writes log the payload size only — values may hold user data.
-        Some(v) => eprintln!(
-            "[plugins] storage set ({id}) {key} = <{} bytes> ({} key(s) before write)",
-            v.len(),
-            map.len()
-        ),
-        None => eprintln!(
-            "[plugins] storage remove ({id}) {key} ({} key(s) before write)",
-            map.len()
-        ),
-    }
-    match value {
-        Some(v) => {
-            map.insert(key, v);
-        }
-        None => {
-            map.remove(&key);
-        }
-    }
-    fs::write(&path, serde_json::to_string(&map).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())
-}
+// The v1 `storage.json` KV map and the P3 document store both live in
+// `plugin_store.rs` (`<base>/data/plugin_store.db`): the commands there are
+// `plugin_storage_get/set` (the compatibility shim), `plugin_db_*` (the
+// document API) and `plugin_settings_*` (declarative settings).
 
 #[cfg(test)]
 mod tests {
@@ -467,42 +506,6 @@ mod tests {
     }
 
     #[test]
-    fn storage_roundtrip_and_traversal_guard() {
-        let root = std::env::temp_dir().join(format!("lume-plugins-store-{}", std::process::id()));
-        let base = root.join("plugins");
-        let demo = base.join("demo");
-        fs::create_dir_all(&demo).unwrap();
-        let path = plugin_storage_path(&root, "demo").unwrap();
-        assert_eq!(path, demo.join("storage.json"));
-
-        // set → get → overwrite → delete
-        plugin_storage_set_for(&root, "demo", "counter".into(), Some("41".into())).unwrap();
-        plugin_storage_set_for(&root, "demo", "greeting".into(), Some("\"hi\"".into())).unwrap();
-        assert_eq!(
-            plugin_storage_get_for(&root, "demo", "counter".into()).unwrap(),
-            Some("41".into())
-        );
-        plugin_storage_set_for(&root, "demo", "counter".to_string(), Some("42".into())).unwrap();
-        assert_eq!(
-            plugin_storage_get_for(&root, "demo", "counter".into()).unwrap(),
-            Some("42".into())
-        );
-        // other keys survive an overwrite
-        assert_eq!(
-            plugin_storage_get_for(&root, "demo", "greeting".into()).unwrap(),
-            Some("\"hi\"".into())
-        );
-        plugin_storage_set_for(&root, "demo", "greeting".into(), None).unwrap();
-        assert_eq!(plugin_storage_get_for(&root, "demo", "greeting".into()).unwrap(), None);
-
-        // unset key → None; path traversal ids rejected
-        assert_eq!(plugin_storage_get_for(&root, "demo", "nope".into()).unwrap(), None);
-        assert!(plugin_storage_path(&base, "..\\evil").is_err());
-        assert!(plugin_storage_path(&base, "").is_err());
-        fs::remove_dir_all(&root).ok();
-    }
-
-    #[test]
     fn manifest_carries_keywords_and_view() {
         let m = parse_manifest(
             "id = \"m\"
@@ -532,13 +535,104 @@ height = 560
         fs::create_dir_all(&demo).unwrap();
         fs::write(demo.join("plugin.toml"), "id = \"demo\"\nname = \"Demo\"\n").unwrap();
         let disabled = vec!["preview".to_string()];
-        let all = list_plugins(&root, &disabled);
+        let all = list_plugins(&root, &disabled, &[]);
         let ids: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
         assert!(ids.contains(&"clipboard") && ids.contains(&"preview") && ids.contains(&"demo"));
         let preview = all.iter().find(|p| p.id == "preview").unwrap();
         assert!(preview.builtin && !preview.enabled);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(!demo.builtin && demo.enabled && demo.name == "Demo");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn trusted_ids_are_reported_and_builtins_never_are() {
+        let root = std::env::temp_dir().join(format!("lume-plugins-trust-{}", std::process::id()));
+        let demo = root.join("plugins").join("demo");
+        fs::create_dir_all(&demo).unwrap();
+        fs::write(
+            demo.join("plugin.toml"),
+            "id = \"demo\"\npermissions = [\"network\"]\n",
+        )
+        .unwrap();
+        let all = list_plugins(&root, &[], &["demo".to_string(), "preview".to_string()]);
+        let demo = all.iter().find(|p| p.id == "demo").unwrap();
+        assert!(demo.trusted);
+        assert_eq!(demo.permissions, vec!["network".to_string()]);
+        let other = all.iter().find(|p| p.id == "clipboard").unwrap();
+        assert!(!other.trusted, "a built-in is never in the trusted list");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn settings_declare_json_defaults_and_options() {
+        let m = parse_manifest(
+            "id = \"demo\"\n\
+             [[settings]]\n\
+             key = \"greeting\"\n\
+             label = \"Greeting\"\n\
+             type = \"text\"\n\
+             default = \"hello\"\n\
+             \n\
+             [[settings]]\n\
+             key = \"limit\"\n\
+             type = \"text\"\n\
+             default = 5\n\
+             \n\
+             [[settings]]\n\
+             key = \"engine\"\n\
+             type = \"select\"\n\
+             default = \"bing\"\n\
+             \n\
+             [[settings.options]]\n\
+             value = \"bing\"\n\
+             label = \"Bing\"\n\
+             \n\
+             [[settings.options]]\n\
+             value = \"google\"\n\
+             \n\
+             [[settings]]\n\
+             key = \"plain\"\n",
+        )
+        .unwrap();
+        assert_eq!(m.settings.len(), 4);
+        let s = &m.settings[0];
+        assert_eq!(s.input, "text");
+        assert_eq!(s.info().default_value, serde_json::json!("hello"));
+        assert_eq!(m.settings[1].info().default_value, serde_json::json!(5));
+        assert_eq!(m.settings[2].info().default_value, serde_json::json!("bing"));
+        assert_eq!(m.settings[2].options.len(), 2);
+        assert_eq!(m.settings[2].options[0].label, "Bing");
+        // An option without a label falls back to its value in the pane.
+        assert_eq!(m.settings[2].options[1].label, "");
+        // No `default` → JSON null; no `type` → text; no `label` → the key.
+        assert_eq!(m.settings[3].info().default_value, serde_json::Value::Null);
+        assert_eq!(m.settings[3].input, "text");
+        assert_eq!(m.settings[3].info().label, "plain");
+        // A plugin without a [[settings]] block reports none.
+        assert!(parse_manifest("id = \"x\"").unwrap().settings.is_empty());
+    }
+
+    #[test]
+    fn manifest_settings_lookup_and_id_resolution() {
+        let root = std::env::temp_dir().join(format!("lume-plugins-mset-{}", std::process::id()));
+        let demo = root.join("plugins").join("demo");
+        fs::create_dir_all(&demo).unwrap();
+        fs::write(
+            demo.join("plugin.toml"),
+            "name = \"Demo\"\n[[settings]]\nkey = \"a\"\nlabel = \"A\"\n",
+        )
+        .unwrap();
+        // `id` omitted → the directory name is the plugin id.
+        assert_eq!(manifest_id_of(&demo), "demo");
+        let declared = manifest_settings(&root, "demo");
+        assert_eq!(declared.len(), 1);
+        assert_eq!(declared[0].key, "a");
+        assert!(manifest_settings(&root, "nope").is_empty());
+        // An unreadable manifest falls back to the directory name too.
+        assert_eq!(manifest_id_of(&root.join("plugins").join("ghost")), "ghost");
+        assert!(valid_plugin_id("demo-1_2"));
+        assert!(!valid_plugin_id("") && !valid_plugin_id("..\\evil") && !valid_plugin_id("a b"));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -553,7 +647,7 @@ height = 560
             "id = \"demo\"\nkeywords = [\"秒搜\", \"Files\"]\n",
         )
         .unwrap();
-        let all = list_plugins(&root, &[]);
+        let all = list_plugins(&root, &[], &[]);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert_eq!(demo.keywords_pinyin.len(), 2);
         assert_eq!(demo.keywords_pinyin[0].full, "miaosou");
@@ -574,7 +668,7 @@ height = 560
             "id = \"demo\"\nentry = \"dist\"\n",
         )
         .unwrap();
-        let all = list_plugins(&root, &[]);
+        let all = list_plugins(&root, &[], &[]);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(demo.entry.ends_with("dist/index.js"), "entry: {}", demo.entry);
         fs::remove_dir_all(&root).ok();
@@ -620,7 +714,7 @@ height = 560
             "id = \"demo\"\n[[features]]\ncode = \"hi\"\nover = true\n",
         )
         .unwrap();
-        let all = list_plugins(&root, &[]);
+        let all = list_plugins(&root, &[], &[]);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert_eq!(demo.features.len(), 1);
         assert_eq!(demo.features[0].code, "hi");

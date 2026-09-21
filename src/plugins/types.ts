@@ -25,8 +25,14 @@ export interface PluginManifest {
   version: string;
   kind: string;
   description: string;
+  /** Capability words the plugin declares (`permissions = [...]` in the
+   * manifest). Enforced since P3.2: an RPC whose permission is missing here
+   * is refused (unless `trusted`). See `docs/PLUGIN_API.md` §6D.6. */
   permissions: string[];
   builtin: boolean;
+  /** 「全部授权」 (settings `plugins.trusted`): every capability check passes,
+   * declared or not. Built-ins are never in this list (they are compiled in). */
+  trusted: boolean;
   enabled: boolean;
   /** Entry JS file (disk plugins, relative to the plugin dir). */
   entry: string;
@@ -52,8 +58,42 @@ export interface PluginManifest {
    * a query the rule matches offers an 「<label>」 row that enters the plugin
    * with the query text as payload. See `PluginFeature`. */
   features: PluginFeature[];
+  /** Declarative settings (`[[settings]]`, P3.4) — rendered by 设置 → 插件;
+   * the values live in the plugin's `__settings` document and reach the
+   * plugin through `settings.all()` / `settings.get()` + `onSettings`. */
+  settings: PluginSetting[];
   /** Absolute plugin directory (disk plugins; empty for built-ins). */
   dir: string;
+}
+
+/** One manifest-declared setting (P3.4). The manifest is the schema: only
+ * declared keys can be written, so a renamed key cannot leave stale values. */
+export interface PluginSetting {
+  /** Key the plugin reads (`settings.get(key)`). */
+  key: string;
+  /** Pane label (the manifest's `label`, falling back to the key). */
+  label: string;
+  /** Input kind: `"toggle"` | `"select"` | `"text"` (unknown → text). */
+  type: "toggle" | "select" | "text" | string;
+  /** Value in effect until the user changes it. */
+  default: unknown;
+  /** `select` choices (`label` empty → the value is shown). */
+  options: { value: string; label: string }[];
+}
+
+/** A stored document (P3.1): the plugin's own fields plus the store's
+ * bookkeeping. `_rev` is the optimistic lock a write must present. */
+export type PluginDoc = Record<string, unknown> & { _id: string; _rev: number };
+
+/** A document to write: no `_rev` = "this is new" (an existing document then
+ * conflicts), `_rev` = "replace exactly the version I read". */
+export type PluginDocInput = Record<string, unknown> & { _id: string; _rev?: number };
+
+/** One `bulkDocs` outcome — a conflict is reported per entry. */
+export interface BulkDocResult {
+  _id: string;
+  _rev: number | null;
+  error: string | null;
 }
 
 /** One declarative entry rule (uTools-style feature). `regex` is compiled and
@@ -177,9 +217,44 @@ export interface PluginHostApi {
     set(key: string, value: unknown): Promise<void>;
     remove(key: string): Promise<void>;
   };
+  /** Plugin-scoped **document** store (P3.1) — `<base>/data/plugin_store.db`,
+   * a separate SQLite database so a plugin's data can be dropped wholesale.
+   * uTools/CouchDB-shaped: documents carry `_rev`, and a write that presents a
+   * stale one rejects with a message starting `conflict:` so the plugin can
+   * re-read and retry. `storage` stays as the v1 key/value shim.
+   *
+   * Caps: 512 KB per document, 2000 documents per plugin (also the
+   * `allDocs` limit), 1000 documents per `bulkDocs` call. Ids starting with
+   * `__` are host-owned and refused (they back `settings` and `storage`). */
+  db: {
+    /** The document, or null when it doesn't exist. */
+    get(id: string): Promise<PluginDoc | null>;
+    /** Create (no `_rev`) or replace (matching `_rev`); resolves with the
+     * stored `_id`/`_rev`, rejects with a `conflict: …` message otherwise. */
+    put(doc: PluginDocInput): Promise<{ _id: string; _rev: number }>;
+    /** Delete what you read — pass the document (its `_rev` is used) or an
+     * id plus the rev you read. */
+    remove(doc: PluginDoc | string, rev?: number): Promise<void>;
+    /** This plugin's documents, id-ordered; `__`-prefixed (host) documents
+     * are never listed. */
+    allDocs(opts?: { idStartsWith?: string; limit?: number }): Promise<PluginDoc[]>;
+    /** One transaction, per-document outcomes: a conflict is reported for
+     * that entry while the rest of the batch still lands. */
+    bulkDocs(docs: PluginDocInput[]): Promise<BulkDocResult[]>;
+  };
+  /** Declarative settings (P3.4). The manifest's `[[settings]]` block is the
+   * schema — the settings pane renders it and these calls read the values.
+   * `all()` is the natural call on page load; `onSettings` fires on change. */
+  settings: {
+    /** Every declared setting with its effective value (defaults ⊕ user). */
+    all(): Promise<Record<string, unknown>>;
+    /** One setting's effective value (null when it isn't declared). */
+    get<T = unknown>(key: string): Promise<T | null>;
+  };
   /** Filesystem reads for preview-style plugins. Arbitrary-path access is
-   * part of the v1 trust model (§9 安全模型: 显式放置即信任); the future
-   * permissions enforcement layer will gate it. */
+   * part of the v1 trust model (§9 安全模型: 显式放置即信任) — since P3.2 the
+   * host enforces the declared `fs.read` permission; a plugin's **own**
+   * `files/` dir needs none. */
   fs: {
     /** Text file preview, lossy-UTF8 decoded; rejects for files > 512KB —
      * show a "preview first 512KB" style message on rejection. */
@@ -193,6 +268,26 @@ export interface PluginHostApi {
     /** Shell icons for a batch of paths — same shape as `get_app_icons`
      * (`icon` is a data/asset URI or null when extraction failed). */
     icon(paths: string[]): Promise<{ path: string; icon: string | null }[]>;
+    /** Write text into the plugin's own `files/` dir (P3.3) — no permission
+     * needed, the directory belongs to the plugin. Resolves with the absolute
+     * path (handy for `openPath` / `paste` / an `<img src>`). `name` is a file
+     * name, never a path; ≤10 MiB. */
+    writeText(name: string, text: string): Promise<string>;
+    /** Write base64 bytes into `files/` (attachments, images; a
+     * `data:…;base64,` prefix is accepted). Resolves with the path. */
+    writeBytes(name: string, base64: string): Promise<string>;
+    /** Read one of the plugin's own files (lossy UTF-8). */
+    readPrivate(name: string): Promise<string>;
+    /** The plugin's own `files/` dir (empty when nothing was written yet). */
+    listPrivate(): Promise<{ name: string; size: number; mtime: number }[]>;
+    /** Absolute path of a file in `files/` without reading or writing it. */
+    privatePath(name: string): Promise<string>;
+    /** Delete one of the plugin's own files (a missing file is not an error). */
+    removePrivate(name: string): Promise<void>;
+    /** Write text to an **arbitrary** absolute path — the `fs.write`
+     * capability, refused unless the manifest declares it (or the plugin is
+     * 全部授权). The parent directory must exist; ≤10 MiB. */
+    writeFile(path: string, text: string): Promise<void>;
   };
   /** Whole-drive file search — the unified `file_search` facade (ROADMAP
    * #20): a running Everything when present, the LumeSVC self-hosted USN
@@ -290,6 +385,9 @@ export interface ServiceHooks {
   /** The service took over the search box (`app.setSubInput`) — keystrokes
    * arrive here (P2.3). */
   onSubInput?(text: string): void;
+  /** The user changed this plugin's declared settings (P3.4) — `values` is
+   * the effective set (`settings.all()`), delivered on change. */
+  onSettings?(values: Record<string, unknown>): void;
 }
 
 /** What a disk **mode** plugin's factory returns. The page UI lives in
@@ -385,6 +483,9 @@ export interface ModeInstance {
   /** The mode took over the search box (`app.setSubInput`): every keystroke
    * arrives here instead of running the mode's own search (P2.3). */
   onSubInput?(text: string): void;
+  /** The user changed this plugin's settings (P3.4); disk mode pages get the
+   * same values as a `lume.on.settings` event. */
+  onSettings?(values: Record<string, unknown>): void;
   /** Consume Esc (e.g. leave multi-select); true = handled, root won't hide. */
   onEscape(): boolean;
   /** Satellite preview request for the selected row (null = hide). */
@@ -488,6 +589,8 @@ export interface ProviderInstance {
    * matching rows instead of running a normal search. Without it the box
    * keeps its usual meaning and typing leaves the drilled level. */
   filter?(item: ProviderResult, query: string): Promise<ProviderResult[]> | ProviderResult[];
+  /** The user changed this plugin's declared settings (P3.4). */
+  onSettings?(values: Record<string, unknown>): void;
 }
 
 /** A plugin: manifest identity + its already-created contributions.

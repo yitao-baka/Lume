@@ -255,5 +255,10 @@
   "pluginDisk": "磁盘",
   "pluginReload": "重载",
   "pluginDev": "开发",
-  "pluginActionUnavailable": "插件无法处理该动作：{id}"
+  "pluginActionUnavailable": "插件无法处理该动作：{id}",
+  "pluginPermissionDenied": "插件「{id}」未声明“{perm}”权限（plugin.toml：permissions = [\"{perm}\"]）",
+  "pluginPermissions": "权限",
+  "pluginTrustAll": "全部授权",
+  "pluginSettings": "设置项",
+  "pluginNoPermissions": "未声明任何能力"
 }

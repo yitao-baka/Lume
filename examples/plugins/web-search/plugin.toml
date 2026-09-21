@@ -7,5 +7,5 @@ name = "Web Search"
 version = "1.0.0"
 kind = "provider"
 description = "Appends a Bing search row for the query"
-permissions = ["network"]   # reserved (v1 does not enforce)
+permissions = ["network"]   # enforced since P3.2 (this example only opens URLs, so it is a no-op here)
 entry = "main.js"

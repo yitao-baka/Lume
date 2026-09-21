@@ -43,6 +43,12 @@ pub struct Settings {
 pub struct Plugins {
     #[serde(default)]
     pub disabled: Vec<String>,
+    /// Ids granted **every** capability they ask for, declared or not (P3.2).
+    /// The explicit-placement trust model already says the user vouches for a
+    /// plugin; this is the escape hatch for a plugin under development that
+    /// starts using a new capability before its manifest catches up.
+    #[serde(default)]
+    pub trusted: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,6 +446,7 @@ impl Default for Settings {
             },
             plugins: Plugins {
                 disabled: Vec::new(),
+                trusted: Vec::new(),
             },
             automation: Automation {
                 enabled: true,
@@ -763,6 +770,32 @@ pub fn set_plugin_enabled(
         next.plugins.disabled.retain(|d| d != &id);
     } else if !next.plugins.disabled.iter().any(|d| d == &id) {
         next.plugins.disabled.push(id);
+    }
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Grant (or revoke) one plugin **all** capabilities regardless of what its
+/// manifest declares (P3.2). Light write like `set_plugin_enabled`; the
+/// registry re-reads the manifest list on `settings-applied`.
+#[tauri::command]
+pub fn set_plugin_trusted(
+    id: String,
+    trusted: bool,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    if trusted {
+        if !next.plugins.trusted.iter().any(|t| t == &id) {
+            next.plugins.trusted.push(id);
+        }
+    } else {
+        next.plugins.trusted.retain(|t| t != &id);
     }
     write_settings_light(&paths::base_dir(), &next)?;
     *guard = next;

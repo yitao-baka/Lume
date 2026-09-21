@@ -2,4 +2,5 @@ id = "actions"
 name = "动作示例 (Actions)"
 kind = "provider"
 description = "P0 示例：enter 动作条目 + description 副行 + 显式 icon + 多文件入口（entry 目录）"
+permissions = ["clipboard"]   # P3.2 起强制：动作条目把文本写剪贴板
 entry = "dist/"

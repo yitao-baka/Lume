@@ -2,6 +2,7 @@ id = "text-tools"
 name = "文本工具 (Text Tools)"
 kind = "provider"
 description = "P2 示例：声明式进入（over/regex）+ 二级下钻（select/filter）+ 插件互跳（redirect）"
+permissions = ["clipboard"]   # P3.2 起强制：转换结果写剪贴板
 entry = "main.js"
 
 # 声明式进入规则（ROADMAP #25）：

@@ -11,5 +11,6 @@ version = "1.0.0"
 kind = "mode"
 description = "全盘文件秒搜模式：宿主 search.files 能力（Everything / LumeSVC 引擎）+ 键盘导航"
 keywords = ["秒搜", "file"]
+permissions = ["search.files", "clipboard"]   # P3.2 起强制：宿主 search.files 能力 + 复制路径
 view = "view.html"    # 桥接 iframe 页 — 本插件不需要 entry 逻辑钩子
 height = 560          # 本模式页面的窗口高度（逻辑 px）

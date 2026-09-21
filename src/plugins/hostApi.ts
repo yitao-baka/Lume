@@ -5,16 +5,36 @@
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import type {
+  BulkDocResult,
   DialogOptions,
   DisplayInfo,
   FileSearchOut,
   HttpRequest,
   HttpResponse,
+  PluginDoc,
+  PluginDocInput,
   PluginFileSearchOptions,
   PluginHostApi,
   PluginServices,
 } from "./types";
 import { plog } from "./log";
+import { guardHostApi } from "./permissions";
+
+/** One document row as the Rust store returns it. */
+interface DbDocRow {
+  id: string;
+  rev: number;
+  json: string;
+}
+
+/** A stored row → the document a plugin sees (`_id`/`_rev` on the parsed body). */
+function withBookkeeping(row: DbDocRow): PluginDoc {
+  return {
+    ...(JSON.parse(row.json) as Record<string, unknown>),
+    _id: row.id,
+    _rev: row.rev,
+  };
+}
 
 /** The richer reply `ctx.http.request` resolves to: the raw fields plus
  * decoded-body conveniences (the bridge transports JSON, so helpers are
@@ -45,9 +65,14 @@ export function decorateHttpResponse(raw: HttpResponse): HttpResult {
 
 /** Build the capability surface for one plugin id. `services` comes from the
  * composition root; every storage call is scoped by the plugin id (the Rust
- * side enforces the directory containment). */
+ * side enforces the directory containment).
+ *
+ * The result is wrapped by `guardHostApi` (P3.2): every capability the
+ * permission ledger lists is refused unless the manifest declares it — for
+ * the launcher-window logic path and the iframe bridge alike, since both go
+ * through here. */
 export function createHostApi(id: string, services: PluginServices): PluginHostApi {
-  return {    app: {
+  return guardHostApi(id, {    app: {
       hide: () => {
         plog.debug(id, "app.hide");
         services.resetAndHide();
@@ -209,6 +234,70 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         await invoke("plugin_storage_set", { id, key, value: null });
       },
     },
+    db: {
+      get: async (docId) => {
+        const row = await invoke<DbDocRow | null>("plugin_db_get", { id, docId });
+        return row ? withBookkeeping(row) : null;
+      },
+      put: async (doc: PluginDocInput) => {
+        const { _id, _rev, ...body } = doc ?? ({} as PluginDocInput);
+        if (!_id) throw new Error("db.put needs a document with an _id");
+        const rev = await invoke<number>("plugin_db_put", {
+          id,
+          docId: _id,
+          json: JSON.stringify(body),
+          rev: _rev ?? null,
+        });
+        plog.debug(id, `db.put ${_id} ${_rev == null ? "(new)" : `(rev ${_rev})`} → rev ${rev}`);
+        return { _id, _rev: rev };
+      },
+      remove: async (docOrId: PluginDoc | string, rev?: number) => {
+        const isDoc = typeof docOrId === "object" && docOrId !== null;
+        const docId = isDoc ? String((docOrId as PluginDoc)._id ?? "") : String(docOrId);
+        const r = isDoc ? (docOrId as PluginDoc)._rev : rev;
+        if (!docId) throw new Error("db.remove needs a document id");
+        if (r == null) {
+          // Fail loudly instead of deleting whatever is there: without the rev
+          // this is not a delete of what the plugin read.
+          throw new Error(`db.remove(${docId}) needs the doc's _rev — pass the document you read`);
+        }
+        await invoke("plugin_db_remove", { id, docId, rev: r });
+        plog.debug(id, `db.remove ${docId} (rev ${r})`);
+      },
+      allDocs: async (opts) => {
+        const rows = await invoke<DbDocRow[]>("plugin_db_all_docs", {
+          id,
+          prefix: opts?.idStartsWith ?? null,
+          limit: opts?.limit ?? null,
+        });
+        plog.debug(id, `db.allDocs ${opts?.idStartsWith ?? "*"} → ${rows.length} doc(s)`);
+        return rows.map(withBookkeeping);
+      },
+      bulkDocs: async (docs: PluginDocInput[]) => {
+        const payload = (docs ?? []).map((d) => {
+          const { _id, _rev, ...body } = d ?? ({} as PluginDocInput);
+          if (!_id) throw new Error("db.bulkDocs: every document needs an _id");
+          return { docId: _id, json: JSON.stringify(body), rev: _rev ?? null };
+        });
+        const res = await invoke<{ id: string; rev: number | null; error: string | null }[]>(
+          "plugin_db_bulk_docs",
+          { id, docs: payload }
+        );
+        const applied = res.filter((r) => r.error == null).length;
+        plog.debug(id, `db.bulkDocs ${res.length} → ${applied} applied`);
+        return res.map(
+          (r): BulkDocResult => ({ _id: r.id, _rev: r.rev, error: r.error })
+        );
+      },
+    },
+    settings: {
+      all: async () => (await invoke<Record<string, unknown>>("plugin_settings_get", { id })) ?? {},
+      get: async <T,>(key: string) => {
+        const values = await invoke<Record<string, unknown>>("plugin_settings_get", { id });
+        const v = values?.[key];
+        return v === undefined ? null : (v as T);
+      },
+    },
     fs: {
       readText: (path: string) => {
         plog.debug(id, "fs.readText:", path);
@@ -228,6 +317,29 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         plog.debug(id, "fs.icon:", paths.length, "path(s)");
         return invoke<{ path: string; icon: string | null }[]>("get_app_icons", { paths });
       },
+      writeText: (name, text) => {
+        plog.debug(id, "fs.writeText:", name, text.length, "chars");
+        return invoke<string>("plugin_fs_private_write", { id, name, text });
+      },
+      writeBytes: (name, base64) => {
+        plog.debug(id, "fs.writeBytes:", name, base64.length, "base64 chars");
+        return invoke<string>("plugin_fs_private_write_b64", { id, name, data: base64 });
+      },
+      readPrivate: (name) => {
+        plog.debug(id, "fs.readPrivate:", name);
+        return invoke<string>("plugin_fs_private_read", { id, name });
+      },
+      listPrivate: () =>
+        invoke<{ name: string; size: number; mtime: number }[]>("plugin_fs_private_list", { id }),
+      privatePath: (name) => invoke<string>("plugin_fs_private_path", { id, name }),
+      removePrivate: async (name) => {
+        plog.debug(id, "fs.removePrivate:", name);
+        await invoke("plugin_fs_private_remove", { id, name });
+      },
+      writeFile: (path, text) => {
+        plog.debug(id, "fs.writeFile:", path, text.length, "chars");
+        return invoke<void>("plugin_fs_write_any", { id, path, text });
+      },
     },
     search: {
       files: (q: string, opts?: number | PluginFileSearchOptions) => {
@@ -244,7 +356,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         });
       },
     },
-  };
+  });
 }
 
 /** Map camelCase dialog options to the snake_case params the Rust command

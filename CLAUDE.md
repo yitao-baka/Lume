@@ -167,12 +167,67 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   `src-tauri/src/bin/lume-agent.rs`)
 - Auto-start at logon — settings toggle writes/removes the
   `HKCU\...\CurrentVersion\Run` `Lume` value (registry is the source of truth)
+- Plugin system — `<base>/plugins/<id>/plugin.toml` + contributions
+  (`provider` / `mode` / `service` / `navBars` / `[[features]]` / `[[settings]]`);
+  the built-ins (clipboard, preview) go through the same registry + enabled set.
+  Host capabilities (`src/plugins/hostApi.ts`) reach plugins by three paths —
+  built-in factory `ctx`, disk factory `ctx`, mode-page `window.lume` bridge —
+  and every capability on the ledger is gated by the manifest's `permissions`
+  (P3.2; `src/plugins/permissions.ts` + the §6D.6 table, 「全部授权」 escape
+  hatch). Plugin data lives in `<base>/data/plugin_store.db`
+  (`src-tauri/src/plugin_store.rs`: `_rev` documents, `__`-prefixed host docs),
+  private files in `<plugin>/files/` (`src-tauri/src/plugin_fs.rs`). Docs:
+  `docs/PLUGIN_API.md` (reference), `docs/PLUGINS.md` (guide), examples
+  `examples/plugins/*`, smokes `scripts/cdp_p0..p3_verify.mjs`
 - Single instance — a named mutex (`lib.rs` `acquire_single_instance`) held for
   the process lifetime; a second launch of `lume.exe` exits immediately
 
 ## Current iteration
 
-**插件系统 P2 入口矩阵与搜索链路（complete) — as of 2026-09-21**: 差距分析
+**插件系统 P3 数据层 · 权限强制层 · 私有文件 · 声明式设置（complete) —
+as of 2026-09-21**: 差距分析（`docs/PLUGIN_GAP_ANALYSIS.md`）第四阶段，
+ROADMAP #26、API 文档 `docs/PLUGIN_API.md` §6F、示例 `examples/plugins/notes/`。
+四条**新不变量**，后续改动必须守住：
+
+1. **插件数据的落点是 `<base>/data/plugin_store.db`**（`plugin_store.rs`），
+   **独立于 `lume.db`**——卸载 = 删一个文件，插件写坏也波及不到剪贴板/固定项。
+   单表 `docs(plugin_id, id, rev, json)`；`_rev` 乐观锁（无 `_rev` = 新建，撞已有
+   即 `conflict:`；删除要 rev 匹配；无 tombstone）；上限 512 KB/文档、
+   2000 篇/插件（= `allDocs` 上限）、1000/`bulkDocs` 批。**`__` 前缀是宿主内部
+   文档**（`__settings` / `__storage`），`db.*` 读不到、写被拒。v1 的
+   `storage.json` 在**进程首次访问 store 时**迁进 `__storage`（文件改名
+   `storage.json.migrated`，只改名不删），`storage.*` 是垫片（IMMEDIATE 事务）。
+2. **权限强制层在 `src/plugins/permissions.ts`**：台账 `RPC_PERMISSION`
+   （`app.notify→notify`、`clipboard.*→clipboard`、`http.request→network`、
+   `dialog.*→dialog`、`screen.*→screen`、`search.files→search.files`、
+   `fs.read*→fs.read`、`fs.writeFile→fs.write`、`app.trash→trash`）是
+   `PLUGIN_API.md` §6D.6 的实现，**新增宿主命令必须两边同时登记**。
+   校验点是 `createHostApi` 里的 `guardHostApi`（逐方法包一层），所以**插件逻辑
+   （启动器窗口内直接持有 API）与 mode 桥接两条路径都覆盖**——初版只在桥接入口
+   校验，provider 逻辑整层绕过，被 `cdp_p3_verify` 当场抓出。fail-closed（未知
+   插件也拒），拒绝文案带缺失能力词；「全部授权」= `settings.plugins.trusted`。
+   **边界**：这是**前端**关卡，mode 页同源可绕过 IPC —— 真正的沙箱留 P4，文档与
+   设置页不得暗示已经隔离。
+3. **插件私有目录是 `<plugin>/files/`**（`plugin_fs.rs`，无需权限，10 MiB/文件）：
+   文件名只能是名字——拒绝分隔符、`.`/`..`、结尾空格/点，以及 `NUL`/`CON`/`COM1`
+   等保留设备名（`<dir>\NUL` 是设备不是文件）。任意路径写入是 `fs.writeFile`
+   （`fs.write` 能力），不自动造父目录。
+4. **声明式设置（`[[settings]]`）以 manifest 为 schema**：`plugin_settings_put`
+   拒绝未声明的键（否则作者改键名后老值阴魂不散）；生效值 = 默认值 ⊕ 存储值；
+   改动经 Rust `plugin-settings` 事件从设置窗送到启动器 → mode `onSettings` /
+   provider / service 钩子 + 页面 `lume.on.settings`（页面 `load` 握手会重放）。
+
+**验证**：cargo test **168**（+17：store rev 契约/上限/内部前缀/allDocs 过滤/
+bulk 逐条/迁移幂等/settings 默认值合并、fs 越界与设备名守卫、manifest settings
+与 trusted 上报）、tsc/vite build 干净、`scripts/cdp_p3_verify.mjs` **45 项全过**、
+P0/P1/P2 三套冒烟无回归（8/14/21）；截图 `test/p3_notes.png`、
+`test/p3_plugin_pane.png`。
+
+**踩坑（务必记住）**：debug/release exe 的 `frontendDist` 资源**在编译期嵌进
+二进制**——改完前端只跑 `vite build` 时，exe 仍在服务上一版 bundle。跑 CDP 冒烟
+前必须 `cargo build`（本轮「权限层不生效」排查了半天的真凶）。
+
+**Prior: 插件系统 P2 入口矩阵与搜索链路（complete) — as of 2026-09-21**: 差距分析
 （`docs/PLUGIN_GAP_ANALYSIS.md`）第三阶段核心，ROADMAP #25、API 文档
 `docs/PLUGIN_API.md` §6E。四项：① **声明式进入 `[[features]]`**（任意 kind）——
 `code`/`label`/`regex`/`over`/`min_length`/`max_length`/`icon`，命中在导航结果

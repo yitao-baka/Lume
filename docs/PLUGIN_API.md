@@ -77,7 +77,8 @@ export default {
 结果末尾会出现插件返回的条目；**设置 → 插件** 里可启停。
 可运行的完整示例：`examples/plugins/web-search/`。
 
-要拿到宿主能力（toast/剪贴板/存储…），把默认导出写成**工厂函数**（§5.6）；
+要拿到宿主能力（toast/剪贴板/文档库/设置…），把默认导出写成**工厂函数**（§5.6）；
+用了台账里的能力要在清单写 `permissions = [...]`（§6F.4）；
 要贡献**整页模式**（自由 HTML UI + 全局关键字进入），见 §6（示例
 `examples/plugins/hello-mode/`）。
 
@@ -92,11 +93,12 @@ export default {
 | `version` | string | `""` | 显示用；设置页以 chip 呈现。内置插件固定为 lume 的包版本。 |
 | `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。三类均支持磁盘加载（mode 需 `view`，provider/service 需 `entry`）。 |
 | `description` | string | `""` | 预留展示位。 |
-| `permissions` | string[] | `[]` | **预留**（v1 不校验、不强制）。为将来权限层准备的声明位。 |
+| `permissions` | string[] | `[]` | **能力声明，P3.2 起强制**：台账（§6D.6）里的能力没声明就调用 → 明确拒绝（fail-closed），设置页每行显示这些 chip。「全部授权」可整插件放行。 |
 | `entry` | string | `""` | 入口 JS（相对插件目录）。provider 必填；mode 可选（逻辑钩子）；service 必填（钩子）。**可以是目录**（多文件打包产物）— 此时实际加载其中的 `index.js`，目录内文件的相对 `import` 由宿主改写为 blob URL（§5.6）。 |
 | `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
+| `settings` | array of table | `[]` | **声明式设置**（P3.4，§6F.3）——`[[settings]]` 子表：`key`、`label`、`type`（`toggle`/`select`/`text`）、`default`、`[[settings.options]]`（`value`/`label`）。设置 → 插件 自动渲染，值存插件 `__settings` 文档，插件经 `ctx.settings.get/all` 读、`onSettings` 感知变更。 |
 | `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。 |
 | `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。 |
@@ -251,6 +253,9 @@ export default function create(ctx) {
   技术上可达，但**不属于契约**，随版本可能变化）。
 - 无法贡献整页模式、右键菜单动作或卫星预览——那些是内置 mode/service
   贡献的能力（§6）。
+- **能用哪些宿主能力由 manifest 的 `permissions` 决定**（P3.2 起强制）：
+  没声明就调用会明确失败（§6F.4）。插件自有数据（`db`/`storage`/`settings`）
+  与私有目录（`<plugin>/files/`）不受限。
 
 ### 5.4 加载与禁用语义
 
@@ -265,6 +270,10 @@ export default function create(ctx) {
 ### 5.5 完整参考示例
 
 - `examples/plugins/web-search/` — 最小 provider（每查询追加一个 Bing 条目）。
+- `examples/plugins/notes/` — P3 新面全演示：文档库（`db.put/allDocs/bulkDocs` +
+  乐观锁）、私有目录导出、声明式设置（`[[settings]]` + `onSettings`）、以及
+  权限层两向对照（未声明 `network` 被拒 / 已声明 `clipboard` 放行）。
+- `examples/plugins/host-tools/` — P1 宿主能力（HTTP/通知/对话框/剪贴板/屏幕）。
 - `examples/plugins/actions/` — P0 新契约全演示：`enter` 动作条目 +
   `description` 副行 + 显式 `icon` + **多文件入口**（`entry = "dist/"` +
   相对导入，见 §5.6）。
@@ -438,8 +447,10 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**（P1.1）——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated` |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框（P1.4）。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
 | `screen` | `cursor()` / `displays()` | 光标位置与显示器列表（P1.5），单位是**物理像素**；`displays()` 每项含 `x/y/width/height`、工作区 `workX/workY/workWidth/workHeight`、`primary` |
-| `fs` | `readText(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` | 文件读取能力：`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`thumb` / `videoPoster` 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null） |
-| `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV（`<base>/plugins/<id>/storage.json`） |
+| `fs` | `readText(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` / `writeText(name, text)` / `writeBytes(name, base64)` / `readPrivate(name)` / `listPrivate()` / `privatePath(name)` / `removePrivate(name)` / `writeFile(path, text)` | 文件读写能力。读取与任意路径写入（`writeFile`）**需要声明**（`fs.read` / `fs.write`，§6D.6）；`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`thumb` / `videoPoster` 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null）。`writeText`/`writeBytes`/`readPrivate`/`listPrivate`/`privatePath`/`removePrivate` 操作**插件私有目录** `<plugin>/files/`（无需权限，单文件 10 MiB，`name` 只能是文件名 —— 见 §6F.2） |
+| `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV —— v1 契约的**兼容垫片**，内部就是文档库里的 `__storage` 文档（§6F.1）；新代码请用 `db` |
+| `db` | `get(id)` / `put(doc)` / `remove(doc\|id, rev?)` / `allDocs({idStartsWith?, limit?})` / `bulkDocs(docs)` | **文档库**（P3.1，§6F.1）：uTools/CouchDB 形状的文档（`_id` + `_rev` 乐观锁），持久化在 `<base>/data/plugin_store.db`。冲突 reject，消息以 `conflict:` 开头 |
+| `settings` | `all()` / `get(key)` | 本插件声明式设置的**生效值**（manifest 默认值 ⊕ 用户改过的值，P3.4，§6F.3） |
 | `search` | `files(q, opts?)` | **全盘文件搜索** — 统一门面 `file_search`（Everything 在运行则走它的 IPC，否则 LumeSVC 自研 USN 索引）。返回 `{backend: "everything"\|"svc"\|"none", status: "ready"\|"building"\|"unavailable", total?, sort?, entries: [{id,name,path,isFolder,mtime?,size?}]}`。`opts` 兼容旧调用：**数字 = max**；对象 = `{offset, max, sort, exts, folder}`——`max` 默认 12、钳制 1..=100；`offset` 从第 offset 条开始（0 起；Everything 全量有效，LumeSVC 由引擎 `skip` 分页——宿主不再用「取 offset+max 再裁剪」的旧技巧，那个技巧被服务端 100 条上限截断过）；`exts`（小写、不带点的扩展名数组）/`folder` 是**名称级过滤**：Everything 收到的是它自己的 `ext:`/`folder:` 语法，USN 引擎在扫描时判定（它的名字排序会把这类命中埋到几千条之后，客户端对一页结果过滤是找不到的）。回复里 `filter` 字段回显**真正生效**的过滤（规范 Everything 语法，如 `"ext:png;jpg"`）；**没有回显＝没过滤**（老服务/老宿主），调用方要自己兜底。；`sort` 取 `"name" \| "path" \| "size" \| "mtime" \| "name_desc" \| "path_desc" \| "size_desc" \| "mtime_desc"`（非法值 = 引擎默认序；svc 无全局排序，对返回页做页内排序并如实回显）。`total` 为引擎报告的总命中数（svc / 老版 Everything 拿不到时缺省）；条目的 `mtime`/`size`（ms epoch / 字节）拿不到时缺省，UI 按字段存在与否自适应隐藏列。完整示例 `examples/plugins/file-search/` |
 
 事件（页面赋值 `window.lume.on.<type> = fn`）：
@@ -451,6 +462,7 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 | `hide` | — | 启动器隐藏且本模式活动 |
 | `enter` | `{code, type, payload}` | 声明式进入规则命中本模式（P2.1）或别的插件 `app.redirect` 过来（P2.5）。`type` = `"regex" \| "over" \| "redirect"`，`payload` = 命中的查询文本（redirect 时为发送方给的 payload）。**页面在 `load` 之后才会收到状态重放**（见下） |
 | `subInput` | `string` | 本模式调 `app.setSubInput` 接管搜索框后，每一次按键（P2.3） |
+| `settings` | `Record<string, unknown>` | 用户在设置页改动了本插件的声明式设置（P3.4）；页面 `load` 后的握手会重放当前值 |
 | `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。焦点在插件 iframe 内时同样送达：iframe 的 keydown（冒泡阶段、目标非可编辑、未被插件 `preventDefault`）由宿主回投 window 路由后经本事件回流。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
 
 **状态重放（重要）**：桥接脚本在 `<head>`、页面自己的 `lume.on.*` 赋值在 `</body>`
@@ -673,7 +685,7 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
   小窗类插件。
 - 权限：`screen`。
 
-### 6D.6 能力与权限台账（P3.2 强制层落地前的单一事实源）
+### 6D.6 能力与权限台账（单一事实源；P3.2 起已强制）
 
 | 宿主能力 | RPC / 命令 | 权限声明 |
 |---|---|---|
@@ -684,13 +696,18 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 | 文件对话框 | `dialog.*` / `plugin_dialog_*` | `dialog` |
 | 光标与显示器 | `screen.*` / `plugin_cursor_pos`、`plugin_displays` | `screen` |
 | 全盘文件搜索 | `search.files` / `file_search` | `search.files` |
-| 文件读取（文本/缩略图/图标） | `fs.*` | `fs.read` |
+| 文件读取（文本/缩略图/图标） | `fs.readText/thumb/videoPoster/icon` | `fs.read` |
+| 任意路径写入 | `fs.writeFile` | `fs.write` |
+| 插件私有目录读写 | `fs.writeText/writeBytes/readPrivate/listPrivate/privatePath/removePrivate` | 无（属于插件自己） |
 | 回收站删除 | `app.trash` / `trash_to_recycle` | `trash` |
-| 插件私有 KV | `storage.*` | 默认授予 |
+| 插件私有 KV / 文档库 / 设置 | `storage.*`、`db.*`、`settings.*` | 无（插件自有数据） |
 
-> **现状**：v1 的信任模型是「显式放置即信任」，`permissions` 是声明位、尚未
-> 强制（§9）。本表是 P1 起新增命令的登记处：P3.2 的权限强制层照着它落实现，
-> 插件作者现在就该按表声明。
+> **现状（P3.2 起）**：本表就是**强制层**的输入——表里每一行未声明即被拒绝
+> （fail-closed，文案带缺失的能力词），实现在 `src/plugins/permissions.ts`
+> （`guardHostApi` 逐方法把关，插件逻辑与 mode 桥接两条路径都覆盖）。
+> 新增宿主命令时**必须**在这里登记一行、并在该文件里加一条
+> `RPC_PERMISSION`；`信任全部权限`（「全部授权」）是开发逃生门。细节与边界
+> 见 §6F.4，信任模型见 §9。
 
 ---
 
@@ -786,6 +803,148 @@ lume.app.redirect("hello-mode", { code: "from-x", payload: "要带过去的内�
 
 ---
 
+## 6F. P3 数据层、私有文件、声明式设置与权限强制层
+
+> `docs/PLUGIN_GAP_ANALYSIS.md` 的 P3 阶段（2026-09-21 落地）。这一阶段把插件的
+> **数据**（文档库替代整文件重写）、**磁盘**（自己的 `files/` 目录）、**配置**
+> （自述设置项）和**边界**（`permissions` 真正生效）四件事一起补上。示例
+> `examples/plugins/notes/`（速记）把四项全用了一遍，实机脚本
+> `scripts/cdp_p3_verify.mjs`（45 项）逐项验收。
+
+### 6F.1 文档库 `ctx.db` / `window.lume.db`
+
+独立的 SQLite 库 `<base>/data/plugin_store.db`（**不在 `lume.db` 里**：卸载 =
+删一个文件，插件写坏也波及不到剪贴板历史与固定项）。单表：
+
+```sql
+docs(plugin_id TEXT, id TEXT, rev INTEGER, json TEXT, PRIMARY KEY(plugin_id, id))
+```
+
+契约与 uTools `utools.db` / CouchDB 同形——文档是一条 JSON **对象**，宿主在读写
+时挂上/摘下 `_id`、`_rev` 两个簿记字段：
+
+| 调用 | 语义 |
+|---|---|
+| `db.get(id)` | 返回文档（含 `_id`/`_rev`），不存在 → `null` |
+| `db.put(doc)` | **不带** `_rev` = 新建（已有同 id 文档 → `conflict:`）；带 `_rev` = 覆盖（rev 不符 → `conflict:`）。resolve `{_id, _rev}`（新 rev） |
+| `db.remove(doc \| id, rev?)` | 删除。传文档对象即用它的 `_rev`；缺 rev 直接 reject（避免「删掉别人刚写的那版」） |
+| `db.allDocs({idStartsWith?, limit?})` | 本插件文档，按 id 升序；**不列 `__` 前缀的宿主文档**；`limit` 默认/上限都是 2000 |
+| `db.bulkDocs(docs)` | 单事务写入，**逐条**返回 `{_id, _rev, error}`（某条冲突不影响其它条） |
+
+约束：单文档 ≤ 512 KB、每插件 ≤ 2000 篇、单批 ≤ 1000 篇；`id` 不能为空、不能以
+`__` 开头（那是宿主的 `__settings` / `__storage`）。**冲突消息以 `conflict:` 开头**
+（如 `conflict: doc "x" is at rev 3, not 2 — re-read it`），插件据此重读后决定
+重试或提示；删除**不留 tombstone**，删掉再从 rev 1 开始。
+
+**乐观锁为什么值得**：一个插件页与它的逻辑钩子会并发改同一批数据（用户连点、
+异步回包），没有 `_rev` 时后写的会静默覆盖先写的；有了它，落后的那次写入会
+明确失败，插件才可能做对。示例里有一行「同一 _rev 写两次」亲眼看到第二次被拒。
+
+**v1 `storage.*` 的兼容垫片**：整个 KV map 存在 `__storage` 文档里，语义不变
+（值仍是 JSON 文本）。进程**首次**访问 store 时会把旧的
+`<plugin>/storage.json` 搬进该文档，并把文件改名为 `storage.json.migrated`
+（**只改名不删**——万一有插件直接读那个文件，数据还在）。旧插件零改动即可继续
+跑，新插件请直接用 `db`。
+
+### 6F.2 插件私有文件 `ctx.fs.*`（`<plugin>/files/`）
+
+```js
+const path = await ctx.fs.writeText("export.txt", text); // 私有目录，无需权限
+await ctx.fs.writeBytes("cover.png", dataUriOrBase64);   // ≤10 MiB
+const names = await ctx.fs.listPrivate();                // [{name, size, mtime}]
+const text = await ctx.fs.readPrivate("export.txt");     // lossy UTF-8
+const abs = await ctx.fs.privatePath("export.txt");      // 交给 openPath / paste / <img src>
+await ctx.fs.removePrivate("export.txt");                // 不存在也算成功
+```
+
+- 私有目录属于插件自己：**不需要任何权限**，随插件目录一起被用户掌控/删除。
+- `name` 只能是**文件名**（不能带 `/`、`\`、`:`，不能是 `.`/`..`，不能以空格或点
+  结尾，不能是 `NUL`/`CON`/`COM1`… 这类 Windows 保留设备名——`<dir>\NUL` 是设备
+  不是文件，naive 拼接会静默丢弃内容），上限 120 字符、单文件 10 MiB。
+- 写**任意绝对路径**是另一回事：`ctx.fs.writeFile(path, text)`，需要 manifest
+  声明 `fs.write`（§6F.4）。父目录必须已存在（不静默造目录）。
+- 附件的典型用法：`writeBytes` → `privatePath` → `app.openPath` / `clipboard.paste`
+  / `search.files`，或直接 `convertFileSrc` 进 `<img>`。
+
+### 6F.3 声明式设置 `[[settings]]`（设置页自动渲染）
+
+`plugin.toml` 里声明，设置 → 插件 每行的「设置项」自动渲染，值存在插件的
+`__settings` 文档里：
+
+```toml
+[[settings]]
+key = "prefix"          # 插件读取的键（必填）
+label = "列表前缀"       # 面板文案（空 → 显示 key）
+type = "text"           # toggle | select | text（未知类型按 text 渲染）
+default = "· "          # 未改动前的值（可省 = null）
+
+[[settings]]
+key = "sort"
+label = "排序"
+type = "select"
+default = "newest"
+
+[[settings.options]]    # select 的选项（label 空 → 显示 value）
+value = "newest"
+label = "最新在前"
+```
+
+插件侧：
+
+```js
+const all = await ctx.settings.all();      // {prefix: "· ", sort: "newest", …}
+const one = await ctx.settings.get("sort");
+// 用户一改，宿主立刻把新值推过来（mode 的 onSettings / provider / service 钩子；
+// mode 页另收 lume.on.settings 事件）
+onSettings(values) { /* 重新渲染 / 重新排序 */ }
+```
+
+规则：**manifest 即 schema** —— 只有声明过的 `key` 能写入（`plugin_settings_put`
+对未声明的键报 `unknown setting "x" …`，避免作者改键名后老值阴魂不散）；
+生效值 = 默认值 ⊕ 用户改过的键；设置窗口与启动器是两个窗口，改动经 Rust 的
+`plugin-settings` 事件送到插件实例，页面在 `load` 握手时还会重放一次当前值。
+
+### 6F.4 权限强制层（消费 `permissions`）
+
+`permissions` 不再是预留字段：**没声明的能力，调用即被拒绝**（fail-closed，
+未知插件同样拒），拒绝文案带缺失的能力词，并在控制台留一行
+`[plugins(id)] permission denied: <method> needs "<perm>" — declared: […]`。
+
+```toml
+permissions = ["network", "clipboard", "fs.write"]
+```
+
+- **台账**（单一事实源 = §6D.6 表）：`app.notify→notify`、`app.trash→trash`、
+  `clipboard.*→clipboard`、`http.request→network`、`dialog.*→dialog`、
+  `screen.*→screen`、`search.files→search.files`、`fs.readText/thumb/videoPoster/
+  icon→fs.read`、`fs.writeFile→fs.write`。
+- **无需声明**：基础动作（`app.hide/toast/setQuery/setPlaceholder/openPath/
+  revealPath/resize/setSubInput/redirect`）、插件自有数据（`storage.*`、`db.*`、
+  `settings.*`）、私有目录（`fs.writeText` 等）。
+- **校验点**：宿主构建插件 API 时逐方法包一层（`guardHostApi`），所以插件
+  **逻辑**（跑在启动器窗口、直接持有 API 的那份）与 **mode 页的桥接** 两条路径
+  都被覆盖——只在桥接入口拦是不够的（这是本阶段实机脚本抓出来的第一个 bug）。
+- **设置页**：每个磁盘插件行显示声明的权限 chips；「全部授权」
+  （`settings.plugins.trusted`）是开发逃生门——勾上后该插件的一切能力调用放行，
+  用于「插件先跑起来、manifest 之后补」的场景。内置插件（clipboard/preview）
+  编译进 lume.exe，不参与该表。
+- **边界要诚实**：这是**前端**关卡。mode 页是同源 iframe，蓄意的恶意页面仍可
+  直接触达 Tauri IPC —— 真正的隔离要靠沙箱（与生态阶段一起做）。这一层今天买到
+  的是**知情同意**与**明确失败**：插件用了什么能力写在 manifest 里、设置页看得见，
+  忘了声明就当场报错而不是悄悄能用。
+
+### 6F.5 验收与示例
+
+- 示例 `examples/plugins/notes/`（速记）：`[[features]]` 保存文本 → `db.put`；
+  输入「笔记」列出全部文档 + 一组演示行（`bulkDocs`、乐观锁、导出到私有目录、
+  导出到选定路径（dialog + `fs.write`）、清空、以及**故意未声明 network** 的
+  `http.request` 与**已声明**的剪贴板写入各一行）。
+- 实机脚本 `scripts/cdp_p3_verify.mjs`：45 项，覆盖保存→库内容一致、乐观锁双向
+  拒绝、`bulkDocs` 逐条结果、内部文档不可写、权限拒绝/放行、私有文件真的落盘、
+  旧 `storage.json` 迁移改名、设置改值后端到端生效、设置页 chips/开关/控件渲染。
+
+---
+
 ## 7. 启停与状态管理
 
 - 启停集 = `settings.toml` 的 `plugins.disabled: string[]`（缺省 = 全启用）。
@@ -812,14 +971,25 @@ pluginBuiltin`。
 
 ## 9. 安全模型
 
-- **动态加载 = 任意代码执行**。v1 的信任模型是**显式放置即信任**：用户
-  自己把插件放进 `<base>/plugins/`。清单 `permissions` 字段只是声明位，
-  v1 不校验、不隔离——插件代码与启动器同权限（可达 Tauri IPC）。
-- **`fs.readText`/`thumb`/`icon`（及 `app.trash`）暴露任意路径的文件读取
-  与删除能力**，与 v1 信任模型（显式放置即信任）一致；`permissions`
-  强制层落地后纳入白名单。
-- 内置插件与磁盘插件在注册表/启停上无差别，但内置代码经编译审计随包发布。
-- 后续方向：`permissions` 强制层（IPC 白名单）、插件沙箱、签名校验。
+- **动态加载 = 任意代码执行**。信任模型仍是**显式放置即信任**：用户自己把插件
+  放进 `<base>/plugins/`。插件代码与启动器同进程、同权限。
+- **`permissions` 自 P3.2 起被强制**（§6F.4）：台账（§6D.6）里的能力没声明就
+  调用会**明确失败**（fail-closed，含未知插件），设置页每行显示声明的权限 chips，
+  「全部授权」是开发逃生门。覆盖范围：`app.notify`、`app.trash`、`clipboard.*`、
+  `http.request`、`dialog.*`、`screen.*`、`search.files`、`fs.read*`、
+  `fs.writeFile`；基础 UI 动作与插件自有数据（`storage`/`db`/`settings`）与私有
+  目录（`<plugin>/files/`）无需声明。
+- **这一层的边界要说清楚**：校验点在**前端**（宿主构建 API 时逐方法把关）。
+  mode 页是同源 srcdoc iframe，一个蓄意的恶意页面可以绕过 API 直接触达 Tauri
+  IPC（`parent.__TAURI_INTERNALS__`）。所以它今天买到的是**知情同意 +
+  明确失败**，不是隔离：能力写在 manifest 里看得见，忘了声明会当场报错而不是
+  悄悄可用。
+- **真正的隔离**（沙箱 iframe + 命令侧白名单 + 插件 id 注入）与签名校验、`.lupx`
+  安装确认一起留到生态阶段（P4）；届时台账与设置页的权限 UI 已就位。
+- `fs.readText`/`thumb`/`icon`（及 `app.trash`）暴露任意路径的读取与删除能力，
+  现已被 `fs.read` / `trash` 声明覆盖。
+- 内置插件与磁盘插件在注册表/启停上无差别，但内置代码经编译审计随包发布且不
+  参与权限表。
 
 ---
 
@@ -843,15 +1013,23 @@ pluginBuiltin`。
   - Rust 侧（`[plugins]` 前缀）：`scanning <dir>` / `scan: found "<id>"
     (kind=…, version=…)` / `scan: skipping …`（无清单/解析失败）/
     `"<id>" enabled=…` / `list: N plugin(s) total` / `storage get/set/
-    remove (<id>) <key> → …`（值只记大小不记内容）。
+    remove (<id>) <key> → …`（值只记大小不记内容）/ `db put|remove|allDocs|
+    bulkDocs (<id>) …` / `settings set (<id>) <key> = <n bytes>` /
+    `fs private write|read|list|remove (<id>) <name> …` /
+    `storage migrate: …`（迁移逐插件一行）。
 - **CDP 连接**：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
   启动后连 `127.0.0.1:9222`。现成脚本：
+  - `scripts/cdp_p3_verify.mjs` — P3 数据层/权限/私有文件/设置（45 项）
   - `scripts/cdp_plugin_verify.mjs` — provider 行 + 插件面板截图
   - `scripts/cdp_settings_smoke.mjs` — 8 分区设置冒烟
   - `scripts/cdp_launcher_shots.mjs` — 启动器截图（前后对比）
 - **手工验证清单**：放入插件 → 重启 → 设置/插件可见 → 搜索出现结果行 →
   启停 toggle 即时生效 → 关闭活动模式插件自动回导航页；mode 页可另验
-  `setPlaceholder` 按钮（§5C）与 DevTools Verbose 下的 RPC 轨迹。
+  `setPlaceholder` 按钮（§5C）与 DevTools Verbose 下的 RPC 轨迹；P3 面可验
+  设置项渲染与改动后插件 toast、以及未声明能力的拒绝文案。
+- **改前端后必须重新 `cargo build` 再跑 CDP 冒烟**：debug/release exe 的
+  `frontendDist` 资源是**编译期嵌进二进制**的，只跑 `vite build` 时 exe 仍在
+  服务上一版 bundle（本轮排查「权限层不生效」的真凶）。
 
 ---
 
@@ -863,15 +1041,27 @@ pluginBuiltin`。
   任意模式自定义行模型留待后续。
 - 磁盘插件的 JS 在 blob URL 中执行：可用标准 Web API 与标准 ESM 语法
   （`export`），但**不能 `import` 项目内部模块或第三方包**（无解析根）。
+- **插件数据的落点变了（P3.1）**：`storage.json` 已迁到 `<base>/data/plugin_store.db`
+  的 `__storage` 文档（旧文件改名为 `storage.json.migrated` 保留）。`storage.*`
+  旧调用语义不变，但**换机/备份时不要只拷 `plugins/`**——插件数据在 `data/` 里。
 
 ---
 
 ## 12. 路线
 
-- 权限强制层（消费 `permissions` 声明：IPC 白名单/能力注入；P1 起新增的
-  宿主命令逐一登记权限）
-- 宿主能力面扩张：HTTP 代理（打掉 CORS）、系统通知、剪贴板图片/文件、
-  对话框（见 `docs/PLUGIN_GAP_ANALYSIS.md` P1）
-- 进入方式矩阵：regex/over 文本匹配、文件拖入、子输入框、provider 二级下钻
-- 插件级设置界面（插件自述设置项 → 设置页自动渲染）
-- storage → SQLite 文档库（`_rev` 乐观锁）
+已完成（细节见对应章节与 `docs/ROADMAP.md` #23–#26）：
+
+- ✅ 权限强制层（`permissions` → 逐 RPC 校验 + 设置页 chips + 全部授权）—— §6F.4
+- ✅ 宿主能力面：HTTP 代理（打掉 CORS）、系统通知、剪贴板图片/文件、对话框、
+  屏幕（P1）—— §6D
+- ✅ 进入方式矩阵：regex/over 声明式进入、子输入框、provider 二级下钻、插件互跳
+  （P2）—— §6E
+- ✅ 插件级设置界面（`[[settings]]` → 设置页自动渲染 → `onSettings`）—— §6F.3
+- ✅ storage → SQLite 文档库（`_rev` 乐观锁 + allDocs/bulkDocs + 自动迁移）—— §6F.1
+- ✅ 插件私有文件目录（`<plugin>/files/`）与 `fs.write` 能力 —— §6F.2
+
+未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P2 余项 / P4）：
+
+- `type = "files"` 文件拖入、`img` 剪贴板图片进入、`template = "list"` 官方列模板
+- `.lupx` 打包与安装确认、插件市场源、窗口匹配/超级面板、AI 宿主 API
+- 插件沙箱与签名校验（真正的隔离，权限层目前是前端关卡）

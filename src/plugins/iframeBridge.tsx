@@ -42,6 +42,7 @@ export const BRIDGE_SCRIPT = `
       resize: function (size) {
         return call("app.resize", { width: size && size.width, height: size && size.height });
       },
+      notify: function (title, body) { return call("app.notify", { title: title, body: body }); },
     },
     fs: {
       readText: function (p) { return call("fs.readText", { path: p }); },
@@ -52,6 +53,41 @@ export const BRIDGE_SCRIPT = `
     clipboard: {
       readText: function () { return call("clipboard.readText"); },
       writeText: function (t) { return call("clipboard.writeText", { text: t }); },
+      writeImage: function (data) { return call("clipboard.writeImage", { data: data }); },
+      writeFiles: function (paths) { return call("clipboard.writeFiles", { paths: paths }); },
+      readFiles: function () { return call("clipboard.readFiles"); },
+      paste: function (payload) {
+        return call("clipboard.paste", {
+          text: payload && payload.text,
+          image: payload && payload.image,
+          files: payload && payload.files,
+        });
+      },
+    },
+    http: {
+      request: function (req) {
+        return call("http.request", { req: req }).then(function (res) {
+          if (!res) return res;
+          // Decode the base64 body here: page code stays free of atob/TextDecoder.
+          var dec = function () {
+            var bin = atob(res.body || "");
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            return new TextDecoder().decode(bytes);
+          };
+          res.text = dec;
+          res.json = function () { return JSON.parse(dec()); };
+          return res;
+        });
+      },
+    },
+    dialog: {
+      open: function (opts) { return call("dialog.open", { opts: opts }); },
+      save: function (opts) { return call("dialog.save", { opts: opts }); },
+    },
+    screen: {
+      cursor: function () { return call("screen.cursor"); },
+      displays: function () { return call("screen.displays"); },
     },
     storage: {
       get: function (k) { return call("storage.get", { key: k }); },

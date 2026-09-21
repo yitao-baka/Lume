@@ -1,0 +1,5 @@
+id = "host-tools"
+name = "宿主能力示例 (Host Tools)"
+kind = "provider"
+description = "P1 示例：宿主 HTTP（无 CORS）、系统通知、文件对话框、剪贴板图片/文件/粘贴、光标与显示器"
+entry = "main.js"

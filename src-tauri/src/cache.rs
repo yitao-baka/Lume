@@ -80,7 +80,7 @@ fn init_files_schema(conn: &Connection) -> rusqlite::Result<()> {
 
 /// Compute `(full pinyin, initials)` for a name. Chinese characters map to
 /// their pinyin; anything else is passed through lowercased.
-fn pinyin_for(name: &str) -> (String, String) {
+pub(crate) fn pinyin_for(name: &str) -> (String, String) {
     use pinyin::ToPinyin;
     let chars: Vec<char> = name.chars().collect();
     let pinyins: Vec<_> = name.to_pinyin().collect();

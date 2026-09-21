@@ -11,7 +11,7 @@
 
 import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import type { LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginManifest, PluginServices } from "./types";
+import type { LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
 import { plog } from "./log";
@@ -78,10 +78,7 @@ export function allPlugins(): LauncherPlugin[] {
 }
 
 /** Enabled provider instances (contributed by registered and disk plugins). */
-export function providerPlugins(): {
-  id: string;
-  instance: { search(query: string): Promise<{ name: string; path: string }[]> };
-}[] {
+export function providerPlugins(): { id: string; instance: ProviderInstance }[] {
   return plugins
     .filter((p) => p.provider && isEnabled(p.id))
     .map((p) => ({ id: p.id, instance: p.provider! }));
@@ -102,6 +99,10 @@ export function providerPlugins(): {
 // reserved for a future enforcement layer). The mode view iframe is
 // same-origin (srcdoc) — no sandbox beyond that trust decision.
 const loadedDiskIds = new Set<string>();
+/** Ids that this module actually registered into `plugins` (disk loads only)
+ * — unload removes exactly these, never a built-in that happens to share an
+ * id with a disk manifest. */
+const registeredDiskIds = new Set<string>();
 let pluginServices: PluginServices | null = null;
 
 /** Wire the composition-root services (the host API needs them). Call once
@@ -110,14 +111,113 @@ export function setPluginServices(services: PluginServices) {
   pluginServices = services;
 }
 
+// ── Multi-file ESM module loader (P0.4) ──
+//
+// A disk entry may be a single ES Module file or a bundled multi-file build
+// (e.g. an esbuild/vite product — the Rust side resolves an `entry` directory
+// to `index.js` inside it). Relative imports (`./x.js`, `../y.js`) are
+// rewritten to blob URLs: every referenced file is fetched via the asset
+// protocol, compiled the same way (recursively, cached by path), and the
+// specifier is replaced with its blob URL before `import()`. Bare package
+// names are NOT resolved — bundle the dependencies in (standard practice for
+// launcher plugins; no node_modules on disk).
+
+/** Static `from "..."` / bare `import "..."` / dynamic `import("...")` with a
+ * relative specifier. */
+const RELATIVE_IMPORT_RE =
+  /(from\s*|import\s*\(\s*|import\s*)(["'])(\.{1,2}\/[^"']+)\2/g;
+
+/** One blob-imported module: its URL (for parent rewrites) + namespace. */
+interface CompiledModule {
+  url: string;
+  mod: unknown;
+}
+
+/** Path → compiled module promise. Cache across loads within a session;
+ * cleared on plugin reload so re-imported code is re-read from disk. */
+const moduleCache = new Map<string, Promise<CompiledModule>>();
+
+/** Normalized cache key for a module path. */
+function moduleKey(p: string): string {
+  return p.replace(/\//g, "\\").toLowerCase();
+}
+
+/** The directory part of a Windows path (any separator mix). */
+function parentDir(p: string): string {
+  const norm = p.replace(/\//g, "\\");
+  const i = norm.lastIndexOf("\\");
+  return i > 0 ? norm.slice(0, i) : norm;
+}
+
+/** Resolve `dir` + relative `spec` (`./x.js`, `../../y/z.js`) to a plain
+ * Windows path without drive-dependent logic. */
+function resolveRelative(dir: string, spec: string): string {
+  const parts = (dir + "\\" + spec.replace(/\//g, "\\")).split("\\");
+  const out: string[] = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return out.join("\\");
+}
+
+/** Fetch a module file's text. Without an extension, `.js` then
+ * `<dir>/index.js` are tried (extensionless relative imports). */
+async function fetchModuleText(path: string): Promise<string> {
+  const candidates = /\.[a-zA-Z0-9]+$/.test(path)
+    ? [path]
+    : [path + ".js", path + "\\index.js"];
+  let lastErr: unknown;
+  for (const c of candidates) {
+    try {
+      return await fetchDiskFile(c);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr ?? new Error(`module not found: ${path}`);
+}
+
+/** Compile one module (and, recursively, its relative imports) from disk. */
+function compileDiskModule(absPath: string): Promise<CompiledModule> {
+  const key = moduleKey(absPath);
+  const cached = moduleCache.get(key);
+  if (cached) return cached;
+  const compiled = (async (): Promise<CompiledModule> => {
+    const text = await fetchModuleText(absPath);
+    const dir = parentDir(absPath);
+    const deps = new Map<string, Promise<string>>(); // specifier → blob URL
+    for (const m of text.matchAll(RELATIVE_IMPORT_RE)) {
+      const spec = m[3];
+      if (!deps.has(spec)) {
+        deps.set(
+          spec,
+          compileDiskModule(resolveRelative(dir, spec)).then((c) => c.url)
+        );
+      }
+    }
+    const urls = new Map<string, string>(
+      await Promise.all(
+        [...deps.entries()].map(
+          async ([s, pr]) => [s, await pr] as [string, string]
+        )
+      )
+    );
+    const rewritten = text.replace(RELATIVE_IMPORT_RE, (m, pre, q, spec) => {
+      const url = urls.get(spec);
+      return url ? pre + q + url + q : m;
+    });
+    const url = URL.createObjectURL(new Blob([rewritten], { type: "text/javascript" }));
+    return { url, mod: await import(url) };
+  })();
+  moduleCache.set(key, compiled);
+  return compiled;
+}
+
 async function importDiskModule(dir: string, entry: string): Promise<any> {
-  const url = convertFileSrc(dir + "\\" + entry);
-  const text = await fetch(url).then((r) => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.text();
-  });
-  const blob = new Blob([text], { type: "text/javascript" });
-  return import(URL.createObjectURL(blob));
+  const joined = dir + "\\" + entry.replace(/\//g, "\\");
+  return (await compileDiskModule(joined)).mod;
 }
 
 async function fetchDiskFile(path: string): Promise<string> {
@@ -252,6 +352,39 @@ async function execHostRpc(
         width: args.width as number | undefined,
         height: args.height as number | undefined,
       });
+    case "app.notify":
+      return api.app.notify(a.title, a.body);
+    case "clipboard.writeImage":
+      return api.clipboard.writeImage(a.data);
+    case "clipboard.writeFiles":
+      return api.clipboard.writeFiles(args.paths as string[]);
+    case "clipboard.readFiles":
+      return api.clipboard.readFiles();
+    case "clipboard.paste":
+      return api.clipboard.paste({
+        text: args.text as string | undefined,
+        image: args.image as string | undefined,
+        files: args.files as string[] | undefined,
+      });
+    case "http.request": {
+      const req = args.req as Record<string, unknown>;
+      return api.http.request({
+        url: String(req?.url ?? ""),
+        method: req?.method as string | undefined,
+        headers: req?.headers as Record<string, string> | undefined,
+        body: req?.body as string | undefined,
+        bodyBase64: req?.bodyBase64 as string | undefined,
+        timeoutMs: req?.timeoutMs as number | undefined,
+      });
+    }
+    case "dialog.open":
+      return api.dialog.open(args.opts as never);
+    case "dialog.save":
+      return api.dialog.save(args.opts as never);
+    case "screen.cursor":
+      return api.screen.cursor();
+    case "screen.displays":
+      return api.screen.displays();
     case "fs.readText":
       return api.fs.readText(a.path);
     case "fs.thumb":
@@ -375,16 +508,45 @@ function createDiskModeInstance(
   };
 }
 
-/** Load every not-yet-loaded, enabled disk plugin from the manifests. */
+/** Unload one disk plugin's contributions (hot reload, P0.3): drop its
+ * registrations, forget its load attempt and clear the module cache so a
+ * re-import re-reads the code from disk. (The cache is global — already-
+ * imported modules of other plugins stay alive; only future loads recompile.)
+ * Returns false when the id was never loaded from disk. */
+export async function unloadDiskPlugin(id: string): Promise<boolean> {
+  if (!registeredDiskIds.has(id)) return false;
+  registeredDiskIds.delete(id);
+  loadedDiskIds.delete(id);
+  for (let i = plugins.length - 1; i >= 0; i--) {
+    if (plugins[i].id === id) plugins.splice(i, 1);
+  }
+  moduleCache.clear();
+  return true;
+}
+
+/** Hot-reload one disk plugin (settings-pane 重载 button → `plugin-reload`
+ * event). Re-reads manifests so manifest edits apply too; unknown ids are
+ * reported back as false. */
+export async function reloadDiskPlugin(id: string): Promise<boolean> {
+  const had = await unloadDiskPlugin(id);
+  // Re-read manifests first: a renamed/removed plugin must not be resurrected
+  // from a stale manifest list, and new keywords/features need a fresh read.
+  try {
+    setManifests(await invoke<PluginManifest[]>("get_plugins"));
+  } catch (err) {
+    plog.error(null, "reload: get_plugins failed:", err);
+  }
+  await loadDiskPlugins();
+  return had;
+}
+
+/** Load every not-yet-loaded, enabled disk plugin from the manifests.
+ * Manifests flagged `development` are unloaded first, so editing their code
+ * takes effect on the next refresh (settings-applied) without a restart. */
 export async function loadDiskPlugins() {
   const services = pluginServices;
   let loadedAny = false;
   for (const m of manifests()) {
-    if (loadedDiskIds.has(m.id)) {
-      plog.debug(m.id, "skip load: already loaded this session");
-      continue;
-    }
-    loadedDiskIds.add(m.id); // mark regardless of outcome — never retry-spam
     if (m.builtin || !m.enabled || !m.dir) {
       plog.debug(
         m.id,
@@ -393,7 +555,12 @@ export async function loadDiskPlugins() {
       );
       continue;
     }
-
+    if (m.development) await unloadDiskPlugin(m.id);
+    if (loadedDiskIds.has(m.id)) {
+      plog.debug(m.id, "skip load: already loaded this session");
+      continue;
+    }
+    loadedDiskIds.add(m.id); // mark regardless of outcome — never retry-spam
     try {
       if (m.kind === "provider" && m.entry) {
         const def = await importDiskModule(m.dir, m.entry);
@@ -404,6 +571,7 @@ export async function loadDiskPlugins() {
           continue;
         }
         const navBars = navBarsContribution(m.id, logic);
+        const rawOnEnter = logic.onEnter;
         definePlugin({
           id: m.id,
           provider: {
@@ -416,11 +584,27 @@ export async function loadDiskPlugins() {
                 return Promise.reject(err);
               }
             },
+            ...(typeof rawOnEnter === "function"
+              ? {
+                  onEnter: (item: ProviderResult) => {
+                    try {
+                      (rawOnEnter as (it: ProviderResult) => void)(item);
+                    } catch (err) {
+                      plog.error(m.id, "provider onEnter failed:", err);
+                    }
+                  },
+                }
+              : {}),
           },
           ...(navBars ? { navBars } : {}),
         });
+        registeredDiskIds.add(m.id);
         loadedAny = true;
-        plog.info(m.id, `loaded provider (entry=${m.entry}${navBars ? ", navBars" : ""})`);
+        plog.info(
+          m.id,
+          `loaded provider (entry=${m.entry}${navBars ? ", navBars" : ""}` +
+            `${typeof rawOnEnter === "function" ? ", onEnter" : ""})`
+        );
       } else if (m.kind === "mode" && m.view) {
         const logic = m.entry
           ? resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!))
@@ -436,10 +620,12 @@ export async function loadDiskPlugins() {
             label: m.name || m.id,
           },
           keywords: m.keywords,
+          keywordsPinyin: m.keywordsPinyin ?? [],
           pluginName: m.name || m.id,
           mode: instance,
           ...(navBars ? { navBars } : {}),
         });
+        registeredDiskIds.add(m.id);
         loadedAny = true;
         plog.info(
           m.id,
@@ -459,6 +645,7 @@ export async function loadDiskPlugins() {
           },
           ...(navBars ? { navBars } : {}),
         });
+        registeredDiskIds.add(m.id);
         loadedAny = true;
         plog.info(m.id, `loaded service (entry=${m.entry}${navBars ? ", navBars" : ""})`);
       } else {
@@ -481,21 +668,44 @@ export async function loadDiskPlugins() {
 }
 
 /** Global keywords (uTools-style) of enabled mode plugins → Navigate offers
- * an 「进入 <name>」 row when the query matches one exactly. */
+ * an 「进入 <name>」 row when the query matches one. Matching tiers, best
+ * first: exact (case-insensitive) → prefix → pinyin initials prefix → full
+ * pinyin prefix. Pinyin comes precomputed from the backend (`keywordsPinyin`)
+ * — the frontend has no pinyin table of its own. */
 export function modeKeywordMatches(q: string): { id: ModeId; name: string }[] {
   const needle = q.trim().toLowerCase();
   if (!needle) return [];
-  return plugins
-    .filter((p) => p.mode && isEnabled(p.id))
-    .filter((p) =>
-      ((p as { keywords?: string[] }).keywords ?? []).some(
-        (k) => k.trim().toLowerCase() === needle
-      )
-    )
-    .map((p) => ({
-      id: p.id,
-      name: (p as { pluginName?: string }).pluginName ?? p.id,
-    }));
+  const hits: { id: ModeId; name: string; tier: number }[] = [];
+  for (const p of plugins) {
+    if (!p.mode || !isEnabled(p.id)) continue;
+    const kws = (p as { keywords?: string[] }).keywords ?? [];
+    const pys = (p as { keywordsPinyin?: { full: string; initials: string }[] })
+      .keywordsPinyin ?? [];
+    let best = Infinity;
+    kws.forEach((k, i) => {
+      const kl = k.trim().toLowerCase();
+      let tier = Infinity;
+      if (kl === needle) tier = 0;
+      else if (kl.startsWith(needle)) tier = 1;
+      else {
+        const py = pys[i];
+        if (py) {
+          if (py.initials.startsWith(needle)) tier = 2;
+          else if (py.full.startsWith(needle)) tier = 3;
+        }
+      }
+      if (tier < best) best = tier;
+    });
+    if (best < Infinity) {
+      hits.push({
+        id: p.id,
+        name: (p as { pluginName?: string }).pluginName ?? p.id,
+        tier: best,
+      });
+    }
+  }
+  hits.sort((a, b) => a.tier - b.tier);
+  return hits.map(({ id, name }) => ({ id, name }));
 }
 
 /** Enabled plugins contributing Navigate bars (栏目), in registration

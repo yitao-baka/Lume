@@ -14,6 +14,9 @@ mod icons;
 pub mod input;
 pub mod paths;
 pub mod pipe;
+mod notify;
+mod plugin_host;
+mod plugin_net;
 mod plugins;
 mod pins;
 pub mod recent;
@@ -355,6 +358,17 @@ pub fn run() {
             plugins::get_plugins,
             plugins::plugin_storage_get,
             plugins::plugin_storage_set,
+            plugins::reload_plugin,
+            plugin_net::plugin_http_fetch,
+            notify::plugin_notify,
+            clipboard::plugin_clipboard_write_image,
+            clipboard::plugin_clipboard_write_files,
+            clipboard::plugin_clipboard_read_files,
+            clipboard::plugin_clipboard_paste,
+            plugin_host::plugin_dialog_open,
+            plugin_host::plugin_dialog_save,
+            plugin_host::plugin_cursor_pos,
+            plugin_host::plugin_displays,
             settings::set_plugin_enabled,
             clipboard::get_clipboard_text,
             clipboard::set_clipboard_text,

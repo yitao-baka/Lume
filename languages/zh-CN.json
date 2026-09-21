@@ -252,5 +252,7 @@
   "pluginKindService": "服务",
   "pluginKindProvider": "搜索提供",
   "pluginBuiltin": "内置",
-  "pluginDisk": "磁盘"
+  "pluginDisk": "磁盘",
+  "pluginReload": "重载",
+  "pluginDev": "开发"
 }

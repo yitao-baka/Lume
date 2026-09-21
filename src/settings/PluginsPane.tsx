@@ -41,6 +41,18 @@ export default function PluginsPane() {
     }
   }
 
+  /** Hot-reload one disk plugin: the launcher unloads + re-imports it from
+   * disk (its `plugin-reload` event path), so code edits apply without
+   * restarting Lume. Built-ins have nothing to reload from disk. */
+  async function reload(p: PluginManifest) {
+    try {
+      await invoke("reload_plugin", { id: p.id });
+      setStatus({ ok: true, text: p.id + " ↻" });
+    } catch (err) {
+      setStatus({ ok: false, text: String(err) });
+    }
+  }
+
   return (
     <>
       <h2 class="settings-grouptitle">{t("plugins")}</h2>
@@ -56,13 +68,23 @@ export default function PluginsPane() {
                     <span class="settings-chip-mini">
                       {p.builtin ? t("pluginBuiltin") : t("pluginDisk")}
                     </span>
+                    <Show when={p.development}>
+                      <span class="settings-chip-mini">{t("pluginDev")}</span>
+                    </Show>
                     <Show when={p.version}>
                       <span class="settings-chip-mini">{p.version}</span>
                     </Show>
                   </span>
                 </span>
               </div>
-              <Toggle checked={p.enabled} onChange={(v) => void toggle(p, v)} />
+              <div class="settings-plugin-actions">
+                <Show when={!p.builtin}>
+                  <button class="settings-mini-btn" onClick={() => void reload(p)}>
+                    ↻ {t("pluginReload")}
+                  </button>
+                </Show>
+                <Toggle checked={p.enabled} onChange={(v) => void toggle(p, v)} />
+              </div>
             </div>
           )}
         </For>

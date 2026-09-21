@@ -38,6 +38,7 @@ import {
   navBarPlugins,
   providerPlugins,
   refreshPlugins,
+  reloadDiskPlugin,
   setPluginServices,
   type ModeId,
   type PluginServices,
@@ -405,9 +406,20 @@ function App() {
             if (id !== requestSeq) return;
             for (const it of items ?? []) {
               if (res.length + extra.length >= 20) break;
-              if (!it?.name || !it?.path || seen.has(it.path)) continue;
-              seen.add(it.path);
-              extra.push({ id: 0, name: it.name, path: it.path });
+              if (!it?.name) continue;
+              // `enter` rows don't open anything — synthesize a stable dedup
+              // key (path stays required in the grid's entry model).
+              const key = it.path || `lume-plugin://${p.id}/${extra.length}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              extra.push({
+                id: 0,
+                name: it.name,
+                path: key,
+                ...(it.description ? { description: it.description } : {}),
+                ...(it.icon ? { icon: it.icon } : {}),
+                ...(it.enter ? { providerEnter: { pluginId: p.id, item: it } } : {}),
+              });
             }
           } catch (err) {
             console.error("provider search failed:", p.id, err);
@@ -415,7 +427,9 @@ function App() {
         }
         const merged = [...res, ...extra];
         setApps(merged);
-        void icons.loadIcons(merged);
+        // Rows with an explicit icon or a plugin-enter action don't go through
+        // the icon pipeline (icon is already resolved / path is synthetic).
+        void icons.loadIcons(merged.filter((a) => !a.icon && !a.providerEnter));
         sizer.scheduleResize();
       }
     } else {
@@ -540,6 +554,20 @@ function App() {
       }
       const item = apps()[selected()];
       if (!item) return;
+      // Provider action row (manifest of `enter`): hand the original result
+      // object back to the plugin's onEnter instead of launching anything.
+      // The launcher stays open — the plugin hides itself when done.
+      if (item.providerEnter) {
+        const p = providerPlugins().find(
+          (x) => x.id === item.providerEnter!.pluginId
+        );
+        try {
+          p?.instance.onEnter?.(item.providerEnter.item as never);
+        } catch (err) {
+          console.error("provider onEnter failed:", p?.id ?? item.providerEnter.pluginId, err);
+        }
+        return;
+      }
       // 全局关键字行：进入对应插件模式（不隐藏，不记为已使用条目）。
       if (item.path.startsWith("lume-mode://")) {
         void switchMode(item.path.slice("lume-mode://".length));
@@ -645,6 +673,13 @@ function App() {
       void applyRuntimeSettings();
     });
     onCleanup(() => unlistenSettings());
+
+    // Settings-pane 重载 button (plugins::reload_plugin): re-import one disk
+    // plugin from disk. Bars ride along (a reload may add/remove navBars).
+    const unlistenPluginReload = await listen<string>("plugin-reload", (e) => {
+      void reloadDiskPlugin(e.payload).then(() => refreshPluginBars());
+    });
+    onCleanup(() => unlistenPluginReload());
 
     // The launcher stays hidden between toggles. On every fresh show (hotkey /
     // tray toggle) reset to the Navigate main menu, re-focus the input, and

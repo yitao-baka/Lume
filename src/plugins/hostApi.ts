@@ -3,15 +3,50 @@
 //! pages reach the same surface through the postMessage bridge (§ iframe).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { FileSearchOut, PluginHostApi, PluginServices } from "./types";
+import type {
+  DialogOptions,
+  DisplayInfo,
+  FileSearchOut,
+  HttpRequest,
+  HttpResponse,
+  PluginFileSearchOptions,
+  PluginHostApi,
+  PluginServices,
+} from "./types";
 import { plog } from "./log";
+
+/** The richer reply `ctx.http.request` resolves to: the raw fields plus
+ * decoded-body conveniences (the bridge transports JSON, so helpers are
+ * re-attached on each side rather than serialized). */
+export type HttpResult = HttpResponse & {
+  /** Body decoded as UTF-8 text (lossy for binary payloads). */
+  text(): string;
+  /** Body parsed as JSON (throws on malformed JSON). */
+  json<T = unknown>(): T;
+};
+
+/** Decode a base64 body into a string without Buffer (webview-safe). */
+function decodeBase64Utf8(b64: string): string {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+/** Attach the body helpers to a raw `http.request` reply. */
+export function decorateHttpResponse(raw: HttpResponse): HttpResult {
+  return {
+    ...raw,
+    text: () => decodeBase64Utf8(raw.body ?? ""),
+    json: <T,>() => JSON.parse(decodeBase64Utf8(raw.body ?? "")) as T,
+  };
+}
 
 /** Build the capability surface for one plugin id. `services` comes from the
  * composition root; every storage call is scoped by the plugin id (the Rust
  * side enforces the directory containment). */
 export function createHostApi(id: string, services: PluginServices): PluginHostApi {
-  return {
-    app: {
+  return {    app: {
       hide: () => {
         plog.debug(id, "app.hide");
         services.resetAndHide();
@@ -55,11 +90,89 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         plog.debug(id, "app.resize:", size);
         services.resizeWindow(size ?? {});
       },
+      notify: async (title, body) => {
+        plog.debug(id, "app.notify:", title);
+        await invoke("plugin_notify", { title, body, pluginId: id });
+      },
     },
     clipboard: {
       readText: () => invoke<string | null>("get_clipboard_text"),
       writeText: async (text) => {
         await invoke("set_clipboard_text", { text });
+      },
+      writeImage: async (data) => {
+        plog.debug(id, "clipboard.writeImage:", data.length, "bytes");
+        await invoke("plugin_clipboard_write_image", { data });
+      },
+      writeFiles: async (paths) => {
+        plog.debug(id, "clipboard.writeFiles:", paths.length, "path(s)");
+        await invoke("plugin_clipboard_write_files", { paths });
+      },
+      readFiles: () => invoke<string[]>("plugin_clipboard_read_files"),
+      paste: async (payload) => {
+        plog.debug(id, "clipboard.paste:", Object.keys(payload ?? {}).join("/"));
+        await invoke("plugin_clipboard_paste", {
+          text: payload?.text,
+          image: payload?.image,
+          files: payload?.files,
+        });
+      },
+    },
+    http: {
+      request: async (req: HttpRequest) => {
+        plog.debug(id, "http.request:", req?.method ?? "GET", req?.url);
+        const raw = await invoke<HttpResponse>("plugin_http_fetch", {
+          req: {
+            url: req?.url,
+            method: req?.method,
+            headers: req?.headers,
+            body: req?.body,
+            body_base64: req?.bodyBase64,
+            timeout_ms: req?.timeoutMs,
+          },
+        });
+        return decorateHttpResponse(raw);
+      },
+    },
+    dialog: {
+      open: async (opts?: DialogOptions) => {
+        plog.debug(id, "dialog.open:", opts?.title ?? "");
+        return invoke<string[]>("plugin_dialog_open", { params: dialogParams(opts) });
+      },
+      save: async (opts?: DialogOptions) => {
+        plog.debug(id, "dialog.save:", opts?.title ?? "");
+        return invoke<string | null>("plugin_dialog_save", { params: dialogParams(opts) });
+      },
+    },
+    screen: {
+      cursor: () => invoke<{ x: number; y: number }>("plugin_cursor_pos"),
+      displays: async () => {
+        const raw = await invoke<
+          {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+            work_x: number;
+            work_y: number;
+            work_width: number;
+            work_height: number;
+            primary: boolean;
+          }[]
+        >("plugin_displays");
+        return raw.map(
+          (d): DisplayInfo => ({
+            x: d.x,
+            y: d.y,
+            width: d.width,
+            height: d.height,
+            workX: d.work_x,
+            workY: d.work_y,
+            workWidth: d.work_width,
+            workHeight: d.work_height,
+            primary: d.primary,
+          })
+        );
       },
     },
     storage: {
@@ -109,5 +222,19 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         });
       },
     },
+  };
+}
+
+/** Map camelCase dialog options to the snake_case params the Rust command
+ * deserializes (`extensions` stays camel-free). */
+function dialogParams(opts?: DialogOptions) {
+  const o = opts ?? {};
+  return {
+    title: o.title,
+    default_path: o.defaultPath,
+    file_name: o.fileName,
+    filters: o.filters,
+    multiple: o.multiple ?? false,
+    folder: o.folder ?? false,
   };
 }

@@ -172,7 +172,53 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**提权代理后续修理与生命周期（ROADMAP #22 follow-up, complete) — as of 2026-09-20**:
+**插件系统 P1 宿主能力面（HTTP / 通知 / 剪贴板 / 对话框 / 屏幕，complete)
+— as of 2026-09-21**: 差距分析（`docs/PLUGIN_GAP_ANALYSIS.md`）第二阶段，
+ROADMAP #24、API 文档 `docs/PLUGIN_API.md` §6D。**零新增 crate**：HTTP 用
+`windows` crate 的 WinHTTP（新增 feature `Win32_Networking_WinHttp`），通知用
+`Shell_NotifyIconW`。① **`plugin_net.rs`**——宿主 HTTP（Schannel TLS + 系统代理
++ 跟随重定向 + gzip 解压；`spawn_blocking`；http/https 限定、超时 1–60s、4MiB
+截断上报），打掉页面 `fetch` 的 CORS 限制（翻译/查词类插件的命门）；4 个单测用
+本地 `TcpListener` 起服务器验证 GET/POST/协议拒绝/截断。② **`notify.rs`**——
+自注册**隐藏**通知图标（`NIS_HIDDEN`，不占托盘）+ `NIF_INFO` 气泡；**刻意不用
+WinRT toast**（非打包/便携应用需要 AUMID + 开始菜单快捷方式）。③ **剪贴板
+扩展**（`clipboard.rs`）——`writeImage`（PNG，32MB 上限）/`writeFiles`（CF_HDROP）/
+`readFiles`/`paste`（复用 `auto_paste`：隐藏→还焦点→Ctrl+V），并给 auto_paste
+的两条静默回退分支补了日志。④ **`plugin_host.rs`**——原生文件对话框
+（`tauri-plugin-dialog` blocking API + `spawn_blocking`，取消 = `[]`/`null`，
+走 Rust 命令以免给启动器窗口加 `dialog:default` 能力）与光标/显示器几何
+（物理像素）。前端三路径（内置/磁盘工厂 `ctx`、iframe `window.lume`）同步，
+`http.request` 附 `text()`/`json()`；示例 `examples/plugins/host-tools/`（`h:`
+出动作面板）。验证：cargo test **149**（+8）、tsc/build 干净、
+`scripts/cdp_p1_verify.mjs` **14 项全过**（页面对比 CORS 直连失败 vs 宿主成功、
+图片/文件剪贴板往返、对话框 ESC 取消、屏幕几何、paste 隐藏启动器 + 日志证据）。
+**实测结论**：① WebView2 隐藏窗口时 `document.visibilityState` 仍是 "visible"
+→ 窗口可见性只能从 OS 侧探测，已产出 `scripts/ps_lume_windows.ps1`（并排除
+Tao 内部事件窗口——它的 `MainWindowHandle` 会误导）；② **本机不显示任何通知
+气泡**（PowerShell `NotifyIcon.ShowBalloonTip` 对照实验同样不显示 → 系统级抑制），
+脚本如实报告该差异而非假装通过。
+
+**Prior: 插件系统 P0（拼音关键字 + provider 动作条目 + 热重载 + 多文件入口，complete)
+— as of 2026-09-21**: 对齐 uTools 差距分析（`docs/PLUGIN_GAP_ANALYSIS.md`）的
+第一阶段，ROADMAP #23。① **关键字拼音匹配**——`plugins.rs` 扫描时为
+`keywords` 预计算拼音（复用 `cache::pinyin_for`，`keywordsPinyin` 字段 serde
+camelCase 下发；**坑**：mode 插件注册时漏拷该字段到 `LauncherPlugin` 会导致
+前端匹配静默失效），`modeKeywordMatches` 分级匹配：精确 → 前缀 → 首字母 →
+全拼（`ms`/`miao` 唤出「秒搜」）。② **provider 动作条目**——`ProviderResult`
+新增可选 `description`（网格副行 `.result-box-desc`）/`icon`（data:/URL 直通、
+路径走 asset；显式图标行跳过图标管线）/`enter`（激活回调 `onEnter(item)` 而非
+`launch_app`，启动器不隐藏；`path` 可省，宿主生成 `lume-plugin://` 合成去重键）。
+③ **热重载**——清单 `development` 字段（每次 settings-applied 自动重载）+
+设置 → 插件 磁盘行「↻ 重载」按钮（`reload_plugin` 命令 → `plugin-reload`
+事件 → `reloadDiskPlugin`：卸载 + 清模块缓存 + 重读清单；`registeredDiskIds`
+保证卸载不误伤内置）。④ **多文件 ESM 入口**——清单 `entry` 可为目录（Rust
+解析为 `index.js`），前端 `compileDiskModule` 递归把相对 import 改写为 blob
+URL（按路径缓存；裸包名不支持）。示例 `examples/plugins/actions/`（即多文件
+形态）。验证：cargo test 141（+2）、tsc/build 干净、
+`scripts/cdp_p0_verify.mjs` 8 项全过（截图 `test/p0_provider_rows.png`、
+`test/p0_settings_plugins.png`）。顺手修存量 tsc 错误（hostApi.ts 缺类型导入）。
+
+**Prior: 提权代理后续修理与生命周期（ROADMAP #22 follow-up, complete) — as of 2026-09-20**:
 四个问题的实机修复与一个生命周期改动。
 ① **注册失败的根因**：`schtasks /Create /XML` 拒绝带 `encoding=` 属性的 XML 声明
 （`<?xml… encoding="UTF-8"?>`），报 `错误: 任务 XML 格式错误 (1,40) 无法切换编码`；

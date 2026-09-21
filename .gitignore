@@ -1,5 +1,7 @@
 node_modules
 dist
+# 示例插件的打包产物是示例源码的一部分（multi-file entry 演示）
+!examples/plugins/*/dist/
 .claude/
 # Local test scratch files (clipboard preview testing)
 test/

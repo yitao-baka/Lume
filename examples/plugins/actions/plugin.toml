@@ -1,0 +1,5 @@
+id = "actions"
+name = "动作示例 (Actions)"
+kind = "provider"
+description = "P0 示例：enter 动作条目 + description 副行 + 显式 icon + 多文件入口（entry 目录）"
+entry = "dist/"

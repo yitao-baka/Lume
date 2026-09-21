@@ -40,6 +40,14 @@ export interface PluginManifest {
   /** Mode plugins: pill icon (relative to the plugin dir; resolved to a
    * URL by the registry). Empty = no pill image. */
   icon: string;
+  /** Development flag (manifest `development`): the registry reloads the
+   * plugin from disk on every refresh (settings-applied) — code edits take
+   * effect without a restart. */
+  development: boolean;
+  /** Backend-computed pinyin of `keywords` (same order) — lets the frontend
+   * match "miao"/"ms" against the Chinese keyword 「秒搜」 without a pinyin
+   * library. Empty entries when the plugin has no keywords. */
+  keywordsPinyin: { full: string; initials: string }[];
   /** Absolute plugin directory (disk plugins; empty for built-ins). */
   dir: string;
 }
@@ -75,12 +83,46 @@ export interface PluginHostApi {
      * holds until the next content-driven resize (Navigate auto-fit or a
      * mode switch re-applies the configured size). */
     resize(size: { width?: number; height?: number }): void;
+    /** System notification (P1.2) — reaches the user while the launcher is
+     * hidden (the in-app toast cannot). Rendered through the shell's
+     * notification area; title/body are truncated by the shell's field
+     * widths. */
+    notify(title: string, body: string): Promise<void>;
   };
   clipboard: {
     /** Current system clipboard text (null = non-text/empty). */
     readText(): Promise<string | null>;
     /** Write plain text to the system clipboard. */
     writeText(text: string): Promise<void>;
+    /** Put a PNG on the clipboard (base64 or a `data:image/png;base64,…` URI). */
+    writeImage(data: string): Promise<void>;
+    /** Put a file/folder list on the clipboard as CF_HDROP (Explorer-style
+     * copy). */
+    writeFiles(paths: string[]): Promise<void>;
+    /** The clipboard's current file list (empty when it holds something
+     * else). */
+    readFiles(): Promise<string[]>;
+    /** Write one payload and paste it into the window that had focus before
+     * the launcher appeared (hide → Ctrl+V). Exactly one field. The payload
+     * stays on the clipboard afterwards, like a normal copy. */
+    paste(payload: { text?: string; image?: string; files?: string[] }): Promise<void>;
+  };
+  /** Host-side HTTP (P1.1) — no CORS: the request runs in a Rust worker via
+   * WinHTTP (Schannel TLS, automatic system proxy). http/https only, default
+   * timeout 10s (≤60s), response truncated at 4 MiB with `truncated` set. */
+  http: {
+    request(req: HttpRequest): Promise<HttpResponse>;
+  };
+  /** Native file pickers (P1.4). Cancelling resolves to `[]` / `null` — not
+   * an error, the plugin decides what to say. */
+  dialog: {
+    open(opts?: DialogOptions): Promise<string[]>;
+    save(opts?: DialogOptions): Promise<string | null>;
+  };
+  /** Screen geometry (P1.5) in **physical** pixels. */
+  screen: {
+    cursor(): Promise<{ x: number; y: number }>;
+    displays(): Promise<DisplayInfo[]>;
   };
   /** Plugin-scoped key/value store persisted to
    * `<base>/plugins/<id>/storage.json` (values are JSON-serialized). */
@@ -133,6 +175,61 @@ export interface PluginFileSearchOptions {
   exts?: string[];
   /** Restrict to directories. */
   folder?: boolean;
+}
+
+/** One request for `http.request` (P1.1). */
+export interface HttpRequest {
+  /** Absolute http/https URL. */
+  url: string;
+  /** HTTP verb (default GET). Alphabetic only. */
+  method?: string;
+  headers?: Record<string, string>;
+  /** UTF-8 request body. */
+  body?: string;
+  /** Binary request body (base64); wins over `body`. */
+  bodyBase64?: string;
+  /** 1000–60000 ms (default 10000). */
+  timeoutMs?: number;
+}
+
+/** `http.request` reply. `body` is base64 (decode with `atob`) — the
+ * convenience wrapper the plugins see also carries `text()`/`json()`. */
+export interface HttpResponse {
+  status: number;
+  /** Response headers, keys lowercased. */
+  headers: Record<string, string>;
+  body: string;
+  /** True when the 4 MiB cap cut the body short. */
+  truncated: boolean;
+}
+
+/** Shared picker options for `dialog.open` / `dialog.save` (P1.4). */
+export interface DialogOptions {
+  title?: string;
+  /** Directory the picker opens in. */
+  defaultPath?: string;
+  /** Pre-filled file name. */
+  fileName?: string;
+  /** `extensions` without dots; an empty list means "all files". */
+  filters?: { name: string; extensions: string[] }[];
+  /** `dialog.open` only: allow several files (default false). */
+  multiple?: boolean;
+  /** `dialog.open` only: pick directories instead of files. */
+  folder?: boolean;
+}
+
+/** One monitor (P1.5), physical pixels. */
+export interface DisplayInfo {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Work area (the monitor minus the taskbar). */
+  workX: number;
+  workY: number;
+  workWidth: number;
+  workHeight: number;
+  primary: boolean;
 }
 
 /** Optional lifecycle hooks for disk **service** plugins (headless). */
@@ -263,12 +360,25 @@ export interface PreviewService {
   clear(): void;
 }
 
-/** A search result contributed by a provider — AppEntry-shaped, so the
- * results grid, activation (launch_app opens files AND URLs) and the icon
- * pipeline treat provider rows exactly like app rows. */
+/** A search result contributed by a provider. Plain `{name, path}` rows
+ * activate exactly like native results (launch_app opens files AND URLs);
+ * the optional fields turn a row into a richer or plugin-activated entry. */
 export interface ProviderResult {
   name: string;
-  path: string;
+  /** File path or URL opened on activation. Optional when `enter` is set
+   * (an action row that doesn't open anything) — the host generates a
+   * synthetic unique key for deduplication. */
+  path?: string;
+  /** Optional second line rendered under the name in the results grid. */
+  description?: string;
+  /** Explicit icon: data:/http(s):/asset:/blob: URIs pass through, anything
+   * else is treated as a file path (resolved via the asset protocol).
+   * Omitted → the regular icon pipeline for `path`. */
+  icon?: string;
+  /** Marker: activating this row calls the provider's `onEnter(item)`
+   * instead of launch_app. The launcher stays open — the plugin decides
+   * when to hide itself (ctx.app.hide). */
+  enter?: boolean;
 }
 
 /** A Navigate-page bar (栏目) contributed by a plugin — rendered on the
@@ -293,6 +403,10 @@ export interface NavBarContribution {
  * (appended after the native index, deduped by path). */
 export interface ProviderInstance {
   search(query: string): Promise<ProviderResult[]>;
+  /** Called when the user activates a row whose `enter` was set. The same
+   * result object `search` returned comes back (extra plugin fields are
+   * preserved). Exceptions are logged and isolated like search errors. */
+  onEnter?(item: ProviderResult): void;
 }
 
 /** A plugin: manifest identity + its already-created contributions.
@@ -317,6 +431,10 @@ export interface LauncherPlugin {
   navBars?: () => Promise<NavBarContribution[]> | NavBarContribution[];
   /** Global keywords + display name (uTools-style mode entry). */
   keywords?: string[];
+  /** Backend-computed pinyin of `keywords` (same order) — consumed by
+   * `modeKeywordMatches` for the tiered (exact → prefix → initials → full
+   * pinyin) matching. */
+  keywordsPinyin?: { full: string; initials: string }[];
   pluginName?: string;
   /** Headless lifecycle hooks (disk service plugins). */
   lifecycle?: ServiceHooks;

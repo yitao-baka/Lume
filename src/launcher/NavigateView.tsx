@@ -33,7 +33,7 @@ export interface NavigateViewProps {
  * freezes at the initial value (no selection feedback at all). */
 function itemBox(
   props: NavigateViewProps,
-  item: { name: string; path: string; icon?: string; mono?: boolean },
+  item: { name: string; path: string; icon?: string; mono?: boolean; description?: string },
   opts: { wrap?: boolean },
   selected: () => boolean,
   handlers: {
@@ -76,6 +76,9 @@ function itemBox(
         </Show>
       </span>
       <span class="result-box-name">{item.name}</span>
+      <Show when={item.description}>
+        <span class="result-box-desc">{item.description}</span>
+      </Show>
     </div>
   );
 }

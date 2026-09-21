@@ -17,8 +17,21 @@ use std::fs;
 use std::path::Path;
 use tauri::State;
 
+use crate::cache::pinyin_for;
 use crate::paths::base_dir;
 use crate::settings::{self, SettingsState};
+
+/// Per-keyword pinyin search aids, computed by the backend at scan time so
+/// the frontend can match a typed query against Chinese keywords without a
+/// pinyin library ("miao"/"ms" → 「秒搜」). Not part of the manifest —
+/// `plugin.toml` never carries these.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct KeywordPinyin {
+    /// Lowercased full pinyin of the keyword.
+    pub full: String,
+    /// Lowercased pinyin initials.
+    pub initials: String,
+}
 
 /// A plugin manifest, parsed from `<base>/plugins/<id>/plugin.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,6 +71,11 @@ pub struct PluginManifest {
     /// Mode plugins: pill icon, relative to the plugin dir.
     #[serde(default)]
     pub icon: String,
+    /// Development flag: the frontend registry reloads the plugin from disk
+    /// on every refresh (settings-applied), so editing its code takes effect
+    /// without a restart. Plugin authors opt in via the manifest.
+    #[serde(default)]
+    pub development: bool,
 }
 
 fn default_kind() -> String {
@@ -87,6 +105,13 @@ pub struct PluginInfo {
     pub height: Option<u32>,
     /// Mode plugins: pill icon (relative to the plugin dir).
     pub icon: String,
+    /// Development flag (manifest `development`): the frontend reloads this
+    /// plugin on every refresh so code edits take effect without a restart.
+    pub development: bool,
+    /// Pinyin search aids for `keywords` (same order); empty when the plugin
+    /// has no keywords. Backend-computed (the frontend has no pinyin table).
+    #[serde(rename = "keywordsPinyin")]
+    pub keywords_pinyin: Vec<KeywordPinyin>,
     /// Absolute plugin directory (disk plugins; empty for built-ins).
     pub dir: String,
 }
@@ -163,6 +188,21 @@ fn scan_disk_plugins(base: &Path) -> Vec<PluginManifest> {
     out
 }
 
+/// Resolve a manifest `entry` to the file the frontend should import: when
+/// the entry names a directory (a bundled multi-file build, e.g. an esbuild
+/// product), the module root is `index.js` inside it.
+fn resolve_entry(dir: &Path, entry: &str) -> String {
+    if entry.is_empty() {
+        return entry.into();
+    }
+    let p = dir.join(entry);
+    if p.is_dir() {
+        let trimmed = entry.trim_end_matches(['/', '\\']);
+        return format!("{trimmed}/index.js");
+    }
+    entry.into()
+}
+
 /// Built-ins + on-disk plugins, annotated with the effective enabled state.
 pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
     let enabled = |id: &str| !disabled.iter().any(|d| d == id);
@@ -182,12 +222,22 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             keywords: Vec::new(),
             height: None,
             icon: String::new(),
+            development: false,
+            keywords_pinyin: Vec::new(),
             dir: String::new(),
         })
         .collect();
     let disk = scan_disk_plugins(base);
     for m in disk {
         let dir = plugins_dir(base).join(&m.id);
+        let keywords_pinyin = m
+            .keywords
+            .iter()
+            .map(|k| {
+                let (full, initials) = pinyin_for(k);
+                KeywordPinyin { full, initials }
+            })
+            .collect();
         eprintln!(
             "[plugins] \"{}\" enabled={} (disabled list: {:?})",
             m.id,
@@ -203,11 +253,13 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             permissions: m.permissions,
             builtin: false,
             enabled: enabled(&m.id),
-            entry: m.entry,
+            entry: resolve_entry(&dir, &m.entry),
             view: m.view,
             keywords: m.keywords,
             height: m.height,
             icon: m.icon,
+            development: m.development,
+            keywords_pinyin,
             dir: dir.to_string_lossy().into_owned(),
         });
     }
@@ -226,6 +278,15 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
 pub fn get_plugins(state: State<SettingsState>) -> Result<Vec<PluginInfo>, String> {
     let snapshot = settings::snapshot(&state);
     Ok(list_plugins(&base_dir(), &snapshot.plugins.disabled))
+}
+
+/// Settings-pane 重载 button: ask the launcher webview to reload one disk
+/// plugin (the registry unloads + re-imports it). Only an event — the actual
+/// unload/reload lives in the frontend registry (`reloadDiskPlugin`).
+#[tauri::command]
+pub fn reload_plugin(id: String, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    app.emit("plugin-reload", id).map_err(|e| e.to_string())
 }
 
 // ── Plugin-scoped key/value storage (uTools db 风格, ROADMAP #7) ──
@@ -439,6 +500,45 @@ height = 560
         assert!(preview.builtin && !preview.enabled);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(!demo.builtin && demo.enabled && demo.name == "Demo");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn keywords_get_pinyin_search_aids() {
+        let root = std::env::temp_dir().join(format!("lume-plugins-py-{}", std::process::id()));
+        let base = root.join("plugins");
+        let demo = base.join("demo");
+        fs::create_dir_all(&demo).unwrap();
+        fs::write(
+            demo.join("plugin.toml"),
+            "id = \"demo\"\nkeywords = [\"秒搜\", \"Files\"]\n",
+        )
+        .unwrap();
+        let all = list_plugins(&root, &[]);
+        let demo = all.iter().find(|p| p.id == "demo").unwrap();
+        assert_eq!(demo.keywords_pinyin.len(), 2);
+        assert_eq!(demo.keywords_pinyin[0].full, "miaosou");
+        assert_eq!(demo.keywords_pinyin[0].initials, "ms");
+        assert_eq!(demo.keywords_pinyin[1].full, "files");
+        assert_eq!(demo.keywords_pinyin[1].initials, "files");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn entry_directory_resolves_to_index_js() {
+        let root = std::env::temp_dir().join(format!("lume-plugins-entry-{}", std::process::id()));
+        let base = root.join("plugins");
+        let dist = base.join("demo").join("dist");
+        fs::create_dir_all(&dist).unwrap();
+        fs::write(dist.join("index.js"), "export default {};\n").unwrap();
+        fs::write(
+            base.join("demo").join("plugin.toml"),
+            "id = \"demo\"\nentry = \"dist\"\n",
+        )
+        .unwrap();
+        let all = list_plugins(&root, &[]);
+        let demo = all.iter().find(|p| p.id == "demo").unwrap();
+        assert!(demo.entry.ends_with("dist/index.js"), "entry: {}", demo.entry);
         fs::remove_dir_all(&root).ok();
     }
 }

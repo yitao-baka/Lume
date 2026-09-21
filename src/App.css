@@ -932,6 +932,17 @@ body,
   font-size: 12px;
 }
 
+/* Provider rows' optional second line (plugin description). */
+.result-box-desc {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
 /* Apps / Clipboard mode switch in the search row. */
 .mode-switch {
   flex: none;
@@ -1755,6 +1766,29 @@ body.settings-window #root {
   display: inline-flex;
   gap: 6px;
   margin-left: 8px;
+}
+
+/* Plugin row: 重载 button beside the enable toggle. */
+.settings-plugin-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.settings-mini-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.settings-mini-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
 }
 
 .settings-chip-mini {

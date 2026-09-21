@@ -93,9 +93,10 @@ export default {
 | `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。三类均支持磁盘加载（mode 需 `view`，provider/service 需 `entry`）。 |
 | `description` | string | `""` | 预留展示位。 |
 | `permissions` | string[] | `[]` | **预留**（v1 不校验、不强制）。为将来权限层准备的声明位。 |
-| `entry` | string | `""` | 入口 JS（相对插件目录）。provider 必填；mode 可选（逻辑钩子）；service 必填（钩子）。 |
+| `entry` | string | `""` | 入口 JS（相对插件目录）。provider 必填；mode 可选（逻辑钩子）；service 必填（钩子）。**可以是目录**（多文件打包产物）— 此时实际加载其中的 `index.js`，目录内文件的相对 `import` 由宿主改写为 blob URL（§5.6）。 |
 | `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
-| `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入与关键字完全一致时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。 |
+| `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
+| `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。 |
 | `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。 |
 
@@ -173,20 +174,53 @@ interface PluginManifest {   // 前端看到的形态
 
 ```ts
 export default {
-  search(query: string): Promise<{ name: string; path: string }[]>
+  search(query: string): Promise<ProviderResult[]>
+  onEnter?(item: ProviderResult): void   // 可选 — `enter` 条目的激活回调
 };
 ```
 
 | 成员 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `search` | `(query: string) => Promise<ProviderResult[]>` | ✅ | 同步返回数组也可以（加载器会 `Promise.resolve` 包装）。 |
+| `onEnter` | `(item: ProviderResult) => void` | — | 用户激活带 `enter` 标记的条目时回调；收到的是 `search` 返回的那个对象（自定义字段原样保留）。见 §5.1.1。 |
 
 `ProviderResult`：
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | ✅ | 结果条目显示名（网格里单行省略）。 |
-| `path` | string | ✅ | 文件绝对路径 **或** URL。激活时经 `launch_app`（`ShellExecuteW`）打开，两者都支持。 |
+| `path` | string | — | 文件绝对路径 **或** URL。声明了 `enter` 的条目可省略（动作条目不打开任何东西，宿主生成合成去重键）。激活时经 `launch_app`（`ShellExecuteW`）打开。 |
+| `description` | string | — | 可选副行，显示在名字下方（结果网格两行形态）。 |
+| `icon` | string | — | 可选显式图标：`data:`/`http(s):`/`asset:`/`blob:` URI 原样使用，其余按文件路径走 asset 协议；省略 = 走 `path` 的常规图标管线。 |
+| `enter` | boolean | — | 标记：激活本条目**不调 `launch_app`**，改为回调 provider 的 `onEnter(item)`；启动器保持打开，插件自行决定何时 `ctx.app.hide()`。 |
+
+#### 5.1.1 `enter` 动作条目
+
+```js
+export default function create(ctx) {
+  return {
+    async search(query) {
+      return [{
+        name: "复制当前时间",
+        description: "点击执行动作（不打开文件）",
+        icon: "data:image/svg+xml;…",
+        enter: true,
+        action: "time",           // 自定义字段会随 item 原样回传
+      }];
+    },
+    onEnter(item) {
+      if (item.action === "time") {
+        ctx.clipboard.writeText(new Date().toString())
+          .then(() => ctx.app.toast("已复制"));
+      }
+    },
+  };
+}
+```
+
+- 与原生条目激活路径的差异：`onEnter` 抛错/缺失只记控制台日志；启动器**不隐藏**
+  （与 `app.revealPath` 同一哲学 — 做完动作往往还要继续搜，隐藏由插件决定）。
+- 普通条目（无 `enter`）激活路径不变：`launch_app` 打开 `path`。
 
 ### 5.2 调用时机与结果合并
 
@@ -200,9 +234,11 @@ export default {
   4. 总条数封顶 **20**（原生 + provider 合计）；
   5. 整个过程用根搜索令牌（`searchToken`）守卫——期间有新按键搜索，
      迟到的结果被丢弃。
-- **激活路径与原生条目完全一致**：点击/Enter → `launch_app`（URL 走默认
-  浏览器，文件走 ShellExecute）；图标走 `get_app_icons` 管线（取不到 →
-  未知图标回退，URL 条目通常就是未知图标）。
+- **激活路径**：普通条目与原生条目完全一致 — 点击/Enter → `launch_app`
+  （URL 走默认浏览器，文件走 ShellExecute）；图标走 `get_app_icons` 管线
+  （取不到 → 未知图标回退，URL 条目通常就是未知图标）。声明了 `enter` 的
+  条目改为回调 `onEnter(item)`（§5.1.1）；带显式 `icon` 的条目图标直接使用，
+  不再走图标管线。
 - **错误隔离**：单个 provider 的 `search` 抛错/拒绝 →
   `console.error("provider search failed: <id>")`，其它 provider 与原生
   结果不受影响。
@@ -214,12 +250,12 @@ export default {
   技术上可达，但**不属于契约**，随版本可能变化）。
 - 无法贡献整页模式、右键菜单动作或卫星预览——那些是内置 mode/service
   贡献的能力（§6）。
-- 无法在条目上挂自定义动作/预览——条目激活固定走 `launch_app`。
 
 ### 5.4 加载与禁用语义
 
-- **单次加载**：`loadDiskProviders` 用 `loadedDiskIds` 保证每个 id 每会话
-  只 import 一次（无论成败）。修改插件代码 → 重启 Lume。
+- **单次加载**：加载器用 `loadedDiskIds` 保证每个 id 每会话只 import 一次
+  （无论成败）。修改插件代码 → 设置 → 插件 点「↻ 重载」，或重启 Lume
+  （§5.8）；清单声明 `development = true` 的插件每次刷新自动重载。
 - **禁用**：设置 → 插件 关闭后，`settings.plugins.disabled` 记录 id →
   `providerPlugins()` 的 enabled 过滤把它的结果从合并中剔除——**但模块
   仍驻留内存**（v1 不卸载已加载模块）。重新启用立即恢复结果，无需重启。
@@ -227,9 +263,54 @@ export default {
 
 ### 5.5 完整参考示例
 
-`examples/plugins/web-search/`——为每个查询追加一个 Bing 搜索条目。
-安装：把整个 `web-search/` 目录拷进 `<base>/plugins/`，重启或触发一次
-settings-applied，然后在 设置 → 插件 里确认它处于开启状态。
+- `examples/plugins/web-search/` — 最小 provider（每查询追加一个 Bing 条目）。
+- `examples/plugins/actions/` — P0 新契约全演示：`enter` 动作条目 +
+  `description` 副行 + 显式 `icon` + **多文件入口**（`entry = "dist/"` +
+  相对导入，见 §5.6）。
+- 安装：把整个目录拷进 `<base>/plugins/`，重启或触发一次 settings-applied，
+  然后在 设置 → 插件 里确认它处于开启状态。
+
+### 5.6 多文件入口（entry 目录）
+
+清单 `entry` 可以指向**目录**（Rust 侧解析为其中的 `index.js`），目录内的
+相对 `import`（`./util.js`、`../x/y.js`）由宿主加载器递归改写为 blob URL：
+
+```
+my-plugin/
+├── plugin.toml        entry = "dist/"
+└── dist/
+    ├── index.js       import { helper } from "./util.js";
+    └── util.js
+```
+
+- 无需打包工具也能拆文件；用 esbuild/vite 打出的多文件产物同样直接可用。
+- **不支持裸包名**（`import "lodash"`）——依赖请在打包时内联；无 node_modules
+  解析、无运行时下载。
+- 模块按路径缓存（一次搜索会话内重复加载不重编译）；重载插件时缓存清空。
+
+### 5.7 关键字匹配分级（mode `keywords`）
+
+Navigate 输入按以下优先级匹配关键字（多插件命中时按级排序，同「进入」行合并）：
+
+| 级 | 匹配 | 例（关键字「秒搜」） |
+|---|---|---|
+| 0 | 精确（大小写不敏感） | `秒搜` |
+| 1 | 关键字前缀 | `秒` |
+| 2 | 拼音首字母前缀 | `ms` |
+| 3 | 拼音全拼前缀 | `miao` / `miaosou` |
+
+拼音形式由 Rust 在扫描清单时预计算（`pinyin` crate）并随 `get_plugins` 下发
+（`keywordsPinyin`），前端不做拼音转换。
+
+### 5.8 热重载
+
+- **手动**：设置 → 插件 每个磁盘插件行的「↻ 重载」按钮 → Rust `reload_plugin`
+  命令 → `plugin-reload` 事件 → 前端注册表卸载并重新从磁盘 import 该插件
+  （含清单重读：改 `keywords`/`height`/`icon` 同样生效）。内置插件无此按钮。
+- **自动**：清单 `development = true` → 每次 settings-applied（任一设置保存、
+  任一插件启停）都先卸载再重载。
+- 重载会清空模块缓存（§5.6）；若重载的是当前激活的 mode，模式实例被整体
+  替换（查询清空，页面重建）。
 
 ---
 
@@ -351,8 +432,11 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 
 | 组 | 方法 | 说明 |
 |---|---|---|
-| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现） |
-| `clipboard` | `readText()` / `writeText(text)` | 系统剪贴板文本 |
+| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（P1.2，§6D） |
+| `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（P1.3，§6D） |
+| `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**（P1.1）——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated` |
+| `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框（P1.4）。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
+| `screen` | `cursor()` / `displays()` | 光标位置与显示器列表（P1.5），单位是**物理像素**；`displays()` 每项含 `x/y/width/height`、工作区 `workX/workY/workWidth/workHeight`、`primary` |
 | `fs` | `readText(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` | 文件读取能力：`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`thumb` / `videoPoster` 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null） |
 | `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV（`<base>/plugins/<id>/storage.json`） |
 | `search` | `files(q, opts?)` | **全盘文件搜索** — 统一门面 `file_search`（Everything 在运行则走它的 IPC，否则 LumeSVC 自研 USN 索引）。返回 `{backend: "everything"\|"svc"\|"none", status: "ready"\|"building"\|"unavailable", total?, sort?, entries: [{id,name,path,isFolder,mtime?,size?}]}`。`opts` 兼容旧调用：**数字 = max**；对象 = `{offset, max, sort, exts, folder}`——`max` 默认 12、钳制 1..=100；`offset` 从第 offset 条开始（0 起；Everything 全量有效，LumeSVC 由引擎 `skip` 分页——宿主不再用「取 offset+max 再裁剪」的旧技巧，那个技巧被服务端 100 条上限截断过）；`exts`（小写、不带点的扩展名数组）/`folder` 是**名称级过滤**：Everything 收到的是它自己的 `ext:`/`folder:` 语法，USN 引擎在扫描时判定（它的名字排序会把这类命中埋到几千条之后，客户端对一页结果过滤是找不到的）。回复里 `filter` 字段回显**真正生效**的过滤（规范 Everything 语法，如 `"ext:png;jpg"`）；**没有回显＝没过滤**（老服务/老宿主），调用方要自己兜底。；`sort` 取 `"name" \| "path" \| "size" \| "mtime" \| "name_desc" \| "path_desc" \| "size_desc" \| "mtime_desc"`（非法值 = 引擎默认序；svc 无全局排序，对返回页做页内排序并如实回显）。`total` 为引擎报告的总命中数（svc / 老版 Everything 拿不到时缺省）；条目的 `mtime`/`size`（ms epoch / 字节）拿不到时缺省，UI 按字段存在与否自适应隐藏列。完整示例 `examples/plugins/file-search/` |
@@ -499,6 +583,108 @@ src/plugins/clipboard/
 
 ---
 
+## 6D. P1 宿主能力（HTTP / 通知 / 剪贴板 / 对话框 / 屏幕）
+
+> `docs/PLUGIN_GAP_ANALYSIS.md` 的 P1 阶段（2026-09-21 落地）。所有能力都是
+> **Rust 侧的一个命令**，三条路径（内置工厂 `ctx` / 磁盘 provider 工厂 `ctx` /
+> iframe 桥接 `window.lume`）暴露同一套方法名。表格见 §6C。
+
+### 6D.1 `http.request` — 宿主 HTTP（无 CORS）
+
+插件页面里的 `fetch` 受同源/CORS 约束，翻译、查词、汇率这类插件因此做不了。
+宿主 HTTP 把请求放到 Rust 侧发出（WinHTTP：Schannel TLS、跟随重定向、
+gzip/deflate 自动解压、**自动使用系统代理**），页面直连被拦的地址经此即可访问。
+
+```js
+const res = await ctx.http.request({ url: "https://api.example.com/x", timeoutMs: 15000 });
+res.status;            // 200
+res.headers;           // { "content-type": "application/json", … }（键小写）
+res.text();            // 响应体解码为 UTF-8 文本
+res.json();            // 解析为对象（格式非法时抛错）
+res.truncated;         // 响应体超过 4 MiB 被截断时为 true
+```
+
+- `method`（默认 GET，仅字母）、`headers`、`body`（UTF-8 文本）、
+  `bodyBase64`（二进制，优先于 `body`）、`timeoutMs`（钳制 1–60 秒）。
+- 仅允许 `http` / `https`；其他协议与非法 URL 直接 reject。
+- 主线程永不阻塞：请求跑在 Rust 工作线程上。
+- 权限：`network`（manifest 声明位；强制层见 §9 与 P3.2 规划）。
+
+### 6D.2 `app.notify` — 系统通知
+
+启动器隐藏时，应用内 toast 触达不到用户；`notify(title, body)` 经 Windows
+通知区投递（宿主自注册一个**隐藏**的通知图标，不占用托盘位置；标题/正文按
+shell 字段宽度截断）。
+
+```js
+await ctx.app.notify("下载完成", "report.pdf 已保存到下载文件夹");
+```
+
+- 首次调用时懒注册通知图标，之后复用；注册或投递失败会 reject（不静默）。
+- **显示与否取决于系统设置**：Windows 关闭通知 / 专注助手开启时 shell 会丢弃
+  气泡——API 仍成功返回，这一点在实机验证脚本里如实报告。
+- 权限：`notify`。
+
+### 6D.3 剪贴板扩展
+
+```js
+await ctx.clipboard.writeImage(canvas.toDataURL("image/png")); // PNG，base64 或 data URI
+await ctx.clipboard.writeFiles(["C:\\a.txt", "C:\\b.txt"]);    // CF_HDROP（Explorer 式复制）
+const files = await ctx.clipboard.readFiles();                 // 当前文件列表（无则 []）
+await ctx.clipboard.paste({ text: "粘贴到前台窗口" });          // 写入并 Ctrl+V
+```
+
+- `paste` 复用剪贴板模式的完整流程：隐藏启动器 → 把焦点还给呼出前的前台窗口
+  → 注入 Ctrl+V；**载荷粘贴后留在剪贴板上**（与普通复制一致）。只有一个载荷
+  字段允许存在；没有目标窗口时退化为纯复制（并记日志）。
+- 图片上限 32 MB（解码前检查）。
+- 权限：`clipboard`（既有文本读写同名）。
+
+### 6D.4 `dialog.open` / `dialog.save` — 原生文件对话框
+
+```js
+const files = await ctx.dialog.open({ title: "选择文本", multiple: true,
+  filters: [{ name: "文本", extensions: ["txt", "md"] }] });
+const target = await ctx.dialog.save({ fileName: "输出.txt" });  // 取消 → null
+```
+
+- 取消不是错误：`open` 返回 `[]`，`save` 返回 `null`——由插件决定提示什么。
+- `defaultPath` 指定起始目录，`folder: true` 改为选目录。
+- 对话框由 Rust 侧驱动（`tauri-plugin-dialog`），启动器窗口的能力集不因此扩大。
+- 权限：`dialog`。
+
+### 6D.5 `screen.cursor` / `screen.displays` — 屏幕几何
+
+```js
+const { x, y } = await ctx.screen.cursor();     // 物理像素
+const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,workY,workWidth,workHeight,primary}]
+```
+
+- 全部是**物理像素**（多屏时 `x` 可为负）；配合 `app.resize` 可做「贴着光标」的
+  小窗类插件。
+- 权限：`screen`。
+
+### 6D.6 能力与权限台账（P3.2 强制层落地前的单一事实源）
+
+| 宿主能力 | RPC / 命令 | 权限声明 |
+|---|---|---|
+| 隐藏启动器 / toast / 改查询 / 打开路径 / 定位 / 回收站 / 改窗口尺寸 | `app.*` | 无（基础能力） |
+| 系统通知 | `app.notify` / `plugin_notify` | `notify` |
+| 剪贴板读写（文本/图片/文件/粘贴） | `clipboard.*` | `clipboard` |
+| 宿主 HTTP | `http.request` / `plugin_http_fetch` | `network` |
+| 文件对话框 | `dialog.*` / `plugin_dialog_*` | `dialog` |
+| 光标与显示器 | `screen.*` / `plugin_cursor_pos`、`plugin_displays` | `screen` |
+| 全盘文件搜索 | `search.files` / `file_search` | `search.files` |
+| 文件读取（文本/缩略图/图标） | `fs.*` | `fs.read` |
+| 回收站删除 | `app.trash` / `trash_to_recycle` | `trash` |
+| 插件私有 KV | `storage.*` | 默认授予 |
+
+> **现状**：v1 的信任模型是「显式放置即信任」，`permissions` 是声明位、尚未
+> 强制（§9）。本表是 P1 起新增命令的登记处：P3.2 的权限强制层照着它落实现，
+> 插件作者现在就该按表声明。
+
+---
+
 ## 7. 启停与状态管理
 
 - 启停集 = `settings.toml` 的 `plugins.disabled: string[]`（缺省 = 全启用）。
@@ -581,7 +767,10 @@ pluginBuiltin`。
 
 ## 12. 路线
 
-- 权限强制层（消费 `permissions` 声明：IPC 白名单/能力注入）
-- 磁盘 `mode` / `service` 动态加载（需要视图与服务的沙箱化）
-- provider 结果的自定义动作与预览
+- 权限强制层（消费 `permissions` 声明：IPC 白名单/能力注入；P1 起新增的
+  宿主命令逐一登记权限）
+- 宿主能力面扩张：HTTP 代理（打掉 CORS）、系统通知、剪贴板图片/文件、
+  对话框（见 `docs/PLUGIN_GAP_ANALYSIS.md` P1）
+- 进入方式矩阵：regex/over 文本匹配、文件拖入、子输入框、provider 二级下钻
 - 插件级设置界面（插件自述设置项 → 设置页自动渲染）
+- storage → SQLite 文档库（`_rev` 乐观锁）

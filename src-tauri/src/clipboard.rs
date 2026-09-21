@@ -1288,6 +1288,128 @@ pub fn set_clipboard_text(text: String) -> Result<(), String> {
     cb.set_text(text).map_err(|e| e.to_string())
 }
 
+// ── Plugin host clipboard surface (P1.3 of docs/PLUGIN_GAP_ANALYSIS.md) ──
+//
+// Plugins could already read/write text; these add the other two payload kinds
+// (PNG images, CF_HDROP file lists) plus the paste-into-the-previous-window
+// action, reusing the exact internals the clipboard mode uses (the same
+// auto_paste flow, the same HDROP writer) so behaviour cannot drift.
+
+/// Reject an implausible image payload before decoding (the IPC layer carries
+/// whatever a plugin sends; the decode is the expensive part).
+const MAX_PLUGIN_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+
+/// Decode a base64 payload that may be a `data:image/png;base64,…` URI.
+fn decode_image_payload(data: &str) -> Result<Vec<u8>, String> {
+    let b64 = match data.split_once(',') {
+        Some((head, rest)) if head.starts_with("data:") => rest,
+        _ => data,
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|e| format!("bad base64: {e}"))?;
+    if bytes.is_empty() {
+        return Err("empty image payload".into());
+    }
+    if bytes.len() > MAX_PLUGIN_IMAGE_BYTES {
+        return Err(format!("image too large ({} bytes)", bytes.len()));
+    }
+    Ok(bytes)
+}
+
+/// Put a PNG (base64 or data URI) on the clipboard as an image.
+#[tauri::command]
+pub fn plugin_clipboard_write_image(data: String) -> Result<(), String> {
+    let png = decode_image_payload(&data)?;
+    let rgba = image::load_from_memory(&png)
+        .map_err(|e| format!("decode image: {e}"))?
+        .to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let img = arboard::ImageData {
+        width: w as usize,
+        height: h as usize,
+        bytes: Cow::Owned(rgba.into_raw()),
+    };
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    cb.set_image(img).map_err(|e| e.to_string())?;
+    eprintln!("[plugins] clipboard.writeImage: {w}x{h}");
+    Ok(())
+}
+
+/// Put a file/folder list on the clipboard as CF_HDROP (Explorer-style copy).
+#[tauri::command]
+pub fn plugin_clipboard_write_files(paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("no paths given".into());
+    }
+    eprintln!("[plugins] clipboard.writeFiles: {} path(s)", paths.len());
+    set_files_to_clipboard(&paths)
+}
+
+/// The clipboard's current file list (empty when it holds something else).
+#[tauri::command]
+pub fn plugin_clipboard_read_files() -> Result<Vec<String>, String> {
+    Ok(read_file_list().unwrap_or_default())
+}
+
+/// Write one payload to the clipboard and paste it into the window that had
+/// focus before the launcher appeared (the clipboard mode's auto_paste flow:
+/// hide the launcher, restore focus, Ctrl+V). Exactly one payload is expected.
+/// Like a normal copy, the payload STAYS on the clipboard afterwards.
+#[tauri::command]
+pub fn plugin_clipboard_paste(
+    text: Option<String>,
+    image: Option<String>,
+    files: Option<Vec<String>>,
+    focus: State<crate::window::FocusState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let given = [text.is_some(), image.is_some(), files.is_some()]
+        .iter()
+        .filter(|x| **x)
+        .count();
+    if given == 0 {
+        return Err("paste needs one of text / image / files".into());
+    }
+    if given > 1 {
+        return Err("paste takes exactly one of text / image / files".into());
+    }
+    eprintln!(
+        "[plugins] clipboard.paste: {}",
+        if text.is_some() {
+            "text"
+        } else if image.is_some() {
+            "image"
+        } else {
+            "files"
+        }
+    );
+    auto_paste(&app, &focus, || {
+        if let Some(t) = text {
+            let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+            return cb.set_text(t).map_err(|e| e.to_string());
+        }
+        if let Some(img) = image {
+            let png = decode_image_payload(&img)?;
+            let rgba = image::load_from_memory(&png)
+                .map_err(|e| format!("decode image: {e}"))?
+                .to_rgba8();
+            let data = arboard::ImageData {
+                width: rgba.width() as usize,
+                height: rgba.height() as usize,
+                bytes: Cow::Owned(rgba.into_raw()),
+            };
+            let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+            return cb.set_image(data).map_err(|e| e.to_string());
+        }
+        let files = files.unwrap_or_default();
+        if files.is_empty() {
+            return Err("no paths given".into());
+        }
+        set_files_to_clipboard(&files)
+    })
+}
+
 #[tauri::command]
 pub fn search_clipboard(
     query: String,
@@ -1429,11 +1551,13 @@ fn auto_paste(
 
     let Some(hwnd_raw) = maybe_hwnd else {
         // No target window recorded — fall back to a plain copy.
+        eprintln!("[clipboard] paste: no target window recorded — copied without pasting");
         return set();
     };
 
     if !unsafe { IsWindow(Some(HWND(hwnd_raw as *mut std::ffi::c_void))) }.as_bool() {
         // Window is gone — fall back to a plain copy.
+        eprintln!("[clipboard] paste: target window is gone — copied without pasting");
         return set();
     }
 

@@ -252,5 +252,7 @@
   "pluginKindService": "Service",
   "pluginKindProvider": "Provider",
   "pluginBuiltin": "Built-in",
-  "pluginDisk": "Disk"
+  "pluginDisk": "Disk",
+  "pluginReload": "Reload",
+  "pluginDev": "Dev"
 }

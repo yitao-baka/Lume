@@ -1650,3 +1650,83 @@ PgDn/方向键/NumLock/小键盘 `/`/PrintScreen，即 MSDN 的 0xE0 集合）�
   `schtasks /query /tn Lume\LumeAgent` 显示 Ready；对一个**以管理员运行**的目标
   配规则 → 触发 → 按键送达；关掉代理时同一规则只记 `needs_agent`；UAC 取消 →
   界面提示取消且状态不变。
+
+## 23. 插件系统 P0：拼音关键字 + provider 动作条目 + 热重载 + 多文件入口（已实现）
+
+**状态：已实现（2026-09-21）。** 差距分析与后续阶段（P1–P4）见
+`docs/PLUGIN_GAP_ANALYSIS.md`（vs uTools 调研）。
+
+四项全部落地，一次实机冒烟（`scripts/cdp_p0_verify.mjs`，8 项断言全过）：
+
+- **P0.1 关键字拼音匹配**：`plugins.rs` 在扫描清单时用 `cache::pinyin_for`
+  （改为 `pub(crate)`）为每个 `keywords` 预计算 `(full, initials)`，随
+  `get_plugins` 下发（`keywordsPinyin`，serde camelCase rename）；前端
+  `modeKeywordMatches` 放宽为分级匹配：精确 → 前缀 → 拼音首字母前缀 →
+  拼音全拼前缀（多插件命中按级排序）。输入 `ms`/`miao` 可唤出「秒搜」。
+  **坑**：`LauncherPlugin` 注册时漏拷 `keywordsPinyin`（后端数据对了前端
+  仍是 undefined）——首轮冒烟抓到。
+- **P0.2 provider 动作条目**：`ProviderResult` 新增可选 `description`
+  （结果网格第二行副标题，`.result-box-desc`）/`icon`（data:/http(s):/asset:/
+  blob: 直通、其余按文件路径 asset 解析；显式图标行不再走 `get_app_icons`
+  管线）/`enter`（激活不调 `launch_app`，改为回调 provider 的
+  `onEnter(item)`——启动器不隐藏，插件自行 `app.hide()`；`path` 可省，
+  宿主生成 `lume-plugin://` 合成去重键）。示例 `examples/plugins/actions/`。
+- **P0.3 热重载**：清单新增 `development`（每次 settings-applied 自动卸载
+  重载）；设置 → 插件 磁盘插件行新增「↻ 重载」按钮 → 新命令
+  `reload_plugin` → `plugin-reload` 事件 → 注册表 `reloadDiskPlugin`（卸载
+  该 id 的磁盘注册项 + 清空模块缓存 + 重读清单重加载；内置插件无按钮）。
+  mode/service/provider 三分支统一登记 `registeredDiskIds`，卸载绝不误伤
+  同名内置插件。
+- **P0.4 多文件 ESM 入口**：清单 `entry` 可指向目录（Rust `resolve_entry`
+  解析为其中 `index.js`）；前端 `compileDiskModule` 递归把相对 import
+  （`./x.js`、`../y.js`，含动态 `import()` 与无扩展名 → `.js`/`index.js`
+  解析）改写为 blob URL，按路径缓存、重载时清空。裸包名不支持（打包时内联）。
+  actions 示例即 `entry = "dist/"` + 两文件相对导入，端到端验证。
+
+**验证**：cargo test 141（+2：keywords 拼音、entry 目录解析）、tsc/vite
+build 干净、`cdp_p0_verify.mjs` 8 项（动作条目点击 → 剪贴板写入 + toast +
+启动器保持打开；ms/miao/秒搜 三级匹配；reload 后 provider 仍工作）；
+截图 `test/p0_provider_rows.png`（icon+副行）、`test/p0_settings_plugins.png`
+（重载按钮）。顺手修了一个存量 tsc 错误（`hostApi.ts` 缺
+`PluginFileSearchOptions` 类型导入）。
+
+## 24. 插件系统 P1：宿主能力面（HTTP / 通知 / 剪贴板 / 对话框 / 屏幕，已实现）
+
+**状态：已实现（2026-09-21）。** 差距分析见 `docs/PLUGIN_GAP_ANALYSIS.md` P1，
+API 文档见 `docs/PLUGIN_API.md` §6D。
+
+五项宿主能力，全部走「一个 Rust 命令 + 一条权限声明」的形态，零新增 crate
+（HTTP 用 `windows` crate 的 WinHTTP，通知用 `Shell_NotifyIconW`）：
+
+- **P1.1 宿主 HTTP（`plugin_net.rs`）**：WinHTTP 客户端（Schannel TLS、自动
+  系统代理、跟随重定向、gzip/deflate 自动解压），Rust 工作线程 + `spawn_blocking`，
+  http/https 限定、超时 1–60s（默认 10s）、响应 4MiB 截断上报。**这是 P1 的
+  核心价值**：页面 `fetch` 受 CORS 限制，翻译/查词这类最大一类插件此前做不了。
+  4 个单测用 `std::net::TcpListener` 起本地服务器（GET/POST/协议拒绝/截断），
+  实机脚本另做 CORS 对照（页面直连失败 vs 宿主成功）。
+- **P1.2 系统通知（`notify.rs`）**：自注册**隐藏**通知图标（`NIS_HIDDEN`，
+  不占用托盘）+ `NIF_INFO` 气泡（Win10/11 由 shell 渲染进通知中心）；懒创建、
+  复用。**为什么不用 tauri-plugin-notification / WinRT toast**：toast API 对
+  非打包（便携版）应用需要 AUMID + 开始菜单快捷方式，气泡路径无此前提。
+  实机：`cargo test -- --ignored live_notify` 通过（shell 接受注册与投递）；
+  **本机气泡不可见**——对照实验证明 PowerShell `NotifyIcon.ShowBalloonTip`
+  同样不显示，即系统级抑制，非实现问题（脚本已如实报告该差异）。
+- **P1.3 剪贴板扩展（`clipboard.rs`）**：`writeImage`（PNG base64/data URI，
+  32MB 上限）、`writeFiles`（CF_HDROP）、`readFiles`、`paste`（复用
+  `auto_paste` 完整流程：隐藏 → 交还焦点 → Ctrl+V；载荷留在剪贴板）。
+  顺手补了 `auto_paste` 两条回退分支的日志（此前静默回退为纯复制）。
+- **P1.4 文件对话框（`plugin_host.rs`）**：`tauri-plugin-dialog` 的 Rust 侧
+  blocking API + `spawn_blocking`；取消解析为 `[]`/`null`（非错误）。走 Rust
+  命令而非给启动器窗口加 `dialog:default` 能力，插件攻击面不扩大。
+- **P1.5 光标与显示器（`plugin_host.rs`）**：`GetCursorPos` + `EnumDisplayMonitors`
+  /`GetMonitorInfoW`，物理像素；2 个单测（唯一主屏、光标落在某台显示器内）。
+
+前端三条路径同步（内置/磁盘工厂 `ctx`、iframe 桥接 `window.lume`），
+`http.request` 返回体附 `text()`/`json()` 便利方法；示例
+`examples/plugins/host-tools/`（输入 `h:` 出动作面板）。
+
+**验证**：cargo test **149**（+4 HTTP、+2 通知、+2 屏幕，另 1 个 ignored live 过）、
+tsc/vite build 干净、`scripts/cdp_p1_verify.mjs` **14 项全过**（CORS 对照、
+通知投递、图片/文件剪贴板往返、对话框 ESC 取消、屏幕几何、paste 隐藏启动器 +
+日志证明走完整路径）；新工具 `scripts/ps_lume_windows.ps1`（OS 侧窗口可见性探测
+——WebView2 隐藏时 `document.visibilityState` 不变，这条实测结论已写进脚本注释）。

@@ -14,6 +14,15 @@ export interface AppEntry {
   id: number;
   name: string;
   path: string;
+  /** Provider extras (P0.2): optional second line under the name in the
+   * results grid. */
+  description?: string;
+  /** Explicit icon (provider rows) — wins over the cached icon pipeline. */
+  icon?: string;
+  /** Set on provider rows declared with `enter`: activation calls the
+   * provider's `onEnter(item)` instead of launch_app; `path` is a synthetic
+   * dedup key in that case. */
+  providerEnter?: { pluginId: string; item: unknown };
 }
 
 /** One `file_search` hit — the AppEntry fields plus file metadata. The

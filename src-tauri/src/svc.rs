@@ -689,46 +689,49 @@ fn everything_counts(session: Option<u32>) -> bool {
 
 /// Named-pipe server: length-prefixed JSON requests in, length-prefixed JSON
 /// replies out. Verbs: `hello` (data-dir handoff), `search` (file search via
-/// the usnidx engine), `status` (engine state). Blocking single-thread accept
-/// loop; requests are one message each.
+/// the usnidx engine), `status` (engine state). The accept loop keeps one
+/// instance listening at all times and hands each accepted connection to its
+/// own thread, so the next client can connect while the previous one is still
+/// being served — a strictly serial accept loop (one instance total) made the
+/// second of two back-to-back queries fail with `ERROR_PIPE_BUSY` whenever the
+/// first took longer than the client's retry budget (per-keystroke searches
+/// are ~100ms apart, an engine scan is not). Requests are one message each.
 fn pipe_server(shared: Arc<Shared>) {
-    use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
-    use windows::Win32::Storage::FileSystem::{PIPE_ACCESS_DUPLEX, ReadFile, WriteFile};
     use windows::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, NAMED_PIPE_MODE,
-        PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES,
+        ConnectNamedPipe, CreateNamedPipeW, NAMED_PIPE_MODE, PIPE_READMODE_MESSAGE,
+        PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES,
     };
-    use windows::Win32::Foundation::LocalFree;
 
     const SDDL: &str = "D:(A;;GA;;;AU)(A;;GA;;;SY)"; // Authenticated Users + SYSTEM
     let sddl = wide(SDDL);
+    let name = wide(PIPE_NAME);
+
+    let mut sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+    let sddl_ok = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), 1, &mut sd, None)
+    }
+    .is_ok();
+    let sa = sddl_ok.then(|| SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd.0,
+        bInheritHandle: false.into(),
+    });
+    // `sa.lpSecurityDescriptor` still points at `sd`, which every accept-loop
+    // iteration hands to CreateNamedPipeW (it copies per instance). The
+    // descriptor is therefore kept alive for the server's lifetime instead of
+    // being freed here — one small allocation, freed at process exit.
 
     loop {
         if STOP_FLAG.load(Ordering::Relaxed) {
             return;
         }
-        let mut sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
-        let has_sa = unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), 1, &mut sd, None)
-        }
-        .is_ok();
-        let sa = if has_sa {
-            Some(SECURITY_ATTRIBUTES {
-                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                lpSecurityDescriptor: sd.0,
-                bInheritHandle: false.into(),
-            })
-        } else {
-            None
-        };
-
-        let name = wide(PIPE_NAME);
         let pipe = unsafe {
             CreateNamedPipeW(
                 PCWSTR(name.as_ptr()),
-                PIPE_ACCESS_DUPLEX,
+                windows::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX,
                 NAMED_PIPE_MODE(PIPE_TYPE_MESSAGE.0 | PIPE_READMODE_MESSAGE.0),
                 PIPE_UNLIMITED_INSTANCES,
                 65536, // out: search replies carry up to ~100 paths
@@ -737,42 +740,59 @@ fn pipe_server(shared: Arc<Shared>) {
                 sa.as_ref().map(|p| p as *const SECURITY_ATTRIBUTES),
             )
         };
-        if has_sa {
-            // The descriptor was consumed by CreateNamedPipeW; free the copy.
-            let _ =
-                unsafe { LocalFree(Some(windows::Win32::Foundation::HLOCAL(sd.0))) };
-        }
         if pipe == INVALID_HANDLE_VALUE {
             std::thread::sleep(Duration::from_millis(500));
             continue;
         }
 
-        // Block until a client connects.
-        let _ = unsafe { ConnectNamedPipe(pipe, None) };
-        let mut buf = [0u8; 4096];
-        let mut n: u32 = 0;
-        let ok = unsafe { ReadFile(pipe, Some(&mut buf), Some(&mut n), None) };
-        if ok.is_ok() && n >= 4 {
-            let len = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-            if len + 4 <= n as usize {
-                let payload = String::from_utf8_lossy(&buf[4..4 + len]).into_owned();
-                let reply = handle_message(&shared, &payload);
-                let mut out = Vec::with_capacity(reply.len() + 4);
-                out.extend_from_slice(&(reply.len() as u32).to_le_bytes());
-                out.extend_from_slice(reply.as_bytes());
-                let _ = unsafe { WriteFile(pipe, Some(&out), None, None) };
-                // Wait for the client to hang up before recycling the pipe
-                // instance: DisconnectNamedPipe discards data the client has
-                // not read yet, so an immediate disconnect would race the
-                // reply out of the buffer (classic lost-reply bug).
-                let mut drain = [0u8; 64];
-                let mut dn: u32 = 0;
-                let _ = unsafe { ReadFile(pipe, Some(&mut drain), Some(&mut dn), None) };
-            }
+        // Block until a client connects, then let a worker finish the
+        // exchange while this loop immediately offers the next instance.
+        if unsafe { ConnectNamedPipe(pipe, None) }.is_err() {
+            // The client vanished between create and connect.
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(pipe) };
+            continue;
         }
-        let _ = unsafe { DisconnectNamedPipe(pipe) };
-        let _ = unsafe { CloseHandle(pipe) };
+        let shared = Arc::clone(&shared);
+        // The handle has to cross a thread boundary; it is a process-wide
+        // kernel handle, so moving it is sound.
+        let pipe = crate::pipe::SendHandle(pipe);
+        let _ = std::thread::Builder::new()
+            .name("svc-conn".into())
+            .spawn(move || serve_connection(shared, pipe));
     }
+}
+
+/// Serve one accepted connection: read the request, dispatch, reply, then
+/// linger until the client hangs up before recycling the instance.
+fn serve_connection(shared: Arc<Shared>, wrapper: crate::pipe::SendHandle) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+    use windows::Win32::System::Pipes::DisconnectNamedPipe;
+    let pipe = wrapper.0;
+
+    let mut buf = [0u8; 4096];
+    let mut n: u32 = 0;
+    let ok = unsafe { ReadFile(pipe, Some(&mut buf), Some(&mut n), None) };
+    if ok.is_ok() && n >= 4 {
+        let len = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+        if len + 4 <= n as usize {
+            let payload = String::from_utf8_lossy(&buf[4..4 + len]).into_owned();
+            let reply = handle_message(&shared, &payload);
+            let mut out = Vec::with_capacity(reply.len() + 4);
+            out.extend_from_slice(&(reply.len() as u32).to_le_bytes());
+            out.extend_from_slice(reply.as_bytes());
+            let _ = unsafe { WriteFile(pipe, Some(&out), None, None) };
+            // Wait for the client to hang up before recycling the pipe
+            // instance: DisconnectNamedPipe discards data the client has
+            // not read yet, so an immediate disconnect would race the
+            // reply out of the buffer (classic lost-reply bug).
+            let mut drain = [0u8; 64];
+            let mut dn: u32 = 0;
+            let _ = unsafe { ReadFile(pipe, Some(&mut drain), Some(&mut dn), None) };
+        }
+    }
+    let _ = unsafe { DisconnectNamedPipe(pipe) };
+    let _ = unsafe { CloseHandle(pipe) };
 }
 
 /// Dispatch one request. Every verb replies with a length-prefixed JSON
@@ -860,5 +880,23 @@ mod tests {
             .expect("search");
         eprintln!("search reply: {reply}");
         assert!(reply.contains(r#""t":"results""#));
+    }
+
+    /// Regression: the serial single-instance accept loop made the second of
+    /// two back-to-back queries fail with `connect pipe: busy/failed` whenever
+    /// the first was still being served (its instance was occupied and the
+    /// client gave up after ~100 ms of retries — an engine scan takes
+    /// ~100-150 ms). With per-connection threads every query must connect.
+    /// Uses `search`, not the instant `status`, so each request actually
+    /// occupies the server for a while. `lume-svc.exe --foreground` (or the
+    /// service) with a built index, then run this test.
+    #[test]
+    #[ignore] // requires the service (or --foreground) to be running
+    fn live_pipe_rapid_back_to_back_queries() {
+        for i in 0..10 {
+            let reply = pipe_transact(r#"{"t":"search","q":"e","max":50}"#, Duration::from_secs(2))
+                .unwrap_or_else(|e| panic!("query {i} failed: {e}"));
+            assert!(reply.contains(r#""t":"results""#), "query {i}: {reply}");
+        }
     }
 }

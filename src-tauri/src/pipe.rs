@@ -8,7 +8,17 @@
 //! Server side lives with each pipe's owner (`svc::pipe_server`,
 //! `agent::serve`); this module only ever dials out.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// How long the connect phase may wait for a free pipe instance (busy waits,
+/// instance recycle windows). Must stay well under the tightest caller
+/// timeout — the agent's 500 ms ping — so the reply phase keeps room.
+const CONNECT_BUDGET: Duration = Duration::from_millis(250);
+/// How long a missing pipe may keep being retried. A single-instance server
+/// between recycling one instance and listening on the next re-opens within
+/// milliseconds; a pipe that is *really* absent must fail fast (the old
+/// behavior, and what "is the service installed" probing relies on).
+const NOT_FOUND_BUDGET: Duration = Duration::from_millis(80);
 
 /// One request/reply exchange with `pipe_name`, bounded by `timeout`.
 ///
@@ -30,34 +40,10 @@ pub fn transact(pipe_name: &str, payload: &str, timeout: Duration) -> Result<Str
 
 /// The blocking half of [`transact`] — connect, write, read the framed reply.
 fn transact_blocking(pipe_name: &str, payload: &str) -> Result<String, String> {
-    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_PIPE_BUSY, GENERIC_READ, GENERIC_WRITE};
-    use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING};
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::WriteFile;
     let name = wide(pipe_name);
-    let mut handle = None;
-    for attempt in 0..3 {
-        handle = unsafe {
-            CreateFileW(
-                windows::core::PCWSTR(name.as_ptr()),
-                GENERIC_READ.0 | GENERIC_WRITE.0,
-                FILE_SHARE_MODE(0),
-                None,
-                OPEN_EXISTING,
-                FILE_FLAGS_AND_ATTRIBUTES(0),
-                None,
-            )
-        }
-        .ok();
-        if handle.is_some() {
-            break;
-        }
-        // The server holds its single instance until the previous client hangs
-        // up, so a busy pipe is expected under contention — retry briefly.
-        if unsafe { GetLastError() } != ERROR_PIPE_BUSY || attempt == 2 {
-            return Err("connect pipe: busy/failed".into());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let handle = handle.ok_or("connect pipe failed")?;
+    let handle = connect(pipe_name, &name)?;
     let result = (|| {
         let mut message = Vec::with_capacity(payload.len() + 4);
         message.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -80,6 +66,59 @@ fn transact_blocking(pipe_name: &str, payload: &str) -> Result<String, String> {
     result
 }
 
+/// Open a client handle to `pipe_name`, waiting out transient unavailability
+/// within [`CONNECT_BUDGET`]. Two conditions are expected on a live server:
+/// `ERROR_PIPE_BUSY` (every instance is currently connected to another
+/// client — the canonical `WaitNamedPipeW` case) and `ERROR_FILE_NOT_FOUND`
+/// (a single-instance server is between recycling one instance and listening
+/// on the next). Both clear within milliseconds, so wait and retry; anything
+/// else (no server at all, access denied) fails immediately.
+fn connect(pipe_name: &str, name: &[u16]) -> Result<windows::Win32::Foundation::HANDLE, String> {
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, GENERIC_READ, GENERIC_WRITE};
+    use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING};
+    use windows::Win32::System::Pipes::WaitNamedPipeW;
+
+    let deadline = Instant::now() + CONNECT_BUDGET;
+    let not_found_deadline = Instant::now() + NOT_FOUND_BUDGET;
+    loop {
+        match unsafe {
+            CreateFileW(
+                windows::core::PCWSTR(name.as_ptr()),
+                GENERIC_READ.0 | GENERIC_WRITE.0,
+                FILE_SHARE_MODE(0),
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES(0),
+                None,
+            )
+        } {
+            Ok(handle) => return Ok(handle),
+            Err(e) if e.code() == ERROR_PIPE_BUSY.to_hresult() => {
+                // Ask the server to wake us when an instance frees up (bounded
+                // by the remaining budget), then race for it again — another
+                // client may take the freed instance first.
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err("connect pipe: busy".into());
+                }
+                let _ = unsafe {
+                    WaitNamedPipeW(
+                        windows::core::PCWSTR(name.as_ptr()),
+                        remaining.as_millis().min(u32::MAX as u128) as u32,
+                    )
+                };
+            }
+            Err(e) if e.code() == ERROR_FILE_NOT_FOUND.to_hresult() => {
+                if Instant::now() >= not_found_deadline {
+                    return Err(format!("connect pipe: {pipe_name} not found"));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(format!("connect pipe failed: {e}")),
+        }
+    }
+}
+
 fn read_exact(handle: windows::Win32::Foundation::HANDLE, buf: &mut [u8]) -> Result<(), String> {
     use windows::Win32::Storage::FileSystem::ReadFile;
     let mut done = 0usize;
@@ -97,6 +136,14 @@ fn read_exact(handle: windows::Win32::Foundation::HANDLE, buf: &mut [u8]) -> Res
 pub(crate) fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
+
+/// A pipe handle on its way to a connection thread. Windows handles are
+/// process-wide objects, so `Send` is sound here (the `windows` crate cannot
+/// know that and types `HANDLE` as a raw pointer). Shared by the two servers
+/// (`svc::pipe_server`, `agent::serve`), which hand accepted connections to
+/// per-connection worker threads.
+pub(crate) struct SendHandle(pub windows::Win32::Foundation::HANDLE);
+unsafe impl Send for SendHandle {}
 
 #[cfg(test)]
 mod tests {

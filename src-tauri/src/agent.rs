@@ -639,18 +639,12 @@ pub fn serve() -> Result<(), String> {
         let ctx = Arc::clone(&ctx);
         // The handle has to cross a thread boundary; it is a process-wide
         // kernel handle, so moving it is sound.
-        let pipe = SendHandle(pipe);
+        let pipe = crate::pipe::SendHandle(pipe);
         let _ = std::thread::Builder::new()
             .name("agent-conn".into())
             .spawn(move || serve_connection(pipe, &ctx));
     }
 }
-
-/// A pipe handle on its way to a connection thread. Windows handles are
-/// process-wide objects, so `Send` is sound here (the `windows` crate cannot
-/// know that and types `HANDLE` as a raw pointer).
-struct SendHandle(windows::Win32::Foundation::HANDLE);
-unsafe impl Send for SendHandle {}
 
 /// Create the pipe instance with the agent's DACL.
 fn create_pipe(
@@ -704,7 +698,7 @@ fn create_pipe(
 
 /// Serve one connection: read, dispatch, reply, then linger until the client
 /// hangs up before recycling the instance.
-fn serve_connection(wrapper: SendHandle, ctx: &Arc<Ctx>) {
+fn serve_connection(wrapper: crate::pipe::SendHandle, ctx: &Arc<Ctx>) {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
     use windows::Win32::System::Pipes::DisconnectNamedPipe;

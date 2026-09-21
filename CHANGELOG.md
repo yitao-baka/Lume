@@ -58,6 +58,23 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **LumeSVC 文件搜索间断性失败（`connect pipe: busy/failed`）** — 首次查询可用、
+  紧接着的下一次查询失败、约 10s（后端冷却）后恢复。两个叠加的根因：① `svc.rs`
+  管道服务端是**严格串行的单实例** accept 循环——同一时刻只存在一个管道实例，
+  正被服务的实例让后续 `CreateFileW` 得到 `ERROR_PIPE_BUSY`；② `pipe.rs` 客户端
+  只重试 2 次 × 50ms（共 ~100ms），而一次引擎 search 要占服务端 ~100–300ms，
+  重试必然耗尽；实例回收间隙的 `ERROR_FILE_NOT_FOUND` 也被笼统报成 busy。逐字
+  触发的搜索恰好 ~100ms 一发，于是「首查成功、次查失败、冷却 10s」周期出现。
+  修复：服务端改为与 `lume-agent` 同款的**每连接一个线程**并发 accept（
+  `ConnectNamedPipe` 返回即派发、立即监听下一个实例，`PIPE_UNLIMITED_INSTANCES`
+  本就允许），连接不再被在途请求阻塞；客户端连接阶段改用规范的
+  `WaitNamedPipeW` + 250ms 截止预算等实例释放，`FILE_NOT_FOUND`（回收间隙）
+  单独 80ms 快速重试、管道真不存在时立即报错（安装探测语义不变），其余错误
+  （拒绝访问等）立即失败。`SendHandle` 上移 `pipe.rs` 供两个服务端共用。
+  新增 ignored 回归测试 `live_pipe_rapid_back_to_back_queries`（10 次背靠背
+  search 全部连通）。
+  （`src-tauri/src/{svc.rs,pipe.rs,agent.rs}`）
+
 - **提权代理注册失败（根因）** — `schtasks /Create /XML` 拒绝我们生成的 XML，
   因为声明行 `<?xml version="1.0" encoding="UTF-8"?>` 带 `encoding=` 属性，报
   `错误: 任务 XML 格式错误 (1,40) 无法切换编码`。去掉 XML 声明后同一内容即可正常

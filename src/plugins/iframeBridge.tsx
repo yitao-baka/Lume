@@ -131,12 +131,15 @@ function attachKeyForwarding(frame: HTMLIFrameElement) {
   // Typing hand-off: a click anywhere non-editable in the plugin page parks
   // focus inside the iframe, so host-side typing silently drops. Bounce focus
   // back to the search box after the click settles — every plugin benefits,
-  // not just the ones that implement the hand-off themselves.
+  // not just the ones that implement the hand-off themselves. Selectable
+  // text (user-select: text) is skipped: clicking a preview's path to copy
+  // it must not yank focus to the search input.
   doc.addEventListener(
     "mousedown",
     (e) => {
       const t = e.target as HTMLElement | null;
       if (t?.closest?.("input, textarea, [contenteditable]")) return;
+      if (t && getComputedStyle(t).userSelect === "text") return;
       setTimeout(() => document.getElementById("search-input")?.focus(), 0);
     },
     true

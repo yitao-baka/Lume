@@ -627,11 +627,7 @@ pub fn serve() -> Result<(), String> {
                 continue;
             }
         };
-        let connected = unsafe {
-            windows::Win32::System::Pipes::ConnectNamedPipe(pipe, None)
-        }
-        .is_ok();
-        if !connected {
+        if !crate::pipe::accept_client(pipe) {
             // The client vanished between create and connect.
             let _ = unsafe { windows::Win32::Foundation::CloseHandle(pipe) };
             continue;

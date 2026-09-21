@@ -58,6 +58,30 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **LumeSVC 搜索仍然间歇失败 —— 同一症状的第二轮根因**（首轮见下条：并发
+  accept + 客户端 `WaitNamedPipeW`）。首轮修好后仍能稳定复现「先输入一个字符、
+  再改成 pptx」，实测抓到三个叠加原因：① **引擎每查询的热循环浪费**——
+  `contains_bytes` 对**每个文件名**重建一次 256 字节 Horspool 跳表（~68 万文件
+  ≈ 每次查询 1.7 亿字节的无效初始化），且把**全部命中**收进 Vec 再整体排序、
+  截断（单字符命中可达数十万条）；改跳表为每查询构建一次（`Matcher`，单字节
+  查询走 `memchr`）、命中改用**有界 top-k 堆**（排序语义完全不变：`(是否前缀
+  命中, 名称长度, FRN, 卷)` 是全序，结果与旧实现一致）。实测 68 万节点索引：
+  debug 269.7→54.8ms（`pptx`）/ 414.8→115.7ms（`a`），release 82.9→20.6ms /
+  107.8→16.7ms。② **`ERROR_PIPE_CONNECTED` 被当成失败**——客户端在服务端调用
+  `ConnectNamedPipe` **之前**到达时（前一个请求刚结束、下一个紧随其后，正是
+  连续打字的情形），Windows 以该错误码完成，连接其实**已经建立**；按失败处理
+  就 `CloseHandle` 掉了活连接，客户端表现为「刚连上就 EPIPE」。新增共享的
+  `pipe::accept_client`（`svc.rs` / `agent.rs` 同修，此前两者都受影响）。
+  ③ **排队被误判为后端不可用**——服务端按序作答，连打四个键时最后一个要排在
+  三个 ~100ms 的扫描之后，超过当时 800ms 的客户端超时 → 冷却 10s → 用户看到
+  「后端不可用」；`SVC_TIMEOUT` 放宽到 1500ms（调用是 async、过期结果本来就被
+  前端丢弃，唯一代价是极端情况下晚一点回退到原生结果）。验证：`cargo test`
+  135 通过；管道探针（8 并发 + 5 连击）从 3146ms + 2×EPIPE 降到 715ms 零错误；
+  新增 ignored 基准 `perf_search_at_real_scale`（68 万合成节点，钉住查询预算）；
+  并按用户给的路径实机复现（秒搜页输入 `a` → 改为 `pptx`）确认命中正常、
+  无「后端不可用」。
+  （`src-tauri/src/{usnidx.rs,pipe.rs,svc.rs,agent.rs,filesearch.rs}`）
+
 - **LumeSVC 文件搜索间断性失败（`connect pipe: busy/failed`）** — 首次查询可用、
   紧接着的下一次查询失败、约 10s（后端冷却）后恢复。两个叠加的根因：① `svc.rs`
   管道服务端是**严格串行的单实例** accept 循环——同一时刻只存在一个管道实例，

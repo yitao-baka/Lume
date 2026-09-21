@@ -201,33 +201,44 @@ impl Engine {
 
     /// Search the current index (partial while building). Returns the state
     /// string alongside the hits so callers can surface "still building".
+    ///
+    /// Ranking is by `(prefix match first, shorter name first, frn, volume)` —
+    /// a total order, so the same query always returns the same page no matter
+    /// how the map iterates. The scan keeps only the best `max` candidates in
+    /// a bounded heap: a single character matches hundreds of thousands of
+    /// names, and collecting them all just to sort and truncate was the
+    /// query's second-largest cost after the match itself.
     pub fn search(&self, query: &str, max: usize) -> (&'static str, Vec<FileHit>) {
         let query = query.trim();
         if query.is_empty() {
             return ("ready", Vec::new());
         }
         let needle: Vec<u8> = query.to_lowercase().into_bytes();
+        let matcher = Matcher::new(&needle);
         let inner = self.inner.lock().unwrap();
         let status = inner.state.as_str();
-        let mut matches: Vec<(u8, u16, u64, usize)> = Vec::new(); // (score, name_len, frn, vol)
+        // (score, name_len, frn, vol) — a max-heap that never holds more than
+        // `max` entries, so popping the largest leaves the best `max`.
+        let mut best: std::collections::BinaryHeap<(u8, u16, u64, usize)> =
+            std::collections::BinaryHeap::with_capacity(max + 1);
         for (vi, vol) in inner.volumes.iter().enumerate() {
-            for &frn in &vol.order {
-                let Some(node) = vol.map.get(&frn) else {
-                    continue; // stale order entry
-                };
-                let hay = &vol.lcase[node.lcase_off as usize..node.lcase_off as usize + node.lcase_len as usize];
-                if !contains_bytes(hay, &needle) {
+            for (&frn, node) in &vol.map {
+                let off = node.lcase_off as usize;
+                let hay = &vol.lcase[off..off + node.lcase_len as usize];
+                if !matcher.is_match(hay) {
                     continue;
                 }
                 let score: u8 = if hay.starts_with(&needle) { 0 } else { 1 };
-                matches.push((score, node.name_len, frn, vi));
+                best.push((score, node.name_len, frn, vi));
+                if best.len() > max {
+                    best.pop();
+                }
             }
         }
-        matches.sort_unstable();
-        matches.truncate(max);
-        let hits = matches
-            .iter()
-            .filter_map(|&(_, _, frn, vi)| {
+        let hits = best
+            .into_sorted_vec()
+            .into_iter()
+            .filter_map(|(_, _, frn, vi)| {
                 let vol = &inner.volumes[vi];
                 let path = resolve_path(vol, frn)?;
                 let node = vol.map.get(&frn)?;
@@ -387,32 +398,62 @@ fn resolve_path(vol: &VolumeIndex, frn: u64) -> Option<String> {
 
 /// Case-insensitive substring search over pre-lowercased UTF-8 (byte-level
 /// matching is safe: UTF-8 is self-synchronizing). Horspool bad-char shifts.
-fn contains_bytes(hay: &[u8], needle: &[u8]) -> bool {
-    let n = needle.len();
-    if n == 0 {
-        return true;
+/// One query's matcher: the Horspool skip table is built **once per query**
+/// and reused across every name in the index. It used to be rebuilt inside
+/// the per-file scan — a 256-byte table initialization for each of ~680k
+/// names, which dominated the whole query (267 of its 270 ms in a debug
+/// build). A one-byte needle (the "type one character" case) skips Horspool
+/// entirely for `memchr`-backed `slice::contains`.
+struct Matcher {
+    needle: Vec<u8>,
+    skip: [usize; 256],
+}
+
+impl Matcher {
+    fn new(needle: &[u8]) -> Self {
+        let n = needle.len();
+        let mut skip = [n.max(1); 256];
+        for (i, &b) in needle.iter().enumerate() {
+            skip[b as usize] = (n - 1 - i).max(1);
+        }
+        Self {
+            needle: needle.to_vec(),
+            skip,
+        }
     }
-    if hay.len() < n {
-        return false;
-    }
-    let mut skip = [n; 256];
-    for (i, &b) in needle.iter().enumerate() {
-        skip[b as usize] = (n - 1 - i).max(1);
-    }
-    let mut i = 0;
-    while i + n <= hay.len() {
-        if &hay[i..i + n] == needle {
+
+    fn is_match(&self, hay: &[u8]) -> bool {
+        let needle = &self.needle[..];
+        let n = needle.len();
+        if n == 0 {
             return true;
         }
-        i += skip[hay[i + n - 1] as usize];
+        if hay.len() < n {
+            return false;
+        }
+        if n == 1 {
+            return hay.contains(&needle[0]);
+        }
+        let mut i = 0;
+        while i + n <= hay.len() {
+            if &hay[i..i + n] == needle {
+                return true;
+            }
+            i += self.skip[hay[i + n - 1] as usize];
+        }
+        false
     }
-    false
+}
+
+/// Convenience wrapper for tests and one-off checks (rebuilds the table).
+#[cfg(test)]
+fn contains_bytes(hay: &[u8], needle: &[u8]) -> bool {
+    Matcher::new(needle).is_match(hay)
 }
 
 // ---------------------------------------------------------------------------
 // Windows API: volume discovery, MFT enum, USN journal
 // ---------------------------------------------------------------------------
-
 /// Fixed NTFS drive roots ("C:\", ...). Removable/network volumes are out of
 /// scope for v1 (documented).
 fn ntfs_fixed_roots() -> Vec<String> {
@@ -849,8 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn contains_bytes_basics() {
-        assert!(contains_bytes(b"hello world", b""));
+    fn contains_bytes_basics() {        assert!(contains_bytes(b"hello world", b""));
         assert!(contains_bytes(b"hello world", b"world"));
         assert!(contains_bytes(b"hello world", b"lo wo"));
         assert!(!contains_bytes(b"hello", b"hello world"));
@@ -877,5 +917,56 @@ mod tests {
         eprintln!("search 'windows' ({status}): {:#?}", hits);
         assert_eq!(status, "ready");
         assert!(!hits.is_empty());
+    }
+
+    /// Query-latency budget at real index scale (~680k nodes): the service is
+    /// asked per keystroke, so a search must stay in the low tens of
+    /// milliseconds. Prints per-query timings; the assertion is deliberately
+    /// loose (10× the release budget) so a debug build only trips it on a real
+    /// algorithmic regression. Run with `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn perf_search_at_real_scale() {
+        use std::time::Instant;
+        let mut v = vol();
+        // ~680k nodes, names of realistic length (8-28 bytes), mixed case and
+        // a few thousand CJK ones -- the shape the real index has.
+        let mut parent = 5u64;
+        for i in 0..680_000u64 {
+            let frn = i + 100;
+            if i % 500 == 0 {
+                parent = 5; // keep a shallow tree so paths resolve in a few hops
+            }
+            let name = match i % 7 {
+                0 => format!("document-{i}.pdf"),
+                1 => format!("Report_{i}.docx"),
+                2 => format!("image_{i}.png"),
+                3 => format!("main{i}.rs"),
+                4 => format!("设置指南{i}.pdf"),
+                5 => format!("notes-{i}.txt"),
+                _ => format!("cache{i}.tmp"),
+            };
+            upsert(&mut v, frn, parent, &name_u16(&name), i % 11 == 0);
+            if i % 11 == 0 {
+                parent = frn;
+            }
+        }
+        eprintln!("index: {} nodes", v.map.len());
+        let engine = Engine {
+            inner: Mutex::new(Inner {
+                state: State::Ready,
+                volumes: vec![v],
+                generation: 1,
+            }),
+        };
+        for (q, max) in [("pptx", 50), ("a", 50), ("e", 50), ("doc", 50), ("main", 12)] {
+            // One warm-up (page-in), then the measured run.
+            let _ = engine.search(q, max);
+            let t = Instant::now();
+            let (_, hits) = engine.search(q, max);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            eprintln!("search {q:>6} max={max}: {ms:.1}ms ({} hits)", hits.len());
+            assert!(ms < 400.0, "search {q} took {ms:.1}ms");
+        }
     }
 }

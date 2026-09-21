@@ -6,7 +6,8 @@
 //! byte length followed by a UTF-8 JSON payload, one request per connection.
 //!
 //! Server side lives with each pipe's owner (`svc::pipe_server`,
-//! `agent::serve`); this module only ever dials out.
+//! `agent::serve`); this module only ever dials out — plus
+//! [`accept_client`], the one accept detail both servers must get right.
 
 use std::time::{Duration, Instant};
 
@@ -144,6 +145,25 @@ pub(crate) fn wide(s: &str) -> Vec<u16> {
 /// per-connection worker threads.
 pub(crate) struct SendHandle(pub windows::Win32::Foundation::HANDLE);
 unsafe impl Send for SendHandle {}
+
+/// Block until a client connects to a listening instance, returning whether
+/// the instance now owns a live connection.
+///
+/// The subtlety: when a client reaches the pipe *before* the server calls
+/// `ConnectNamedPipe` (routine when a request follows the previous one
+/// closely), Windows completes it with `ERROR_PIPE_CONNECTED` — the
+/// connection is already established and the caller must serve it. Reading
+/// that as a failure and closing the instance kills the client mid-handshake,
+/// which is exactly the "connected, then instantly broken pipe" a client
+/// sees as `EPIPE`. Only other errors mean the instance is unusable.
+pub(crate) fn accept_client(pipe: windows::Win32::Foundation::HANDLE) -> bool {
+    use windows::Win32::Foundation::ERROR_PIPE_CONNECTED;
+    use windows::Win32::System::Pipes::ConnectNamedPipe;
+    match unsafe { ConnectNamedPipe(pipe, None) } {
+        Ok(()) => true,
+        Err(e) => e.code() == ERROR_PIPE_CONNECTED.to_hresult(),
+    }
+}
 
 #[cfg(test)]
 mod tests {

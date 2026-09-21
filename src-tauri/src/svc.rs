@@ -701,8 +701,8 @@ fn pipe_server(shared: Arc<Shared>) {
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
     use windows::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, NAMED_PIPE_MODE, PIPE_READMODE_MESSAGE,
-        PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES,
+        CreateNamedPipeW, NAMED_PIPE_MODE, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE,
+        PIPE_UNLIMITED_INSTANCES,
     };
 
     const SDDL: &str = "D:(A;;GA;;;AU)(A;;GA;;;SY)"; // Authenticated Users + SYSTEM
@@ -747,8 +747,8 @@ fn pipe_server(shared: Arc<Shared>) {
 
         // Block until a client connects, then let a worker finish the
         // exchange while this loop immediately offers the next instance.
-        if unsafe { ConnectNamedPipe(pipe, None) }.is_err() {
-            // The client vanished between create and connect.
+        if !crate::pipe::accept_client(pipe) {
+            // The instance is unusable (the client vanished, the handle broke).
             let _ = unsafe { windows::Win32::Foundation::CloseHandle(pipe) };
             continue;
         }

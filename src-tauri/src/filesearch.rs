@@ -29,7 +29,14 @@ use crate::everything::{self, FileHit};
 /// native app results keep their slots).
 const FILE_RESULTS_MAX: u32 = 12;
 const EVERYTHING_TIMEOUT: Duration = Duration::from_millis(600);
-const SVC_TIMEOUT: Duration = Duration::from_millis(800);
+/// Generous on purpose: the service answers queued queries in order, so a
+/// typing burst can put a query a few hundred ms behind its predecessors
+/// (~20-30 ms each in a release build, ~50-180 ms in debug). Treating that
+/// queue as a failure cooled the backend down for 10 s — the "search works,
+/// then goes unavailable" symptom. A genuinely wedged service still exits
+/// through the timeout; nothing here waits on it interactively (the call is
+/// async and the frontend discards superseded results).
+const SVC_TIMEOUT: Duration = Duration::from_millis(1500);
 /// Skip a backend for this long after a failure (timeout/hang), so typing
 /// never waits on a wedged Everything or service more than once.
 const COOLDOWN: Duration = Duration::from_secs(10);

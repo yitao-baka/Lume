@@ -45,6 +45,20 @@ use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 /// Clipboard drop format (files/folders copied from Explorer).
 const CF_HDROP: u32 = 15;
 
+/// RAII guard for an open clipboard: closes it on drop. Every early return
+/// (and a panic) between `OpenClipboard` and the end of the scope still
+/// releases the system clipboard — a leaked open clipboard makes every other
+/// process's copy/paste fail until Lume exits.
+struct OpenClipboardGuard;
+
+impl Drop for OpenClipboardGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseClipboard();
+        }
+    }
+}
+
 /// How often the listener checks the clipboard sequence number.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// Display label stored for image rows.
@@ -1070,11 +1084,10 @@ fn read_cf_bitmap_image() -> Option<Vec<u8>> {
         if OpenClipboard(None).is_err() {
             return None;
         }
+        let _guard = OpenClipboardGuard;
         let handle = GetClipboardData(2 /* CF_BITMAP */).ok()?;
         let hbitmap = windows::Win32::Graphics::Gdi::HBITMAP(handle.0);
-        let png = crate::icons::bitmap_to_png(hbitmap);
-        let _ = CloseClipboard();
-        png
+        crate::icons::bitmap_to_png(hbitmap)
     }
 }
 
@@ -1089,6 +1102,7 @@ fn read_custom_png_image() -> Option<Vec<u8>> {
         if OpenClipboard(None).is_err() {
             return None;
         }
+        let _guard = OpenClipboardGuard;
         let mut found: Option<Vec<u8>> = None;
         let mut fmt: u32 = 0;
         loop {
@@ -1136,7 +1150,6 @@ fn read_custom_png_image() -> Option<Vec<u8>> {
                 }
             }
         }
-        let _ = CloseClipboard();
         found
     }
 }
@@ -1151,9 +1164,8 @@ fn read_file_list() -> Option<Vec<String>> {
         if OpenClipboard(None).is_err() {
             return None;
         }
-        let paths = read_hdrop();
-        let _ = CloseClipboard();
-        paths
+        let _guard = OpenClipboardGuard;
+        read_hdrop()
     }
 }
 

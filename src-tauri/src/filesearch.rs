@@ -75,7 +75,8 @@ pub struct FileEntry {
 /// Async so the potential backend timeouts (≤1.4s) never block the UI thread
 /// — sync Tauri commands run on the main thread. All options are optional and
 /// invalid values fall back to defaults (max clamped 1..=100; offset passes
-/// through to the engine, which truncates).
+/// through to the engine, which truncates). An empty query is legitimate: it
+/// means "recent files" (see `run_search`).
 #[tauri::command]
 pub async fn file_search(
     query: String,
@@ -83,9 +84,6 @@ pub async fn file_search(
     offset: Option<u32>,
     sort: Option<String>,
 ) -> FileSearchOut {
-    if query.trim().is_empty() {
-        return unavailable();
-    }
     let max = max.unwrap_or(FILE_RESULTS_MAX).clamp(1, 100);
     let offset = offset.unwrap_or(0);
     // 'static: only the known sort names survive (invalid → engine default),
@@ -102,11 +100,18 @@ pub async fn file_search(
         })
 }
 
+/// The effective sort for a query. An empty query = "recent files": default
+/// to `mtime_desc` (and echo it) so the plugin page really shows 最近修改 —
+/// without it the engines return their index-default order, which is not what
+/// an empty query promises. An explicit sort always wins. Pure for the unit
+/// test; `run_search` applies it.
+fn effective_sort<'a>(query: &str, sort: Option<&'a str>) -> Option<&'a str> {
+    sort.or_else(|| query.trim().is_empty().then_some("mtime_desc"))
+}
+
 fn run_search(query: &str, max: u32, offset: u32, sort: Option<&str>) -> FileSearchOut {
-    if query.trim().is_empty() {
-        return unavailable();
-    }
     let now = Instant::now();
+    let sort = effective_sort(query, sort);
     // Everything first: its index is live and the IPC costs nothing when it
     // isn't running (FindWindow probe).
     if everything::available() && !cooled_down("everything", now) {
@@ -147,8 +152,7 @@ fn run_search(query: &str, max: u32, offset: u32, sort: Option<&str>) -> FileSea
     unavailable()
 }
 
-fn unavailable() -> FileSearchOut {
-    FileSearchOut {
+fn unavailable() -> FileSearchOut {    FileSearchOut {
         backend: "none".into(),
         status: "unavailable".into(),
         total: None,
@@ -292,12 +296,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_query_short_circuits() {
-        let out = run_search("   ", 12, 0, None);
-        assert_eq!(out.backend, "none");
-        assert_eq!(out.status, "unavailable");
-        assert!(out.entries.is_empty());
-        assert!(out.total.is_none() && out.sort.is_none());
+    fn empty_query_defaults_to_mtime_desc() {
+        // Empty query = "recent files": the effective sort defaults to
+        // mtime_desc and is echoed through to the backend; an explicit sort
+        // always wins, and non-empty queries keep the engine default order.
+        assert_eq!(effective_sort("", None), Some("mtime_desc"));
+        assert_eq!(effective_sort("   ", None), Some("mtime_desc"));
+        assert_eq!(effective_sort("abc", None), None);
+        assert_eq!(effective_sort("", Some("size")), Some("size"));
     }
 
     #[test]

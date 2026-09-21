@@ -92,6 +92,57 @@ export function injectBridge(html: string): string {
   return injection + html;
 }
 
+/** Forward keydowns from the plugin iframe to the host window router.
+ *
+ * Focus entering the iframe (any click on the plugin page) makes keydown fire
+ * in the iframe's document only — the host window listener never sees it. This
+ * re-dispatches the event on the host window so the existing key routing
+ * (`keyboard.ts` `onKeyDown` / `blockBrowserKeys`) applies unchanged:
+ *
+ * - Bubble phase, not capture: the plugin page's own document listeners
+ *   register earlier and run first, so a plugin can consume keys (Esc in
+ *   file-search's filter dialog) via `preventDefault` — consumed events are
+ *   not forwarded.
+ * - Editable targets (input/textarea/contenteditable) are skipped: the
+ *   plugin's dialogs own their typing (Ctrl+A/C/V, arrows, Enter).
+ * - When the host router consumes the re-dispatch (Esc / mode-switch /
+ *   arrows), `preventDefault` is re-applied on the original event so iframe
+ *   defaults (Tab focus roaming, …) stay blocked too.
+ */
+function attachKeyForwarding(frame: HTMLIFrameElement) {
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  doc.addEventListener("keydown", (e) => {
+    const t = e.target as HTMLElement | null;
+    const editable = t?.closest?.("input, textarea, [contenteditable]");
+    if (e.defaultPrevented || editable) return;
+    const syn = new KeyboardEvent("keydown", {
+      key: e.key,
+      code: e.code,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      bubbles: true,
+    });
+    window.dispatchEvent(syn);
+    if (syn.defaultPrevented) e.preventDefault();
+  });
+  // Typing hand-off: a click anywhere non-editable in the plugin page parks
+  // focus inside the iframe, so host-side typing silently drops. Bounce focus
+  // back to the search box after the click settles — every plugin benefits,
+  // not just the ones that implement the hand-off themselves.
+  doc.addEventListener(
+    "mousedown",
+    (e) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("input, textarea, [contenteditable]")) return;
+      setTimeout(() => document.getElementById("search-input")?.focus(), 0);
+    },
+    true
+  );
+}
+
 /** Build the mode View for a disk mode plugin: renders the prepared HTML in
  * an iframe and answers the bridge RPCs. Events (query/show/hide) flow out
  * through the returned `post` handle. */
@@ -137,6 +188,10 @@ export function createIframeView(
         srcdoc={srcdoc()}
         title="plugin"
         ref={(el) => (frame = el)}
+        // srcdoc is set asynchronously — the document swaps between
+        // about:blank and the injected page, so key forwarding can only be
+        // attached after the load event lands on the final document.
+        onLoad={() => attachKeyForwarding(frame!)}
       />
     );
   };

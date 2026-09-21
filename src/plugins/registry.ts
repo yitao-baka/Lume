@@ -155,10 +155,14 @@ function callHook(id: string, logic: Record<string, unknown>, name: string, ...a
 }
 
 /** data:/http(s):/asset:/blob: URIs pass through untouched; anything else in
- * an item's `icon` is a file path (e.g. inside the plugin dir) → asset URL. */
-function resolvePluginIcon(icon: unknown): string | undefined {
+ * an item's `icon` is a file path (absolute, or relative to `base` — a
+ * manifest icon is relative to the plugin dir) → asset URL. */
+function resolvePluginIcon(icon: unknown, base?: string): string | undefined {
   if (typeof icon !== "string" || icon === "") return undefined;
   if (/^(data:|https?:|asset:|blob:)/i.test(icon)) return icon;
+  if (base && !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(icon)) {
+    return convertFileSrc(base + "\\" + icon);
+  }
   return convertFileSrc(icon);
 }
 
@@ -428,7 +432,7 @@ export async function loadDiskPlugins() {
           modeMeta: {
             labelKey: "",
             placeholderKey: "",
-            icon: "",
+            icon: resolvePluginIcon(m.icon, m.dir) ?? "",
             label: m.name || m.id,
           },
           keywords: m.keywords,

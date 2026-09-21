@@ -181,10 +181,9 @@ pub fn search(
     sort: Option<&str>,
     timeout: Duration,
 ) -> Result<QueryOutcome, Error> {
+    // An empty query is legitimate — Everything treats it as match-all (the
+    // "recent files" page comes through here, sort = mtime_desc).
     let query = query.trim();
-    if query.is_empty() {
-        return Ok(QueryOutcome::default());
-    }
     let tx = JOB_TX.get_or_init(spawn_worker);
     let (out, rx) = channel();
     let job = Job {

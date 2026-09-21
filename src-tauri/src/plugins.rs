@@ -55,6 +55,9 @@ pub struct PluginManifest {
     /// to the global 设置 → 窗口大小 → 高度.
     #[serde(default)]
     pub height: Option<u32>,
+    /// Mode plugins: pill icon, relative to the plugin dir.
+    #[serde(default)]
+    pub icon: String,
 }
 
 fn default_kind() -> String {
@@ -82,6 +85,8 @@ pub struct PluginInfo {
     pub keywords: Vec<String>,
     /// Mode-declared preferred window height (logical px; None = global).
     pub height: Option<u32>,
+    /// Mode plugins: pill icon (relative to the plugin dir).
+    pub icon: String,
     /// Absolute plugin directory (disk plugins; empty for built-ins).
     pub dir: String,
 }
@@ -176,6 +181,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             view: String::new(),
             keywords: Vec::new(),
             height: None,
+            icon: String::new(),
             dir: String::new(),
         })
         .collect();
@@ -201,6 +207,7 @@ pub fn list_plugins(base: &Path, disabled: &[String]) -> Vec<PluginInfo> {
             view: m.view,
             keywords: m.keywords,
             height: m.height,
+            icon: m.icon,
             dir: dir.to_string_lossy().into_owned(),
         });
     }
@@ -401,16 +408,20 @@ mod tests {
             "id = \"m\"
 kind = \"mode\"
 view = \"view.html\"
+icon = \"icon.svg\"
 keywords = [\"clip\", \"剪贴板\"]
 height = 560
 ",
         )
         .unwrap();
         assert_eq!(m.view, "view.html");
+        assert_eq!(m.icon, "icon.svg");
         assert_eq!(m.keywords, vec!["clip".to_string(), "剪贴板".to_string()]);
         assert_eq!(m.height, Some(560));
         // height is optional — omitted means "use the global setting".
         assert_eq!(parse_manifest("id = \"m\"").unwrap().height, None);
+        // icon is optional — omitted means "no pill image" (empty string).
+        assert_eq!(parse_manifest("id = \"m\"").unwrap().icon, "");
     }
 
     #[test]

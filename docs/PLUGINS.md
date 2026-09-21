@@ -25,7 +25,8 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
 
 - `provider` — 向搜索结果追加条目（纯对象 `{search}` 或工厂 `create(ctx)`）
 - `mode` — 整页模式：`view` HTML 自由 UI（桥接 iframe）+ 可选 `entry`
-  逻辑钩子 + `keywords` 全局关键字进入 + 可选 `height` 窗口高度
+  逻辑钩子 + `keywords` 全局关键字进入 + 可选 `height` 窗口高度 +
+  可选 `icon` pill 图标
   （示例 `examples/plugins/hello-mode/`；基于宿主 `search.files` 能力的
   完整文件搜索模式见 `examples/plugins/file-search/`）
 - `service` — 无 UI 生命周期钩子（`onShow`/`onHide`/`onQuery`）
@@ -33,9 +34,11 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
 宿主能力 API（`ctx` / `window.lume`）：`app.hide/toast/setQuery/setPlaceholder/openPath/
 resize`、`clipboard.readText/writeText`、`storage.get/set/remove`（插件私有
 KV）、`search.files(q, max?)`（全盘文件秒搜 = `file_search` 门面，Everything /
-LumeSVC 引擎自动选择）。mode 桥接 iframe 还会收到 `lume.on.key` 按键事件
-（模式激活时 window keydown 的 {key,ctrlKey,shiftKey,altKey}，模式页自实现
-↑↓/Enter）。详见 `docs/PLUGIN_API.md` §6C。
+LumeSVC 引擎自动选择；**空查询 = 最近文件**，引擎默认按修改时间倒序）。
+mode 桥接 iframe 还会收到 `lume.on.key` 按键事件
+（模式激活时的 keydown 转发 {key,ctrlKey,shiftKey,altKey}——含焦点在 iframe
+内的情况；模式页自实现 ↑↓/Enter，插件可对自己的 document 监听
+`preventDefault` 来消费按键，如 Esc）。详见 `docs/PLUGIN_API.md` §6C。
 
 ## provider 契约（entry JS）
 

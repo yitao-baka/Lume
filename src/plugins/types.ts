@@ -37,6 +37,9 @@ export interface PluginManifest {
   /** Mode plugins: the mode page's preferred window height (logical px);
    * null = use the global 设置 → 窗口大小 → 高度. */
   height: number | null;
+  /** Mode plugins: pill icon (relative to the plugin dir; resolved to a
+   * URL by the registry). Empty = no pill image. */
+  icon: string;
   /** Absolute plugin directory (disk plugins; empty for built-ins). */
   dir: string;
 }

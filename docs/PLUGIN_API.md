@@ -97,6 +97,7 @@ export default {
 | `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入与关键字完全一致时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。 |
+| `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。 |
 
 **解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
 
@@ -363,9 +364,9 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 | `query` | `string` | 模式激活期间的每次搜索框输入（含清空） |
 | `show` | — | 模式切入 / 每次呼出（reset） |
 | `hide` | — | 启动器隐藏且本模式活动 |
-| `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 window keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
+| `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。焦点在插件 iframe 内时同样送达：iframe 的 keydown（冒泡阶段、目标非可编辑、未被插件 `preventDefault`）由宿主回投 window 路由后经本事件回流。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
 
-Esc 不经过 `key` 事件（根统一处理：菜单 → 模式 onEscape → 卫星预览 → 隐藏）。
+Esc 默认不经过 `key` 事件（根统一处理：菜单 → 模式 onEscape → 卫星预览 → 隐藏）。**插件要消费 Esc**：在自己的 document 上挂冒泡 keydown 监听并 `preventDefault`（须在宿主转发监听之前注册——页面自身脚本先于桥接转发执行，天然满足）——被消费的按键不再回流根路由。iframe 内非可编辑目标的按键在转发后同样经过根 `blockBrowserKeys`（Ctrl/Alt 组合被拦，与宿主非输入区行为一致）；可编辑目标（input/textarea/contenteditable）的按键完全归插件。另外，iframe 内非可编辑区域的点击会把焦点交还宿主搜索框（宿主统一兜底，插件无需自行实现 focus hand-off）。
 
 ---
 

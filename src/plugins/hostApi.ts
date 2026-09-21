@@ -3,7 +3,12 @@
 //! pages reach the same surface through the postMessage bridge (§ iframe).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { FileSearchOut, PluginHostApi, PluginServices } from "./types";
+import type {
+  FileSearchOut,
+  PluginFileSearchOptions,
+  PluginHostApi,
+  PluginServices,
+} from "./types";
 import { plog } from "./log";
 
 /** Build the capability surface for one plugin id. `services` comes from the

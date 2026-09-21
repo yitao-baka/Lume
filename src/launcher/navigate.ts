@@ -10,6 +10,7 @@
 import { createMemo, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
+import copyIcon from "../../res/icons/copy.svg";
 import runIcon from "../../res/icons/normal_run.svg";
 import type { AppEntry, MenuState } from "./types";
 
@@ -139,7 +140,7 @@ export function createNavigateStore(deps: NavigateDeps) {
     return [
       { id: 0, name: t("openInCmd"), path: "", icon: icons.cmd ?? runIcon },
       { id: 0, name: t("openInPowerShell"), path: "", icon: icons.powershell ?? runIcon },
-      { id: 0, name: t("copyPath"), path: "", icon: undefined, mono: true },
+      { id: 0, name: t("copyPath"), path: "", icon: copyIcon, mono: true },
     ];
   };
 

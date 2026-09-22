@@ -983,8 +983,12 @@ permissions = ["network", "clipboard", "fs.write"]
   都被覆盖——只在桥接入口拦是不够的（这是本阶段实机脚本抓出来的第一个 bug）。
 - **设置页**：每个磁盘插件行显示声明的权限 chips；「全部授权」
   （`settings.plugins.trusted`）是开发逃生门——勾上后该插件的一切能力调用放行，
-  用于「插件先跑起来、manifest 之后补」的场景。内置插件（clipboard/preview）
-  编译进 lume.exe，不参与该表。
+  用于「插件先跑起来、manifest 之后补」的场景。**全局开发者模式门控
+  （2026-09-22 起）**：逃生门只在 设置 → 插件 的「开发者模式」
+  （`settings.plugins.dev_mode`，默认关）开启时可见且生效——`get_plugins` 在
+  开发者模式关闭时把所有插件上报为 `trusted=false`，残留的 trusted 列表
+  授予不了任何能力；重载按钮与「开发」徽章同样随开发者模式隐藏。内置插件
+  （clipboard/preview）编译进 lume.exe，不参与该表。
 - **边界要诚实**：这是**前端**关卡。mode 页是同源 iframe，蓄意的恶意页面仍可
   直接触达 Tauri IPC —— 真正的隔离要靠沙箱（与生态阶段一起做）。这一层今天买到
   的是**知情同意**与**明确失败**：插件用了什么能力写在 manifest 里、设置页看得见，

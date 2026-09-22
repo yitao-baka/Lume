@@ -464,13 +464,22 @@ pub fn list_plugins(base: &Path, disabled: &[String], trusted: &[String]) -> Vec
 }
 
 /// Frontend command: list built-in + discovered plugins with enabled state.
+/// The `trusted` flag is gated by `plugins.dev_mode`: while developer mode
+/// is off, every plugin reports untrusted (the permission layer then fails
+/// closed to the declared capabilities), so stale ids in the trusted list
+/// grant nothing.
 #[tauri::command]
 pub fn get_plugins(state: State<SettingsState>) -> Result<Vec<PluginInfo>, String> {
     let snapshot = settings::snapshot(&state);
+    let trusted: Vec<String> = if snapshot.plugins.dev_mode {
+        snapshot.plugins.trusted.clone()
+    } else {
+        Vec::new()
+    };
     Ok(list_plugins(
         &base_dir(),
         &snapshot.plugins.disabled,
-        &snapshot.plugins.trusted,
+        &trusted,
     ))
 }
 

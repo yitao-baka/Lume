@@ -1869,6 +1869,15 @@ body.settings-window #root {
   padding: 5px 10px;
 }
 
+/* Global developer-mode switch at the toolbar's right end. */
+.plg-devmode {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  cursor: default;
+}
+
 .plg-list {
   display: flex;
   flex-direction: column;

@@ -394,6 +394,7 @@ pub fn run() {
             plugin_host::plugin_displays,
             settings::set_plugin_enabled,
             settings::set_plugin_trusted,
+            settings::set_plugin_dev_mode,
             clipboard::get_clipboard_text,
             clipboard::set_clipboard_text,
             svc::svc_status,

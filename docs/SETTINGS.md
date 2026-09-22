@@ -177,7 +177,12 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 
 **工具栏**：概要行（「共 N 个插件 · M 个已启用」）+ 分段筛选
 （全部 / 已启用 / 已停用 / 磁盘插件）+ 关键词筛选输入框（按名称 / id /
-描述 / 关键词子串匹配）；无匹配时显示空态「没有匹配的插件」。
+描述 / 关键词子串匹配）；无匹配时显示空态「没有匹配的插件」。最右是
+**「开发者模式」开关**（`plugins.dev_mode`，默认关，即时生效轻量写
+`set_plugin_dev_mode`）：关闭时**隐藏全部开发者选项**（卡片上的重载按钮、
+「开发」徽章、权限区的「全部授权」行），且后端 `get_plugins` 把所有插件
+上报为 `trusted=false`——残留的 trusted 列表授予不了任何能力（权限层
+fail-closed 到声明能力）；开启时这些选项显示并生效，随后重读插件清单。
 
 **插件卡片**（每个插件一张）：
 
@@ -197,7 +202,8 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 - **权限**（仅磁盘插件）：manifest `permissions` 逐词映射为本地化
   能力 chips（剪贴板/网络/通知/对话框/屏幕信息/全盘搜索/读取文件/
   写入文件/回收站，悬停显示一句话说明）+ 强制说明文案 +
-  橙色警示样式的「全部授权」行（`settings.plugins.trusted`）。
+  橙色警示样式的「全部授权」行（`settings.plugins.trusted`，
+  **仅开发者模式开启时显示**）。
 - **声明式设置**（`[[settings]]`，P3.4）：toggle / select chips /
   文本输入；值 ≠ 默认时在该行下方显示「默认 {value}」提示；写入经
   `plugin_settings_put`，插件经 `plugin-settings` 事件收到变更。
@@ -226,6 +232,21 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   about* / clipIgnoreEmpty），三语言同步。
 - 验证：`cargo test` 74 通过（含 `legacy_user_dirs_migrate_to_key_value_index`）、
   `tsc --noEmit` + `vite build` 干净。
+
+## 实现说明（2026-09-22 全局开发者模式）
+
+- `settings.plugins.dev_mode`（Rust `Plugins` 结构，`#[serde(default)]`，
+  默认关）；新命令 `set_plugin_dev_mode`（轻量写 + `settings-applied`，
+  与 `set_plugin_enabled` / `set_plugin_trusted` 同款）。
+- **trusted 门控在 `get_plugins`**（`plugins.rs`）：dev_mode 关时以空表
+  调 `list_plugins`，所有插件上报 `trusted=false` —— 前端权限层
+  （`permissions.ts`）无需改动即 fail-closed 到声明能力；残留 trusted id
+  不授予任何能力。
+- 插件页：工具栏最右「开发者模式」开关（初值经 `get_settings` 读取）；
+  关闭时隐藏重载按钮 / 「开发」徽章 / 「全部授权」行，开启时显示并在
+  切换后重读清单。i18n +5 键 ×3（`pluginsDevMode{,Hint,On,Off}`）。
+- 测试：`plugin_dev_mode_defaults_off_and_round_trips`（整表缺失 / 缺键
+  均默认关 + 轻量写往返）。
 
 ## 实现说明（2026-09-22 插件页重设计）
 

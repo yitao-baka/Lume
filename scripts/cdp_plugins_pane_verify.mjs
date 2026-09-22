@@ -77,9 +77,28 @@ const toolbar = await s.evalJs(`({
   summary: document.querySelector('.plg-summary')?.textContent ?? "",
   chips: Array.from(document.querySelectorAll('.plg-filter-chip')).map((b) => b.textContent.trim()),
   filterInput: !!document.querySelector('.plg-filter-input'),
+  devToggle: document.querySelector('.plg-devmode')?.textContent.trim() ?? "",
 })`);
-check("toolbar: summary + 4 filter chips + filter input",
-  toolbar.summary.includes("插件") && toolbar.chips.length === 4 && toolbar.filterInput, JSON.stringify(toolbar));
+check("toolbar: summary + 4 filter chips + filter input + dev-mode switch",
+  toolbar.summary.includes("插件") && toolbar.chips.length === 4 && toolbar.filterInput
+  && toolbar.devToggle.includes("开发者模式"), JSON.stringify(toolbar));
+
+// Developer mode OFF (default): no reload buttons, no 开发 badge, no 全部授权
+const devOff = await s.evalJs(`({
+  reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
+  badges: Array.from(document.querySelectorAll('.plg-badge')).map((b) => b.textContent.trim()).filter((t) => t === "开发"),
+  trust: document.querySelectorAll('.plg-card .plg-trust').length,
+})`);
+check("dev mode off hides developer options", devOff.reloads === 0 && devOff.badges.length === 0 && devOff.trust === 0, JSON.stringify(devOff));
+
+// Turn developer mode ON → developer options appear (restored at the end)
+await s.evalJs(`document.querySelector('.plg-devmode .settings-toggle')?.click(); "ok"`);
+await sleep(800);
+const devOnState = await s.evalJs(`({
+  reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
+  trust: document.querySelectorAll('.plg-card .plg-trust').length,
+})`);
+check("dev mode on shows reload options", devOnState.reloads > 0, JSON.stringify(devOnState));
 
 const cards = await s.evalJs(`Array.from(document.querySelectorAll('.plg-card')).map((c) => ({
   name: c.querySelector('.plg-name')?.textContent,
@@ -158,6 +177,17 @@ await s.evalJs(`(() => {
 })()`);
 await sleep(700);
 await s.shot("test/plg_light_detail.png");
+
+// Restore developer mode OFF (the factory default) before exiting
+await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).find((b) => b.textContent.includes("插件"))?.click(); "ok"`);
+await sleep(400);
+await s.evalJs(`document.querySelector('.plg-devmode .settings-toggle')?.click(); "ok"`);
+await sleep(800);
+const devRestored = await s.evalJs(`({
+  reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
+  trust: document.querySelectorAll('.plg-card .plg-trust').length,
+})`);
+check("dev mode restored to off", devRestored.reloads === 0 && devRestored.trust === 0, JSON.stringify(devRestored));
 
 console.log(failures === 0 ? "ALL PASS" : `${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

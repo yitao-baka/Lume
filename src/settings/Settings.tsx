@@ -109,7 +109,7 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
   plugins: [
     "plugins", "pluginKindMode", "pluginKindService", "pluginKindProvider",
     "pluginBuiltin", "pluginDetailKeywords", "pluginDetailFeatures",
-    "pluginPermissions", "pluginTrustAll", "pluginSettings",
+    "pluginPermissions", "pluginTrustAll", "pluginSettings", "pluginsDevMode",
     "permClipboard", "permNetwork", "permNotify", "permDialog", "permScreen",
     "permSearchFiles", "permFsRead", "permFsWrite", "permTrash",
   ],

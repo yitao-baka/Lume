@@ -184,7 +184,19 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**设置 → 插件页重设计（卡片式插件管理器, complete) — as of 2026-09-22**:
+**插件系统全局开发者模式（complete) — as of 2026-09-22**: 设置 → 插件
+工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，新命令
+`set_plugin_dev_mode` 轻量写即时生效）。关闭时**插件页隐藏全部开发者选项**
+（重载按钮 / 「开发」徽章 / 权限区的「全部授权」行），且 **trusted 门控在
+`get_plugins`**（`plugins.rs`：dev_mode 关时以空表调 `list_plugins`）——
+所有插件上报 `trusted=false`，残留的 `settings.plugins.trusted` 列表授予
+不了任何能力，前端权限层 fail-closed 到声明能力（`permissions.ts` 零改动）。
+不变量：**「全部授权」的生效必须同时满足 trusted 列表命中 + dev_mode 开**
+—— 后续若给插件清单加新的上报路径，必须复用 `get_plugins` 的同一门控，
+不能绕过。测试 `plugin_dev_mode_defaults_off_and_round_trips`；文档
+PLUGIN_API §6F.4 / SETTINGS §8 同步。
+
+**Prior: 设置 → 插件页重设计（卡片式插件管理器, complete) — as of 2026-09-22**:
 `src/settings/PluginsPane.tsx` 全量重写 —— 工具栏（概要 + 全部/已启用/
 已停用/磁盘插件 分段筛选 + 关键词筛选输入）+ 每插件一张卡片（40px 图标块，
 manifest `icon` 走 asset 协议、无图标按 kind 着色首字母；名称 + 版本 +

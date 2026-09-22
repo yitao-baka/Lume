@@ -47,8 +47,15 @@ pub struct Plugins {
     /// The explicit-placement trust model already says the user vouches for a
     /// plugin; this is the escape hatch for a plugin under development that
     /// starts using a new capability before its manifest catches up.
+    /// **Gated by `dev_mode`**: while it is off, `get_plugins` reports every
+    /// plugin as untrusted, so stale ids in this list grant nothing.
     #[serde(default)]
     pub trusted: Vec<String>,
+    /// Global plugin developer mode. Off (the default) hides the developer
+    /// options in 设置 → 插件 (重载 / 全部授权 / 开发 badge) and gates the
+    /// `trusted` list (see above); on, they show and take effect.
+    #[serde(default)]
+    pub dev_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -447,6 +454,7 @@ impl Default for Settings {
             plugins: Plugins {
                 disabled: Vec::new(),
                 trusted: Vec::new(),
+                dev_mode: false,
             },
             automation: Automation {
                 enabled: true,
@@ -804,6 +812,26 @@ pub fn set_plugin_trusted(
     Ok(())
 }
 
+/// Global plugin developer mode — toggles the developer options in
+/// 设置 → 插件 (重载 / 全部授权 / 开发 badge) and gates the `trusted`
+/// list (`get_plugins` reports untrusted while this is off). Light write
+/// with the same immediate `settings-applied` semantics.
+#[tauri::command]
+pub fn set_plugin_dev_mode(
+    enabled: bool,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.dev_mode = enabled;
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -819,6 +847,37 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// Plugin developer mode defaults to off (both when the whole
+    /// `[plugins]` table is absent and when only the key is missing) and
+    /// round-trips through a light write alongside the trusted list.
+    #[test]
+    fn plugin_dev_mode_defaults_off_and_round_trips() {
+        let base = temp_base("dev-mode");
+        ensure_settings_files(&base).unwrap();
+        assert!(!read_settings(&base).plugins.dev_mode, "default off");
+        // Table present, key missing → serde default off. Built from the
+        // serialized defaults minus the dev_mode line (a minimal TOML would
+        // fail to parse: Settings has required fields outside [plugins]).
+        let text = toml::to_string_pretty(&Settings::default()).unwrap();
+        let without_dev_mode = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("dev_mode"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), without_dev_mode).unwrap();
+        let s = read_settings(&base);
+        assert!(!s.plugins.dev_mode);
+        // Light-write path persists the flag next to the trusted list.
+        let mut next = s;
+        next.plugins.dev_mode = true;
+        next.plugins.trusted.push("demo".into());
+        write_settings_light(&base, &next).unwrap();
+        let reloaded = read_settings(&base);
+        assert!(reloaded.plugins.dev_mode);
+        assert_eq!(reloaded.plugins.trusted, vec!["demo".to_string()]);
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]

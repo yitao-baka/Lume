@@ -87,6 +87,10 @@ const FILTERS: { id: Filter; label: keyof Messages }[] = [
 export default function PluginsPane() {
   const [plugins, setPlugins] = createSignal<PluginManifest[]>([]);
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
+  /** Global plugin developer mode (settings `plugins.dev_mode`). While off,
+   * the developer options — 重载, 全部授权, the 开发 badge — are hidden and
+   * the backend reports every plugin as untrusted. */
+  const [devMode, setDevMode] = createSignal(false);
   /** Which plugin's detail panel is open (one at a time keeps the list
    * scannable) and the declared-setting values loaded for it. */
   const [openId, setOpenId] = createSignal<string | null>(null);
@@ -104,7 +108,17 @@ export default function PluginsPane() {
     }
   }
 
-  onMount(refresh);
+  onMount(() => {
+    void refresh();
+    // Developer mode lives in the settings file — read the initial value
+    // (the pane's own controls light-write, so no dirty-state round trip).
+    void invoke<unknown>("get_settings")
+      .then((s) => {
+        const pluginsSlice = (s as { plugins?: { dev_mode?: boolean } }).plugins;
+        setDevMode(pluginsSlice?.dev_mode === true);
+      })
+      .catch(() => {});
+  });
 
   function showStatus(ok: boolean, text: string) {
     setStatus({ ok, text });
@@ -196,10 +210,25 @@ export default function PluginsPane() {
     }
   }
 
+  /** Global developer mode — light write like the enable toggles; the
+   * backend gates the `trusted` list so 「全部授权」 is inert while off. */
+  async function toggleDevMode(v: boolean) {
+    const before = devMode();
+    setDevMode(v); // the visible change is instant; the write is a plain file write
+    try {
+      await invoke("set_plugin_dev_mode", { enabled: v });
+      await refresh(); // re-read: trusted flags flip with the gate
+      showStatus(true, t(v ? "pluginsDevModeOn" : "pluginsDevModeOff"));
+    } catch (err) {
+      setDevMode(before);
+      showStatus(false, String(err));
+    }
+  }
+
   return (
     <>
       <h2 class="settings-grouptitle">{t("plugins")}</h2>
-      {/* Summary + filter toolbar */}
+      {/* Summary + filter toolbar + the global developer-mode switch */}
       <div class="plg-toolbar">
         <span class="plg-summary">
           {t("pluginsSummary", {
@@ -227,6 +256,13 @@ export default function PluginsPane() {
           value={needle()}
           onInput={(e) => setNeedle(e.currentTarget.value)}
         />
+        <label
+          class="plg-devmode"
+          title={t("pluginsDevModeHint")}
+        >
+          <Toggle checked={devMode()} onChange={(v) => void toggleDevMode(v)} />
+          <span class="settings-sub-label">{t("pluginsDevMode")}</span>
+        </label>
       </div>
 
       <div class="plg-list">
@@ -235,6 +271,7 @@ export default function PluginsPane() {
             <PluginCard
               p={p}
               open={openId() === p.id}
+              devMode={devMode()}
               settingValues={values()[p.id] ?? ({} as Record<string, unknown>)}
               onToggleOpen={() => void toggleOpen(p)}
               onToggleEnabled={(v) => void toggle(p, v)}
@@ -260,6 +297,8 @@ export default function PluginsPane() {
 function PluginCard(props: {
   p: PluginManifest;
   open: boolean;
+  /** Global developer mode — gates 重载, the 开发 badge and 全部授权. */
+  devMode: boolean;
   settingValues: Record<string, unknown>;
   onToggleOpen: () => void;
   onToggleEnabled: (v: boolean) => void;
@@ -287,7 +326,7 @@ function PluginCard(props: {
             <span class="plg-badge" classList={{ builtin: p().builtin }}>
               {p().builtin ? t("pluginBuiltin") : t("pluginDisk")}
             </span>
-            <Show when={p().development}>
+            <Show when={p().development && props.devMode}>
               <span class="plg-badge dev">{t("pluginDev")}</span>
             </Show>
           </div>
@@ -303,7 +342,7 @@ function PluginCard(props: {
           </div>
         </div>
         <div class="plg-actions" onClick={(e) => e.stopPropagation()}>
-          <Show when={!p().builtin}>
+          <Show when={!p().builtin && props.devMode}>
             <button class="settings-icon-btn" title={t("pluginReload")} onClick={props.onReload}>
               <img class="settings-icon-btn-icon" src={reloadIcon} alt="" draggable={false} />
             </button>
@@ -343,8 +382,9 @@ function PluginCard(props: {
           </Show>
 
           {/* Capabilities (P3.2): what the manifest declares, with the
-              enforced-by-default note and the 全部授权 escape hatch.
-              Built-ins declare nothing — their code ships with Lume. */}
+              enforced-by-default note and — while developer mode is on —
+              the 全部授权 escape hatch. Built-ins declare nothing — their
+              code ships with Lume. */}
           <Show when={!p().builtin}>
             <div class="plg-dsec">
               <span class="plg-dlabel">{t("pluginPermissions")}</span>
@@ -363,10 +403,12 @@ function PluginCard(props: {
                 </div>
               </Show>
               <span class="plg-note">{t("pluginPermEnforcedHint")}</span>
-              <div class="plg-trust">
-                <span class="plg-note warn">{t("pluginTrustHint")}</span>
-                <Toggle checked={p().trusted} onChange={props.onTrust} />
-              </div>
+              <Show when={props.devMode}>
+                <div class="plg-trust">
+                  <span class="plg-note warn">{t("pluginTrustHint")}</span>
+                  <Toggle checked={p().trusted} onChange={props.onTrust} />
+                </div>
+              </Show>
             </div>
           </Show>
 

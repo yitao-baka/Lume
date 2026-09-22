@@ -184,7 +184,22 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**插件系统 P2 余项 · 文件拖入 / 剪贴板图片进入 / 内置列表模板（complete) —
+**设置 → 插件页重设计（卡片式插件管理器, complete) — as of 2026-09-22**:
+`src/settings/PluginsPane.tsx` 全量重写 —— 工具栏（概要 + 全部/已启用/
+已停用/磁盘插件 分段筛选 + 关键词筛选输入）+ 每插件一张卡片（40px 图标块，
+manifest `icon` 走 asset 协议、无图标按 kind 着色首字母；名称 + 版本 +
+内置/磁盘/开发徽章 + 描述 + 类型/关键词预览；重载 + 启停 toggle）+ 点击
+展开的详情面板（关键词 chips、`[[features]]` 进入规则、`permissions` 映射
+成本地化能力 chips + 强制说明 + 橙色警示「全部授权」行、`[[settings]]`
+声明式设置（≠默认时显示「默认 {value}」）、ID/位置等宽信息）。启停/授权/
+重载语义与命令不变，仅 UI；已停用卡片整卡降透明度。i18n +~45 键 ×3，
+`SECTION_SEARCH_KEYS.plugins` 补齐；样式 = `App.css` 的 `plg-*` 块（旧
+`settings-plugin-*` 删除）。验证：tsc/vite/cargo build 干净、
+`scripts/cdp_plugins_pane_verify.mjs` 6 项全过、双主题截图目检
+（`test/plg_dark_list.png`、`test/plg_light_detail.png`）。Spec:
+`docs/SETTINGS.md` §8。
+
+**Prior: 插件系统 P2 余项 · 文件拖入 / 剪贴板图片进入 / 内置列表模板（complete) —
 as of 2026-09-22**: 差距分析 P2.2 / P2.5b（`docs/PLUGIN_GAP_ANALYSIS.md`），
 ROADMAP #27、API 文档 `docs/PLUGIN_API.md` §6E.1.1 / §6E.5，示例
 `examples/plugins/files-img-demo/`、`examples/plugins/list-demo/`。三条**新

@@ -106,7 +106,13 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
     "autoUseAgent",
     "autoAgentResident",
   ],
-  plugins: ["plugins", "pluginKindMode", "pluginKindService", "pluginKindProvider", "pluginBuiltin"],
+  plugins: [
+    "plugins", "pluginKindMode", "pluginKindService", "pluginKindProvider",
+    "pluginBuiltin", "pluginDetailKeywords", "pluginDetailFeatures",
+    "pluginPermissions", "pluginTrustAll", "pluginSettings",
+    "permClipboard", "permNetwork", "permNotify", "permDialog", "permScreen",
+    "permSearchFiles", "permFsRead", "permFsWrite", "permTrash",
+  ],
   about: ["aboutTagline", "aboutVersion", "aboutLicense", "aboutAuthor", "aboutHomepage"],
 };
 

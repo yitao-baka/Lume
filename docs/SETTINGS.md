@@ -172,9 +172,41 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 
 ### 8. 插件（`plugins`）
 
-内置 + 磁盘插件一览（`get_plugins`）：每行 = 名称 + 类型/来源/版本 chips +
-启停 toggle（写 `settings.plugins.disabled`，`settings-applied` 后启动器
-重读注册表；关闭活动模式插件自动回导航页）。格式与开发见 `docs/PLUGINS.md`。
+> **重设计（2026-09-22）**：从扁平行列表升级为插件管理器式卡片布局
+> （`PluginsPane.tsx`，样式类 `plg-*`）。
+
+**工具栏**：概要行（「共 N 个插件 · M 个已启用」）+ 分段筛选
+（全部 / 已启用 / 已停用 / 磁盘插件）+ 关键词筛选输入框（按名称 / id /
+描述 / 关键词子串匹配）；无匹配时显示空态「没有匹配的插件」。
+
+**插件卡片**（每个插件一张）：
+
+- 左侧 40px 图标块：manifest `icon` 经 asset 协议解析（与启动器 pill
+  同规则）；无图标时按类型着色的首字母块（模式 = 蓝 / 服务 = 紫 /
+  搜索提供 = 绿）。
+- 名称（粗体）+ 版本 + 徽章（「内置」accent 蓝 /「磁盘」中性 /
+  「开发」橙）；第二行描述（内置插件用本地化文案
+  `pluginDescClipboard` / `pluginDescPreview`，磁盘插件用 manifest
+  `description`）；第三行类型 + 关键词预览。
+- 右侧：重载按钮（仅磁盘插件，`reload_plugin`）+ 启停 toggle +
+  展开箭头。点击卡片头展开详情；已停用的卡片整卡降透明度并去饱和。
+
+**详情面板**（单开，展开一卡收起其它）：
+
+- 关键词 chips、进入规则（`[[features]]`：label + 类型小标 文本/文件/图片）。
+- **权限**（仅磁盘插件）：manifest `permissions` 逐词映射为本地化
+  能力 chips（剪贴板/网络/通知/对话框/屏幕信息/全盘搜索/读取文件/
+  写入文件/回收站，悬停显示一句话说明）+ 强制说明文案 +
+  橙色警示样式的「全部授权」行（`settings.plugins.trusted`）。
+- **声明式设置**（`[[settings]]`，P3.4）：toggle / select chips /
+  文本输入；值 ≠ 默认时在该行下方显示「默认 {value}」提示；写入经
+  `plugin_settings_put`，插件经 `plugin-settings` 事件收到变更。
+- **信息**：ID 与磁盘位置（等宽字体，可选中复制）。
+
+启停 / 全部授权 / 重载均给出本地化的 2.4s 状态反馈（成功 / 失败）。
+启停语义不变：写 `settings.plugins.disabled`，`settings-applied` 后
+启动器重读注册表；关闭活动模式插件自动回导航页。格式与开发见
+`docs/PLUGINS.md`。
 
 ### 9. 关于（`about`）
 
@@ -194,6 +226,20 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   about* / clipIgnoreEmpty），三语言同步。
 - 验证：`cargo test` 74 通过（含 `legacy_user_dirs_migrate_to_key_value_index`）、
   `tsc --noEmit` + `vite build` 干净。
+
+## 实现说明（2026-09-22 插件页重设计）
+
+- `PluginsPane.tsx` 全量重写（卡片 + 详情面板），样式为 `App.css` 的
+  `plg-*` 块（旧 `settings-plugin-*` 类删除）；重载按钮复用
+  `settings-icon-btn` + `res/icons/refresh.svg`。
+- i18n 新增 ~45 键 × 3 语言（筛选/概要/空态、详情分区标题、能力词
+  `perm*` 标签 + 说明、内置插件描述、操作反馈 `pluginToast*`、
+  `pluginSettingDefault`）；`Settings.tsx` 的 `SECTION_SEARCH_KEYS.plugins`
+  补齐新键（能力词与分区标题可被设置搜索命中）。
+- 验证：`tsc --noEmit` + `vite build` + `cargo build` 干净；
+  `scripts/cdp_plugins_pane_verify.mjs` 6 项全过（工具栏/卡片结构/详情
+  面板/筛选输入/已停用筛选空态/声明式设置渲染），截图
+  `test/plg_dark_list.png`、`test/plg_light_detail.png`（双主题目检）。
 
 ## 实现说明（2026-09-19 提权代理）
 

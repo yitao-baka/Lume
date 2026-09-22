@@ -1814,82 +1814,372 @@ body.settings-window #root {
   filter: var(--icon-filter);
 }
 
-/* 「插件」页 — plugin rows: name + kind/built-in/version chips + toggle. */
-.settings-plugin-meta {
-  min-width: 0;
-}
-
-.settings-plugin-chips {
-  display: inline-flex;
-  gap: 6px;
-  margin-left: 8px;
-}
-
-/* Plugin row: 重载 button beside the enable toggle. */
-.settings-plugin-actions {
-  display: inline-flex;
+/* 「插件」页 — modern plugin-manager cards: a summary/filter toolbar, one
+   card per plugin (icon tile + name + description + enable toggle) and an
+   expandable detail panel (keywords / entry rules / permissions / declared
+   settings / location). */
+.plg-toolbar {
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
-  flex-shrink: 0;
+  margin: 0 4px 12px;
 }
 
-.settings-mini-btn {
-  padding: 3px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
+.plg-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+}
+
+.plg-filter-chips {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--hover);
+}
+
+.plg-filter-chip {
+  padding: 3px 12px;
+  border: none;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.plg-filter-chip:hover {
+  color: var(--text);
+}
+
+.plg-filter-chip.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.plg-filter-input {
+  flex: none;
+  width: 170px;
+  padding: 5px 10px;
+}
+
+.plg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.plg-empty {
+  padding: 28px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.plg-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  overflow: hidden;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.plg-card.open {
+  border-color: var(--border-strong);
+}
+
+/* A disabled plugin stays readable but visibly recedes. */
+.plg-card.off {
+  opacity: 0.55;
+}
+
+.plg-card.off img {
+  filter: grayscale(0.9);
+}
+
+.plg-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
   cursor: pointer;
 }
 
-.settings-mini-btn:hover {
-  color: var(--text);
-  border-color: var(--text-muted);
+.plg-head:hover {
+  background: var(--hover);
 }
 
-.settings-chip-mini {
+.plg-tile {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hover);
+}
+
+.plg-tile img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.plg-tile-letter {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Kind-tinted letter tiles (real plugin icons keep their own colors). */
+.plg-tile.mode {
+  background: rgba(90, 200, 250, 0.14);
+  color: #5ac8fa;
+}
+
+.plg-tile.service {
+  background: rgba(177, 140, 255, 0.16);
+  color: #b18cff;
+}
+
+.plg-tile.provider {
+  background: rgba(63, 191, 127, 0.16);
+  color: #3fbf7f;
+}
+
+.plg-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.plg-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plg-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plg-ver {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.plg-badge {
+  flex: none;
   padding: 1px 8px;
-  border: 1px solid var(--border-strong);
   border-radius: 10px;
   font-size: 11px;
+  border: 1px solid var(--border-strong);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
-/* Plugin row, second line: declared capabilities + the 全部授权 switch. */
-.settings-plugin-perms {
-  display: inline-flex;
+.plg-badge.builtin {
+  border-color: rgba(90, 200, 250, 0.4);
+  color: #5ac8fa;
+  background: rgba(90, 200, 250, 0.08);
+}
+
+.plg-badge.dev {
+  border-color: rgba(255, 176, 32, 0.45);
+  color: #ffb020;
+  background: rgba(255, 176, 32, 0.08);
+}
+
+.plg-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plg-sub {
+  display: flex;
   align-items: center;
   gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 0;
+}
+
+.plg-keywords-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plg-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plg-chev {
+  flex: none;
+  width: 14px;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: center;
+  transition: transform 0.15s ease;
+}
+
+.plg-chev.open {
+  transform: rotate(90deg);
+}
+
+/* The expanded detail panel, inset under the card head. */
+.plg-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 16px 14px 66px;
+  border-top: 1px solid var(--border);
+}
+
+.plg-dsec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plg-dlabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.plg-chiprow {
+  display: flex;
   flex-wrap: wrap;
-  margin-top: 4px;
+  gap: 6px;
 }
 
-.settings-trust-all {
+.plg-kw-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.plg-feature {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 4px;
-  cursor: pointer;
+  padding: 2px 6px 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
-/* A plugin's declared settings, indented under its row. */
-.settings-plugin-settings {
-  margin: 2px 0 8px 12px;
-  padding-left: 10px;
-  border-left: 2px solid var(--border-strong);
+/* Tiny inline tag inside feature chips (rule type). */
+.settings-chip-mini {
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
 }
 
-.settings-plugin-settings .settings-row-between {
-  padding: 3px 0;
+.plg-perm-chip {
+  padding: 2px 10px;
+  border: 1px solid rgba(90, 200, 250, 0.4);
+  border-radius: 10px;
+  background: rgba(90, 200, 250, 0.08);
+  font-size: 12px;
+  color: #5ac8fa;
+  cursor: help;
 }
 
-.settings-plugin-settings .settings-sub-label {
-  display: inline-flex;
+.plg-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.plg-note.warn {
+  color: #ffb020;
+}
+
+/* 全部授权 row — visually flagged as the dangerous escape hatch. */
+.plg-trust {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 176, 32, 0.35);
+  border-radius: 10px;
+  background: rgba(255, 176, 32, 0.06);
 }
+
+.plg-kv {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plg-k {
+  flex: none;
+  width: 52px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.plg-v {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.plg-v.mono,
+.plg-v[title] {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.plg-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plg-default-hint {
+  padding-left: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 
 /* 「关于」页 — description + version / license / author / homepage rows. */
 .settings-about-desc {

@@ -88,9 +88,13 @@ export default function PluginsPane() {
   const [plugins, setPlugins] = createSignal<PluginManifest[]>([]);
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
   /** Global plugin developer mode (settings `plugins.dev_mode`). While off,
-   * the developer options — 重载, 全部授权, the 开发 badge — are hidden and
-   * the backend reports every plugin as untrusted. */
+   * the developer options — 重载, the global 全部授权 switch, the 开发
+   * badge — are hidden and the backend reports every plugin as untrusted. */
   const [devMode, setDevMode] = createSignal(false);
+  /** Global 全部授权 (settings `plugins.trust_all`): trust every disk
+   * plugin regardless of its manifest. Only effective while dev mode is on
+   * (the backend gate); this pane is its only UI. */
+  const [trustAll, setTrustAll] = createSignal(false);
   /** Which plugin's detail panel is open (one at a time keeps the list
    * scannable) and the declared-setting values loaded for it. */
   const [openId, setOpenId] = createSignal<string | null>(null);
@@ -114,8 +118,10 @@ export default function PluginsPane() {
     // (the pane's own controls light-write, so no dirty-state round trip).
     void invoke<unknown>("get_settings")
       .then((s) => {
-        const pluginsSlice = (s as { plugins?: { dev_mode?: boolean } }).plugins;
+        const pluginsSlice = (s as { plugins?: { dev_mode?: boolean; trust_all?: boolean } })
+          .plugins;
         setDevMode(pluginsSlice?.dev_mode === true);
+        setTrustAll(pluginsSlice?.trust_all === true);
       })
       .catch(() => {});
   });
@@ -147,21 +153,6 @@ export default function PluginsPane() {
       await invoke("set_plugin_enabled", { id: p.id, enabled: v });
       setPlugins((list) => list.map((x) => (x.id === p.id ? { ...x, enabled: v } : x)));
       showStatus(true, t(v ? "pluginToastEnabled" : "pluginToastDisabled", { name: p.name || p.id }));
-    } catch (err) {
-      showStatus(false, String(err));
-    }
-  }
-
-  /** 「全部授权」 — pass every capability check for this plugin, declared or
-   * not (the development escape hatch; see PLUGIN_API §6D.6). */
-  async function trust(p: PluginManifest, v: boolean) {
-    try {
-      await invoke("set_plugin_trusted", { id: p.id, trusted: v });
-      setPlugins((list) => list.map((x) => (x.id === p.id ? { ...x, trusted: v } : x)));
-      showStatus(
-        true,
-        t(v ? "pluginToastTrustedOn" : "pluginToastTrustedOff", { name: p.name || p.id }),
-      );
     } catch (err) {
       showStatus(false, String(err));
     }
@@ -211,7 +202,8 @@ export default function PluginsPane() {
   }
 
   /** Global developer mode — light write like the enable toggles; the
-   * backend gates the `trusted` list so 「全部授权」 is inert while off. */
+   * backend gates the trusted flags so the escape hatches are inert while
+   * off. */
   async function toggleDevMode(v: boolean) {
     const before = devMode();
     setDevMode(v); // the visible change is instant; the write is a plain file write
@@ -221,6 +213,22 @@ export default function PluginsPane() {
       showStatus(true, t(v ? "pluginsDevModeOn" : "pluginsDevModeOff"));
     } catch (err) {
       setDevMode(before);
+      showStatus(false, String(err));
+    }
+  }
+
+  /** Global 全部授权 — light write like the other plugin controls; the
+   * backend reports every disk plugin trusted while this and dev mode are
+   * both on. */
+  async function toggleTrustAll(v: boolean) {
+    const before = trustAll();
+    setTrustAll(v); // optimistic — the write is a plain file write
+    try {
+      await invoke("set_plugin_trust_all", { enabled: v });
+      await refresh(); // re-read: the per-plugin trusted flags flip with the gate
+      showStatus(true, t(v ? "pluginsTrustAllOn" : "pluginsTrustAllOff"));
+    } catch (err) {
+      setTrustAll(before);
       showStatus(false, String(err));
     }
   }
@@ -263,6 +271,14 @@ export default function PluginsPane() {
           <Toggle checked={devMode()} onChange={(v) => void toggleDevMode(v)} />
           <span class="settings-sub-label">{t("pluginsDevMode")}</span>
         </label>
+        {/* Global 全部授权 — the only trust control left (the per-plugin
+            toggles are gone); shown under the same developer gate. */}
+        <Show when={devMode()}>
+          <label class="plg-devmode" title={t("pluginsTrustAllHint")}>
+            <Toggle checked={trustAll()} onChange={(v) => void toggleTrustAll(v)} />
+            <span class="settings-sub-label warn">{t("pluginTrustAll")}</span>
+          </label>
+        </Show>
       </div>
 
       <div class="plg-list">
@@ -275,7 +291,6 @@ export default function PluginsPane() {
               settingValues={values()[p.id] ?? ({} as Record<string, unknown>)}
               onToggleOpen={() => void toggleOpen(p)}
               onToggleEnabled={(v) => void toggle(p, v)}
-              onTrust={(v) => void trust(p, v)}
               onReload={() => void reload(p)}
               onPutSetting={(key, value) => void putSetting(p, key, value)}
             />
@@ -297,12 +312,12 @@ export default function PluginsPane() {
 function PluginCard(props: {
   p: PluginManifest;
   open: boolean;
-  /** Global developer mode — gates 重载, the 开发 badge and 全部授权. */
+  /** Global developer mode — gates 重载 and the 开发 badge (the global
+   * 全部授权 switch lives in the toolbar, not per-card). */
   devMode: boolean;
   settingValues: Record<string, unknown>;
   onToggleOpen: () => void;
   onToggleEnabled: (v: boolean) => void;
-  onTrust: (v: boolean) => void;
   onReload: () => void;
   onPutSetting: (key: string, value: unknown) => void;
 }) {
@@ -381,10 +396,11 @@ function PluginCard(props: {
             </div>
           </Show>
 
-          {/* Capabilities (P3.2): what the manifest declares, with the
-              enforced-by-default note and — while developer mode is on —
-              the 全部授权 escape hatch. Built-ins declare nothing — their
-              code ships with Lume. */}
+          {/* Capabilities (P3.2): what the manifest declares and the
+              enforced-by-default note. The trust escape hatch is the global
+              全部授权 switch in the toolbar (developer mode only) — there is
+              deliberately no per-plugin trust control here anymore.
+              Built-ins declare nothing — their code ships with Lume. */}
           <Show when={!p().builtin}>
             <div class="plg-dsec">
               <span class="plg-dlabel">{t("pluginPermissions")}</span>
@@ -403,12 +419,6 @@ function PluginCard(props: {
                 </div>
               </Show>
               <span class="plg-note">{t("pluginPermEnforcedHint")}</span>
-              <Show when={props.devMode}>
-                <div class="plg-trust">
-                  <span class="plg-note warn">{t("pluginTrustHint")}</span>
-                  <Toggle checked={p().trusted} onChange={props.onTrust} />
-                </div>
-              </Show>
             </div>
           </Show>
 

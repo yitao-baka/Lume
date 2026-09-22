@@ -981,13 +981,15 @@ permissions = ["network", "clipboard", "fs.write"]
 - **校验点**：宿主构建插件 API 时逐方法包一层（`guardHostApi`），所以插件
   **逻辑**（跑在启动器窗口、直接持有 API 的那份）与 **mode 页的桥接** 两条路径
   都被覆盖——只在桥接入口拦是不够的（这是本阶段实机脚本抓出来的第一个 bug）。
-- **设置页**：每个磁盘插件行显示声明的权限 chips；「全部授权」
-  （`settings.plugins.trusted`）是开发逃生门——勾上后该插件的一切能力调用放行，
-  用于「插件先跑起来、manifest 之后补」的场景。**全局开发者模式门控
-  （2026-09-22 起）**：逃生门只在 设置 → 插件 的「开发者模式」
-  （`settings.plugins.dev_mode`，默认关）开启时可见且生效——`get_plugins` 在
-  开发者模式关闭时把所有插件上报为 `trusted=false`，残留的 trusted 列表
-  授予不了任何能力；重载按钮与「开发」徽章同样随开发者模式隐藏。内置插件
+- **设置页**：每个磁盘插件行显示声明的权限 chips；「全部授权」是开发
+  逃生门——开启后所有磁盘插件的一切能力调用放行，用于「插件先跑起来、
+  manifest 之后补」的场景。**形态（2026-09-22 起）**：授权开关并入 设置 →
+  插件 工具栏的**全局开发者选项**，不再有逐插件开关——「开发者模式」
+  （`settings.plugins.dev_mode`，默认关）是总闸与显隐开关，「全部授权」
+  （`settings.plugins.trust_all`）只在它开启时显示且生效；`get_plugins`
+  在开发者模式关闭时把所有插件上报为 `trusted=false`，残留的 trusted
+  列表与 trust_all 都授予不了任何能力。逐插件的 `trusted` 列表仍被
+  尊重（`set_plugin_trusted` 命令保留），只是设置页不再写入。内置插件
   （clipboard/preview）编译进 lume.exe，不参与该表。
 - **边界要诚实**：这是**前端**关卡。mode 页是同源 iframe，蓄意的恶意页面仍可
   直接触达 Tauri IPC —— 真正的隔离要靠沙箱（与生态阶段一起做）。这一层今天买到

@@ -384,10 +384,16 @@ fn resolve_entry(dir: &Path, entry: &str) -> String {
 }
 
 /// Built-ins + on-disk plugins, annotated with the effective enabled state and
-/// the `trusted` flag (`settings.plugins.trusted`).
-pub fn list_plugins(base: &Path, disabled: &[String], trusted: &[String]) -> Vec<PluginInfo> {
+/// the `trusted` flag (`settings.plugins.trusted`, or **every** disk plugin
+/// when `trust_all` is set — the caller gates both by `plugins.dev_mode`).
+pub fn list_plugins(
+    base: &Path,
+    disabled: &[String],
+    trusted: &[String],
+    trust_all: bool,
+) -> Vec<PluginInfo> {
     let enabled = |id: &str| !disabled.iter().any(|d| d == id);
-    let is_trusted = |id: &str| trusted.iter().any(|t| t == id);
+    let is_trusted = |id: &str| trust_all || trusted.iter().any(|t| t == id);
     let mut out: Vec<PluginInfo> = BUILTIN_PLUGINS
         .iter()
         .map(|(id, name, kind)| PluginInfo {
@@ -466,20 +472,21 @@ pub fn list_plugins(base: &Path, disabled: &[String], trusted: &[String]) -> Vec
 /// Frontend command: list built-in + discovered plugins with enabled state.
 /// The `trusted` flag is gated by `plugins.dev_mode`: while developer mode
 /// is off, every plugin reports untrusted (the permission layer then fails
-/// closed to the declared capabilities), so stale ids in the trusted list
-/// grant nothing.
+/// closed to the declared capabilities), so the trusted list — and the
+/// global `trust_all` switch — grant nothing.
 #[tauri::command]
 pub fn get_plugins(state: State<SettingsState>) -> Result<Vec<PluginInfo>, String> {
     let snapshot = settings::snapshot(&state);
-    let trusted: Vec<String> = if snapshot.plugins.dev_mode {
-        snapshot.plugins.trusted.clone()
+    let (trusted, trust_all) = if snapshot.plugins.dev_mode {
+        (snapshot.plugins.trusted.clone(), snapshot.plugins.trust_all)
     } else {
-        Vec::new()
+        (Vec::new(), false)
     };
     Ok(list_plugins(
         &base_dir(),
         &snapshot.plugins.disabled,
         &trusted,
+        trust_all,
     ))
 }
 
@@ -568,7 +575,7 @@ height = 560
         fs::create_dir_all(&demo).unwrap();
         fs::write(demo.join("plugin.toml"), "id = \"demo\"\nname = \"Demo\"\n").unwrap();
         let disabled = vec!["preview".to_string()];
-        let all = list_plugins(&root, &disabled, &[]);
+        let all = list_plugins(&root, &disabled, &[], false);
         let ids: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
         assert!(ids.contains(&"clipboard") && ids.contains(&"preview") && ids.contains(&"demo"));
         let preview = all.iter().find(|p| p.id == "preview").unwrap();
@@ -588,7 +595,7 @@ height = 560
             "id = \"demo\"\npermissions = [\"network\"]\n",
         )
         .unwrap();
-        let all = list_plugins(&root, &[], &["demo".to_string(), "preview".to_string()]);
+        let all = list_plugins(&root, &[], &["demo".to_string(), "preview".to_string()], false);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(demo.trusted);
         assert_eq!(demo.permissions, vec!["network".to_string()]);
@@ -680,7 +687,7 @@ height = 560
             "id = \"demo\"\nkeywords = [\"秒搜\", \"Files\"]\n",
         )
         .unwrap();
-        let all = list_plugins(&root, &[], &[]);
+        let all = list_plugins(&root, &[], &[], false);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert_eq!(demo.keywords_pinyin.len(), 2);
         assert_eq!(demo.keywords_pinyin[0].full, "miaosou");
@@ -701,7 +708,7 @@ height = 560
             "id = \"demo\"\nentry = \"dist\"\n",
         )
         .unwrap();
-        let all = list_plugins(&root, &[], &[]);
+        let all = list_plugins(&root, &[], &[], false);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(demo.entry.ends_with("dist/index.js"), "entry: {}", demo.entry);
         fs::remove_dir_all(&root).ok();
@@ -747,7 +754,7 @@ height = 560
             "id = \"demo\"\n[[features]]\ncode = \"hi\"\nover = true\n",
         )
         .unwrap();
-        let all = list_plugins(&root, &[], &[]);
+        let all = list_plugins(&root, &[], &[], false);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert_eq!(demo.features.len(), 1);
         assert_eq!(demo.features[0].code, "hi");

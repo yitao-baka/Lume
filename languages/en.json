@@ -282,10 +282,7 @@
   "pluginToastEnabled": "{name} enabled",
   "pluginToastDisabled": "{name} disabled",
   "pluginToastReloaded": "{name} reloaded",
-  "pluginToastTrustedOn": "{name}: all capabilities granted",
-  "pluginToastTrustedOff": "{name}: back to declared-only capabilities",
   "pluginPermEnforcedHint": "The plugin can only call the capabilities it declares; anything else is refused.",
-  "pluginTrustHint": "Skip every capability check for this plugin (development escape hatch)",
   "pluginsDevMode": "Developer mode",
   "pluginsDevModeHint": "Show the developer options (Reload, Trust all). 「Trust all」 only takes effect while this is on.",
   "pluginsDevModeOn": "Developer mode on",
@@ -307,5 +304,8 @@
   "permFsWrite": "File write",
   "permFsWriteDesc": "Write to arbitrary paths (≤10 MiB)",
   "permTrash": "Recycle bin",
-  "permTrashDesc": "Move files to the recycle bin"
+  "permTrashDesc": "Move files to the recycle bin",
+  "pluginsTrustAllHint": "Skip capability checks for every disk plugin (development escape hatch; requires developer mode)",
+  "pluginsTrustAllOn": "All plugins trusted",
+  "pluginsTrustAllOff": "Back to declared-only capabilities"
 }

@@ -282,10 +282,7 @@
   "pluginToastEnabled": "「{name}」已啟用",
   "pluginToastDisabled": "「{name}」已停用",
   "pluginToastReloaded": "「{name}」已重載",
-  "pluginToastTrustedOn": "「{name}」已全部授權",
-  "pluginToastTrustedOff": "「{name}」已恢復依宣告授權",
   "pluginPermEnforcedHint": "外掛只能呼叫已宣告的能力，未宣告的呼叫會被拒絕。",
-  "pluginTrustHint": "跳過該外掛的所有能力檢查（開發者選項）",
   "pluginsDevMode": "開發者模式",
   "pluginsDevModeHint": "顯示重載、全部授權等開發者選項；「全部授權」僅在此開啟時生效。",
   "pluginsDevModeOn": "開發者模式已開啟",
@@ -307,5 +304,8 @@
   "permFsWrite": "寫入檔案",
   "permFsWriteDesc": "寫入任意路徑（≤10 MiB）",
   "permTrash": "資源回收筒",
-  "permTrashDesc": "將檔案移至資源回收筒"
+  "permTrashDesc": "將檔案移至資源回收筒",
+  "pluginsTrustAllHint": "對所有磁碟外掛跳過能力檢查（開發逃生門，需開啟開發者模式）",
+  "pluginsTrustAllOn": "已全部授權",
+  "pluginsTrustAllOff": "已恢復依宣告授權"
 }

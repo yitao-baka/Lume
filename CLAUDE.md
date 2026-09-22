@@ -184,16 +184,18 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**插件系统全局开发者模式（complete) — as of 2026-09-22**: 设置 → 插件
-工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，新命令
-`set_plugin_dev_mode` 轻量写即时生效）。关闭时**插件页隐藏全部开发者选项**
-（重载按钮 / 「开发」徽章 / 权限区的「全部授权」行），且 **trusted 门控在
-`get_plugins`**（`plugins.rs`：dev_mode 关时以空表调 `list_plugins`）——
-所有插件上报 `trusted=false`，残留的 `settings.plugins.trusted` 列表授予
-不了任何能力，前端权限层 fail-closed 到声明能力（`permissions.ts` 零改动）。
-不变量：**「全部授权」的生效必须同时满足 trusted 列表命中 + dev_mode 开**
-—— 后续若给插件清单加新的上报路径，必须复用 `get_plugins` 的同一门控，
-不能绕过。测试 `plugin_dev_mode_defaults_off_and_round_trips`；文档
+**插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
+工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，`set_plugin_dev_mode`
+轻量写即时生效）。关闭时**插件页隐藏全部开发者选项**（重载按钮 / 「开发」徽章），
+且 **trusted 门控在 `get_plugins`**——所有插件上报 `trusted=false`，权限层
+fail-closed 到声明能力（`permissions.ts` 零改动）。用户反馈后**逐插件「全部授权」
+行已删除**（含 `.plg-trust` 样式与 `pluginTrustHint` 等键）：改为工具栏里的**全局
+「全部授权」**（`plugins.trust_all`，`set_plugin_trust_all`，橙色警示文案，仅
+dev_mode 开时显示；`list_plugins` 新增 `trust_all` 参数把全部磁盘插件上报
+trusted）。不变量：**任何逃生门生效必须 dev_mode 开**（`get_plugins` 是唯一
+上报路径，绕过 = 权限层失守）；旧 `trusted` 列表仍被尊重但设置页不再写入
+（`set_plugin_trusted` 命令保留）。测试 `plugin_dev_mode_defaults_off_and_
+round_trips` / `plugin_trust_all_defaults_off_and_round_trips`；文档
 PLUGIN_API §6F.4 / SETTINGS §8 同步。
 
 **Prior: 设置 → 插件页重设计（卡片式插件管理器, complete) — as of 2026-09-22**:

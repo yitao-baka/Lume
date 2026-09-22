@@ -1878,6 +1878,11 @@ body.settings-window #root {
   cursor: default;
 }
 
+/* The global 全部授权 label reads as a warning-level control. */
+.settings-sub-label.warn {
+  color: #ffb020;
+}
+
 .plg-list {
   display: flex;
   flex-direction: column;

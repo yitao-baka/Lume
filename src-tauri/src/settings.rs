@@ -52,10 +52,16 @@ pub struct Plugins {
     #[serde(default)]
     pub trusted: Vec<String>,
     /// Global plugin developer mode. Off (the default) hides the developer
-    /// options in 设置 → 插件 (重载 / 全部授权 / 开发 badge) and gates the
-    /// `trusted` list (see above); on, they show and take effect.
+    /// options in 设置 → 插件 (重载 / 开发 badge) and gates BOTH escape
+    /// hatches below; on, they show and take effect.
     #[serde(default)]
     pub dev_mode: bool,
+    /// **Trust every disk plugin** — a single global switch (effective only
+    /// while `dev_mode` is on) replacing the old per-plugin trusted toggles.
+    /// The per-plugin `trusted` list is still honored, but the settings pane
+    /// only ever writes this flag.
+    #[serde(default)]
+    pub trust_all: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -455,6 +461,7 @@ impl Default for Settings {
                 disabled: Vec::new(),
                 trusted: Vec::new(),
                 dev_mode: false,
+                trust_all: false,
             },
             automation: Automation {
                 enabled: true,
@@ -832,6 +839,26 @@ pub fn set_plugin_dev_mode(
     Ok(())
 }
 
+/// Global 全部授权 — trust **every** disk plugin regardless of what its
+/// manifest declares. Only effective while `plugins.dev_mode` is on (the
+/// `get_plugins` gate); the settings pane shows the switch under the same
+/// developer-options gate. Light write like `set_plugin_dev_mode`.
+#[tauri::command]
+pub fn set_plugin_trust_all(
+    enabled: bool,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.trust_all = enabled;
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -847,6 +874,20 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// Global 全部授权 defaults to off and round-trips through a light
+    /// write (its *effectiveness* is gated by dev_mode in `get_plugins`).
+    #[test]
+    fn plugin_trust_all_defaults_off_and_round_trips() {
+        let base = temp_base("trust-all");
+        ensure_settings_files(&base).unwrap();
+        assert!(!read_settings(&base).plugins.trust_all, "default off");
+        let mut next = read_settings(&base);
+        next.plugins.trust_all = true;
+        write_settings_light(&base, &next).unwrap();
+        assert!(read_settings(&base).plugins.trust_all);
+        fs::remove_dir_all(&base).ok();
     }
 
     /// Plugin developer mode defaults to off (both when the whole

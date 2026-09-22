@@ -83,22 +83,31 @@ check("toolbar: summary + 4 filter chips + filter input + dev-mode switch",
   toolbar.summary.includes("插件") && toolbar.chips.length === 4 && toolbar.filterInput
   && toolbar.devToggle.includes("开发者模式"), JSON.stringify(toolbar));
 
-// Developer mode OFF (default): no reload buttons, no 开发 badge, no 全部授权
+// Developer mode OFF (deterministic: click only if currently on) — no reload
+// buttons, no 开发 badge, no global trust-all
+const setDevMode = async (on) => {
+  await s.evalJs(`(() => {
+    const t = document.querySelector('.plg-devmode .settings-toggle');
+    if (t && t.classList.contains("on") !== ${on}) t.click();
+    return "ok";
+  })()`);
+  await sleep(800);
+};
+await setDevMode(false);
 const devOff = await s.evalJs(`({
   reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
   badges: Array.from(document.querySelectorAll('.plg-badge')).map((b) => b.textContent.trim()).filter((t) => t === "开发"),
-  trust: document.querySelectorAll('.plg-card .plg-trust').length,
+  trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
 })`);
-check("dev mode off hides developer options", devOff.reloads === 0 && devOff.badges.length === 0 && devOff.trust === 0, JSON.stringify(devOff));
+check("dev mode off hides developer options", devOff.reloads === 0 && devOff.badges.length === 0 && devOff.trustAllLabel === 0, JSON.stringify(devOff));
 
-// Turn developer mode ON → developer options appear (restored at the end)
-await s.evalJs(`document.querySelector('.plg-devmode .settings-toggle')?.click(); "ok"`);
-await sleep(800);
+// Turn developer mode ON deterministically → developer options appear
+await setDevMode(true);
 const devOnState = await s.evalJs(`({
   reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
-  trust: document.querySelectorAll('.plg-card .plg-trust').length,
+  trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
 })`);
-check("dev mode on shows reload options", devOnState.reloads > 0, JSON.stringify(devOnState));
+check("dev mode on shows reload + global trust-all", devOnState.reloads > 0 && devOnState.trustAllLabel === 1, JSON.stringify(devOnState));
 
 const cards = await s.evalJs(`Array.from(document.querySelectorAll('.plg-card')).map((c) => ({
   name: c.querySelector('.plg-name')?.textContent,
@@ -121,11 +130,11 @@ const detail = await s.evalJs(`({
   name: document.querySelector('.plg-card.open .plg-name')?.textContent ?? "",
   sections: Array.from(document.querySelectorAll('.plg-card.open .plg-dsec .plg-dlabel, .plg-card.open .plg-dsec .plg-dsec')).map((n) => n.textContent?.trim()).filter(Boolean),
   permChips: Array.from(document.querySelectorAll('.plg-card.open .plg-perm-chip')).map((c) => c.textContent.trim()),
-  trust: !!document.querySelector('.plg-card.open .plg-trust'),
+  perPluginTrust: document.querySelectorAll('.plg-card .plg-trust').length,
   meta: Array.from(document.querySelectorAll('.plg-card.open .plg-kv')).map((n) => n.textContent.trim()),
 })`);
-check("detail panel opens with permissions + trust + meta",
-  detail.open && detail.permChips.length > 0 && detail.trust && detail.meta.length >= 1, JSON.stringify(detail));
+check("detail panel opens with permissions + meta, no per-plugin trust row",
+  detail.open && detail.permChips.length > 0 && detail.perPluginTrust === 0 && detail.meta.length >= 1, JSON.stringify(detail));
 await s.shot("test/plg_dark_list.png");
 
 // Keyword filter narrows the list
@@ -178,16 +187,15 @@ await s.evalJs(`(() => {
 await sleep(700);
 await s.shot("test/plg_light_detail.png");
 
-// Restore developer mode OFF (the factory default) before exiting
+// Restore the factory defaults deterministically: developer mode OFF
 await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).find((b) => b.textContent.includes("插件"))?.click(); "ok"`);
 await sleep(400);
-await s.evalJs(`document.querySelector('.plg-devmode .settings-toggle')?.click(); "ok"`);
-await sleep(800);
+await setDevMode(false);
 const devRestored = await s.evalJs(`({
   reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
-  trust: document.querySelectorAll('.plg-card .plg-trust').length,
+  trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
 })`);
-check("dev mode restored to off", devRestored.reloads === 0 && devRestored.trust === 0, JSON.stringify(devRestored));
+check("dev mode restored to off", devRestored.reloads === 0 && devRestored.trustAllLabel === 0, JSON.stringify(devRestored));
 
 console.log(failures === 0 ? "ALL PASS" : `${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

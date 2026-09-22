@@ -282,10 +282,7 @@
   "pluginToastEnabled": "「{name}」已启用",
   "pluginToastDisabled": "「{name}」已停用",
   "pluginToastReloaded": "「{name}」已重载",
-  "pluginToastTrustedOn": "「{name}」已全部授权",
-  "pluginToastTrustedOff": "「{name}」已恢复按声明授权",
   "pluginPermEnforcedHint": "插件只能调用已声明的能力，未声明的调用会被拒绝。",
-  "pluginTrustHint": "跳过该插件的所有能力检查（开发者选项）",
   "pluginsDevMode": "开发者模式",
   "pluginsDevModeHint": "显示重载、全部授权等开发者选项；「全部授权」仅在此开启时生效。",
   "pluginsDevModeOn": "开发者模式已开启",
@@ -307,5 +304,8 @@
   "permFsWrite": "写入文件",
   "permFsWriteDesc": "写入任意路径（≤10 MiB）",
   "permTrash": "回收站",
-  "permTrashDesc": "将文件移入回收站"
+  "permTrashDesc": "将文件移入回收站",
+  "pluginsTrustAllHint": "对所有磁盘插件跳过能力检查（开发逃生门，需开启开发者模式）",
+  "pluginsTrustAllOn": "已全部授权",
+  "pluginsTrustAllOff": "已恢复按声明授权"
 }

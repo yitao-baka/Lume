@@ -11,6 +11,8 @@ import type { ModeInstance } from "../plugins/types";
 export interface KeyDeps {
   mode: () => Mode;
   appsQuery: () => string;
+  /** P2.2: true while drop/img rows replace the bars on an empty query. */
+  forceGrid?: () => boolean;
   /** Key that switches modes (settings → 快捷键). */
   switchKey: () => string;
   /** All enabled mode ids in cycle order (apps first, then plugin modes). */
@@ -82,7 +84,9 @@ export function createKeyRouter(deps: KeyDeps) {
       const idx = modes.indexOf(deps.mode());
       void deps.switchMode(modes[(Math.max(idx, 0) + 1) % modes.length]);
     } else if (deps.mode() === "apps") {
-      const empty = deps.appsQuery() === "";
+      // P2.2: a file drop / clipboard-image row set replaces the bars even on
+      // an empty query — the grid keys (and selection) apply.
+      const empty = deps.appsQuery() === "" && !deps.forceGrid?.();
       // ── search results grid (non-empty query) ──
       // Grid navigation always wins when there is a query, regardless of
       // `zone` — the zone signal belongs to the bar view and may carry a

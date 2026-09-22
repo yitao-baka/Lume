@@ -260,5 +260,7 @@
   "pluginPermissions": "权限",
   "pluginTrustAll": "全部授权",
   "pluginSettings": "设置项",
-  "pluginNoPermissions": "未声明任何能力"
+  "pluginNoPermissions": "未声明任何能力",
+  "pluginFeatureFiles": "{label}（{count} 个文件）",
+  "pluginListEmpty": "暂无条目 —— 插件返回了空列表"
 }

@@ -2,6 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show, For } from "solid
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { Dynamic } from "solid-js/web";
 import { resolveLocale, setLocale, t, type Messages } from "./i18n";
@@ -23,6 +24,7 @@ import {
   TOAST_UNDO_MS,
 } from "./launcher/types";
 import type { ProviderInstance, ProviderResult } from "./plugins/types";
+import type { FeatureMatch } from "./plugins/registry";
 import { createIconStore } from "./launcher/icons";
 import { createWindowSizer } from "./launcher/sizing";
 import { createNavigateStore, type ContributedBar } from "./launcher/navigate";
@@ -36,6 +38,8 @@ import {
   deliverFeature,
   deliverSubInput,
   featureMatches,
+  fileFeatureMatches,
+  imgFeatureMatches,
   modeById,
   modeKeywordMatches,
   modePlugins,
@@ -139,6 +143,10 @@ function App() {
   };
   const [apps, setApps] = createSignal<AppEntry[]>([]);
   const [selected, setSelected] = createSignal(0);
+  // P2.2 — plugin entry rows for OS file drops (paths arrive via the Tauri
+  // drag-drop handler) and for the clipboard image. Cleared on hide/summon.
+  const [droppedFiles, setDroppedFiles] = createSignal<string[]>([]);
+  const [clipboardImgOk, setClipboardImgOk] = createSignal(false);
   const [menu, setMenu] = createSignal<MenuState>(null);
 
   // ── Shared launcher state ──
@@ -327,6 +335,10 @@ function App() {
         // Switch first (the mode's page must exist), then deliver the payload.
         void switchMode(pluginId).then(() => {
           deliverFeature(pluginId, info);
+          // The payload may have changed the mode's row source (e.g. a list
+          // template's quick-add); re-run its search so rows reflect it.
+          const inst = modeById(pluginId);
+          if (inst) void runSearch(inst.query());
         });
         return true;
       }
@@ -359,6 +371,7 @@ function App() {
   const router = createKeyRouter({
     mode,
     appsQuery,
+    forceGrid: () => droppedFiles().length > 0 || (clipboardImgOk() && imgFeatureMatches().length > 0),
     modeIds: () => [APPS_MODE, ...modePlugins().map((m) => m.id)],
     switchKey,
     shiftEnterAdmin,
@@ -408,6 +421,8 @@ function App() {
     // Lifecycle: the active mode + disk services learn about the hide first.
     activeMode()?.onHide?.();
     for (const p of allPlugins()) p.lifecycle?.onHide?.();
+    setDroppedFiles([]); // P2.2 rows are one-shot: gone after the hide
+    setClipboardImgOk(false);
     clearSearch();
     await invoke("hide_launcher");
   }
@@ -439,6 +454,29 @@ function App() {
             },
           }
         : {}),
+    };
+  }
+
+  /** P2.2 files/img feature rows → grid entries. The name composes the
+   * manifest label with the file count (files only); the payload keeps the
+   * matched paths for the plugin. */
+  function featureRowToEntry(f: FeatureMatch): AppEntry {
+    const name =
+      f.type === "files"
+        ? t("pluginFeatureFiles", { label: f.label, count: String(f.paths?.length ?? 0) })
+        : f.label;
+    return {
+      id: -1,
+      name,
+      path: `lume-feature://${f.pluginId}/${f.code}`,
+      ...(f.icon ? { icon: f.icon } : {}),
+      featureEnter: {
+        pluginId: f.pluginId,
+        code: f.code,
+        type: f.type,
+        payload: f.payload,
+        ...(f.paths ? { paths: f.paths } : {}),
+      },
     };
   }
 
@@ -478,9 +516,38 @@ function App() {
     const id = ++requestSeq;
     if (mode() === "apps") {
       if (q.trim() === "") {
-        // Empty query shows the two bars (最近使用 / 已固定), not a browse grid.
-        setApps([]);
-        sizer.scheduleResize();
+        // Empty query shows the two bars (最近使用 / 已固定), not a browse grid —
+        // unless P2.2 plugin rows are on offer: a fresh file drop and/or the
+        // clipboard holding an image with an img feature declared. Then the
+        // grid shows exactly those rows (uTools-style drop menu; NavigateView
+        // and the key router both leave the bar zone while forceGrid is true).
+        const rebuildEmpty = (feats: FeatureMatch[]) => {
+          setApps(feats.map(featureRowToEntry));
+          sizer.scheduleResize();
+        };
+        const feats = [
+          ...fileFeatureMatches(droppedFiles()),
+          ...(clipboardImgOk() ? imgFeatureMatches() : []),
+        ];
+        rebuildEmpty(feats);
+        if (imgFeatureMatches().length > 0) {
+          // One cheap probe per empty render (OpenClipboard + format check) —
+          // a screenshot taken while the menu is up makes the row appear, and
+          // the clipboard changing back to text drops it. Stale-guarded by
+          // the request token.
+          void invoke<boolean>("plugin_clipboard_has_image")
+            .then((ok) => {
+              if (id !== requestSeq) return;
+              setClipboardImgOk(!!ok);
+              // Rebuild either way: the probe may have ADDED the row (image
+              // appeared) or must DROP a stale one (clipboard changed back).
+              rebuildEmpty([
+                ...fileFeatureMatches(droppedFiles()),
+                ...(ok ? imgFeatureMatches() : []),
+              ]);
+            })
+            .catch(() => {});
+        }
         return;
       }
       // Native index and the unified file-search backend race in parallel;
@@ -512,6 +579,10 @@ function App() {
             ...(f.icon ? { icon: f.icon } : {}),
             featureEnter: { pluginId: f.pluginId, code: f.code, type: f.type, payload: f.payload },
           });
+        }
+        // P2.2: a file dropped while a query is up also offers its rows.
+        for (const f of fileFeatureMatches(droppedFiles())) {
+          extra.push(featureRowToEntry(f));
         }
         for (const f of files?.entries ?? []) {
           if (res.length + extra.length >= 20) break;
@@ -699,10 +770,12 @@ function App() {
       // 声明式进入行（features/P2.1）：把查询作为 payload 投递给插件。
       // mode 目标先切页再 onEnter；provider/service 直接 onFeature。
       if (item.featureEnter) {
-        const ok = services.enterPlugin(item.featureEnter.pluginId, {
-          code: item.featureEnter.code,
-          type: item.featureEnter.type,
-          payload: item.featureEnter.payload,
+        const fe = item.featureEnter;
+        const ok = services.enterPlugin(fe.pluginId, {
+          code: fe.code,
+          type: fe.type,
+          payload: fe.payload,
+          ...(fe.paths ? { paths: fe.paths } : {}),
         });
         if (!ok) showToast(t("pluginActionUnavailable", { id: item.featureEnter.pluginId }));
         return;
@@ -863,6 +936,23 @@ function App() {
     });
     onCleanup(() => unlistenPluginSettings());
 
+    // OS file drop (P2.2): the Tauri drag-drop handler (enabled on this
+    // window only) delivers real paths — WebView2's HTML5 drop never exposes
+    // them. A drop while Navigate is open offers matching plugin rows (files
+    // features); the list clears on the next hide/summon. Mode pages are not
+    // drop targets (their iframes see no DOM drop either — the handler owns
+    // the OLE drop target).
+    const unlistenDrag = await getCurrentWebview().onDragDropEvent((ev) => {
+      if (ev.payload.type !== "drop") return;
+      const paths = ev.payload.paths ?? [];
+      if (paths.length === 0) return;
+      setDroppedFiles(paths);
+      setClipboardImgOk(false);
+      if (mode() !== APPS_MODE) return;
+      void runSearch(appsQuery());
+    });
+    onCleanup(() => unlistenDrag());
+
     // The launcher stays hidden between toggles. On every fresh show (hotkey /
     // tray toggle) reset to the Navigate main menu, re-focus the input, and
     // repopulate the grid. This listens to the Rust `launcher-shown` event, not
@@ -871,6 +961,8 @@ function App() {
     // reset there would wipe the current mode/search mid-drag.
     const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
       for (const p of allPlugins()) p.lifecycle?.onShow?.();
+      setDroppedFiles([]); // a fresh summon starts a clean main menu (P2.2)
+      setClipboardImgOk(false);
       clearSearch();
       await Promise.all([nav.refreshRecent(), nav.refreshPins()]);
       await refreshPluginBars();
@@ -1008,6 +1100,7 @@ function App() {
             markMouse={markMouse}
             openMenu={setMenu}
             setSelected={setSelected}
+            forceGrid={() => droppedFiles().length > 0 || (clipboardImgOk() && imgFeatureMatches().length > 0)}
           />
         ) : (
           <Dynamic component={activeMode()?.View} />

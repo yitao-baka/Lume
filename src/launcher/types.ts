@@ -29,12 +29,14 @@ export interface AppEntry {
    * so the search box keeps feeding the drilled level. */
   providerDrill?: { pluginId: string; item: unknown; filterable: boolean };
   /** Set on declarative-entry rows (`[[features]]` / redirect): activation
-   * enters the plugin with this payload (P2.1). */
+   * enters the plugin with this payload (P2.1). `files`/`img` rows (P2.2)
+   * carry the dropped paths in `paths`. */
   featureEnter?: {
     pluginId: string;
     code: string;
-    type: "regex" | "over" | "redirect";
+    type: "regex" | "over" | "redirect" | "files" | "img";
     payload: string;
+    paths?: string[];
   };
 }
 

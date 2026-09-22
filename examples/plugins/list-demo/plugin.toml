@@ -1,0 +1,27 @@
+# List Demo — P2.5b 示例（template = "list"，免 view.html 的轻插件形态）。
+#
+# 覆盖：
+#   kind = "mode" + template = "list" + entry —— 清单里没有 view；
+#   宿主把 main.js 装进启动器窗口（与 provider 同一信任模型），用内置列表
+#   组件渲染 search(q) 的行；↑/↓/Enter 走共享键盘导航，点击行调用 onEnter。
+#
+# 安装：把整个 list-demo/ 目录拷进 <base>/plugins/，重启 Lume（或触发一次
+# 设置变更）。用法：关键字「清单」/「list」进入，输入过滤；↑/↓ 选择，
+# Enter 激活（本例：复制名字到剪贴板）。
+id = "list-demo"
+name = "清单 (List Demo)"
+version = "1.0.0"
+kind = "mode"
+description = "P2.5b 示例：template = \"list\" —— 零 HTML 的列表模式插件"
+entry = "main.js"
+keywords = ["清单", "list"]
+permissions = ["clipboard"]
+
+# template = "list"（P2.5b）：宿主内置列表渲染 main.js 的 search(q) 行。
+template = "list"
+
+# 声明式进入（P2.1）也能用：输入「买 …」直接带着 payload 进入本模式。
+[[features]]
+code = "quick-add"
+label = "清单：快速添加一条"
+regex = "^买 .{1,20}$"

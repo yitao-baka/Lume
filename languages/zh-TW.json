@@ -260,5 +260,7 @@
   "pluginPermissions": "權限",
   "pluginTrustAll": "全部授權",
   "pluginSettings": "設定項",
-  "pluginNoPermissions": "未宣告任何能力"
+  "pluginNoPermissions": "未宣告任何能力",
+  "pluginFeatureFiles": "{label}（{count} 個檔案）",
+  "pluginListEmpty": "暫無條目 —— 外掛傳回了空清單"
 }

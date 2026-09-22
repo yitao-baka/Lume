@@ -616,6 +616,57 @@ body,
   color: var(--text-faint);
 }
 
+/* Built-in plugin list template (P2.5b, manifest template = "list"): a flat
+   row list under the search box — icon + name + description, one selection. */
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px 10px;
+  overflow-y: auto;
+}
+
+.plugin-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.plugin-list-row:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.plugin-list-selected,
+.plugin-list-row.plugin-list-selected {
+  background: rgba(128, 128, 128, 0.22);
+}
+
+.plugin-list-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  filter: var(--icon-filter);
+}
+
+.plugin-list-name {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.plugin-list-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 /* Bottom toast (150ms ease-out), centered in the window. */
 .toast {
   position: fixed;
@@ -784,6 +835,12 @@ body,
 /* Drag-and-drop reorder: the item being dragged gets a dimmed placeholder. */
 .result-box.result-dragging {
   opacity: 0.25;
+}
+
+/* Pointer-reorder in progress: no accidental text selection while dragging. */
+body.reorder-dragging {
+  user-select: none;
+  cursor: grabbing;
 }
 
 /* Insertion point marker — a white left border on the item that the dragged

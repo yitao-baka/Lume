@@ -82,6 +82,7 @@ export const BRIDGE_SCRIPT = `
       writeImage: function (data) { return call("clipboard.writeImage", { data: data }); },
       writeFiles: function (paths) { return call("clipboard.writeFiles", { paths: paths }); },
       readFiles: function () { return call("clipboard.readFiles"); },
+      readImage: function () { return call("clipboard.readImage"); },
       paste: function (payload) {
         return call("clipboard.paste", {
           text: payload && payload.text,

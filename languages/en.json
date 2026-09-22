@@ -260,5 +260,7 @@
   "pluginPermissions": "Permissions",
   "pluginTrustAll": "Trust all",
   "pluginSettings": "Settings",
-  "pluginNoPermissions": "no capabilities declared"
+  "pluginNoPermissions": "no capabilities declared",
+  "pluginFeatureFiles": "{label} ({count} file(s))",
+  "pluginListEmpty": "No items — the plugin returned an empty list"
 }

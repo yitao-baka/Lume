@@ -184,7 +184,41 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**插件系统 P3 数据层 · 权限强制层 · 私有文件 · 声明式设置（complete) —
+**插件系统 P2 余项 · 文件拖入 / 剪贴板图片进入 / 内置列表模板（complete) —
+as of 2026-09-22**: 差距分析 P2.2 / P2.5b（`docs/PLUGIN_GAP_ANALYSIS.md`），
+ROADMAP #27、API 文档 `docs/PLUGIN_API.md` §6E.1.1 / §6E.5，示例
+`examples/plugins/files-img-demo/`、`examples/plugins/list-demo/`。三条**新
+不变量**：
+
+1. **主窗口的 Tauri drag-drop handler 现在是启用的**（`lib.rs`；此前因磁贴
+   重排禁用）。原因：WebView2 的 HTML5 drop 拿不到真实路径，只有 wry 的 OLE
+   drop target 能给出 `paths` —— 这是 `type = "files"` 的数据来源。**代价**：
+   handler 吞掉非文件 HTML5 拖拽，所以**磁贴重排必须是 pointer events 版**
+   （`navigate.ts`：按下 → 6px 阈值 → 行列插入点；拖后吞一次 click；改回
+   HTML5 DnD = 重排失灵 + 拖拽行失效）。settings/preview 窗口保持禁用。
+   `fileType` 分类与文件夹匹配明确未做（见 §6E.1.1 未支持项）。
+2. **剪贴板 probe 与 reader 必须同链**：`plugin_clipboard_has_image` 的格式
+   判定（CF_DIB / CF_BITMAP / 名称含 png 的自定义格式、HDROP 优先排除）与
+   `plugin_clipboard_read_image` 的采集链（arboard → 自定义 PNG → CF_BITMAP）
+   是同一份逻辑的镜像 —— 改一边必须改另一边，否则空查询菜单的 img 行会与
+   `clipboard.readImage()` 的结果矛盾。`clipboard.readImage` 是新宿主能力，
+   权限 `clipboard`（`RPC_PERMISSION` 两处登记）。
+3. **`template = "list"` 的 mode 免 `view`**（`registry.ts` 专属分支 +
+   `listTemplate.tsx`）：`entry` 逻辑跑在启动器窗口（provider 信任模型），
+   内置列表渲染 `search(q)` 行；**声明式 feature 投递后宿主重跑一次该模式的
+   搜索**（`enterPlugin` mode 分支）—— 改行源的钩子（quick-add）必须靠它
+   反映到列表。`ModeInstance.rows()` 与 `ClipboardItem` 的类型耦合依旧
+   （cast + 注释），泛化仍留待后续。
+
+**验证**：cargo test **169**、tsc/vite build/cargo build 干净、
+`scripts/cdp_p2b_verify.mjs` **17 项全过**（img 行出现/消失/readImage 真读、
+拖入 3 文件出行 2 个命中文本 + fs.readText 真读、hide/summon 清空、list-demo
+内置列表渲染 + quick-add + 指针重排持久化）、P0/P1/P2/P3 回归 **8/14/21/45
+全过**；截图 `test/p2b_files.png`、`test/p2b_list.png`。**边界**：自动化不能
+合成真实 OS 拖拽 —— `tauri://drag-drop` 用 `plugin:event|emit_to` 投回同一
+事件验证逻辑链，OLE 真实路径链路只有手工步骤（`docs/TESTING.md`）。
+
+**Prior: 插件系统 P3 数据层 · 权限强制层 · 私有文件 · 声明式设置（complete) —
 as of 2026-09-21**: 差距分析（`docs/PLUGIN_GAP_ANALYSIS.md`）第四阶段，
 ROADMAP #26、API 文档 `docs/PLUGIN_API.md` §6F、示例 `examples/plugins/notes/`。
 四条**新不变量**，后续改动必须守住：

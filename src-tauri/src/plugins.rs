@@ -45,6 +45,16 @@ pub struct PluginFeature {
     /// Unique code inside the plugin; delivered on enter (payload `code`).
     #[serde(default)]
     pub code: String,
+    /// `text` (default) | `files` | `img` (P2.2). A `text` rule matches query
+    /// text (`regex`/`over`); a `files` rule matches OS drag-dropped files by
+    /// `extensions` (payload `paths`); an `img` rule matches the clipboard
+    /// holding an image (the plugin reads it via `clipboard.readImage()`).
+    #[serde(default = "default_feature_type", rename = "type")]
+    pub feature_type: String,
+    /// `files` rules: accepted extensions (case-insensitive, no leading dot;
+    /// empty = any file). JSON spelling is the same word.
+    #[serde(default)]
+    pub extensions: Vec<String>,
     /// Row label. Empty → the plugin name is used.
     #[serde(default)]
     pub label: String,
@@ -54,7 +64,8 @@ pub struct PluginFeature {
     /// Match any non-empty text (used when `regex` is empty).
     #[serde(default)]
     pub over: bool,
-    /// Optional query-length bounds (chars).
+    /// Optional query-length bounds (chars). For `files` rules: file-count
+    /// bounds instead.
     #[serde(default, rename(serialize = "minLength", deserialize = "min_length"))]
     pub min_length: Option<usize>,
     #[serde(default, rename(serialize = "maxLength", deserialize = "max_length"))]
@@ -99,6 +110,10 @@ pub struct PluginSetting {
 }
 
 fn default_setting_type() -> String {
+    "text".into()
+}
+
+fn default_feature_type() -> String {
     "text".into()
 }
 
@@ -163,6 +178,11 @@ pub struct PluginManifest {
     /// rendered in a sandboxed iframe inside the launcher page).
     #[serde(default)]
     pub view: String,
+    /// Mode plugins: `template = "list"` declares the built-in list template —
+    /// the plugin ships only `entry` logic and the host renders its rows in
+    /// the standard list component (`view` is not needed).
+    #[serde(default)]
+    pub template: String,
     /// Global keywords (uTools-style): typing one in Navigate search offers
     /// an 「进入 <name>」 row that opens the mode.
     #[serde(default)]
@@ -217,6 +237,8 @@ pub struct PluginInfo {
     pub entry: String,
     /// View HTML file (disk mode plugins).
     pub view: String,
+    /// Mode plugins: `"list"` = built-in list template (no `view` needed).
+    pub template: String,
     /// Global keywords (mode plugins).
     pub keywords: Vec<String>,
     /// Mode-declared preferred window height (logical px; None = global).
@@ -380,6 +402,7 @@ pub fn list_plugins(base: &Path, disabled: &[String], trusted: &[String]) -> Vec
             enabled: enabled(id),
             entry: String::new(),
             view: String::new(),
+            template: String::new(),
             keywords: Vec::new(),
             height: None,
             icon: String::new(),
@@ -419,6 +442,7 @@ pub fn list_plugins(base: &Path, disabled: &[String], trusted: &[String]) -> Vec
             enabled: enabled(&m.id),
             entry: resolve_entry(&dir, &m.entry),
             view: m.view,
+            template: m.template,
             keywords: m.keywords,
             height: m.height,
             icon: m.icon,
@@ -720,5 +744,36 @@ height = 560
         assert_eq!(demo.features[0].code, "hi");
         assert!(all.iter().find(|p| p.id == "clipboard").unwrap().features.is_empty());
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn files_img_features_and_list_template_parse() {
+        let m: PluginManifest = parse_manifest(
+            "id = \"demo\"\ntemplate = \"list\"\n\
+             [[features]]\n\
+             code = \"docs\"\n\
+             type = \"files\"\n\
+             label = \"处理文件\"\n\
+             extensions = [\"md\", \"txt\"]\n\
+             min_length = 1\n\
+             \n\
+             [[features]]\n\
+             code = \"shot\"\n\
+             type = \"img\"\n\
+             label = \"处理剪贴板图片\"\n",
+        )
+        .unwrap();
+        assert_eq!(m.template, "list");
+        assert_eq!(m.features[0].feature_type, "files");
+        assert_eq!(m.features[0].extensions, vec!["md", "txt"]);
+        assert_eq!(m.features[1].feature_type, "img");
+        // A feature without `type` is a text rule (unchanged P2.1 behaviour).
+        let plain: PluginManifest =
+            parse_manifest("id = \"d\"\n[[features]]\ncode = \"x\"\nover = true\n").unwrap();
+        assert_eq!(plain.features[0].feature_type, "text");
+        // The frontend sees the same-word `extensions` plus `type`.
+        let json = serde_json::to_string(&m.features[0]).unwrap();
+        assert!(json.contains("\"type\":\"files\""), "{json}");
+        assert!(json.contains("\"extensions\":[\"md\",\"txt\"]"), "{json}");
     }
 }

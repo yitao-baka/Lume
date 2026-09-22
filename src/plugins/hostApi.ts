@@ -156,6 +156,10 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         await invoke("plugin_clipboard_write_files", { paths });
       },
       readFiles: () => invoke<string[]>("plugin_clipboard_read_files"),
+      readImage: () => {
+        plog.debug(id, "clipboard.readImage");
+        return invoke<string | null>("plugin_clipboard_read_image");
+      },
       paste: async (payload) => {
         plog.debug(id, "clipboard.paste:", Object.keys(payload ?? {}).join("/"));
         await invoke("plugin_clipboard_paste", {

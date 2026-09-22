@@ -23,6 +23,9 @@ export interface NavigateViewProps {
   markMouse: () => void;
   openMenu: (m: MenuState) => void;
   setSelected: (i: number) => void;
+  /** P2.2: render the grid even on an empty query (file-drop / clipboard-
+   * image plugin rows replace the bars until the next hide/summon). */
+  forceGrid?: () => boolean;
 }
 
 /** A single box in a bar or the results grid, with icon resolution: an
@@ -40,8 +43,8 @@ function itemBox(
     onActivate: () => void;
     onSelect: () => void;
     onContext: (e: MouseEvent) => void;
-    draggable?: boolean;
-    onDragStart?: (e: DragEvent) => void;
+    /** Pinned-bar pointer reorder: called on left-button pointerdown. */
+    onDragPress?: (e: PointerEvent) => void;
   }
 ) {
   const src = () => item.icon ?? props.iconFor(item.path);
@@ -51,14 +54,13 @@ function itemBox(
       classList={{ "result-selected": selected(), "folder-box": opts.wrap }}
       role="option"
       aria-selected={selected()}
-      draggable={handlers.draggable ?? false}
       onMouseMove={handlers.onSelect}
       onClick={handlers.onActivate}
       onContextMenu={(e) => {
         e.preventDefault();
         handlers.onContext(e);
       }}
-      onDragStart={handlers.onDragStart}
+      onPointerDown={handlers.onDragPress}
     >
       <span class="result-box-tile result-box-icon">
         <Show
@@ -130,28 +132,14 @@ function SectionView(props: NavigateViewProps, section: NavSection) {
                   section.setSelected(i());
                 },
                 onContext: (e) => section.onContext(e, i()),
-                draggable: section.draggable,
-                onDragStart: section.draggable
-                  ? (e) => {
-                      section.onDragStart?.(i());
-                      // The drag image: a dimmed clone parked off-screen.
-                      const src = e.currentTarget as HTMLElement;
-                      src.classList.add("result-dragging");
-                      if (e.dataTransfer) {
-                        e.dataTransfer.setData("text/plain", "");
-                        e.dataTransfer.effectAllowed = "move";
-                        const clone = src.cloneNode(true) as HTMLElement;
-                        clone.style.opacity = "0.6";
-                        clone.style.position = "absolute";
-                        clone.style.top = "-9999px";
-                        clone.style.pointerEvents = "none";
-                        document.body.appendChild(clone);
-                        const rect = src.getBoundingClientRect();
-                        e.dataTransfer.setDragImage(clone, rect.width / 2, rect.height / 2);
-                        setTimeout(() => clone.remove(), 0);
+                onDragPress:
+                  section.draggable && section.onDragStart
+                    ? (e) => {
+                        // Left button only; right/middle stay context/aux-click.
+                        if (e.button !== 0) return;
+                        section.onDragStart!(i(), e);
                       }
-                    }
-                  : undefined,
+                    : undefined,
               }
             )
           }
@@ -166,7 +154,7 @@ export function NavigateView(props: NavigateViewProps) {
 
   return (
     <Show
-      when={props.appsQuery() === ""}
+      when={props.appsQuery() === "" && !props.forceGrid?.()}
       fallback={
         <Show when={props.apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
           <div class="result-grid" role="grid">

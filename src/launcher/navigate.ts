@@ -70,10 +70,12 @@ export interface NavSection {
   onContext(e: MouseEvent, idx: number): void;
   /** Delete-key soft delete (recent only — absent = key ignored). */
   onDelete?(idx: number): void;
-  /** Native drag-reorder (pinned only). The view draws the drag image and
-   * calls `onDragStart`; the document-level listeners commit via `onReorder`. */
+  /** Pointer-driven drag-reorder (pinned only). `onDragStart` records the
+   * pending drag on pointerdown; the document-level pointer listeners commit
+   * via `onReorder`. (HTML5 drag-and-drop is unavailable in-page: the Tauri
+   * drag-drop handler owns the OLE drop target for file drops.) */
   draggable?: boolean;
-  onDragStart?(idx: number): void;
+  onDragStart?(idx: number, e: PointerEvent): void;
   onReorder?(fromIndex: number, overIndex: number): void;
   /** Labels wrap instead of ellipsizing (explorer action tiles). */
   wrap?: boolean;
@@ -193,8 +195,9 @@ export function createNavigateStore(deps: NavigateDeps) {
           if (app) deps.openMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
         },
         draggable: true,
-        onDragStart: (idx) => beginDrag("pinned", idx),
-        onReorder: (fromIndex, overIndex) => void commitPinnedReorder(fromIndex, overIndex),
+        onDragStart: (idx, e) => beginDrag("pinned", idx, e),
+        onReorder: (fromIndex, overIndex) =>
+          void commitPinnedReorder(fromIndex, overIndex),
       });
     }
     list.push(...pluginBars());
@@ -548,17 +551,6 @@ export function createNavigateStore(deps: NavigateDeps) {
     }
   }
 
-  // ── Native drag-and-drop for pinned-bar reordering ──────────────────────
-  // Use a plain ref (not a SolidJS signal) so drag event handlers never
-  // trigger reactive re-renders that would destroy the dragged DOM element.
-  // `sectionId` scopes the listeners to the dragged section's grid, so a drag
-  // that crosses into another bar (recent / a plugin bar) is ignored.
-  let dragRef: { sectionId: string; fromIndex: number; overIndex: number } | null = null;
-
-  function beginDrag(sectionId: string, fromIndex: number) {
-    dragRef = { sectionId, fromIndex, overIndex: fromIndex };
-  }
-
   /** Commit a completed pinned-bar drag: splice the item to its new slot and
    * persist the new order. */
   async function commitPinnedReorder(fromIndex: number, overIndex: number) {
@@ -577,85 +569,140 @@ export function createNavigateStore(deps: NavigateDeps) {
     }
   }
 
-  /** Install the document-level drag listeners for section reordering.
-   * Raw DOM listeners (not Solid events) so preventDefault() always reaches
-   * the native event. Listeners live for the window's lifetime. */
-  function installDragReorder() {
-    document.addEventListener("dragover", (e) => {
-      const target = (e.target as HTMLElement).closest(".bar-grid") as HTMLElement | null;
-      if (!target || !dragRef) return;
-      // Only the dragged section's own grid accepts the drag — hovering
-      // another bar (recent / plugin bars) must not compute insert positions.
-      if (target.dataset.barId !== dragRef.sectionId) return;
-      e.preventDefault();
-      // Group items by row (same top ≈ same row), then find which row the
-      // cursor is on. Within that row, find the horizontal insertion point.
-      // When the cursor is below all rows, insert at the very end.
-      const boxes = Array.from(target.querySelectorAll(".result-box")) as HTMLElement[];
-      const rows: { top: number; bottom: number; indices: number[] }[] = [];
-      for (let idx = 0; idx < boxes.length; idx++) {
-        const r = boxes[idx].getBoundingClientRect();
-        const last = rows[rows.length - 1];
-        if (last && Math.abs(r.top - last.top) < 10) {
-          last.indices.push(idx);
-          last.bottom = Math.max(last.bottom, r.bottom);
-        } else {
-          rows.push({ top: r.top, bottom: r.bottom, indices: [idx] });
-        }
-      }
-      let overIndex = boxes.length;
-      let targetRow = rows[rows.length - 1]; // default to last row
-      for (const row of rows) {
-        if (e.clientY < row.bottom) { targetRow = row; break; }
-      }
-      if (e.clientY > targetRow.bottom) {
-        overIndex = boxes.length; // below all rows → end
+  // ── Pointer-driven drag reorder for the pinned bar ───────────────────────
+  // HTML5 drag-and-drop cannot reorder pins: with the Tauri drag-drop handler
+  // enabled (file drops → plugin features, P2.2) the WebView2's OLE drop
+  // target answers non-file drags with DROPEFFECT_NONE, killing dragstart
+  // mid-flight. Reordering therefore runs on raw pointer events: press a pin,
+  // move past a small threshold (so a plain click still launches), and these
+  // document-level listeners drive the same row/column insertion logic the
+  // HTML5 version had. A plain ref (not a signal) so no reactive re-render
+  // destroys the dragged element mid-drag.
+  type DragRef = {
+    sectionId: string;
+    fromIndex: number;
+    overIndex: number;
+    active: boolean;
+    startX: number;
+    startY: number;
+    sourceBox: HTMLElement | null;
+  };
+  let dragRef: DragRef | null = null;
+  // A finished drag must not turn its pointerup into a click (the box's click
+  // launches the app). One capture-phase click after the drag is swallowed.
+  let suppressClick = false;
+
+  function beginDrag(sectionId: string, fromIndex: number, e: PointerEvent) {
+    dragRef = {
+      sectionId,
+      fromIndex,
+      overIndex: fromIndex,
+      active: false,
+      startX: e.clientX,
+      startY: e.clientY,
+      sourceBox: e.currentTarget as HTMLElement,
+    };
+  }
+
+  /** Which slot the cursor points at inside `target`'s box row: group the
+   * boxes by row (same top ≈ same row), pick the row under `y`, then the
+   * horizontal insertion point within it. Below all rows → the very end. */
+  function overIndexInGrid(target: HTMLElement, x: number, y: number): number {
+    const boxes = Array.from(target.querySelectorAll(".result-box")) as HTMLElement[];
+    const rows: { top: number; bottom: number; indices: number[] }[] = [];
+    for (let idx = 0; idx < boxes.length; idx++) {
+      const r = boxes[idx].getBoundingClientRect();
+      const last = rows[rows.length - 1];
+      if (last && Math.abs(r.top - last.top) < 10) {
+        last.indices.push(idx);
+        last.bottom = Math.max(last.bottom, r.bottom);
       } else {
-        for (const idx of targetRow.indices) {
-          const r = boxes[idx].getBoundingClientRect();
-          if (e.clientX < r.left + r.width / 2) { overIndex = idx; break; }
-        }
-        if (overIndex === boxes.length) {
-          overIndex = targetRow.indices[targetRow.indices.length - 1] + 1;
-        }
+        rows.push({ top: r.top, bottom: r.bottom, indices: [idx] });
       }
-      // Update insertion indicator classes on result-box elements.
+    }
+    if (rows.length === 0) return 0;
+    let targetRow = rows[rows.length - 1]; // default to last row
+    for (const row of rows) {
+      if (y < row.bottom) {
+        targetRow = row;
+        break;
+      }
+    }
+    if (y > targetRow.bottom) return boxes.length;
+    for (const idx of targetRow.indices) {
+      const r = boxes[idx].getBoundingClientRect();
+      if (x < r.left + r.width / 2) return idx;
+    }
+    return targetRow.indices[targetRow.indices.length - 1] + 1;
+  }
+
+  /** Clear drag styling from every box. Query the whole document rather than
+   * just one grid: with several bars visible, styling from an earlier drag
+   * must never linger on any section. */
+  function clearDragStyling() {
+    document
+      .querySelectorAll(
+        ".result-box.result-dragging,.result-box.result-insert-before,.result-box.result-insert-after"
+      )
+      .forEach((c) =>
+        c.classList.remove("result-dragging", "result-insert-before", "result-insert-after")
+      );
+  }
+
+  /** Install the document-level pointer listeners for section reordering.
+   * Raw DOM listeners (not Solid events) so the logic always sees the event.
+   * Listeners live for the window's lifetime. */
+  function installDragReorder() {
+    document.addEventListener("pointermove", (e) => {
+      const dr = dragRef;
+      if (!dr) return;
+      if (!dr.active) {
+        // Below the threshold it is still a plain click — do nothing.
+        if (Math.hypot(e.clientX - dr.startX, e.clientY - dr.startY) < 6) return;
+        dr.active = true;
+        dr.sourceBox?.classList.add("result-dragging");
+        document.body.classList.add("reorder-dragging"); // no text selection mid-drag
+      }
+      e.preventDefault();
+      const target = document.querySelector(
+        `.bar-grid[data-bar-id="${dr.sectionId}"]`
+      ) as HTMLElement | null;
+      if (!target) return;
+      const overIndex = overIndexInGrid(target, e.clientX, e.clientY);
+      const boxes = Array.from(target.querySelectorAll(".result-box")) as HTMLElement[];
       boxes.forEach((b) => b.classList.remove("result-insert-before", "result-insert-after"));
-      if (overIndex !== dragRef.fromIndex && overIndex !== dragRef.fromIndex + 1) {
+      // No marker when the drop would be a no-op (same slot or adjacent).
+      if (overIndex !== dr.fromIndex && overIndex !== dr.fromIndex + 1) {
         if (overIndex < boxes.length) {
           boxes[overIndex].classList.add("result-insert-before");
         } else {
           boxes[boxes.length - 1].classList.add("result-insert-after");
         }
       }
-      dragRef.overIndex = overIndex;
+      dr.overIndex = overIndex;
     });
 
-    // Clear drag styling from every box. Query the whole document rather than
-    // just one grid: with several bars visible, styling from an earlier drag
-    // must never linger on any section.
-    const clearDragStyling = () => {
-      document
-        .querySelectorAll(
-          ".result-box.result-dragging,.result-box.result-insert-before,.result-box.result-insert-after"
-        )
-        .forEach((c) =>
-          c.classList.remove("result-dragging", "result-insert-before", "result-insert-after")
-        );
-    };
-
-    // Safety net: a drop that ends without a dragend (WebView2 quirk) must
-    // still clear the styling.
-    document.addEventListener("drop", clearDragStyling);
-
-    document.addEventListener("dragend", (e) => {
-      clearDragStyling();
+    document.addEventListener("pointerup", () => {
       const dr = dragRef;
       dragRef = null;
-      if (!dr || (e as DragEvent).dataTransfer?.dropEffect === "none") return;
+      document.body.classList.remove("reorder-dragging");
+      clearDragStyling();
+      if (!dr || !dr.active) return;
+      suppressClick = true;
       if (dr.overIndex === dr.fromIndex || dr.overIndex === dr.fromIndex + 1) return;
       sectionById(dr.sectionId)?.onReorder?.(dr.fromIndex, dr.overIndex);
     });
+
+    document.addEventListener(
+      "click",
+      (e) => {
+        if (!suppressClick) return;
+        e.stopPropagation();
+        e.preventDefault();
+        suppressClick = false;
+      },
+      true
+    );
   }
 
   return {

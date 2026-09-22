@@ -38,6 +38,9 @@ export interface PluginManifest {
   entry: string;
   /** View HTML file (disk mode plugins, relative to the plugin dir). */
   view: string;
+  /** Mode plugins: `"list"` = the built-in list template renders the plugin's
+   * rows (no `view` needed; the plugin ships only `entry` logic). */
+  template: string;
   /** Global keywords (uTools-style mode entry). */
   keywords: string[];
   /** Mode plugins: the mode page's preferred window height (logical px);
@@ -104,13 +107,20 @@ export interface BulkDocResult {
 export interface PluginFeature {
   /** Unique code inside the plugin — delivered on enter. */
   code: string;
+  /** `text` (default) | `files` | `img`. A `text` rule matches query text; a
+   * `files` rule matches OS drag-dropped files by `extensions`; an `img`
+   * rule matches the clipboard holding an image (read via
+   * `clipboard.readImage()`). */
+  type: "text" | "files" | "img";
+  /** `files` rules: accepted extensions (case-insensitive; empty = any). */
+  extensions: string[];
   /** Row label; empty → the plugin name is used. */
   label: string;
   /** Regex matched against the query text. */
   regex: string;
   /** Match any non-empty text (used when `regex` is empty). */
   over: boolean;
-  /** Optional query-length bounds (characters). */
+  /** Optional bounds (characters for text rules; file counts for `files`). */
   minLength: number | null;
   maxLength: number | null;
   /** Optional row icon (relative to the plugin dir). */
@@ -121,10 +131,13 @@ export interface PluginFeature {
 export interface FeatureEnterInfo {
   /** The rule's `code`. */
   code: string;
-  /** How the entry was reached: a manifest rule, or `app.redirect`. */
-  type: "regex" | "over" | "redirect";
-  /** The matched query text (or the redirect payload). */
+  /** How the entry was reached: a manifest rule, `app.redirect`, dropped
+   * files (`files`) or the clipboard image (`img`). */
+  type: "regex" | "over" | "redirect" | "files" | "img";
+  /** The matched query text (or the redirect payload; "" for files/img). */
   payload: string;
+  /** `files` rules: the dropped file paths (the matched subset). */
+  paths?: string[];
 }
 
 /** The capability surface handed to disk plugin factories (v2, uTools-
@@ -188,6 +201,10 @@ export interface PluginHostApi {
     /** The clipboard's current file list (empty when it holds something
      * else). */
     readFiles(): Promise<string[]>;
+    /** The clipboard's image as a `data:image/png;base64,…` URI (null when it
+     * holds no decodable image). Same sources the clipboard mode captures:
+     * CF_DIB/DIBV5, screenshot tools' custom PNG, CF_BITMAP. */
+    readImage(): Promise<string | null>;
     /** Write one payload and paste it into the window that had focus before
      * the launcher appeared (hide → Ctrl+V). Exactly one field. The payload
      * stays on the clipboard afterwards, like a normal copy. */

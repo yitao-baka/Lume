@@ -126,7 +126,12 @@ pub fn run() {
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
-            .disable_drag_drop_handler()
+            // P2.2: the Tauri drag-drop handler is ENABLED here (the only
+            // window) so OS file drags arrive as `tauri://drag-drop` with real
+            // paths (WebView2's HTML5 drop never exposes paths). The handler
+            // swallows non-file HTML5 drags, which is why pinned-bar reordering
+            // runs on pointer events (src/launcher/navigate.ts) and the other
+            // windows keep it disabled.
             .initialization_script(&init_script)
             .build()?;
 
@@ -380,6 +385,8 @@ pub fn run() {
             clipboard::plugin_clipboard_write_image,
             clipboard::plugin_clipboard_write_files,
             clipboard::plugin_clipboard_read_files,
+            clipboard::plugin_clipboard_has_image,
+            clipboard::plugin_clipboard_read_image,
             clipboard::plugin_clipboard_paste,
             plugin_host::plugin_dialog_open,
             plugin_host::plugin_dialog_save,

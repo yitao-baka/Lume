@@ -1352,6 +1352,72 @@ pub fn plugin_clipboard_read_files() -> Result<Vec<String>, String> {
     Ok(read_file_list().unwrap_or_default())
 }
 
+/// Whether the clipboard currently holds an image in any format the reader
+/// below (`plugin_clipboard_read_image`) can decode: CF_DIB/DIBV5 (arboard),
+/// a plain CF_BITMAP, or a screenshot tool's custom PNG format. Never throws
+/// for "not an image" — `Ok(false)` — because the empty-query probe calls
+/// this on every summon. A CF_HDROP file list is NOT an image (the capture
+/// chain checks files before bitmaps for the same reason).
+#[tauri::command]
+pub fn plugin_clipboard_has_image() -> Result<bool, String> {
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            // Another process holds the clipboard open — nothing sensible to
+            // report right now.
+            return Ok(false);
+        }
+        let _guard = OpenClipboardGuard;
+        if IsClipboardFormatAvailable(8 /* CF_DIB */).is_ok()
+            || IsClipboardFormatAvailable(2 /* CF_BITMAP */).is_ok()
+        {
+            return Ok(true);
+        }
+        if IsClipboardFormatAvailable(CF_HDROP).is_ok() {
+            return Ok(false);
+        }
+        // Custom formats: the same name check `read_custom_png_image` uses,
+        // so the probe and the reader can never disagree.
+        let mut fmt: u32 = 0;
+        loop {
+            fmt = EnumClipboardFormats(fmt);
+            if fmt == 0 {
+                break;
+            }
+            if fmt == CF_HDROP {
+                continue;
+            }
+            let mut name = [0u16; 80];
+            let n = GetClipboardFormatNameW(fmt, &mut name);
+            if n <= 0 {
+                continue;
+            }
+            let nm = String::from_utf16_lossy(&name[..n as usize]).to_lowercase();
+            if nm.contains("png") || nm.contains("image/png") {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// Read the clipboard's image as a `data:image/png;base64,…` URI (plugin
+/// `clipboard.readImage`). Same acquisition chain as the history capture
+/// (`arboard` CF_DIB → custom PNG → CF_BITMAP) so the two can never disagree.
+/// None when the clipboard holds no decodable image.
+#[tauri::command]
+pub fn plugin_clipboard_read_image() -> Result<Option<String>, String> {
+    let png = if let Ok(mut cb) = arboard::Clipboard::new() {
+        cb.get_image().ok().and_then(|img| encode_png(&img))
+    } else {
+        None
+    }
+    .or_else(read_custom_png_image)
+    .or_else(read_cf_bitmap_image);
+    Ok(png.map(|bytes| {
+        format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+    }))
+}
+
 /// Write one payload to the clipboard and paste it into the window that had
 /// focus before the launcher appeared (the clipboard mode's auto_paste flow:
 /// hide the launcher, restore focus, Ctrl+V). Exactly one payload is expected.

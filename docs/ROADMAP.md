@@ -1767,8 +1767,8 @@ tsc/vite build 干净、`scripts/cdp_p2_verify.mjs` **21 项全过**（over/rege
 subInput 接管与自动释放、redirect 载荷回显），P0/P1 两套冒烟无回归；
 截图 `test/p2_redirect_enter.png`、`test/p2_subinput.png`。
 
-**未做**（留待后续）：`files` 文件拖入与 `img` 剪贴板图片进入、`template = "list"`
-官方列模板。
+**余项已补齐**（2026-09-22，见 #27）：`files` 文件拖入、`img` 剪贴板图片进入、
+`template = "list"` 官方列模板。
 
 ## 26. 插件系统 P3：数据层、权限强制层、私有文件与声明式设置（已实现）
 
@@ -1825,4 +1825,52 @@ bulkDocs、权限拒绝/放行各一次、私有文件落盘、迁移改名、�
 bundle（本轮排查权限层「不生效」的真凶就是这个）。
 
 **未做**（留待 P4）：`.lupx` 打包、市场源、窗口匹配/超级面板、AI 宿主 API；
-`files` 拖入与 `img` 剪贴板图片进入、`template = "list"` 官方列模板（P2 余项）。
+逐能力开关的细粒度授权（现只有「全部授权」）与云同步（见差距分析 §4）。
+
+## 27. 插件系统 P2 余项：文件拖入、剪贴板图片进入、内置列表模板（已实现）
+
+**状态：已实现（2026-09-22）。** 差距分析 `docs/PLUGIN_GAP_ANALYSIS.md` P2.2 /
+P2.5b，API 文档 `docs/PLUGIN_API.md` §6E.1.1 / §6E.5。示例
+`examples/plugins/files-img-demo/`、`examples/plugins/list-demo/`，实机脚本
+`scripts/cdp_p2b_verify.mjs`（17 项）。
+
+- **`type = "files"`（文件拖入）**：`[[features]]` 规则加 `type`（缺省
+  `text`）与 `extensions`（大小写不敏感、不带点；空 = 任意文件），
+  `min_length`/`max_length` 在该类型下是文件数边界。Tauri drag-drop handler
+  在主窗口**启用**（此前因磁贴重排被禁用）——WebView2 的 HTML5 drop 拿不到
+  真实路径，只有 OLE drop target（wry 的 handler）能给出 `paths`；拖入
+  （呼出时拖住文件按热键）出行「<label>（N 个文件）」，激活把命中**子集**
+  投递 `onFeature/onEnter({type: "files", paths})`；行在下一次隐藏/呼出清空。
+  **代价**：handler 会吞掉非文件 HTML5 拖拽 —— 磁贴重排从 HTML5 DnD 重写为
+  **指针事件**（按下 → 6px 阈值 → 行列插入点计算，复用原有算法；拖后一次
+  click 被吞掉避免误启动；`body.reorder-dragging` 防误选文本）。`fileType`
+  分类与文件夹匹配明确未做（无免 IO 判据，见 §6E.1.1）。
+- **`type = "img"`（剪贴板图片进入）**：新命令 `plugin_clipboard_has_image`
+  （CF_DIB / CF_BITMAP / 截图工具自定义 PNG —— 名称探测与读取链完全一致，
+  probe 和 reader 不会互相矛盾）+ `plugin_clipboard_read_image`（复用剪贴板
+  历史的采集链：arboard → 自定义 PNG → CF_BITMAP → PNG data URI）。空查询
+  主菜单出「<label>」行，**每次空查询渲染探测一次**（截图后不出键即出行；
+  剪贴板换回文本后陈旧行消失），激活后插件用 `ctx.clipboard.readImage()`
+  （新 host API / 桥接 `lume.clipboard.readImage`，`clipboard` 权限）取图。
+- **`template = "list"`（内置列表模板）**：mode 插件声明后**免 `view`**，
+  `entry` 逻辑跑在启动器窗口（provider 同款信任模型与 ctx），内置 Solid 列表
+  组件（`.plugin-list-*`）渲染 `search(q)` 的行；↑/↓/Enter 走共享键盘导航
+  （宿主读 `rows()`/`selected()`/`activate()`），点击行 → `onEnter(item)`。
+  声明式 feature 命中投递 `onFeature`，**投递后宿主重跑一次该模式的搜索**
+  （quick-add 这类改行源的钩子立即反映到列表）。
+- **配套**：mode feature 投递后重跑搜索（上面第三条）；空查询下拖拽/img 行
+  替代栏目条 —— `NavigateView` 与 keyRouter 增加 `forceGrid` 通道，键盘方向键
+  在行集上导航而不是栏目区。
+
+**验证**：cargo test **169**（+1：files/img/template 解析与 JSON 形状）、
+tsc/vite build/cargo build 干净、`scripts/cdp_p2b_verify.mjs` **17 项全过**
+（无图无行 → SetImage 出行 → readImage 真读到 PNG；拖入 3 文件只出行 2 个
+命中文本 + fs.readText 真读到内容；拖拽行 hide/summon 清空；list-demo 关键字
+进入 → 内置列表渲染 → quick-add 加行 → 指针重排交换固定项并持久化）、
+P0/P1/P2/P3 四套回归 **8/14/21/45 全过**；截图 `test/p2b_files.png`、
+`test/p2b_list.png`。
+
+**边界（诚实记录）**：自动化里真实 OS 拖拽不可合成 —— `tauri://drag-drop`
+用 `plugin:event|emit_to` 投回同一事件验证逻辑链，wry 的 OLE drop target
+（真实路径的来源）只在手工步骤覆盖（`docs/TESTING.md`「Plugin file drop」）；
+settings 窗口与预览窗口保持 handler 禁用（无文件拖入需求、避免波及文本拖拽）。

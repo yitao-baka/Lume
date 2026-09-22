@@ -39,6 +39,7 @@ export const RPC_PERMISSION: Record<string, string> = {
   "clipboard.writeImage": "clipboard",
   "clipboard.writeFiles": "clipboard",
   "clipboard.readFiles": "clipboard",
+  "clipboard.readImage": "clipboard",
   "clipboard.paste": "clipboard",
   "http.request": "network",
   "dialog.open": "dialog",

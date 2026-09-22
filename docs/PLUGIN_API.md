@@ -96,10 +96,11 @@ export default {
 | `permissions` | string[] | `[]` | **能力声明，P3.2 起强制**：台账（§6D.6）里的能力没声明就调用 → 明确拒绝（fail-closed），设置页每行显示这些 chip。「全部授权」可整插件放行。 |
 | `entry` | string | `""` | 入口 JS（相对插件目录）。provider 必填；mode 可选（逻辑钩子）；service 必填（钩子）。**可以是目录**（多文件打包产物）— 此时实际加载其中的 `index.js`，目录内文件的相对 `import` 由宿主改写为 blob URL（§5.6）。 |
 | `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
+| `template` | string | `""` | mode 插件：`"list"` = 用内置列表模板渲染 `entry` 逻辑的行，**免 `view` HTML**（§6E.5） |
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
 | `settings` | array of table | `[]` | **声明式设置**（P3.4，§6F.3）——`[[settings]]` 子表：`key`、`label`、`type`（`toggle`/`select`/`text`）、`default`、`[[settings.options]]`（`value`/`label`）。设置 → 插件 自动渲染，值存插件 `__settings` 文档，插件经 `ctx.settings.get/all` 读、`onSettings` 感知变更。 |
-| `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。 |
+| `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入）与 `"img"`（剪贴板图片）规则见 §6E.1.1。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。 |
 | `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。 |
 
@@ -443,7 +444,7 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 | 组 | 方法 | 说明 |
 |---|---|---|
 | `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（P1.2，§6D）；`setSubInput`/`removeSubInput` 接管/交还搜索框（P2.3，§6E.2）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（P2.5，§6E.4） |
-| `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（P1.3，§6D） |
+| `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `readImage()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`readImage()` 返回 PNG data URI（无图 = null；`img` feature 的取数路径，§6E.1.1）；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（P1.3，§6D） |
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**（P1.1）——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated` |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框（P1.4）。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
 | `screen` | `cursor()` / `displays()` | 光标位置与显示器列表（P1.5），单位是**物理像素**；`displays()` 每项含 `x/y/width/height`、工作区 `workX/workY/workWidth/workHeight`、`primary` |
@@ -747,6 +748,37 @@ regex = "^https?://"    # 正则匹配输入（与 over 二选一；两者都有
 - **无 UI 的用法**：service 插件 + `over` + `onFeature` 就能做「选中文本 → 转
   换 → 写剪贴板」这类零 UI 工具。
 
+### 6E.1.1 `type = "files"` 文件拖入与 `type = "img"` 剪贴板图片进入（P2.2）
+
+```toml
+[[features]]
+code = "handle-docs"
+label = "文件处理器：处理文本文件"
+type = "files"              # 缺省 "text"（上面的 regex/over 规则）
+extensions = ["md", "txt"]  # 大小写不敏感、不带点；省略 = 任意文件
+min_length = 1              # 这里是文件数边界（text 规则里是字符数）
+
+[[features]]
+code = "handle-image"
+label = "图片处理器：处理剪贴板图片"
+type = "img"
+```
+
+- **files**：把文件从资源管理器**拖到启动器窗口**（Tauri drag-drop handler 提供
+  真实路径；WebView2 的 HTML5 drop 拿不到路径）即出现「<label>（N 个文件）」行
+  ——拖入时主菜单在则立即出行，不在（启动器隐藏）则先拖住文件再按热键呼出。
+  **激活**把命中的路径**子集**投递给 `onFeature({code, type: "files", payload: "",
+  paths})`（mode 收 `onEnter`）——只匹配了 `extensions` 的文件在 `paths` 里。
+  行在下一次隐藏/呼出后消失。查询非空时拖入也会把行追加进结果。
+  *未支持*：`fileType`（image/video/folder 等分类——没有可靠的免 IO 判据）与
+  文件夹（无扩展名规则无法表达）；按扩展名过滤即可覆盖绝大多数场景。
+- **img**：剪贴板持有可解码图片（CF_DIB/DIBV5、截图工具的自定义 PNG、CF_BITMAP）
+  时，**空查询主菜单**出现「<label>」行（激活 = `onFeature({code,
+  type: "img", payload: ""})`）。像素由插件自己读：
+  `ctx.clipboard.readImage()` → `data:image/png;base64,…`（null = 无图），
+  需要清单声明 `clipboard` 权限。
+- 示例：`examples/plugins/files-img-demo/`。
+
 ### 6E.2 子输入框（`app.setSubInput` / `removeSubInput`）
 
 ```js
@@ -800,6 +832,31 @@ lume.app.redirect("hello-mode", { code: "from-x", payload: "要带过去的内�
   （页面收 `lume.on.enter`）；目标为 provider/service：投递 `onFeature(...)`。
 - 目标不存在 / 未启用 / 未加载 → **宿主 toast 提示**（`pluginActionUnavailable`），
   不做静默失败（市场跳转是远期，暂不提供）。
+
+### 6E.5 内置列表模板（`template = "list"`，P2.5b）
+
+```toml
+id = "list-demo"
+kind = "mode"
+entry = "main.js"      # 必填 —— 逻辑（provider 同款 ctx 能力面）
+template = "list"      # 声明内置列表模板 —— 不需要 view.html
+```
+
+`kind = "mode"` 且声明 `template = "list"` 的插件**免写任何 HTML**：宿主把
+`entry` 装进启动器窗口（与 provider 相同的信任模型与 `ctx` 能力面），用内置
+Solid 列表组件渲染其行；键盘 ↑/↓/Enter 走共享导航（宿主读 `rows()` /
+`selected()` / `activate()`），点击行回调 `onEnter(item)`。逻辑契约：
+
+- **`search(q) → 行数组`（必需）**：行形状与 provider 结果相同
+  （`{ name, path?, description?, icon? }`，`name` 必填）。
+- `onEnter(item)`（可选）：行激活。启动器保持打开 —— 插件自己决定何时
+  `ctx.app.hide()`。
+- 可选钩子 `onShow` / `onHide` / `onQuery(q)` / `onSubInput` / `onSettings` 与
+  provider/service 相同；`[[features]]` 命中投递到 `onFeature(info)`（mode 在
+  切页后收，同 §6E.1）。`[[settings]]`（P3.4）照常生效。
+- `view` 字段被忽略；`height` / `icon` / `keywords` 照常。
+
+示例：`examples/plugins/list-demo/`（零 HTML，文档库 + 剪贴板 + features）。
 
 ---
 
@@ -1020,6 +1077,8 @@ pluginBuiltin`。
 - **CDP 连接**：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
   启动后连 `127.0.0.1:9222`。现成脚本：
   - `scripts/cdp_p3_verify.mjs` — P3 数据层/权限/私有文件/设置（45 项）
+  - `scripts/cdp_p2b_verify.mjs` — P2 余项：files 拖入 / img 剪贴板图片 /
+    template="list" 列表模板 / 磁贴指针重排（17 项）
   - `scripts/cdp_plugin_verify.mjs` — provider 行 + 插件面板截图
   - `scripts/cdp_settings_smoke.mjs` — 8 分区设置冒烟
   - `scripts/cdp_launcher_shots.mjs` — 启动器截图（前后对比）
@@ -1054,14 +1113,14 @@ pluginBuiltin`。
 - ✅ 权限强制层（`permissions` → 逐 RPC 校验 + 设置页 chips + 全部授权）—— §6F.4
 - ✅ 宿主能力面：HTTP 代理（打掉 CORS）、系统通知、剪贴板图片/文件、对话框、
   屏幕（P1）—— §6D
-- ✅ 进入方式矩阵：regex/over 声明式进入、子输入框、provider 二级下钻、插件互跳
-  （P2）—— §6E
+- ✅ 进入方式矩阵：regex/over 声明式进入、文件拖入（files）、剪贴板图片（img）、
+  子输入框、provider 二级下钻、插件互跳、内置列表模板（P2 全量）—— §6E
 - ✅ 插件级设置界面（`[[settings]]` → 设置页自动渲染 → `onSettings`）—— §6F.3
 - ✅ storage → SQLite 文档库（`_rev` 乐观锁 + allDocs/bulkDocs + 自动迁移）—— §6F.1
 - ✅ 插件私有文件目录（`<plugin>/files/`）与 `fs.write` 能力 —— §6F.2
 
-未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P2 余项 / P4）：
+未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4）：
 
-- `type = "files"` 文件拖入、`img` 剪贴板图片进入、`template = "list"` 官方列模板
+- files 规则的 `fileType` 分类与文件夹匹配（§6E.1.1 未支持项）
 - `.lupx` 打包与安装确认、插件市场源、窗口匹配/超级面板、AI 宿主 API
 - 插件沙箱与签名校验（真正的隔离，权限层目前是前端关卡）

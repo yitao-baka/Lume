@@ -32,7 +32,8 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   逻辑钩子 + `keywords` 全局关键字进入 + 可选 `height` 窗口高度 +
   可选 `icon` pill 图标
   （示例 `examples/plugins/hello-mode/`；基于宿主 `search.files` 能力的
-  完整文件搜索模式见 `examples/plugins/file-search/`）
+  完整文件搜索模式见 `examples/plugins/file-search/`；`template = "list"`
+  免 HTML 列表模式见 `examples/plugins/list-demo/`）
 - `service` — 无 UI 生命周期钩子（`onShow`/`onHide`/`onQuery`）
 
 `keywords` 的匹配分级为 精确 → 前缀 → 拼音首字母 → 拼音全拼（后端预计算
@@ -117,11 +118,21 @@ over = true            # 任意非空文本命中（regex = "^https?://" 则按�
 min_length = 2
 ```
 
-模带来四件事：① `features` 命中出「<label>」行，激活把查询作为 payload 投递给
+带进来四件事：① `features` 命中出「<label>」行，激活把查询作为 payload 投递给
 `onEnter`（mode）/`onFeature`（provider/service）；② `app.setSubInput`
 让模式接管搜索框逐字过滤（`lume.on.subInput`）；③ provider 用 `drill` +
 `select`（可选 `filter`）做二级下钻，Esc 回上一级；④ `app.redirect(插件id,
 {code, payload})` 跳到另一个插件并带数据。
+
+**文件拖入与剪贴板图片（P2.2，2026-09-22）**：规则加 `type = "files"`
+（拖文件到启动器 → 「<label>（N 个文件）」行，payload 是命中路径数组
+`info.paths`；`extensions = ["md", "txt"]` 过滤扩展名）或 `type = "img"`
+（剪贴板有图时空查询出行，插件用 `ctx.clipboard.readImage()` 读 PNG data
+URI）。示例 `examples/plugins/files-img-demo/`。
+
+**免 HTML 的列表模式（P2.5b）**：mode 插件声明 `template = "list"` 后不用写
+`view` —— 宿主用内置列表渲染 `search(q)` 返回的行（形状同 provider 结果），
+↑/↓/Enter/点击走 `onEnter(item)`。示例 `examples/plugins/list-demo/`。
 
 ## 数据、私有文件与插件设置（P3）
 

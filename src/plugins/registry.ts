@@ -14,6 +14,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { FeatureEnterInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
+import { createListTemplateMode } from "./listTemplate";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
 export {
@@ -243,7 +244,7 @@ function resolveLogic(def: unknown, api: ReturnType<typeof createHostApi>): Reco
   return (def && typeof def === "object" ? def : {}) as Record<string, unknown>;
 }
 
-function callHook(id: string, logic: Record<string, unknown>, name: string, ...args: unknown[]) {
+export function callHook(id: string, logic: Record<string, unknown>, name: string, ...args: unknown[]) {
   const fn = logic[name];
   if (typeof fn === "function") {
     try {
@@ -765,6 +766,37 @@ export async function loadDiskPlugins() {
             `${typeof rawFilter === "function" ? ", filter" : ""}` +
             `${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
         );
+      } else if (m.kind === "mode" && m.template === "list" && m.entry) {
+        // Built-in list template (P2.5b): no view HTML — the entry logic runs
+        // host-side (provider trust model) and the built-in list component
+        // renders its rows.
+        const logic = resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!));
+        const instance = createListTemplateMode(m, logic, services!);
+        definePlugin({
+          id: m.id,
+          modeMeta: {
+            labelKey: "",
+            placeholderKey: "",
+            icon: resolvePluginIcon(m.icon, m.dir) ?? "",
+            label: m.name || m.id,
+          },
+          keywords: m.keywords,
+          keywordsPinyin: m.keywordsPinyin ?? [],
+          features: m.features ?? [],
+          dir: m.dir,
+          pluginName: m.name || m.id,
+          mode: instance,
+        });
+        registeredDiskIds.add(m.id);
+        // Declarative settings (P3.4): hand the plugin its effective values
+        // now, so a logic hook can act on them without waiting for a change.
+        void applyPluginSettings(m.id);
+        loadedAny = true;
+        plog.info(
+          m.id,
+          `loaded mode (template=list, entry=${m.entry}` +
+            `${m.height != null ? `, height=${m.height}` : ""}${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
+        );
       } else if (m.kind === "mode" && m.view) {
         const logic = m.entry
           ? resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!))
@@ -826,7 +858,8 @@ export async function loadDiskPlugins() {
           m.id,
           `unusable manifest: kind=${m.kind}` +
             (m.kind === "provider" && !m.entry ? " — provider requires `entry`" : "") +
-            (m.kind === "mode" && !m.view ? " — mode requires `view`" : "") +
+            (m.kind === "mode" && m.template !== "list" && !m.view ? " — mode requires `view`" : "") +
+            (m.kind === "mode" && m.template === "list" && !m.entry ? " — template=list requires `entry`" : "") +
             (m.kind === "service" && !m.entry ? " — service requires `entry`" : "")
         );
       }
@@ -975,6 +1008,9 @@ export function featureMatches(q: string): FeatureMatch[] {
     const feats = (p as { features?: PluginFeature[] }).features ?? [];
     feats.forEach((f, i) => {
       if (!f?.code) return;
+      // files/img rules never match query text — fileFeatureMatches /
+      // imgFeatureMatches own them.
+      if (f.type && f.type !== "text") return;
       const len = query.length;
       if (f.minLength != null && len < f.minLength) return;
       if (f.maxLength != null && len > f.maxLength) return;
@@ -991,6 +1027,68 @@ export function featureMatches(q: string): FeatureMatch[] {
         code: f.code,
         type,
         payload: query,
+        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+      });
+    });
+  }
+  return out;
+}
+
+/** `type = "files"` rules (P2.2) matching a dropped file list: a rule fires
+ * when its `extensions` filter (empty = any file) matches at least one drop,
+ * bounded by min/maxLength as file counts. The payload carries only the
+ * matching subset — a plugin that asked for `["md"]` never sees a `.png`. */
+export function fileFeatureMatches(paths: string[]): FeatureMatch[] {
+  if (paths.length === 0) return [];
+  const out: FeatureMatch[] = [];
+  for (const p of plugins) {
+    if (!isEnabled(p.id)) continue;
+    const feats = (p as { features?: PluginFeature[] }).features ?? [];
+    feats.forEach((f) => {
+      if (!f?.code || f.type !== "files") return;
+      const exts = (f.extensions ?? []).map((e) => e.toLowerCase().replace(/^\./, ""));
+      const matched = paths.filter((path) => {
+        if (exts.length === 0) return true;
+        const name = path.split(/[\\/]/).pop() ?? "";
+        const dot = name.lastIndexOf(".");
+        // No dot / dotfile: only matched by a filter that accepts any file.
+        if (dot <= 0) return exts.length === 0;
+        return exts.includes(name.slice(dot + 1).toLowerCase());
+      });
+      if (matched.length === 0) return;
+      if (f.minLength != null && matched.length < f.minLength) return;
+      if (f.maxLength != null && matched.length > f.maxLength) return;
+      out.push({
+        pluginId: p.id,
+        code: f.code,
+        type: "files",
+        payload: "",
+        paths: matched,
+        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+      });
+    });
+  }
+  return out;
+}
+
+/** `type = "img"` rules (P2.2) — offered on the empty-query main menu while
+ * the clipboard holds an image (the caller probes `plugin_clipboard_has_image`
+ * once per summon, never per keystroke). The plugin reads the pixels itself
+ * via `clipboard.readImage()`. */
+export function imgFeatureMatches(): FeatureMatch[] {
+  const out: FeatureMatch[] = [];
+  for (const p of plugins) {
+    if (!isEnabled(p.id)) continue;
+    const feats = (p as { features?: PluginFeature[] }).features ?? [];
+    feats.forEach((f) => {
+      if (!f?.code || f.type !== "img") return;
+      out.push({
+        pluginId: p.id,
+        code: f.code,
+        type: "img",
+        payload: "",
         label: f.label || (p as { pluginName?: string }).pluginName || p.id,
         ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
       });

@@ -136,6 +136,13 @@ URI）。**类别匹配（P4）**：`files` 规则还可以写 `file_type = "fol
 `"others"`（宿主维护扩展名类别表）；`extensions` 非空时优先且文件夹不再
 命中。示例 `examples/plugins/files-img-demo/`。
 
+**活动窗口匹配（P4，ROADMAP #29）**：`type = "window"` 规则按**呼出前的
+前台窗口**触发——呼出时空查询主菜单出现「<label>」行，激活投递
+`info.window = {process, className, title, path?}`。维度：`process`
+（exe 名或 stem）、`class`（Win32 窗口类）、`title`（子串或 `/…/` 正则）；
+字段内 OR、字段间 AND，三字段全空 = 永不命中。匹配不需要权限（主动读窗口
+信息才要 `window`）。示例 `examples/plugins/window-demo/`。
+
 **免 HTML 的列表模式（P2.5b）**：mode 插件声明 `template = "list"` 后不用写
 `view` —— 宿主用内置列表渲染 `search(q)` 返回的行（形状同 provider 结果），
 ↑/↓/Enter/点击走 `onEnter(item)`。示例 `examples/plugins/list-demo/`。

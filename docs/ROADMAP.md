@@ -1949,3 +1949,58 @@ folder 激活路径真实投递；原 files/img/list/重排全回归）；
 **未做（P4 后半）**：市场源（静态 JSON 索引 + 应用内安装 + 版本比对提示）、
 签名校验、`.lupx` 文件关联/拖包安装、宿主窗口内插件逻辑的进程级隔离、
 浏览器 URL / 划词捕获（UIA）、AI 宿主 API。
+
+## 29. 插件系统 P4：活动窗口匹配（`[[features]] type = "window"`，已实现）
+
+**状态：已实现（2026-09-25）。** uTools `window` feature 的对位能力：按
+**呼出启动器前的前台窗口**触发插件——呼出时空查询主菜单出现「<label>」行，
+激活把窗口信息投递给 `onFeature`/`onEnter`（`info.window`）。探测层完全
+复用 #28 的基建（`FocusState.last_hwnd` 快照 + `ForegroundContext` 的
+process/className/title/path），本条只做清单字段 + 前端匹配 + 行渲染。
+API 文档见 `docs/PLUGIN_API.md` §6H.4。
+
+- **清单**：`[[features]]` 新增 `type = "window"` 与三维匹配字段
+  `process`（exe 文件名或去 `.exe` 的 stem，忽略大小写，对齐
+  `automation.rs::matches_rule` 先例）、`class`（Win32 窗口类，精确、忽略
+  大小写）、`title`（大小写不敏感子串，`/…/` 包裹为正则——复用 text 规则
+  的编译缓存与守卫）。**字段内 OR、字段间 AND；三字段全空 = 永不命中**
+  （与 text 规则「无 regex 无 over 永不命中」对称）。
+- **触发时机**：每次呼出（launcher-shown）由宿主拉取前台快照（**仅当存在
+  启用的 window 规则时才发 IPC**——`hasWindowFeatures()` 门控），空查询
+  主菜单出行（非空查询不出现，uTools 同）；行走既有 `featureRowToEntry`/
+  `featureEnter` 管线，激活路径 `services.enterPlugin` 零改动，payload 携带
+  `window = {process, className, title, path?}`；隐藏即清空（summon-scoped，
+  与 files 行一致）。
+- **forceGrid 接线**：空查询主菜单在「有 window 匹配行」时切到网格
+  （与 files/img 行同语义）——**注意条件必须是「匹配行数 > 0」而不是
+  「快照非空」**，否则呼出永远顶掉栏目条（实机抓出过）。
+- **权限语义**：匹配是宿主侧行为不需要权限，行 payload 只携带命中插件
+  自己的窗口信息；主动读取（`app.foreground`）才声明 `window`（#28）。
+- **超时加固（顺带的真实 bug）**：`resolve_explorer_path` 的 STA COM
+  join **无超时**，跨套间调用偶发长阻塞会把 launcher-shown 管线整个挂住
+  （本机实机抓到：呼出后无响应）。改为 channel + `recv_timeout(600ms)`，
+  超时返回 `None`、worker 线程分离自清。
+- **示例** `examples/plugins/window-demo/`（notepad process 规则、
+  process+title AND 规则、Explorer class 规则三条各演示一个维度）。
+
+**验证**：tsc/vite build/cargo build 干净、cargo test 185 无回归、
+`scripts/cdp_window_feature_verify.mjs` **11 项全过**（真实前台窗口：
+PowerShell AppActivate 激活编辑器 → toggle_launcher 呼出捕获 → process
+维度出行、process+title AND 正负例、行点击 payload 完整投递
+（进程/类名/标题）、前台切换后行消失、`app.foreground` 权限拒绝/放行/
+fail-closed）、`scripts/cdp_lupx_verify.mjs` 23 项与
+`scripts/cdp_p2b_verify.mjs` 22 项无回归；截图
+`test/window_feature_rows.png`。
+
+**踩坑（值得记）**：① 本机 `System32\notepad.exe` 可能是 Store 版 stub
+（`-PassThru` 的 PID 没有窗口）或被 Notepad3 等文件关联替换——自动化激活
+按**标题前缀** AppActivate、process 规则写双词通吃；② 前端 `plog` 未导入
+时 vite build 不报错（esbuild 不做类型检查），运行时 ReferenceError 把
+`.then` 回调静默炸掉——**tsc --noEmit 必须在构建前跑**（本轮排查
+「匹配成功但行不渲染」的真凶）；③ forceGrid 条件写成「快照非空」会顶掉
+栏目条，必须以「匹配行数 > 0」为准。
+
+**未做（P4 后半，不变）**：市场源（静态 JSON 索引 + 应用内安装 + 版本提示）、
+签名校验、`.lupx` 文件关联/拖包安装、浏览器 URL / 划词捕获（UIA）、
+超级面板（光标小窗 + 模拟 Ctrl+C 选区捕获）、AI 宿主 API、宿主窗口内插件
+逻辑的进程级隔离。

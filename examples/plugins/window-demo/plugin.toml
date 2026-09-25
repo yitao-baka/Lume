@@ -1,0 +1,48 @@
+# Window Demo — P4 活动窗口匹配示例（ROADMAP #29）。
+#
+# `[[features]] type = "window"` 规则按**呼出启动器前的前台窗口**匹配：
+# 呼出时空查询主菜单出现「<label>」行，激活把窗口信息投递给 onFeature
+# （info.window = {process, className, title, path?}）。
+#
+# 匹配语义：字段内 OR、字段间 AND；三个字段都没写 = 永不命中。
+#   process = ["notepad", "notepad++.exe"]   exe 名或去 .exe 的 stem，
+#                                            大小写不敏感
+#   class   = ["CabinetWClass"]              Win32 窗口类（精确、忽略大小写）
+#   title   = ["文档", "/Lume|v\d+/"]        大小写不敏感子串；/…/ 为正则
+#
+# 安装：把整个 window-demo/ 目录拷进 <base>/plugins/，重启或任一设置保存后
+# 生效。用法：
+#   先让记事本成为前台窗口（点一下记事本），按 Alt+Space 呼出 Lume →
+#   空查询主菜单出现「窗口工具：这是记事本」行 → 激活后 toast 报告窗口信息
+#   让资源管理器在前台呼出 → 出现「窗口工具：资源管理器文件夹」行（命中
+#   class 维度，且能拿到当前文件夹 path）
+id = "window-demo"
+name = "窗口工具 (Window Demo)"
+kind = "provider"
+version = "1.0.0"
+description = "P4 示例：type=window 活动窗口匹配（process/class/title 维度）"
+entry = "main.js"
+
+# 匹配是宿主侧行为，不需要权限；插件要主动读窗口信息（ctx.app.foreground()）
+# 才需要声明 window —— 本示例两条都用，所以声明了。
+permissions = ["window"]
+
+[[features]]
+code = "notepad"
+label = "窗口工具：这是记事本"
+type = "window"
+process = ["notepad", "notepad.exe"]
+
+# AND 演示：进程是记事本**且**标题含「验证用」才命中（字段间 AND）。
+[[features]]
+code = "notepad-verified"
+label = "窗口工具：记事本（标题含「验证用」）"
+type = "window"
+process = ["notepad"]
+title = ["验证用"]
+
+[[features]]
+code = "explorer"
+label = "窗口工具：资源管理器文件夹"
+type = "window"
+class = ["CabinetWClass"]

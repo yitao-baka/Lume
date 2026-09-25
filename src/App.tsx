@@ -6,6 +6,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { Dynamic } from "solid-js/web";
 import { resolveLocale, setLocale, t, type Messages } from "./i18n";
+import { plog } from "./plugins/log";
 import { applyColorMode } from "./theme";
 import type { SettingsData } from "./settings/types";
 import settingsIcon from "../res/icons/settings.svg";
@@ -23,7 +24,7 @@ import {
   TOAST_MS,
   TOAST_UNDO_MS,
 } from "./launcher/types";
-import type { ProviderInstance, ProviderResult } from "./plugins/types";
+import type { ForegroundInfo, ProviderInstance, ProviderResult } from "./plugins/types";
 import type { FeatureMatch } from "./plugins/registry";
 import { createIconStore } from "./launcher/icons";
 import { createWindowSizer } from "./launcher/sizing";
@@ -40,6 +41,7 @@ import {
   detachedPluginIds,
   featureMatches,
   fileFeatureMatches,
+  hasWindowFeatures,
   imgFeatureMatches,
   isPluginDetached,
   isPluginDetachable,
@@ -57,6 +59,7 @@ import {
   applyPluginSettings,
   setPluginDetached,
   setPluginServices,
+  windowFeatureMatches,
   type ModeId,
   type PluginServices,
 } from "./plugins/registry";
@@ -157,6 +160,10 @@ function App() {
   // directory from a file with one attributes query per drop.
   const [droppedFiles, setDroppedFiles] = createSignal<string[]>([]);
   const [droppedFileKinds, setDroppedFileKinds] = createSignal<string[]>([]);
+  /** The window that had focus before this summon (P4, ROADMAP #29) — feeds
+   * the `type = "window"` feature rows on the empty-query menu. `null` when
+   * no window was captured or no window features exist. */
+  const [fgContext, setFgContext] = createSignal<ForegroundInfo | null>(null);
   const [clipboardImgOk, setClipboardImgOk] = createSignal(false);
   const [menu, setMenu] = createSignal<MenuState>(null);
 
@@ -389,10 +396,17 @@ function App() {
     setWorkAreaH(null);
     sizer.scheduleResize();
   }
+  /** P4: the empty-query menu switches to the grid when any plugin rows are
+   * on offer — dropped files, a **matched** window rule, or the clipboard
+   * image (a captured foreground context alone doesn't force the grid). */
+  const emptyMenuForceGrid = () =>
+    droppedFiles().length > 0 ||
+    windowFeatureMatches(fgContext()).length > 0 ||
+    (clipboardImgOk() && imgFeatureMatches().length > 0);
   const router = createKeyRouter({
     mode,
     appsQuery,
-    forceGrid: () => droppedFiles().length > 0 || (clipboardImgOk() && imgFeatureMatches().length > 0),
+    forceGrid: emptyMenuForceGrid,
     modeIds: () => [APPS_MODE, ...modePlugins().map((m) => m.id)],
     switchKey,
     shiftEnterAdmin,
@@ -444,6 +458,7 @@ function App() {
     for (const p of allPlugins()) p.lifecycle?.onHide?.();
     setDroppedFiles([]); // P2.2 rows are one-shot: gone after the hide
     setDroppedFileKinds([]);
+    setFgContext(null); // window rows are summon-scoped the same way (P4)
     setClipboardImgOk(false);
     clearSearch();
     await invoke("hide_launcher");
@@ -498,6 +513,7 @@ function App() {
         type: f.type,
         payload: f.payload,
         ...(f.paths ? { paths: f.paths } : {}),
+        ...(f.window ? { window: f.window } : {}),
       },
     };
   }
@@ -548,6 +564,7 @@ function App() {
           sizer.scheduleResize();
         };
         const feats = [
+          ...windowFeatureMatches(fgContext()),
           ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
           ...(clipboardImgOk() ? imgFeatureMatches() : []),
         ];
@@ -564,6 +581,7 @@ function App() {
               // Rebuild either way: the probe may have ADDED the row (image
               // appeared) or must DROP a stale one (clipboard changed back).
               rebuildEmpty([
+                ...windowFeatureMatches(fgContext()),
                 ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
                 ...(ok ? imgFeatureMatches() : []),
               ]);
@@ -826,6 +844,7 @@ function App() {
           type: fe.type,
           payload: fe.payload,
           ...(fe.paths ? { paths: fe.paths } : {}),
+          ...(fe.window ? { window: fe.window } : {}),
         });
         if (!ok) showToast(t("pluginActionUnavailable", { id: item.featureEnter.pluginId }));
         return;
@@ -1064,6 +1083,41 @@ function App() {
       clearSearch();
       await Promise.all([nav.refreshRecent(), nav.refreshPins()]);
       await refreshPluginBars();
+      // The window that had focus before this summon (P4, ROADMAP #29) —
+      // fetched only when some plugin declares a `type = "window"` rule
+      // (zero IPC otherwise), before the first search so the rows are on
+      // the empty-query menu right away.
+      if (hasWindowFeatures()) {
+        // Non-blocking on purpose: the COM hop behind this command can stall
+        // for longer than a summon may wait, so the fetch lands whenever it
+        // lands and re-renders the empty menu then (the img-probe pattern).
+        void invoke<{
+          process: string;
+          className: string;
+          title: string;
+          path: string | null;
+        }>("get_foreground_context")
+          .then((ctx) => {
+            const mapped =
+              ctx && (ctx.process || ctx.className || ctx.title || ctx.path)
+                ? {
+                    process: ctx.process,
+                    className: ctx.className,
+                    title: ctx.title,
+                    ...(ctx.path ? { path: ctx.path } : {}),
+                  }
+                : null;
+            plog.debug(null, "foreground context:", JSON.stringify(mapped));
+            setFgContext(mapped);
+            if (mode() === APPS_MODE) void runSearch(appsQuery());
+          })
+          .catch(() => {
+            plog.warn(null, "foreground context fetch failed");
+            setFgContext(null);
+          });
+      } else {
+        setFgContext(null);
+      }
       // 记住上次所在页面: a restored Clipboard page must load its history; an
       // apps page re-runs its (session) query or shows the bars.
       await runSearch(mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? ""));
@@ -1198,7 +1252,7 @@ function App() {
             markMouse={markMouse}
             openMenu={setMenu}
             setSelected={setSelected}
-            forceGrid={() => droppedFiles().length > 0 || (clipboardImgOk() && imgFeatureMatches().length > 0)}
+            forceGrid={emptyMenuForceGrid}
           />
         ) : (
           <Dynamic component={activeMode()?.View} />

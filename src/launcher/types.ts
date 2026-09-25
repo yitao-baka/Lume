@@ -34,9 +34,10 @@ export interface AppEntry {
   featureEnter?: {
     pluginId: string;
     code: string;
-    type: "regex" | "over" | "redirect" | "files" | "img";
+    type: "regex" | "over" | "redirect" | "files" | "img" | "window";
     payload: string;
     paths?: string[];
+    window?: { process: string; className: string; title: string; path?: string };
   };
 }
 

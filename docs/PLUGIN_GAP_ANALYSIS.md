@@ -479,6 +479,10 @@ Lume 的既定架构约束（`docs/ARCHITECTURE.md`）：业务逻辑归 Rust、
   （可复用 `explorer.rs`/`input.rs` 的前台窗口探测——`get_foreground_context`
   已含 process/className/title/path，`app.foreground` 已透出（`window`
   权限，#28）），体量大，评估后单独立项。
+  **窗口匹配已实现（2026-09-25，ROADMAP #29）**：`[[features]] type =
+  "window"` 按 process/class/title 维度匹配呼出前的前台窗口，空查询主菜单
+  出行、payload 携带窗口信息（`docs/PLUGIN_API.md` §6H.4）；超级面板
+  （划词捕获 + 光标小窗）仍留后续。
 - **AI 宿主 API**（`utools.ai` 形态）：视需求单独立项。
 
 ## 6. 与 ROADMAP / 文档的衔接

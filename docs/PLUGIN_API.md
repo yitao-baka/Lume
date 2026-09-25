@@ -100,7 +100,7 @@ export default {
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
 | `settings` | array of table | `[]` | **声明式设置**（P3.4，§6F.3）——`[[settings]]` 子表：`key`、`label`、`type`（`toggle`/`select`/`text`）、`default`、`[[settings.options]]`（`value`/`label`）。设置 → 插件 自动渲染，值存插件 `__settings` 文档，插件经 `ctx.settings.get/all` 读、`onSettings` 感知变更。 |
-| `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入）与 `"img"`（剪贴板图片）规则见 §6E.1.1。 |
+| `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入，含 `file_type` 类别，§6E.1.1）、`"img"`（剪贴板图片）与 `"window"`（活动窗口匹配，§6H.4）规则见对应小节。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。分离窗口的默认高度同样取它（§6G）。 |
 | `detachable` | bool | `false` | **mode 专属**（P6，§6G）— 页面可以分离为独立窗口：设置页显示「可分离」chip，激活该模式时页面右上角悬停出现「在独立窗口打开」按钮。依赖启动器搜索框交互（`setSubInput`/`setQuery` 驱动）的模式不要声明。 |
 | `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。 |
@@ -1175,6 +1175,53 @@ file_type = "image"      # 图片扩展名类别表（png/jpg/gif/webp/…）
 规则各一条）；实机脚本 `scripts/cdp_lupx_verify.mjs`（23 项）、
 `scripts/cdp_p2b_verify.mjs` fileType 段。
 
+### 6H.4 活动窗口匹配（`[[features]] type = "window"`，ROADMAP #29）
+
+按**呼出启动器前的前台窗口**触发：呼出时空查询主菜单出现「<label>」行，
+激活把窗口信息投递给 `onFeature`/`onEnter`（`info.window`）。典型用途：
+用户正在某应用里 → 呼出 → 插件针对「用户此刻在哪」出动作行。
+
+```toml
+[[features]]
+code = "notepad"
+label = "窗口工具：这是记事本"
+type = "window"
+process = ["notepad", "notepad.exe"]   # exe 文件名或去 .exe 的 stem，忽略大小写
+
+[[features]]
+code = "explorer"
+label = "窗口工具：资源管理器文件夹"
+type = "window"
+class = ["CabinetWClass"]               # Win32 窗口类（精确、忽略大小写）
+
+[[features]]
+code = "notepad-verified"
+label = "窗口工具：记事本（标题含「验证用」）"
+type = "window"
+process = ["notepad"]
+title = ["验证用"]                       # 大小写不敏感子串；"/…/" 包裹为正则
+```
+
+**匹配语义**：字段内 OR（多个值任一命中）、字段间 AND（声明的每个维度都要
+命中）；**三个字段都没写 = 永不命中**（与 text 规则「无 regex 无 over 永不
+命中」对称）。匹配发生在呼出瞬间（`FocusState.last_hwnd` 的快照）：
+`process` 用前台进程的 exe 文件名（`app.foreground` 同源），`class`/`title`
+用 `GetClassNameW`/`GetWindowTextW`。
+
+**触发与生命周期**：仅空查询主菜单出现（非空查询不出现，uTools 同）；每次
+呼出按新前台重算，隐藏后清空（summon-scoped，与 files 行一致）；有 window
+行时网格替代栏目条（与 files/img 行同语义）。
+
+**权限语义**：匹配是宿主侧行为——只看清单声明，**不需要权限**；行 payload
+只携带该插件自己命中的窗口信息。插件要**主动**读窗口信息（`app.foreground`
+，§6H.2）才需要声明 `window`。
+
+示例：`examples/plugins/window-demo/`；实机脚本
+`scripts/cdp_window_feature_verify.mjs`（11 项：process/AND 维度正负例、
+payload 投递、summon-scoped 清空、权限拒绝/放行/fail-closed；Explorer 的
+class 维度与 path 解析依赖真实 Explorer 窗口激活，自动化不稳定，由示例的
+手工步骤覆盖）。
+
 ---
 
 ## 7. 启停与状态管理
@@ -1315,12 +1362,13 @@ pluginBuiltin`。
 - ✅ 沙箱机制（opaque iframe + Rust 命令侧白名单 + 前端守卫双层防线）—— §6C、§9
 - ✅ mode 页独立窗口（`detachable` 清单字段 + 运行时插件窗口 + 跨窗口状态推送）—— §6G
 - ✅ `.lupx` 打包、安装确认与卸载；`app.foreground`（`window` 权限）；
-  files 规则 `file_type` 类别与文件夹匹配（P4 前半）—— §6H
+  files 规则 `file_type` 类别与文件夹匹配（P4 前半）—— §6H.1–6H.3
+- ✅ 活动窗口匹配（`[[features]] type = "window"`，process/class/title
+  维度，呼出时快照匹配）—— §6H.4
 
 未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4 后半）：
 
 - `.lupx` 市场源（静态索引 + 应用内安装 + 版本提示）、签名校验、
   拖包/文件关联安装
-- 活动窗口匹配（`[[features]] type = "window"`）、浏览器 URL / 划词捕获
-  （UIA）、超级面板、AI 宿主 API
+- 浏览器 URL / 划词捕获（UIA）、超级面板、AI 宿主 API
 - 宿主窗口内插件逻辑的进程级隔离（沙箱已覆盖 mode 页与命令侧，§9 残余边界）

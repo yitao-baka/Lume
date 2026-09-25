@@ -83,6 +83,19 @@ pub struct PluginFeature {
     /// Optional row icon (relative to the plugin dir; resolved like `icon`).
     #[serde(default)]
     pub icon: String,
+    /// `window` rules (P4, ROADMAP #29): match the foreground window at
+    /// summon time. Within one field the values OR, across fields they AND;
+    /// a rule with **no** field at all never matches. `process` matches the
+    /// exe file name or its stem (case-insensitive, cf.
+    /// `automation.rs::matches_rule`); `class` is the exact Win32 window
+    /// class (case-insensitive); `title` is a case-insensitive substring, or
+    /// a regex when wrapped in `/…/`.
+    #[serde(default)]
+    pub process: Vec<String>,
+    #[serde(default)]
+    pub class: Vec<String>,
+    #[serde(default)]
+    pub title: Vec<String>,
 }
 
 /// One `select` choice (P3.4). `label` falls back to `value`.

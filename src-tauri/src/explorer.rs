@@ -306,15 +306,30 @@ fn resolve_context(hwnd: isize) -> ForegroundContext {
 /// the active tab's shell window inside the `CabinetWClass` tab host) and
 /// visible (the active tab) — then its folder is resolved via `IFolderView` →
 /// `IPersistFolder2` → `GetCurFolder`.
+///
+/// The COM hop is marshalled to explorer.exe and, on a pump-less STA thread,
+/// occasionally stalls far longer than a summon can wait (observed in the
+/// field: the caller — the launcher-shown pipeline — hung with no error). The
+/// worker thread is therefore detached with a **600 ms receive timeout**: a
+/// stalled resolve returns `None` in time and the worker drains on its own
+/// when the shell answers (it dies right after — nothing joins it).
 fn resolve_explorer_path(hwnd: isize) -> Option<String> {
-    let result = std::thread::spawn(move || com_resolve_path(hwnd))
-        .join()
-        .ok()
-        .flatten();
-    if result.is_none() {
-        eprintln!("[explorer] no folder path for hwnd {hwnd:#x}");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(com_resolve_path(hwnd));
+    });
+    match rx.recv_timeout(std::time::Duration::from_millis(600)) {
+        Ok(result) => {
+            if result.is_none() {
+                eprintln!("[explorer] no folder path for hwnd {hwnd:#x}");
+            }
+            result
+        }
+        Err(_) => {
+            eprintln!("[explorer] folder resolve timed out for hwnd {hwnd:#x}");
+            None
+        }
     }
-    result
 }
 
 /// The COM `IShellWindows` query on a dedicated STA thread. COM is initialized

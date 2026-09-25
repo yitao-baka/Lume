@@ -111,11 +111,12 @@ export interface BulkDocResult {
 export interface PluginFeature {
   /** Unique code inside the plugin — delivered on enter. */
   code: string;
-  /** `text` (default) | `files` | `img`. A `text` rule matches query text; a
-   * `files` rule matches OS drag-dropped files by `extensions`/`fileType`; an
-   * `img` rule matches the clipboard holding an image (read via
-   * `clipboard.readImage()`). */
-  type: "text" | "files" | "img";
+  /** `text` (default) | `files` | `img` | `window`. A `text` rule matches
+   * query text; a `files` rule matches OS drag-dropped files by
+   * `extensions`/`fileType`; an `img` rule matches the clipboard holding an
+   * image (read via `clipboard.readImage()`); a `window` rule matches the
+   * window that had focus before the launcher appeared. */
+  type: "text" | "files" | "img" | "window";
   /** `files` rules: accepted extensions (case-insensitive; empty = any).
    * When non-empty, extension matching wins and folders never match. */
   extensions: string[];
@@ -124,6 +125,14 @@ export interface PluginFeature {
    * (P4). `folder` matches directories; the rest are extension tables over
    * files. Ignored when `extensions` is non-empty. */
   fileType: string | null;
+  /** `window` rules: foreground-window matchers. Within one field the
+   * values OR, across fields they AND; a rule with no field at all never
+   * matches. `process` = exe file name or stem (case-insensitive); `class` =
+   * exact Win32 window class (case-insensitive); `title` = case-insensitive
+   * substring, or a regex when wrapped in `/…/`. */
+  process: string[];
+  class: string[];
+  title: string[];
   /** Row label; empty → the plugin name is used. */
   label: string;
   /** Regex matched against the query text. */
@@ -142,12 +151,16 @@ export interface FeatureEnterInfo {
   /** The rule's `code`. */
   code: string;
   /** How the entry was reached: a manifest rule, `app.redirect`, dropped
-   * files (`files`) or the clipboard image (`img`). */
-  type: "regex" | "over" | "redirect" | "files" | "img";
-  /** The matched query text (or the redirect payload; "" for files/img). */
+   * files (`files`), the clipboard image (`img`) or the foreground window
+   * (`window`). */
+  type: "regex" | "over" | "redirect" | "files" | "img" | "window";
+  /** The matched query text (or the redirect payload; "" for files/img/
+   * window). */
   payload: string;
   /** `files` rules: the dropped file paths (the matched subset). */
   paths?: string[];
+  /** `window` rules: the foreground window that matched. */
+  window?: ForegroundInfo;
 }
 
 /** The capability surface handed to disk plugin factories (v2, uTools-

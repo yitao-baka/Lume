@@ -11,7 +11,7 @@
 
 import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import type { FeatureEnterInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
+import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
 import { createListTemplateMode } from "./listTemplate";
@@ -1078,6 +1078,66 @@ export function imgFeatureMatches(): FeatureMatch[] {
     });
   }
   return out;
+}
+
+/** `type = "window"` rules (P4, ROADMAP #29) — offered on the empty-query
+ * main menu when the window that had focus before the launcher appeared
+ * matches the rule's declared dimensions. Matching: within one field the
+ * values OR, across fields they AND; a rule with no field at all never
+ * matches (symmetric with a text rule that has neither regex nor over).
+ * The payload carries the matched window info so a plugin can adapt (e.g.
+ * offer actions for the file the user is looking at). */
+export function windowFeatureMatches(fg: ForegroundInfo | null): FeatureMatch[] {
+  if (!fg) return [];
+  const process = fg.process.toLowerCase();
+  const processStem = process.replace(/\.exe$/, "");
+  const className = fg.className.toLowerCase();
+  const out: FeatureMatch[] = [];
+  for (const p of plugins) {
+    if (!isEnabled(p.id)) continue;
+    const feats = (p as { features?: PluginFeature[] }).features ?? [];
+    feats.forEach((f, idx) => {
+      if (!f?.code || f.type !== "window") return;
+      const procs = (f.process ?? []).map((v) => v.toLowerCase());
+      const classes = (f.class ?? []).map((v) => v.toLowerCase());
+      const titles = f.title ?? [];
+      if (procs.length === 0 && classes.length === 0 && titles.length === 0) return;
+      if (procs.length > 0 && !procs.some((v) => v === process || v === processStem)) return;
+      if (classes.length > 0 && !classes.includes(className)) return;
+      if (titles.length > 0 && !titles.some((v) => titleValueMatches(p.id, idx, v, fg.title))) return;
+      out.push({
+        pluginId: p.id,
+        code: f.code,
+        type: "window",
+        payload: "",
+        window: fg,
+        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+      });
+    });
+  }
+  return out;
+}
+
+/** One `title` matcher value: a case-insensitive substring, or a regex when
+ * wrapped in `/…/` (compiled through the same cache/guards as the text-rule
+ * patterns — same plugin+rule key space, invalid and empty-matching patterns
+ * are dropped). */
+function titleValueMatches(pluginId: string, ruleIdx: number, value: string, title: string): boolean {
+  const wrapped = /^\/(.*)\/$/.exec(value.trim());
+  if (!wrapped) return title.toLowerCase().includes(value.toLowerCase());
+  const re = compileFeatureRegex(pluginId, ruleIdx, wrapped[1]);
+  return re ? re.test(title) : false;
+}
+
+/** Whether any enabled plugin declares a `type = "window"` rule — gates the
+ * per-summon foreground-context fetch (zero IPC when unused). */
+export function hasWindowFeatures(): boolean {
+  return plugins.some(
+    (p) =>
+      isEnabled(p.id) &&
+      ((p as { features?: PluginFeature[] }).features ?? []).some((f) => f?.type === "window")
+  );
 }
 
 /** Route a declarative entry payload to its plugin: a mode receives

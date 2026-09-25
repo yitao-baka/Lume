@@ -410,6 +410,13 @@ Lume 的既定架构约束（`docs/ARCHITECTURE.md`）：业务逻辑归 Rust、
 > 触达 Tauri IPC，跳过整层；真正的隔离（沙箱 iframe + 命令侧白名单 + 签名）与
 > `.lupx` 安装确认一起留到 P4。今天这一层的价值是**知情同意 + 明确失败**，文档
 > 与设置页都照实写。
+>
+> **P5 更新（2026-09-25，沙箱提前落地）**：原计划留到 P4 的「沙箱 iframe +
+> 命令侧白名单」两项已实现——mode 页换成 opaque-origin 沙箱 iframe（同源绕过
+> 关死），`plugin_perm.rs` 在 Rust 侧按清单 `permissions` 校验每个宿主能力命令
+> 的调用方 id（fail-closed，原生路径 = main 窗口）。仍未做的 P4 项：`.lupx`
+> 安装确认、签名校验、宿主窗口内插件逻辑（provider/service entry）的进程级
+> 隔离。
 
 **P3.1 storage → SQLite 文档库**
 

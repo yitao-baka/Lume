@@ -18,6 +18,7 @@ mod notify;
 mod plugin_fs;
 mod plugin_host;
 mod plugin_net;
+mod plugin_perm;
 mod plugin_store;
 mod plugins;
 mod pins;
@@ -86,6 +87,7 @@ pub fn run() {
         .manage(window::FocusState::default())
         .manage(dirwatch::DirWatchState::default())
         .manage(window::PreviewState::default())
+        .manage(plugin_perm::PluginPermState::default())
         .plugin(hotkey::build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

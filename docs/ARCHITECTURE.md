@@ -10,6 +10,12 @@ Tauri IPC
         ▼
 Rust Core (src-tauri/src/)
   ├─ window.rs   — show / hide / toggle the launcher surface
+  ├─ plugins.rs  — plugin discovery (`<base>/plugins/*/plugin.toml`) +
+  │                manifest registry (`get_plugins`, reload, pinyin keywords)
+  ├─ plugin_perm.rs — Rust-side permission whitelist: every host-capability
+  │                plugin command re-checks the caller's plugin id against
+  │                its manifest `permissions` (fail-closed; native paths are
+  │                main-window only)
   ├─ apps.rs     — file search from the index caches, fuzzy + pinyin scoring,
   │                ShellExecuteW launch (+ records recent-opens)
   ├─ cache.rs    — System32 / user / icons SQLite index caches

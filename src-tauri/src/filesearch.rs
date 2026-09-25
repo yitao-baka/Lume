@@ -106,7 +106,24 @@ pub async fn file_search(
     sort: Option<String>,
     exts: Option<Vec<String>>,
     folder: Option<bool>,
-) -> FileSearchOut {
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<FileSearchOut, String> {
+    // The native Navigate pipeline calls this from the main window without an
+    // id; plugins go through `search.files` with their id (`search.files`
+    // permission, Rust-side enforced).
+    if let Err(err) = crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "search.files",
+    ) {
+        eprintln!("[filesearch] denied: {err}");
+        return Err(err);
+    }
     let max = max.unwrap_or(FILE_RESULTS_MAX).clamp(1, 100);
     let offset = offset.unwrap_or(0);
     // 'static: only the known sort names survive (invalid → engine default),
@@ -120,9 +137,10 @@ pub async fn file_search(
         run_search(&query, max, offset, sort, &filter, filter_echo)
     })
     .await
+    .map(|out| Ok(out))
     .unwrap_or_else(|e| {
         eprintln!("[filesearch] join failed: {e}");
-        unavailable()
+        Ok(unavailable())
     })
 }
 

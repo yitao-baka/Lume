@@ -210,14 +210,24 @@ permissions = ["network", "clipboard", "fs.write"]
 （`storage`/`db`/`settings`）与私有目录 `files/`。完整台账与边界（含「这是
 前端关卡、不是沙箱」的说明）见 `docs/PLUGIN_API.md` §6D.6 与 §9。
 
-## 安全模型（v1）
+## 安全模型（v1 + P5 沙箱）
 
 加载第三方 JS = 在启动器 webview 里执行任意代码。信任模型是
 **显式放置即信任**（用户自己把插件放进 plugins/ 目录）。`permissions`
-自 P3.2 起**被强制**（上表；未声明的能力调用即失败），但校验点在前端——
-mode 页是同源 iframe，蓄意代码仍可绕过，真正的沙箱留待生态阶段。内置插件
-（clipboard/preview）编译进二进制，与磁盘插件走同一注册表与启停路径，不参与
-权限表。
+自 P3.2 起**被强制**（上表；未声明的能力调用即失败），且自 P5 起是
+**三层防线**：
+
+1. **沙箱 iframe** — mode 页运行在 opaque-origin 沙箱里，够不到宿主与
+   Tauri IPC；页内数据用 `ctx.storage`/`ctx.db`（`localStorage` 不可用），
+   跨域取数用 `lume.http.request`（页内 `fetch` 受 CORS 限制）。
+2. **Rust 命令侧白名单** — 每个宿主能力命令再按清单校验一次调用方
+   plugin_id（直连 `invoke` 也拦得住）。
+3. **前端守卫** — 未声明就调用当场报错，设置页 chips 可见。
+
+残余边界（如实说）：跑在启动器窗口里的插件逻辑（provider/service）仍是
+同源代码，可冒用任意 plugin_id——这是「显式放置即信任」的既有决定。
+内置插件（clipboard/preview）编译进二进制，与磁盘插件走同一注册表与启停
+路径，不参与权限表。
 
 ## 内置插件
 

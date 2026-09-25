@@ -309,8 +309,9 @@ pub(crate) fn manifest_settings(base: &Path, id: &str) -> Vec<PluginSettingInfo>
 }
 
 /// Parse one `plugin.toml` (small standalone parse so tests don't need the
-/// full settings machinery).
-fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
+/// full settings machinery). Also used by the Rust-side permission layer
+/// (`plugin_perm.rs`), which reads manifests on its own.
+pub(crate) fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
     toml::from_str(text).map_err(|e| format!("invalid plugin.toml: {e}"))
 }
 
@@ -475,13 +476,21 @@ pub fn list_plugins(
 /// closed to the declared capabilities), so the trusted list — and the
 /// global `trust_all` switch — grant nothing.
 #[tauri::command]
-pub fn get_plugins(state: State<SettingsState>) -> Result<Vec<PluginInfo>, String> {
+pub fn get_plugins(
+    app: tauri::AppHandle,
+    state: State<SettingsState>,
+) -> Result<Vec<PluginInfo>, String> {
+    use tauri::Manager;
     let snapshot = settings::snapshot(&state);
     let (trusted, trust_all) = if snapshot.plugins.dev_mode {
         (snapshot.plugins.trusted.clone(), snapshot.plugins.trust_all)
     } else {
         (Vec::new(), false)
     };
+    // The Rust-side permission cache rides along: every refresh re-reads the
+    // manifests on disk, so any manifest edit (permissions included) reaches
+    // the command-side checks too.
+    crate::plugin_perm::refresh(&app.state::<crate::plugin_perm::PluginPermState>());
     Ok(list_plugins(
         &base_dir(),
         &snapshot.plugins.disabled,
@@ -495,7 +504,10 @@ pub fn get_plugins(state: State<SettingsState>) -> Result<Vec<PluginInfo>, Strin
 /// unload/reload lives in the frontend registry (`reloadDiskPlugin`).
 #[tauri::command]
 pub fn reload_plugin(id: String, app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Emitter;
+    use tauri::{Emitter, Manager};
+    // The manifest may have changed (permissions included) — drop the
+    // permission cache entry so the next check re-reads it.
+    crate::plugin_perm::invalidate(&app.state::<crate::plugin_perm::PluginPermState>(), &id);
     app.emit("plugin-reload", id).map_err(|e| e.to_string())
 }
 

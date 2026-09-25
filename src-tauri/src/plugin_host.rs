@@ -87,11 +87,23 @@ fn build_dialog(
 
 /// Native open picker. Returns the chosen absolute paths (empty when the user
 /// cancelled — cancellation is not an error, the plugin decides what to say).
+/// Permission: `dialog` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
 pub async fn plugin_dialog_open(
     app: AppHandle,
     params: OpenDialogParams,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<Vec<String>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "dialog",
+    )?;
     let started = std::time::Instant::now();
     let out = tauri::async_runtime::spawn_blocking(move || {
         let b = build_dialog(&app, params.title, params.default_path, params.file_name, params.filters);
@@ -123,11 +135,23 @@ pub async fn plugin_dialog_open(
 }
 
 /// Native save picker. Returns the chosen path, or null when cancelled.
+/// Permission: `dialog` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
 pub async fn plugin_dialog_save(
     app: AppHandle,
     params: SaveDialogParams,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<Option<String>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "dialog",
+    )?;
     let started = std::time::Instant::now();
     let out = tauri::async_runtime::spawn_blocking(move || {
         let b = build_dialog(&app, params.title, params.default_path, params.file_name, params.filters);
@@ -169,8 +193,26 @@ pub struct CursorPos {
     pub y: i32,
 }
 
+/// Cursor position in physical screen pixels.
+/// Permission: `screen` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_cursor_pos() -> Result<CursorPos, String> {
+pub fn plugin_cursor_pos(
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<CursorPos, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "screen",
+    )?;
+    cursor_impl()
+}
+
+fn cursor_impl() -> Result<CursorPos, String> {
     let mut pt = Default::default();
     if unsafe { GetCursorPos(&mut pt) }.is_err() {
         return Err("GetCursorPos failed".into());
@@ -179,8 +221,25 @@ pub fn plugin_cursor_pos() -> Result<CursorPos, String> {
 }
 
 /// Every monitor, physical pixels, in the shell's enumeration order.
+/// Permission: `screen` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_displays() -> Result<Vec<DisplayInfo>, String> {
+pub fn plugin_displays(
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<Vec<DisplayInfo>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "screen",
+    )?;
+    displays_impl()
+}
+
+fn displays_impl() -> Result<Vec<DisplayInfo>, String> {
     let mut out: Vec<DisplayInfo> = Vec::new();
     let ptr = &mut out as *mut Vec<DisplayInfo> as isize;
     let ok = unsafe { EnumDisplayMonitors(None, None, Some(enum_monitor), LPARAM(ptr)) };
@@ -229,7 +288,7 @@ mod tests {
 
     #[test]
     fn displays_include_a_primary_monitor() {
-        let displays = plugin_displays().expect("enumeration should succeed");
+        let displays = displays_impl().expect("enumeration should succeed");
         assert!(!displays.is_empty(), "at least one monitor");
         assert_eq!(
             displays.iter().filter(|d| d.primary).count(),
@@ -247,8 +306,8 @@ mod tests {
 
     #[test]
     fn cursor_is_inside_some_monitor() {
-        let pos = plugin_cursor_pos().expect("cursor position");
-        let displays = plugin_displays().unwrap();
+        let pos = cursor_impl().expect("cursor position");
+        let displays = displays_impl().unwrap();
         let inside = displays.iter().any(|d| {
             pos.x >= d.x && pos.x < d.x + d.width && pos.y >= d.y && pos.y < d.y + d.height
         });

@@ -1318,8 +1318,22 @@ fn decode_image_payload(data: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Put a PNG (base64 or data URI) on the clipboard as an image.
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_clipboard_write_image(data: String) -> Result<(), String> {
+pub fn plugin_clipboard_write_image(
+    data: String,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
     let png = decode_image_payload(&data)?;
     let rgba = image::load_from_memory(&png)
         .map_err(|e| format!("decode image: {e}"))?
@@ -1337,8 +1351,22 @@ pub fn plugin_clipboard_write_image(data: String) -> Result<(), String> {
 }
 
 /// Put a file/folder list on the clipboard as CF_HDROP (Explorer-style copy).
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_clipboard_write_files(paths: Vec<String>) -> Result<(), String> {
+pub fn plugin_clipboard_write_files(
+    paths: Vec<String>,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
     if paths.is_empty() {
         return Err("no paths given".into());
     }
@@ -1347,8 +1375,21 @@ pub fn plugin_clipboard_write_files(paths: Vec<String>) -> Result<(), String> {
 }
 
 /// The clipboard's current file list (empty when it holds something else).
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_clipboard_read_files() -> Result<Vec<String>, String> {
+pub fn plugin_clipboard_read_files(
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<Vec<String>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
     Ok(read_file_list().unwrap_or_default())
 }
 
@@ -1404,8 +1445,21 @@ pub fn plugin_clipboard_has_image() -> Result<bool, String> {
 /// `clipboard.readImage`). Same acquisition chain as the history capture
 /// (`arboard` CF_DIB → custom PNG → CF_BITMAP) so the two can never disagree.
 /// None when the clipboard holds no decodable image.
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_clipboard_read_image() -> Result<Option<String>, String> {
+pub fn plugin_clipboard_read_image(
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<Option<String>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
     let png = if let Ok(mut cb) = arboard::Clipboard::new() {
         cb.get_image().ok().and_then(|img| encode_png(&img))
     } else {
@@ -1422,14 +1476,26 @@ pub fn plugin_clipboard_read_image() -> Result<Option<String>, String> {
 /// focus before the launcher appeared (the clipboard mode's auto_paste flow:
 /// hide the launcher, restore focus, Ctrl+V). Exactly one payload is expected.
 /// Like a normal copy, the payload STAYS on the clipboard afterwards.
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
 pub fn plugin_clipboard_paste(
     text: Option<String>,
     image: Option<String>,
     files: Option<Vec<String>>,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
     focus: State<crate::window::FocusState>,
     app: AppHandle,
 ) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
     let given = [text.is_some(), image.is_some(), files.is_some()]
         .iter()
         .filter(|x| **x)

@@ -129,8 +129,32 @@ pub fn copy_path(path: String) -> Result<(), String> {
 /// Move files/folders to the Recycle Bin. No permanent-delete fallback: any
 /// shell failure is an Err. One batched `SHFileOperationW` (pFrom carries all
 /// paths) — the shell cost, and any progress UI, is paid once.
+/// Permission: `trash` when called by a plugin (plugin_id given); the native
+/// shared context menu calls without one and is main-window only.
 #[tauri::command]
-pub async fn trash_to_recycle(paths: Vec<String>) -> Result<(), String> {
+pub async fn trash_to_recycle(
+    paths: Vec<String>,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<(), String> {
+    if let Err(err) = crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "trash",
+    ) {
+        eprintln!("[explorer] trash denied: {err}");
+        return Err(err);
+    }
+    trash_impl(paths).await
+}
+
+/// The shell operation behind `trash_to_recycle`, without the permission
+/// gate (unit tests call this directly — they cannot build Tauri state).
+async fn trash_impl(paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
         return Ok(());
     }
@@ -403,7 +427,7 @@ mod tests {
         let path = std::env::temp_dir().join("lume-trash-test-9f3a.txt");
         std::fs::write(&path, "trash me").unwrap();
         assert!(path.exists());
-        tauri::async_runtime::block_on(trash_to_recycle(vec![path.to_string_lossy().into_owned()]))
+        tauri::async_runtime::block_on(crate::explorer::trash_impl(vec![path.to_string_lossy().into_owned()]))
             .expect("trash_to_recycle");
         assert!(!path.exists());
     }
@@ -412,7 +436,7 @@ mod tests {
     /// call, no silent success.
     #[test]
     fn trash_rejects_missing_path() {
-        let err = tauri::async_runtime::block_on(trash_to_recycle(vec![
+        let err = tauri::async_runtime::block_on(crate::explorer::trash_impl(vec![
             r"C:\definitely\missing\9f3a.bin".into(),
         ]))
         .unwrap_err();

@@ -281,8 +281,22 @@ fn fetch_blocking(req: HttpRequest) -> Result<HttpResponse, String> {
 
 /// One HTTP request from a plugin. Blocks on a worker thread — the webview
 /// never waits on the main thread. `url` must be absolute http/https.
+/// Permission: `network` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub async fn plugin_http_fetch(req: HttpRequest) -> Result<HttpResponse, String> {
+pub async fn plugin_http_fetch(
+    req: HttpRequest,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<HttpResponse, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "network",
+    )?;
     let url = req.url.clone();
     let started = std::time::Instant::now();
     let out = spawn_blocking(move || fetch_blocking(req))

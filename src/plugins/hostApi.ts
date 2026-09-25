@@ -108,7 +108,8 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         plog.debug(id, "app.trash:", paths.length, "path(s)");
         // The plugin owns the confirmation (toast / UI double-confirm); the
         // host shows none. Recycle-bin only — no permanent-delete fallback.
-        void invoke("trash_to_recycle", { paths }).catch((err) =>
+        // pluginId rides along for the Rust-side `trash` permission check.
+        void invoke("trash_to_recycle", { paths, pluginId: id }).catch((err) =>
           plog.error(id, "app.trash failed:", err)
         );
       },
@@ -119,8 +120,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       notify: async (title, body) => {
         plog.debug(id, "app.notify:", title);
         await invoke("plugin_notify", { title, body, pluginId: id });
-      },
-      setSubInput: (opts) => {
+      },setSubInput: (opts) => {
         plog.debug(id, "app.setSubInput:", opts?.placeholder ?? "");
         services.setSubInput(id, opts ?? {});
       },
@@ -149,16 +149,16 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       },
       writeImage: async (data) => {
         plog.debug(id, "clipboard.writeImage:", data.length, "bytes");
-        await invoke("plugin_clipboard_write_image", { data });
+        await invoke("plugin_clipboard_write_image", { data, pluginId: id });
       },
       writeFiles: async (paths) => {
         plog.debug(id, "clipboard.writeFiles:", paths.length, "path(s)");
-        await invoke("plugin_clipboard_write_files", { paths });
+        await invoke("plugin_clipboard_write_files", { paths, pluginId: id });
       },
-      readFiles: () => invoke<string[]>("plugin_clipboard_read_files"),
+      readFiles: () => invoke<string[]>("plugin_clipboard_read_files", { pluginId: id }),
       readImage: () => {
         plog.debug(id, "clipboard.readImage");
-        return invoke<string | null>("plugin_clipboard_read_image");
+        return invoke<string | null>("plugin_clipboard_read_image", { pluginId: id });
       },
       paste: async (payload) => {
         plog.debug(id, "clipboard.paste:", Object.keys(payload ?? {}).join("/"));
@@ -166,6 +166,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
           text: payload?.text,
           image: payload?.image,
           files: payload?.files,
+          pluginId: id,
         });
       },
     },
@@ -181,6 +182,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
             body_base64: req?.bodyBase64,
             timeout_ms: req?.timeoutMs,
           },
+          pluginId: id,
         });
         return decorateHttpResponse(raw);
       },
@@ -188,15 +190,15 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
     dialog: {
       open: async (opts?: DialogOptions) => {
         plog.debug(id, "dialog.open:", opts?.title ?? "");
-        return invoke<string[]>("plugin_dialog_open", { params: dialogParams(opts) });
+        return invoke<string[]>("plugin_dialog_open", { params: dialogParams(opts), pluginId: id });
       },
       save: async (opts?: DialogOptions) => {
         plog.debug(id, "dialog.save:", opts?.title ?? "");
-        return invoke<string | null>("plugin_dialog_save", { params: dialogParams(opts) });
+        return invoke<string | null>("plugin_dialog_save", { params: dialogParams(opts), pluginId: id });
       },
     },
     screen: {
-      cursor: () => invoke<{ x: number; y: number }>("plugin_cursor_pos"),
+      cursor: () => invoke<{ x: number; y: number }>("plugin_cursor_pos", { pluginId: id }),
       displays: async () => {
         const raw = await invoke<
           {
@@ -210,7 +212,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
             work_height: number;
             primary: boolean;
           }[]
-        >("plugin_displays");
+        >("plugin_displays", { pluginId: id });
         return raw.map(
           (d): DisplayInfo => ({
             x: d.x,
@@ -357,6 +359,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
           sort: o.sort,
           exts: o.exts,
           folder: o.folder,
+          pluginId: id,
         });
       },
     },

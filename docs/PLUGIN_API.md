@@ -437,9 +437,12 @@ lume.app.setPlaceholder("");                        // 传 "" 恢复默认
 
 ## 6C. 磁盘 mode 桥接契约（`window.lume`）
 
-mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise RPC 对象
-`window.lume`（方法拒绝时 reject；桥接层捕获并 `console.error`，返回
-`undefined`）：
+mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 带
+`sandbox="allow-scripts allow-forms allow-popups allow-modals"`，**无**
+`allow-same-origin`——页面够不到宿主文档、`parent.__TAURI_INTERNALS__` 与
+启动器 DOM，也不能导航顶层窗口；代价见下方「沙箱边界」）。注入的桥接客户端
+暴露一个 Promise RPC 对象 `window.lume`（方法拒绝时 reject；桥接层捕获并
+`console.error`，返回 `undefined`）：
 
 | 组 | 方法 | 说明 |
 |---|---|---|
@@ -464,7 +467,7 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 | `enter` | `{code, type, payload}` | 声明式进入规则命中本模式（P2.1）或别的插件 `app.redirect` 过来（P2.5）。`type` = `"regex" \| "over" \| "redirect"`，`payload` = 命中的查询文本（redirect 时为发送方给的 payload）。**页面在 `load` 之后才会收到状态重放**（见下） |
 | `subInput` | `string` | 本模式调 `app.setSubInput` 接管搜索框后，每一次按键（P2.3） |
 | `settings` | `Record<string, unknown>` | 用户在设置页改动了本插件的声明式设置（P3.4）；页面 `load` 后的握手会重放当前值 |
-| `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。焦点在插件 iframe 内时同样送达：iframe 的 keydown（冒泡阶段、目标非可编辑、未被插件 `preventDefault`）由宿主回投 window 路由后经本事件回流。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
+| `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。转发链路（P5 沙箱化后）：页面内非可编辑目标、未被页面 `preventDefault` 的 keydown 由**桥接脚本**转发给宿主 → 宿主在其窗口重放该键（Esc 分层/Tab 切模式/箭头导航照旧）→ 根路由消费的键异步回执 `preventDefault`（迟滞消费——Tab 这类移动焦点的键，iframe 内默认动作可能已先发生；Esc 契约不受影响，页面在**自己 document** 上的冒泡监听里 `preventDefault` 即同步消费，被消费的按键不再转发）。焦点在插件 iframe 内时同样送达。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
 
 **状态重放（重要）**：桥接脚本在 `<head>`、页面自己的 `lume.on.*` 赋值在 `</body>`
 之前——所以宿主**不会**在 iframe 一挂载就推事件。页面 `load` 后桥接发
@@ -472,7 +475,14 @@ mode 页是 srcdoc 同源 iframe，注入的桥接客户端暴露一个 Promise 
 `enter`（若有）。含义：① 页面脚本请同步赋值 `lume.on.*`（异步赋值会错过首播）；
 ② 重复收到同一 `show`/`query` 是正常的，处理器应幂等。
 
-Esc 默认不经过 `key` 事件（根统一处理：菜单 → 模式 onEscape → 卫星预览 → 隐藏）。**插件要消费 Esc**：在自己的 document 上挂冒泡 keydown 监听并 `preventDefault`（须在宿主转发监听之前注册——页面自身脚本先于桥接转发执行，天然满足）——被消费的按键不再回流根路由。iframe 内非可编辑目标的按键在转发后同样经过根 `blockBrowserKeys`（Ctrl/Alt 组合被拦，与宿主非输入区行为一致）；可编辑目标（input/textarea/contenteditable）的按键完全归插件。另外，iframe 内非可编辑区域的点击会把焦点交还宿主搜索框（宿主统一兜底，插件无需自行实现 focus hand-off）。
+**沙箱边界（P5 起）**：iframe 是 opaque origin——`window.localStorage`/
+`document.cookie` 访问会**抛错**（插件数据请用 `ctx.storage`/`ctx.db`）；
+页面内直接 `fetch` 远程受 CORS 约束（opaque origin 发不出带凭据的请求），
+跨域取数请用 `lume.http.request`（宿主代理，无 CORS）；`<img>`/`<video>`
+等非 CORS 资源、asset: 协议图标不受影响。另外，iframe 内非可编辑区域的
+点击会把焦点交还宿主搜索框（桥内 mousedown 交接，宿主统一兜底）。
+
+Esc 默认不经过 `key` 事件（根统一处理：菜单 → 模式 onEscape → 卫星预览 → 隐藏）。**插件要消费 Esc**：在自己的 document 上挂冒泡 keydown 监听并 `preventDefault`——被消费的按键不再转发给宿主（桥接的转发监听检查 `defaultPrevented`）。iframe 内非可编辑目标的按键在转发后同样经过根 `blockBrowserKeys`（Ctrl/Alt 组合被拦，与宿主非输入区行为一致）；可编辑目标（input/textarea/contenteditable）的按键完全归插件。
 
 ---
 
@@ -709,6 +719,10 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 > 新增宿主命令时**必须**在这里登记一行、并在该文件里加一条
 > `RPC_PERMISSION`；`信任全部权限`（「全部授权」）是开发逃生门。细节与边界
 > 见 §6F.4，信任模型见 §9。
+> **P5 起双层防线**：同一张表在 **Rust 侧**也强制（`src-tauri/src/plugin_perm.rs`
+> ——每个宿主能力命令按调用方 plugin_id 对照清单 `permissions` 校验，
+> fail-closed；`file_search`/`trash_to_recycle` 的原生调用路径按「main 窗口 +
+> 无 plugin_id」放行）。绕过前端守卫的调用（直连 `invoke`）同样被拦。
 
 ---
 
@@ -991,10 +1005,14 @@ permissions = ["network", "clipboard", "fs.write"]
   列表与 trust_all 都授予不了任何能力。逐插件的 `trusted` 列表仍被
   尊重（`set_plugin_trusted` 命令保留），只是设置页不再写入。内置插件
   （clipboard/preview）编译进 lume.exe，不参与该表。
-- **边界要诚实**：这是**前端**关卡。mode 页是同源 iframe，蓄意的恶意页面仍可
-  直接触达 Tauri IPC —— 真正的隔离要靠沙箱（与生态阶段一起做）。这一层今天买到
-  的是**知情同意**与**明确失败**：插件用了什么能力写在 manifest 里、设置页看得见，
-  忘了声明就当场报错而不是悄悄能用。
+- **边界要诚实**：前端关卡之上，P5 起还有**命令侧白名单**（`plugin_perm.rs`）：
+  每个宿主能力命令在 Rust 侧再校验一次调用方的 plugin_id 与清单声明。mode 页
+  已是 opaque-origin 沙箱 iframe（§6C），页面无法触达 Tauri IPC；即便某个沙箱
+  被绕开，没有清单背书的能力调用也会在 Rust 层被拒。今天仍然成立的残余边界：
+  **跑在启动器窗口里的插件逻辑**（provider/service 的 `entry`，同源、直接持有
+  `invoke`）可以冒用任意 plugin_id——那是「显式放置即信任」的既有决定，真正
+  关死它需要进程隔离（生态阶段再议）。这一层买到的是**知情同意 + 明确失败 +
+  命令侧边界**：能力写在 manifest 里看得见，忘了声明会当场报错而不是悄悄可用。
 
 ### 6F.5 验收与示例
 
@@ -1042,13 +1060,18 @@ pluginBuiltin`。
   `http.request`、`dialog.*`、`screen.*`、`search.files`、`fs.read*`、
   `fs.writeFile`；基础 UI 动作与插件自有数据（`storage`/`db`/`settings`）与私有
   目录（`<plugin>/files/`）无需声明。
-- **这一层的边界要说清楚**：校验点在**前端**（宿主构建 API 时逐方法把关）。
-  mode 页是同源 srcdoc iframe，一个蓄意的恶意页面可以绕过 API 直接触达 Tauri
-  IPC（`parent.__TAURI_INTERNALS__`）。所以它今天买到的是**知情同意 +
-  明确失败**，不是隔离：能力写在 manifest 里看得见，忘了声明会当场报错而不是
-  悄悄可用。
-- **真正的隔离**（沙箱 iframe + 命令侧白名单 + 插件 id 注入）与签名校验、`.lupx`
-  安装确认一起留到生态阶段（P4）；届时台账与设置页的权限 UI 已就位。
+- **P5 沙箱（2026-09-25）**：防线从前端一层变为三层——
+  1. **opaque-origin 沙箱 iframe**（§6C）：mode 页与宿主隔离，够不到
+     `parent.__TAURI_INTERNALS__` 与启动器 DOM（原 §9 承认的同源绕过已关死）；
+     页面数据走 `storage`/`db`，跨域取数走 `lume.http`；
+  2. **Rust 命令侧白名单**（`plugin_perm.rs`）：每个宿主能力命令按清单
+     `permissions` 校验调用方 plugin_id（fail-closed；原生路径 = main 窗口且
+     无 plugin_id）；清单缓存随 `get_plugins`/`reload_plugin` 刷新；
+  3. **前端守卫**（`permissions.ts`）：不变，负责知情同意与本地化文案。
+- **残余边界（如实说）**：宿主窗口里的插件**逻辑**（provider/service entry）仍
+  是同源代码，可直接 `invoke` 并冒用 id——「显式放置即信任」的既有决定；进程级
+  隔离（每插件一个 webview/进程）留待生态阶段。签名校验、`.lupx` 安装确认同样
+  在生态阶段（P4）；届时台账与设置页的权限 UI 已就位。
 - `fs.readText`/`thumb`/`icon`（及 `app.trash`）暴露任意路径的读取与删除能力，
   现已被 `fs.read` / `trash` 声明覆盖。
 - 内置插件与磁盘插件在注册表/启停上无差别，但内置代码经编译审计随包发布且不
@@ -1124,9 +1147,11 @@ pluginBuiltin`。
 - ✅ 插件级设置界面（`[[settings]]` → 设置页自动渲染 → `onSettings`）—— §6F.3
 - ✅ storage → SQLite 文档库（`_rev` 乐观锁 + allDocs/bulkDocs + 自动迁移）—— §6F.1
 - ✅ 插件私有文件目录（`<plugin>/files/`）与 `fs.write` 能力 —— §6F.2
+- ✅ 沙箱机制（opaque iframe + Rust 命令侧白名单 + 前端守卫双层防线）—— §6C、§9
 
 未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4）：
 
 - files 规则的 `fileType` 分类与文件夹匹配（§6E.1.1 未支持项）
 - `.lupx` 打包与安装确认、插件市场源、窗口匹配/超级面板、AI 宿主 API
-- 插件沙箱与签名校验（真正的隔离，权限层目前是前端关卡）
+- 宿主窗口内插件逻辑的进程级隔离、签名校验（沙箱已覆盖 mode 页与命令侧，
+  §9 残余边界）

@@ -212,10 +212,23 @@ pub fn plugin_fs_private_remove(id: String, name: String) -> Result<(), String> 
 }
 
 /// Write text to an **arbitrary** absolute path. This is the `fs.write`
-/// capability: the frontend refuses the RPC unless the manifest declares it
-/// (or the plugin is trusted). The parent directory must exist.
+/// capability: enforced Rust-side (plugin_perm.rs) — the frontend refusal is
+/// the consent layer, this is the boundary. The parent directory must exist.
 #[tauri::command]
-pub fn plugin_fs_write_any(id: String, path: String, text: String) -> Result<(), String> {
+pub fn plugin_fs_write_any(
+    id: String,
+    path: String,
+    text: String,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_capability(
+        &perms,
+        &settings.current().plugins,
+        &base_dir(),
+        &id,
+        "fs.write",
+    )?;
     if text.len() > MAX_PRIVATE_BYTES {
         return Err(format!(
             "file too large: {} bytes (cap {MAX_PRIVATE_BYTES})",

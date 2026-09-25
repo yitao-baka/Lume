@@ -198,8 +198,23 @@ unsafe extern "system" fn wnd_proc(
 
 /// Plugin host command: show a system notification. `title`/`body` are
 /// truncated by the shell's field widths (64/256 UTF-16 units).
+/// Permission: `notify` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_notify(title: String, body: String, plugin_id: Option<String>) -> Result<(), String> {
+pub fn plugin_notify(
+    title: String,
+    body: String,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "notify",
+    )?;
     eprintln!(
         "[plugins] notify ({}) {}",
         plugin_id.as_deref().unwrap_or("-"),

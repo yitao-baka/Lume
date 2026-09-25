@@ -1,10 +1,15 @@
 //! Disk mode plugin UI: the plugin's `view` HTML renders inside an iframe
-//! (srcdoc, same-origin — the trust model is "explicit placement = trusted")
-//! with an injected bridge client. The page talks to the host through
-//! `window.lume` (promise-based RPC) and receives events by assigning
-//! `window.lume.on.query / .show / .hide / .key`.
+//! (srcdoc, **opaque origin** — the sandbox attribute grants scripts/forms/
+//! popups/modals but not same-origin) with an injected bridge client. The
+//! page talks to the host through `window.lume` (promise-based RPC) and
+//! receives events by assigning `window.lume.on.query / .show / .hide / .key`.
+//!
+//! Opaque origin means the host can no longer reach into the plugin document
+//! (`frame.contentDocument` is off-limits), so the key/focus forwarding that
+//! used to be wired from the parent now runs **inside the bridge script** and
+//! travels over the same postMessage channel as the RPC traffic.
 
-import { createSignal, onCleanup, onMount, type Component } from "solid-js";
+import { createSignal, onMount, onCleanup, type Component } from "solid-js";
 
 /** The bridge client injected into every plugin view page. Kept as a string
  * so it can be textually injected — it runs inside the plugin iframe. */
@@ -166,7 +171,62 @@ export const BRIDGE_SCRIPT = `
       var h = window.lume.on[ev.type];
       if (typeof h === "function") h(ev.payload);
     }
+    if (d.__lumeKeyConsumed) {
+      // Late consumption: the host router decided this forwarded key belongs
+      // to it (Esc / mode switch / grid arrows). preventDefault on the
+      // original event — for focus-moving keys the iframe default may already
+      // have run (best-effort; documented in PLUGIN_API.md §6C).
+      var kb = pendingKeys.get(d.__lumeKeyConsumed);
+      pendingKeys.delete(d.__lumeKeyConsumed);
+      if (kb && d.__lumeKeyConsumed.consumed) {
+        try { kb.preventDefault(); } catch (err) {}
+      }
+    }
   });
+  // ── key forwarding (sandbox-safe) ──
+  // The host cannot reach into this document (opaque origin), so forwarding
+  // runs from inside: non-editable, not-yet-prevented keydowns bubble here
+  // and go to the host, which re-dispatches them through its own router.
+  // Page listeners on inner elements run first in the bubble path — a page
+  // that preventDefaults a key (its Esc dialogs) keeps it, unchanged from the
+  // same-origin days. Every forwarded key gets a receipt so the pending map
+  // cannot grow without bound.
+  var keySeq = 0;
+  var pendingKeys = new Map();
+  document.addEventListener("keydown", function (e) {
+    var t = e.target;
+    if (t && t.closest && t.closest("input, textarea, [contenteditable]")) return;
+    if (e.defaultPrevented) return;
+    var seq = ++keySeq;
+    pendingKeys.set(seq, e);
+    parent.postMessage({
+      __lumeKey: {
+        seq: seq,
+        key: e.key,
+        code: e.code,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+      },
+    }, "*");
+  });
+  // Typing hand-off: a click anywhere non-editable in the plugin page parks
+  // focus inside the iframe, so host-side typing silently drops. Ask the host
+  // to re-focus its search box after the click settles — every plugin
+  // benefits, not just the ones that implement the hand-off themselves.
+  // Selectable text (user-select: text) is skipped: clicking a preview's path
+  // to copy it must not yank focus to the search input.
+  document.addEventListener(
+    "mousedown",
+    function (e) {
+      var t = e.target;
+      if (t && t.closest && t.closest("input, textarea, [contenteditable]")) return;
+      if (t && getComputedStyle(t).userSelect === "text") return;
+      parent.postMessage({ __lumeFocusRequest: true }, "*");
+    },
+    true
+  );
   // Announce readiness on the window's load event, NOT immediately: this
   // script sits in <head>, so an immediate post would reach the host before
   // the page's own scripts assigned lume.on.* handlers — the host's state
@@ -192,59 +252,10 @@ export function injectBridge(html: string): string {
   return injection + html;
 }
 
-/** Forward keydowns from the plugin iframe to the host window router.
- *
- * Focus entering the iframe (any click on the plugin page) makes keydown fire
- * in the iframe's document only — the host window listener never sees it. This
- * re-dispatches the event on the host window so the existing key routing
- * (`keyboard.ts` `onKeyDown` / `blockBrowserKeys`) applies unchanged:
- *
- * - Bubble phase, not capture: the plugin page's own document listeners
- *   register earlier and run first, so a plugin can consume keys (Esc in
- *   file-search's filter dialog) via `preventDefault` — consumed events are
- *   not forwarded.
- * - Editable targets (input/textarea/contenteditable) are skipped: the
- *   plugin's dialogs own their typing (Ctrl+A/C/V, arrows, Enter).
- * - When the host router consumes the re-dispatch (Esc / mode-switch /
- *   arrows), `preventDefault` is re-applied on the original event so iframe
- *   defaults (Tab focus roaming, …) stay blocked too.
- */
-function attachKeyForwarding(frame: HTMLIFrameElement) {
-  const doc = frame.contentDocument;
-  if (!doc) return;
-  doc.addEventListener("keydown", (e) => {
-    const t = e.target as HTMLElement | null;
-    const editable = t?.closest?.("input, textarea, [contenteditable]");
-    if (e.defaultPrevented || editable) return;
-    const syn = new KeyboardEvent("keydown", {
-      key: e.key,
-      code: e.code,
-      ctrlKey: e.ctrlKey,
-      shiftKey: e.shiftKey,
-      altKey: e.altKey,
-      metaKey: e.metaKey,
-      bubbles: true,
-    });
-    window.dispatchEvent(syn);
-    if (syn.defaultPrevented) e.preventDefault();
-  });
-  // Typing hand-off: a click anywhere non-editable in the plugin page parks
-  // focus inside the iframe, so host-side typing silently drops. Bounce focus
-  // back to the search box after the click settles — every plugin benefits,
-  // not just the ones that implement the hand-off themselves. Selectable
-  // text (user-select: text) is skipped: clicking a preview's path to copy
-  // it must not yank focus to the search input.
-  doc.addEventListener(
-    "mousedown",
-    (e) => {
-      const t = e.target as HTMLElement | null;
-      if (t?.closest?.("input, textarea, [contenteditable]")) return;
-      if (t && getComputedStyle(t).userSelect === "text") return;
-      setTimeout(() => document.getElementById("search-input")?.focus(), 0);
-    },
-    true
-  );
-}
+/** The sandbox attribute for plugin view iframes: scripts/forms/popups/modals
+ * run, but the page gets an opaque origin — no access to the host document,
+ * `parent.__TAURI_INTERNALS__` or launcher DOM, no top-frame navigation. */
+export const PLUGIN_FRAME_SANDBOX = "allow-scripts allow-forms allow-popups allow-modals";
 
 /** Build the mode View for a disk mode plugin: renders the prepared HTML in
  * an iframe and answers the bridge RPCs. Events (query/show/hide/enter) flow
@@ -253,7 +264,14 @@ function attachKeyForwarding(frame: HTMLIFrameElement) {
  * `onReady` fires when the plugin page's bridge script announces itself
  * (`__lumeReady`). The host must (re)deliver the current page state there:
  * `post` before that point reaches a document that has no listener yet, so
- * anything sent while the iframe was still loading would be lost. */
+ * anything sent while the iframe was still loading would be lost.
+ *
+ * The same View builder serves both hosts of a plugin page — the launcher
+ * window (mode page inside the results area) and a detached plugin window
+ * (the page hosted on its own). Host-specific behaviour is limited to the
+ * key/focus messages: the launcher re-dispatches keys into its router and
+ * re-focuses the search box; a detached host ignores the focus request and
+ * delivers keys itself. */
 export function createIframeView(
   onRpc: (method: string, args: Record<string, unknown>) => Promise<unknown>,
   onReady?: () => void,
@@ -270,6 +288,16 @@ export function createIframeView(
         const d = (e.data || {}) as {
           __lumeRpc?: { id: number; method: string; args: Record<string, unknown> };
           __lumeReady?: unknown;
+          __lumeKey?: {
+            seq: number;
+            key: string;
+            code: string;
+            ctrlKey: boolean;
+            shiftKey: boolean;
+            altKey: boolean;
+            metaKey: boolean;
+          };
+          __lumeFocusRequest?: unknown;
         };
         if (d.__lumeReady) {
           // The page's bridge is live — safe to (re)send state now.
@@ -295,6 +323,32 @@ export function createIframeView(
               )
             );
         }
+        if (d.__lumeKey) {
+          // Re-dispatch through the host's window so the existing key router
+          // applies unchanged (Esc layering, mode switch, grid arrows; the
+          // active mode's onKey delivers lume.on.key from there). Every key
+          // gets a receipt — consumed ones preventDefault late in the iframe.
+          const k = d.__lumeKey;
+          const syn = new KeyboardEvent("keydown", {
+            key: k.key,
+            code: k.code,
+            ctrlKey: k.ctrlKey,
+            shiftKey: k.shiftKey,
+            altKey: k.altKey,
+            metaKey: k.metaKey,
+            bubbles: true,
+          });
+          window.dispatchEvent(syn);
+          frame?.contentWindow?.postMessage(
+            { __lumeKeyConsumed: { seq: k.seq, consumed: syn.defaultPrevented } },
+            "*"
+          );
+        }
+        if (d.__lumeFocusRequest) {
+          // Typing hand-off (launcher only — a detached window has no search
+          // input and this resolves to nothing).
+          document.getElementById("search-input")?.focus();
+        }
       };
       window.addEventListener("message", handler);
       onCleanup(() => window.removeEventListener("message", handler));
@@ -304,11 +358,8 @@ export function createIframeView(
         class="plugin-frame"
         srcdoc={srcdoc()}
         title="plugin"
+        sandbox={PLUGIN_FRAME_SANDBOX}
         ref={(el) => (frame = el)}
-        // srcdoc is set asynchronously — the document swaps between
-        // about:blank and the injected page, so key forwarding can only be
-        // attached after the load event lands on the final document.
-        onLoad={() => attachKeyForwarding(frame!)}
       />
     );
   };

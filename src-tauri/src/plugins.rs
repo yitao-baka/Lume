@@ -192,6 +192,12 @@ pub struct PluginManifest {
     /// to the global 设置 → 窗口大小 → 高度.
     #[serde(default)]
     pub height: Option<u32>,
+    /// Mode plugins: the page may be detached into its own window (the
+    /// settings pane and the mode page offer the detach affordance only when
+    /// this is set — a mode that leans on the launcher search box should not
+    /// opt in).
+    #[serde(default)]
+    pub detachable: bool,
     /// Mode plugins: pill icon, relative to the plugin dir.
     #[serde(default)]
     pub icon: String,
@@ -243,6 +249,8 @@ pub struct PluginInfo {
     pub keywords: Vec<String>,
     /// Mode-declared preferred window height (logical px; None = global).
     pub height: Option<u32>,
+    /// Mode plugins: the page may be detached into its own window.
+    pub detachable: bool,
     /// Mode plugins: pill icon (relative to the plugin dir).
     pub icon: String,
     /// Development flag (manifest `development`): the frontend reloads this
@@ -412,6 +420,7 @@ pub fn list_plugins(
             template: String::new(),
             keywords: Vec::new(),
             height: None,
+            detachable: false,
             icon: String::new(),
             development: false,
             keywords_pinyin: Vec::new(),
@@ -452,6 +461,7 @@ pub fn list_plugins(
             template: m.template,
             keywords: m.keywords,
             height: m.height,
+            detachable: m.detachable,
             icon: m.icon,
             development: m.development,
             keywords_pinyin,
@@ -577,6 +587,11 @@ height = 560
         assert_eq!(parse_manifest("id = \"m\"").unwrap().height, None);
         // icon is optional — omitted means "no pill image" (empty string).
         assert_eq!(parse_manifest("id = \"m\"").unwrap().icon, "");
+        // detachable is optional — omitted means the page stays in the
+        // launcher; an explicit true lets the settings pane / mode page offer
+        // the detach affordance.
+        assert!(!parse_manifest("id = \"m\"").unwrap().detachable);
+        assert!(parse_manifest("id = \"m\"\ndetachable = true").unwrap().detachable);
     }
 
     #[test]

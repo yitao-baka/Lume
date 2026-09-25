@@ -20,6 +20,7 @@ mod plugin_host;
 mod plugin_net;
 mod plugin_perm;
 mod plugin_store;
+mod plugin_window;
 mod plugins;
 mod pins;
 pub mod recent;
@@ -368,6 +369,12 @@ pub fn run() {
             plugin_store::plugin_storage_get,
             plugin_store::plugin_storage_set,
             plugins::reload_plugin,
+            plugin_window::plugin_window_open,
+            plugin_window::plugin_window_ready,
+            plugin_window::plugin_window_meta,
+            plugin_window::plugin_window_redirect,
+            plugin_window::plugin_window_push_state,
+            plugin_window::plugin_window_close,
             plugin_store::plugin_db_get,
             plugin_store::plugin_db_put,
             plugin_store::plugin_db_remove,

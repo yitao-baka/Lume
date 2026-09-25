@@ -198,6 +198,7 @@ mod tests {
             trusted: trusted.iter().map(|t| t.to_string()).collect(),
             dev_mode,
             trust_all,
+            window_bounds: HashMap::new(),
         }
     }
 

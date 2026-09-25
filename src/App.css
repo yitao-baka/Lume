@@ -113,6 +113,36 @@ body,
   flex-direction: column;
   min-height: 0;
   padding: 6px;
+  position: relative;
+}
+
+/* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。 */
+.detach-btn {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font: 12px/1.4 sans-serif;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.results:hover .detach-btn,
+.detach-btn:focus-visible {
+  opacity: 1;
+}
+
+.detach-btn:hover {
+  color: var(--text);
 }
 
 .hint {

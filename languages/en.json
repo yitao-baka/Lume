@@ -307,5 +307,8 @@
   "permTrashDesc": "Move files to the recycle bin",
   "pluginsTrustAllHint": "Skip capability checks for every disk plugin (development escape hatch; requires developer mode)",
   "pluginsTrustAllOn": "All plugins trusted",
-  "pluginsTrustAllOff": "Back to declared-only capabilities"
+  "pluginsTrustAllOff": "Back to declared-only capabilities",
+  "pluginDetachable": "Detachable",
+  "pluginDetach": "Open in window",
+  "pluginWindowOpenFailed": "Failed to open the plugin window: {id}"
 }

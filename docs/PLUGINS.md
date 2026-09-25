@@ -28,12 +28,13 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   文件而是回调 `onEnter(item)`），完整契约见 `docs/PLUGIN_API.md` §5.1；
   多文件入口（`entry` 指向目录）见 §5.6。示例 `examples/plugins/web-search/`
   与 `examples/plugins/actions/`）
-- `mode` — 整页模式：`view` HTML 自由 UI（桥接 iframe）+ 可选 `entry`
+- `mode` — 整页模式：`view` HTML 自由 UI（沙箱 iframe）+ 可选 `entry`
   逻辑钩子 + `keywords` 全局关键字进入 + 可选 `height` 窗口高度 +
-  可选 `icon` pill 图标
-  （示例 `examples/plugins/hello-mode/`；基于宿主 `search.files` 能力的
-  完整文件搜索模式见 `examples/plugins/file-search/`；`template = "list"`
-  免 HTML 列表模式见 `examples/plugins/list-demo/`）
+  可选 `icon` pill 图标 + `detachable = true` 允许分离为独立窗口（P6，
+  见 `docs/PLUGIN_API.md` §6G；示例 `examples/plugins/hello-mode/`；
+  基于宿主 `search.files` 能力的完整文件搜索模式见
+  `examples/plugins/file-search/`；`template = "list"` 免 HTML 列表模式见
+  `examples/plugins/list-demo/`）
 - `service` — 无 UI 生命周期钩子（`onShow`/`onHide`/`onQuery`）
 
 `keywords` 的匹配分级为 精确 → 前缀 → 拼音首字母 → 拼音全拼（后端预计算

@@ -15,6 +15,8 @@ import type { FeatureEnterInfo, LauncherPlugin, ModeId, ModeInstance, NavBarCont
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
 import { createListTemplateMode } from "./listTemplate";
+import { fetchDiskFile } from "./disk";
+import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
 export {
@@ -222,14 +224,6 @@ async function importDiskModule(dir: string, entry: string): Promise<any> {
   return (await compileDiskModule(joined)).mod;
 }
 
-async function fetchDiskFile(path: string): Promise<string> {
-  const text = await fetch(convertFileSrc(path)).then((r) => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.text();
-  });
-  return text;
-}
-
 /** Accepts both the legacy plain-object form and the v2 factory form.
  * `def` may also be a module namespace — the default export is used. */
 function resolveLogic(def: unknown, api: ReturnType<typeof createHostApi>): Record<string, unknown> {
@@ -334,147 +328,15 @@ function navBarsContribution(
 // this window and its mode page over the bridge — are covered.
 setPermissionSource((id) => manifests().find((x) => x.id === id));
 
-/** Route a bridge RPC ("app.hide" / "storage.get" / …) to the host API. */
+/** Route a bridge RPC ("app.hide" / "storage.get" / …) to the host API.
+ * The router lives in `rpc.ts` so a detached plugin window can answer the
+ * same bridge traffic for its own page. */
 async function execHostRpc(
   id: string,
   method: string,
   args: Record<string, unknown>
 ): Promise<unknown> {
-  plog.debug(id, "rpc →", method, args);
-  const api = createHostApi(id, pluginServices!);
-  const a = args as Record<string, string>;
-  switch (method) {
-    case "app.hide":
-      return api.app.hide();
-    case "app.toast":
-      return api.app.toast(a.text, a.opts as never);
-    case "app.setQuery":
-      return api.app.setQuery(a.q);
-    case "app.setPlaceholder":
-      return api.app.setPlaceholder(a.text);
-    case "app.openPath":
-      return api.app.openPath(a.path);
-    case "app.revealPath":
-      return api.app.revealPath(a.path);
-    case "app.trash":
-      return api.app.trash(args.paths as string[]);
-    case "app.resize":
-      return api.app.resize({
-        width: args.width as number | undefined,
-        height: args.height as number | undefined,
-      });
-    case "app.notify":
-      return api.app.notify(a.title, a.body);
-    case "app.setSubInput":
-      return api.app.setSubInput(args.opts as { placeholder?: string; value?: string } | undefined);
-    case "app.removeSubInput":
-      return api.app.removeSubInput();
-    case "app.redirect":
-      return api.app.redirect(String((args as { pluginId?: string }).pluginId ?? ""), {
-        code: (args as { code?: string }).code,
-        payload: (args as { payload?: string }).payload,
-      });
-    case "clipboard.writeImage":
-      return api.clipboard.writeImage(a.data);
-    case "clipboard.writeFiles":
-      return api.clipboard.writeFiles(args.paths as string[]);
-    case "clipboard.readFiles":
-      return api.clipboard.readFiles();
-    case "clipboard.paste":
-      return api.clipboard.paste({
-        text: args.text as string | undefined,
-        image: args.image as string | undefined,
-        files: args.files as string[] | undefined,
-      });
-    case "http.request": {
-      const req = args.req as Record<string, unknown>;
-      return api.http.request({
-        url: String(req?.url ?? ""),
-        method: req?.method as string | undefined,
-        headers: req?.headers as Record<string, string> | undefined,
-        body: req?.body as string | undefined,
-        bodyBase64: req?.bodyBase64 as string | undefined,
-        timeoutMs: req?.timeoutMs as number | undefined,
-      });
-    }
-    case "dialog.open":
-      return api.dialog.open(args.opts as never);
-    case "dialog.save":
-      return api.dialog.save(args.opts as never);
-    case "screen.cursor":
-      return api.screen.cursor();
-    case "screen.displays":
-      return api.screen.displays();
-    case "fs.readText":
-      return api.fs.readText(a.path);
-    case "fs.thumb":
-      return api.fs.thumb(a.path);
-    case "fs.videoPoster":
-      return api.fs.videoPoster(a.path);
-    case "fs.icon":
-      return api.fs.icon(args.paths as string[]);
-    case "clipboard.readText":
-      return api.clipboard.readText();
-    case "clipboard.writeText":
-      return api.clipboard.writeText(a.text);
-    case "storage.get":
-      return api.storage.get(a.key);
-    case "storage.set":
-      return api.storage.set(a.key, (args as { value: unknown }).value);
-    case "storage.remove":
-      return api.storage.remove(a.key);
-    // The bridge ships a document's body already stringified (it strips the
-    // `_id`/`_rev` bookkeeping on its side); these cases rebuild the document
-    // the host API takes, so the Rust command contract stays the only wire.
-    case "db.get":
-      return api.db.get(a.docId);
-    case "db.put":
-      return api.db.put({
-        ...(JSON.parse(String(args.json ?? "{}")) as Record<string, unknown>),
-        _id: a.docId,
-        ...(args.rev == null ? {} : { _rev: args.rev as number }),
-      });
-    case "db.remove":
-      return api.db.remove(a.docId, args.rev as number);
-    case "db.allDocs":
-      return api.db.allDocs(args.opts as { idStartsWith?: string; limit?: number } | undefined);
-    case "db.bulkDocs": {
-      const rows = (args.docs ?? []) as { docId: string; json: string; rev?: number | null }[];
-      return api.db.bulkDocs(
-        rows.map((r) => ({
-          ...(JSON.parse(r.json || "{}") as Record<string, unknown>),
-          _id: r.docId,
-          ...(r.rev == null ? {} : { _rev: r.rev }),
-        }))
-      );
-    }
-    case "settings.all":
-      return api.settings.all();
-    case "settings.get":
-      return api.settings.get(a.key);
-    case "fs.writeText":
-      return api.fs.writeText(a.name, a.text);
-    case "fs.writeBytes":
-      return api.fs.writeBytes(a.name, a.data);
-    case "fs.readPrivate":
-      return api.fs.readPrivate(a.name);
-    case "fs.listPrivate":
-      return api.fs.listPrivate();
-    case "fs.privatePath":
-      return api.fs.privatePath(a.name);
-    case "fs.removePrivate":
-      return api.fs.removePrivate(a.name);
-    case "fs.writeFile":
-      return api.fs.writeFile(a.path, a.text);
-    case "search.files": {
-      // Second arg: legacy number (= max) or { offset, max, sort }.
-      const o = args.opts as { offset?: number; max?: number; sort?: string } | undefined;
-      return api.search.files(a.q, o);
-    }
-    default:
-      plog.error(id, "unknown lume rpc:", method);
-      throw new Error(`unknown lume rpc: ${method}`);
-  }
+  return execHostRpcShared(id, method, args, pluginServices!);
 }
 
 /** Build the ModeInstance for a disk mode plugin (bridged iframe UI). */
@@ -497,6 +359,18 @@ function createDiskModeInstance(
   // not active (the srcdoc document doesn't exist yet), and a fresh document
   // needs the current values again.
   let settingsValues: Record<string, unknown> | null = null;
+  // Detached-window state pusher (P6): while the page lives in its own
+  // window, this window's iframe is unmounted — page state travels over the
+  // Rust `plugin-window` event channel instead of postMessage.
+  detachedSuppliers.set(m.id, {
+    push: (show) => {
+      void invoke("plugin_window_push_state", {
+        id: m.id,
+        state: { show, query: query(), enter: enterPayload, settings: settingsValues },
+      }).catch((err) => plog.error(m.id, "detached state push failed:", err));
+    },
+    onShow: () => hook("onShow"),
+  });
   const { View, post } = createIframeView(
     (method, args) => execHostRpc(m.id, method, args),
     () => {
@@ -595,6 +469,11 @@ function createDiskModeInstance(
     },
     onEnter: (info) => {
       enterPayload = info;
+      if (detachedIds.has(m.id)) {
+        // The page lives in its own window — the payload travels over the
+        // event channel (the in-launcher iframe is not mounted).
+        detachedSuppliers.get(m.id)?.push(false);
+      }
       if (viewReady) postEv("enter", info);
       hook("onEnter", info);
     },
@@ -604,6 +483,7 @@ function createDiskModeInstance(
     },
     onSettings: (values) => {
       settingsValues = values;
+      if (detachedIds.has(m.id)) detachedSuppliers.get(m.id)?.push(false);
       if (viewReady) postEv("settings", values);
       hook("onSettings", values);
     },
@@ -624,6 +504,7 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
     if (plugins[i].id === id) plugins.splice(i, 1);
   }
   moduleCache.clear();
+  detachedSuppliers.delete(id);
   return true;
 }
 
@@ -960,6 +841,77 @@ export function modePlugins(): {
   return plugins
     .filter((p) => p.mode && isEnabled(p.id))
     .map((p) => ({ id: p.id, instance: p.mode!, modeMeta: p.modeMeta }));
+}
+
+// ── Detached plugin windows (P6) ──
+//
+// A disk mode plugin declaring `detachable` can move its page into its own
+// window (label `plugin-<id>`, page plugin.html). The plugin's **logic** (the
+// entry hooks) stays here in the launcher window — the detached window is
+// only the view. While a plugin is detached:
+// - its postMessage bridge cannot reach this window's iframe (not mounted),
+//   so page state is pushed over Rust events (`plugin_window_push_state`);
+// - `onEnter` / `onSettings` payloads travel the same way;
+// - activating the mode (pill / Tab / keyword / redirect) raises the window
+//   instead of switching pages here.
+const detachedIds = new Set<string>();
+/** Per detached disk mode: a state pusher + the logic-side onShow hook. */
+const detachedSuppliers = new Map<
+  string,
+  { push: (show: boolean) => void; onShow: () => void }
+>();
+
+/** True when the mode page currently lives in its own window. */
+export function isPluginDetached(id: string): boolean {
+  return detachedIds.has(id);
+}
+
+/** Track detach state (set after a successful `plugin_window_open`, cleared
+ * by the `plugin-window-closed` event). */
+export function setPluginDetached(id: string, detached: boolean): void {
+  if (detached) detachedIds.add(id);
+  else detachedIds.delete(id);
+}
+
+/** Currently detached ids (consistency cleanup after settings changes). */
+export function detachedPluginIds(): string[] {
+  return [...detachedIds];
+}
+
+/** The manifest declares the mode detachable (settings-pane chip + the
+ * detach button read this). */
+export function isPluginDetachable(id: string): boolean {
+  return manifests().find((x) => x.id === id)?.detachable ?? false;
+}
+
+/** `plugin-window-ready` — the detached page's bridge is live; push the
+ * current state (the cross-window ready handshake) and fire onShow. Also
+ * (re)marks the plugin detached: the window's existence is the ground truth
+ * (the launcher may have missed its own detach bookkeeping — e.g. after a
+ * reload — and the events arrive before any close). */
+export function onPluginWindowReady(id: string): void {
+  const s = detachedSuppliers.get(id);
+  if (!s) return;
+  detachedIds.add(id);
+  s.push(true);
+  s.onShow();
+}
+
+/** `plugin-window-shown` — a detached window was opened/focused again:
+ * replay `show` into the page and fire the logic hook. Same self-healing
+ * tracking as ready. */
+export function onPluginWindowShown(id: string): void {
+  const s = detachedSuppliers.get(id);
+  if (!s) return;
+  detachedIds.add(id);
+  s.push(true);
+  s.onShow();
+}
+
+/** `plugin-window-closed` — the window is gone; the mode returns to the
+ * normal in-launcher behaviour. */
+export function onPluginWindowClosed(id: string): void {
+  detachedIds.delete(id);
 }
 
 // ── Declarative entry rules (P2.1: `[[features]]` in the manifest) ──

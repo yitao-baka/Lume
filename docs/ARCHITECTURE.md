@@ -16,6 +16,9 @@ Rust Core (src-tauri/src/)
   │                plugin command re-checks the caller's plugin id against
   │                its manifest `permissions` (fail-closed; native paths are
   │                main-window only)
+  ├─ plugin_window.rs — detached mode-plugin windows (`plugin-<id>`, first
+  │                runtime-created windows): open/focus/close, ready
+  │                handshake, state push, geometry remembered per plugin
   ├─ apps.rs     — file search from the index caches, fuzzy + pinyin scoring,
   │                ShellExecuteW launch (+ records recent-opens)
   ├─ cache.rs    — System32 / user / icons SQLite index caches

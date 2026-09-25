@@ -307,5 +307,8 @@
   "permTrashDesc": "将文件移入回收站",
   "pluginsTrustAllHint": "对所有磁盘插件跳过能力检查（开发逃生门，需开启开发者模式）",
   "pluginsTrustAllOn": "已全部授权",
-  "pluginsTrustAllOff": "已恢复按声明授权"
+  "pluginsTrustAllOff": "已恢复按声明授权",
+  "pluginDetachable": "可分离",
+  "pluginDetach": "在独立窗口打开",
+  "pluginWindowOpenFailed": "无法打开独立窗口：{id}"
 }

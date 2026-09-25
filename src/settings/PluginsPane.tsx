@@ -344,6 +344,9 @@ function PluginCard(props: {
             <Show when={p().development && props.devMode}>
               <span class="plg-badge dev">{t("pluginDev")}</span>
             </Show>
+            <Show when={p().detachable}>
+              <span class="plg-badge">{t("pluginDetachable")}</span>
+            </Show>
           </div>
           <Show when={desc()}>
             <div class="plg-desc">{desc()}</div>

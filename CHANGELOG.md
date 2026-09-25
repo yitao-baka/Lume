@@ -8,6 +8,38 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **mode 插件页独立窗口（P6）** — mode 插件可在清单声明 `detachable = true`，
+  激活该模式时页面右上角悬停出现「在独立窗口打开」按钮：点击后启动器隐藏、
+  插件页面在自己的窗口里打开（窗口标题 = 插件名，默认尺寸取清单 `height`，
+  关闭时记忆几何、下次分离原位恢复）。窗口内是**同一个沙箱桥接 iframe**
+  （`plugin.html` 第三个 Vite 入口），`window.lume` 契约不变，仅宿主语义随
+  窗口调整（`app.hide` = 隐藏窗口、`app.resize` = 改窗口尺寸、toast 窗口内
+  浮动、`setQuery`/子输入框不可用、`redirect` 经 Rust 事件转回启动器路由、
+  未消费 Esc 关闭窗口）。再次激活已分离的模式（pill/Tab/关键字/redirect）
+  = 聚焦其窗口；禁用/重载插件自动关窗。插件**逻辑钩子**始终留在启动器窗口，
+  页面状态经 `plugin_window_push_state` → `plugin-state` 事件跨窗口推送
+  （就绪握手对齐桥内 `__lumeReady` 重放）。窗口为**运行时创建**（`plugin-<id>`
+  标签，lume 首例，按插件复用）；新能力文件 `capabilities/plugin-windows.json`
+  （glob `plugin-*`）。示例 hello-mode 已声明 `detachable`；实机脚本
+  `scripts/cdp_plugin_window_verify.mjs`
+  （`src-tauri/src/plugin_window.rs`、`src-tauri/src/plugins.rs`、
+  `src/plugin.html`、`src/pluginWindow.tsx`、`src/plugins/{registry,rpc,types}.ts`、
+  `src/App.tsx`）。
+- **插件沙箱机制（P5）** — mode 页 iframe 从同源 srcdoc 升级为 **opaque-origin
+  沙箱**（`sandbox="allow-scripts allow-forms allow-popups allow-modals"`，
+  无 allow-same-origin）：插件页够不到宿主文档与 `parent.__TAURI_INTERNALS__`、
+  不能导航顶层窗口（原 §9 承认的同源绕过关死）。按键/焦点转发移入桥接脚本
+  （postMessage 协议 + 消费回执迟滞 preventDefault），Esc「页面 preventDefault
+  即消费」契约不变；页内 `localStorage` 不可用（用 `ctx.storage`/`db`）、页内
+  `fetch` 受 CORS 限制（用 `lume.http.request`）。同时新增 **Rust 命令侧权限
+  白名单** `plugin_perm.rs`：每个宿主能力命令（notify/clipboard/http/dialog/
+  screen/search.files/fs.write/trash）按调用方 plugin_id 对照清单
+  `permissions` 再校验一次（fail-closed，缓存随 `get_plugins`/`reload_plugin`
+  刷新；`file_search`/`trash_to_recycle` 的原生路径 = main 窗口且不带 id）。
+  权限层从「前端知情同意」升级为「前端 + 命令侧双层防线」；7 项 Rust 单测 +
+  `scripts/cdp_sandbox_verify.mjs` 14 项实机验证（探针插件在沙箱内自检）
+  （`src-tauri/src/plugin_perm.rs`、`src/plugins/{iframeBridge,permissions,
+  hostApi}.ts`）。
 - **提权注入代理（Elevation agent）** — 新增第三个二进制 `lume-agent.exe`：一个
   极小的**高完整性**助手，唯一能力是「向指定前台窗口发送一次配置好的组合键」。
   解决的是自动动作对**以管理员权限运行的目标程序**永远不生效——根因是 UIPI

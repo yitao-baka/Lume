@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "plugin-windows",
+  "description": "Detached plugin windows (labels plugin-*): resize (app.resize RPC), hide (app.hide RPC) and event listening. Custom plugin_window_* commands are ungated by design — they validate the plugin id server-side.",
+  "windows": [
+    "plugin-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-size",
+    "core:window:allow-inner-size",
+    "core:window:allow-scale-factor",
+    "core:window:allow-hide"
+  ]
+}

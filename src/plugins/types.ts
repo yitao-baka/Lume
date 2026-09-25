@@ -46,6 +46,10 @@ export interface PluginManifest {
   /** Mode plugins: the mode page's preferred window height (logical px);
    * null = use the global 设置 → 窗口大小 → 高度. */
   height: number | null;
+  /** Mode plugins: the page may be detached into its own window (P6). The
+   * detach affordance (mode-page button + pill) only shows for plugins that
+   * declare this. */
+  detachable: boolean;
   /** Mode plugins: pill icon (relative to the plugin dir; resolved to a
    * URL by the registry). Empty = no pill image. */
   icon: string;

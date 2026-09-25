@@ -12,6 +12,7 @@
 //! All functions take the base directory explicitly so unit tests can point
 //! at a temp dir without touching the real portable layout.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -62,6 +63,33 @@ pub struct Plugins {
     /// only ever writes this flag.
     #[serde(default)]
     pub trust_all: bool,
+    /// Detached plugin windows' remembered geometry, per plugin id (P6).
+    /// Written silently by the window's CloseRequested handler; restored on
+    /// the next `plugin_window_open`.
+    #[serde(default)]
+    pub window_bounds: HashMap<String, WindowBounds>,
+}
+
+/// One detached plugin window's remembered geometry (logical px).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WindowBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Remember one plugin window's geometry (called from the window's
+/// `CloseRequested` handler). Silent on purpose — no `settings-applied`:
+/// a geometry write must not re-run the frontend refresh pipeline.
+pub fn remember_plugin_window_bounds(app: &AppHandle, id: &str, bounds: WindowBounds) {
+    let state = app.state::<SettingsState>();
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.window_bounds.insert(id.to_string(), bounds);
+    if write_settings_light(&paths::base_dir(), &next).is_ok() {
+        *guard = next;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -462,6 +490,7 @@ impl Default for Settings {
                 trusted: Vec::new(),
                 dev_mode: false,
                 trust_all: false,
+                window_bounds: HashMap::new(),
             },
             automation: Automation {
                 enabled: true,

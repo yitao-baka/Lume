@@ -37,18 +37,25 @@ import {
   definePlugin,
   deliverFeature,
   deliverSubInput,
+  detachedPluginIds,
   featureMatches,
   fileFeatureMatches,
   imgFeatureMatches,
+  isPluginDetached,
+  isPluginDetachable,
   modeById,
   modeKeywordMatches,
   modePlugins,
   navBarPlugins,
+  onPluginWindowClosed,
+  onPluginWindowReady,
+  onPluginWindowShown,
   pluginKind,
   providerPlugins,
   refreshPlugins,
   reloadDiskPlugin,
   applyPluginSettings,
+  setPluginDetached,
   setPluginServices,
   type ModeId,
   type PluginServices,
@@ -332,6 +339,16 @@ function App() {
       const kind = pluginKind(pluginId);
       if (!kind) return false;
       if (kind === "mode") {
+        // The mode is detached: deliver the payload into its window and
+        // raise it — no page switch happens here (P6).
+        if (isPluginDetached(pluginId)) {
+          // Raise/focus first (its shown event replays `show`), then deliver
+          // the payload — onEnter pushes it into the window either way.
+          void invoke("plugin_window_open", { id: pluginId })
+            .then(() => deliverFeature(pluginId, info))
+            .catch((err) => console.error("plugin_window_open failed:", err));
+          return true;
+        }
         // Switch first (the mode's page must exist), then deliver the payload.
         void switchMode(pluginId).then(() => {
           deliverFeature(pluginId, info);
@@ -711,6 +728,14 @@ function App() {
       void refreshPlugins().then(() => {
         // Plugin bars ride the same refresh (启停 toggles add/remove bars).
         void refreshPluginBars();
+        // Detached windows of disabled/removed/reloaded plugins must not
+        // linger — close them (P6 consistency).
+        for (const id of detachedPluginIds()) {
+          if (!modeById(id)) {
+            setPluginDetached(id, false);
+            void invoke("plugin_window_close", { id }).catch(() => {});
+          }
+        }
         if (mode() !== APPS_MODE && !modeById(mode())) {
           setMode(APPS_MODE);
           setAppsQuery("");
@@ -725,8 +750,28 @@ function App() {
     }
   }
 
+  /** Detach the current mode page into its own window (P6): open (or focus)
+   * the `plugin-<id>` window, mark the registry, and hide the launcher —
+   * the detached window becomes the mode's home until it is closed. */
+  async function detachMode(m: ModeId) {
+    try {
+      await invoke("plugin_window_open", { id: m });
+      setPluginDetached(m, true);
+      services.resetAndHide();
+    } catch (err) {
+      console.error("plugin_window_open failed:", err);
+      showToast(t("pluginWindowOpenFailed", { id: m }));
+    }
+  }
+
   async function switchMode(m: ModeId) {
     if (m === mode()) return;
+    // A detached mode has no page here anymore — activating it raises its
+    // window and puts the launcher away, like any app launch.
+    if (m !== APPS_MODE && isPluginDetached(m)) {
+      await detachMode(m);
+      return;
+    }
     setMode(m);
     // 搜索框所有权与下钻层属于上一个页面：切模式即交还宿主（P2.3/P2.4）。
     setSubInput(null);
@@ -923,10 +968,47 @@ function App() {
 
     // Settings-pane 重载 button (plugins::reload_plugin): re-import one disk
     // plugin from disk. Bars ride along (a reload may add/remove navBars).
+    // A detached window of that plugin is closed first — the reload replaces
+    // the whole instance and the user re-detaches.
     const unlistenPluginReload = await listen<string>("plugin-reload", (e) => {
+      if (isPluginDetached(e.payload)) {
+        setPluginDetached(e.payload, false);
+        void invoke("plugin_window_close", { id: e.payload }).catch(() => {});
+      }
       void reloadDiskPlugin(e.payload).then(() => refreshPluginBars());
     });
     onCleanup(() => unlistenPluginReload());
+
+    // Detached plugin windows (P6): state handshakes + lifecycle. The
+    // registry owns the per-plugin push suppliers; these listeners just
+    // forward the window events.
+    const unlistenPwReady = await listen<string>("plugin-window-ready", (e) => {
+      onPluginWindowReady(e.payload);
+    });
+    onCleanup(() => unlistenPwReady());
+    const unlistenPwShown = await listen<string>("plugin-window-shown", (e) => {
+      onPluginWindowShown(e.payload);
+    });
+    onCleanup(() => unlistenPwShown());
+    const unlistenPwClosed = await listen<string>("plugin-window-closed", (e) => {
+      onPluginWindowClosed(e.payload);
+    });
+    onCleanup(() => unlistenPwClosed());
+    // `app.redirect` from a detached page: route it like any feature entry.
+    const unlistenPwRedirect = await listen<{
+      from: string;
+      pluginId: string;
+      info: { code: string; type: string; payload: string };
+    }>("plugin-window-redirect", (e) => {
+      const { pluginId, info } = e.payload;
+      const ok = services.enterPlugin(pluginId, {
+        code: info.code,
+        type: info.type as "redirect",
+        payload: info.payload,
+      });
+      if (!ok) showToast(t("pluginActionUnavailable", { id: pluginId }));
+    });
+    onCleanup(() => unlistenPwRedirect());
 
     // Settings-pane plugin settings (plugin_store::plugin_settings_put →
     // "plugin-settings"): the values changed in the settings window, hand the
@@ -1105,6 +1187,26 @@ function App() {
         ) : (
           <Dynamic component={activeMode()?.View} />
         )}
+        {/* 分离为独立窗口（P6）— detachable 磁盘 mode 的悬停显现按钮。 */}
+        <Show when={mode() !== APPS_MODE && isPluginDetachable(mode())}>
+          <button
+            class="detach-btn"
+            title={t("pluginDetach")}
+            onClick={() => void detachMode(mode())}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10M9.5 2H14v4.5M14 2 7.5 8.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            {t("pluginDetach")}
+          </button>
+        </Show>
       </div>
       <Show when={toast()}>
         <div class="toast" classList={{ "toast-undo": !!toast()?.undo }}>

@@ -101,7 +101,8 @@ export default {
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
 | `settings` | array of table | `[]` | **声明式设置**（P3.4，§6F.3）——`[[settings]]` 子表：`key`、`label`、`type`（`toggle`/`select`/`text`）、`default`、`[[settings.options]]`（`value`/`label`）。设置 → 插件 自动渲染，值存插件 `__settings` 文档，插件经 `ctx.settings.get/all` 读、`onSettings` 感知变更。 |
 | `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入）与 `"img"`（剪贴板图片）规则见 §6E.1.1。 |
-| `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。 |
+| `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。分离窗口的默认高度同样取它（§6G）。 |
+| `detachable` | bool | `false` | **mode 专属**（P6，§6G）— 页面可以分离为独立窗口：设置页显示「可分离」chip，激活该模式时页面右上角悬停出现「在独立窗口打开」按钮。依赖启动器搜索框交互（`setSubInput`/`setQuery` 驱动）的模式不要声明。 |
 | `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。 |
 
 **解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
@@ -1026,6 +1027,61 @@ permissions = ["network", "clipboard", "fs.write"]
 
 ---
 
+## 6G. mode 页独立窗口（`detachable`，P6）
+
+清单声明 `detachable = true` 的磁盘 mode 插件可以把页面**分离为独立窗口**：
+激活该模式时，页面右上角悬停出现「在独立窗口打开」按钮（⧉）——点击后启动器
+隐藏、插件窗口打开；关闭窗口（× 或 Esc）即销毁，模式回到启动器内页形态。
+设置 → 插件 的卡片上会显示「可分离」chip。
+
+```toml
+kind = "mode"
+view = "view.html"
+detachable = true     # 允许分离为独立窗口
+```
+
+### 6G.1 生命周期
+
+| 动作 | 行为 |
+|---|---|
+| 分离（按钮） | `plugin_window_open` 创建（或聚焦既有）窗口 `plugin-<id>`，加载 `plugin.html?plugin=<id>`；启动器隐藏 |
+| 再次激活 | pill 点击 / Tab 循环 / 关键字 / redirect 进入一个已分离的模式 → 聚焦其窗口（不切启动器页面），启动器隐藏 |
+| 就绪握手 | 窗口页监听器就绪后调 `plugin_window_ready` → 启动器注册表推送 `{show, query, enter, settings}`（`plugin-state` 事件）——跨窗口版的 `__lumeReady` 状态重放 |
+| 显隐 | 窗口获得焦点/重新打开 → `show` 事件重放 + `onShow` 钩子；窗口隐藏不留事件 |
+| 关闭 | × 按钮 / Esc / `plugin_window_close` → 窗口**销毁**（状态不保留，重开重建；插件数据在 `db`/`files` 里不受影响）；宿主记忆窗口几何（`settings.plugins.window_bounds`），下次分离原位打开 |
+| 禁用/重载 | settings-applied 后插件被禁用/移除、或 设置 → 插件 点「↻ 重载」→ 独立窗口自动关闭 |
+
+### 6G.2 桥接契约的窗口内差异
+
+窗口内跑的是**同一个沙箱 iframe + `window.lume` 桥接**（§6C），权限层照常。
+语义随宿主变化的部分：
+
+| 能力 | 启动器内 | 独立窗口内 |
+|---|---|---|
+| `app.hide()` | 隐藏启动器 | 隐藏**插件窗口**（再激活 = 重新聚焦） |
+| `app.resize({w,h})` | 改启动器窗口高度 | 改**插件窗口**尺寸（宽高独立，最小 360×240） |
+| `app.toast(text)` | 启动器底部 toast | 窗口内浮动 toast |
+| `app.setQuery` / `setPlaceholder` / `setSubInput` / `removeSubInput` | 生效 | **不可用**（没有共享搜索框，调用被忽略并记 debug 日志） |
+| `app.redirect(pluginId, …)` | 切页/投递 | 经 Rust `plugin-window-redirect` 转回启动器路由（目标可以是另一个插件） |
+| `lume.on.show` / `hide` | 模式切入/启动器隐藏 | 窗口打开/聚焦 → `show`；无对应 `hide`（关闭即销毁） |
+| `lume.on.key` | 模式激活时由根路由转发 | 窗口页直接转发全部非可编辑按键；**未被消费的 Esc 关闭窗口** |
+| `lume.on.query` / `subInput` | 搜索框输入 | 不会触发 |
+
+其余能力（`clipboard` / `http` / `dialog` / `screen` / `fs` / `storage` / `db` /
+`settings` / `search.files`）两个宿主完全一致。
+
+### 6G.3 实现与边界
+
+- 插件的**逻辑钩子**（`entry` 的 `onShow`/`onQuery`/…）始终跑在启动器窗口
+  （注册表），独立窗口只是视图；`onQuery` 在窗口内不会到来（没有共享搜索框）。
+- `detachable = true` 声明的窗口是**运行时创建**的（lume 首例）——主窗口/
+  设置/预览仍是启动时创建。按插件复用窗口（重复 open = 聚焦）。
+- 依赖启动器搜索框的模式（子输入框、query 驱动）**不要**声明 `detachable`。
+- 示例 `examples/plugins/hello-mode/`（`detachable = true`）；实机脚本
+  `scripts/cdp_plugin_window_verify.mjs`。
+
+---
+
 ## 7. 启停与状态管理
 
 - 启停集 = `settings.toml` 的 `plugins.disabled: string[]`（缺省 = 全启用）。
@@ -1105,16 +1161,26 @@ pluginBuiltin`。
     `storage migrate: …`（迁移逐插件一行）。
 - **CDP 连接**：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
   启动后连 `127.0.0.1:9222`。现成脚本：
-  - `scripts/cdp_p3_verify.mjs` — P3 数据层/权限/私有文件/设置（45 项）
+  - `scripts/cdp_sandbox_verify.mjs` — 沙箱（P5）：opaque iframe 隔离 +
+    桥接/按键/焦点在沙箱内照常 + Rust 命令侧白名单（14 项；探针插件
+    `scripts/fixtures/sandbox-probe/` 在沙箱内自检）
+  - `scripts/cdp_plugin_window_verify.mjs` — 独立窗口（P6）：分离 →
+    状态握手 → 聚焦/enter 投递 → Esc 销毁 → 几何记忆 → 禁用自动关窗（12 项）
+  - `scripts/cdp_p3_verify.mjs` — P3 数据层/权限/私有文件/设置（45 项；
+    其设置页面板一段的选择器落后于 26b0f3b 的插件页重设计，5 项历史性
+    失败，与本轮无关）
   - `scripts/cdp_p2b_verify.mjs` — P2 余项：files 拖入 / img 剪贴板图片 /
     template="list" 列表模板 / 磁贴指针重排（17 项）
-  - `scripts/cdp_plugin_verify.mjs` — provider 行 + 插件面板截图
+  - `scripts/cdp_plugin_verify.mjs` — provider 行 + 沙箱化 mode 页 +
+    插件面板截图
   - `scripts/cdp_settings_smoke.mjs` — 8 分区设置冒烟
   - `scripts/cdp_launcher_shots.mjs` — 启动器截图（前后对比）
 - **手工验证清单**：放入插件 → 重启 → 设置/插件可见 → 搜索出现结果行 →
   启停 toggle 即时生效 → 关闭活动模式插件自动回导航页；mode 页可另验
   `setPlaceholder` 按钮（§5C）与 DevTools Verbose 下的 RPC 轨迹；P3 面可验
-  设置项渲染与改动后插件 toast、以及未声明能力的拒绝文案。
+  设置项渲染与改动后插件 toast、以及未声明能力的拒绝文案；detachable 模式
+  可验「在独立窗口打开」→ 窗口内 toast/resize → Esc 关闭 → 再分离原位恢复
+  （§6G）。
 - **改前端后必须重新 `cargo build` 再跑 CDP 冒烟**：debug/release exe 的
   `frontendDist` 资源是**编译期嵌进二进制**的，只跑 `vite build` 时 exe 仍在
   服务上一版 bundle（本轮排查「权限层不生效」的真凶）。
@@ -1148,6 +1214,7 @@ pluginBuiltin`。
 - ✅ storage → SQLite 文档库（`_rev` 乐观锁 + allDocs/bulkDocs + 自动迁移）—— §6F.1
 - ✅ 插件私有文件目录（`<plugin>/files/`）与 `fs.write` 能力 —— §6F.2
 - ✅ 沙箱机制（opaque iframe + Rust 命令侧白名单 + 前端守卫双层防线）—— §6C、§9
+- ✅ mode 页独立窗口（`detachable` 清单字段 + 运行时插件窗口 + 跨窗口状态推送）—— §6G
 
 未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4）：
 

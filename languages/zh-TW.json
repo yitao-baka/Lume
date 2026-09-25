@@ -307,5 +307,8 @@
   "permTrashDesc": "將檔案移至資源回收筒",
   "pluginsTrustAllHint": "對所有磁碟外掛跳過能力檢查（開發逃生門，需開啟開發者模式）",
   "pluginsTrustAllOn": "已全部授權",
-  "pluginsTrustAllOff": "已恢復依宣告授權"
+  "pluginsTrustAllOff": "已恢復依宣告授權",
+  "pluginDetachable": "可分離",
+  "pluginDetach": "在獨立視窗開啟",
+  "pluginWindowOpenFailed": "無法開啟獨立視窗：{id}"
 }

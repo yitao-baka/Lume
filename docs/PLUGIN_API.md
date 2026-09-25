@@ -1090,7 +1090,8 @@ detachable = true     # 允许分离为独立窗口
   探针即可分辨本页是否在宿主搜索框所在的窗口）。
 - 示例 `examples/plugins/hello-mode/`（`detachable = true`）；实机脚本
   `scripts/cdp_plugin_window_verify.mjs` + `plugins/file-search/scripts/
-  verify-host.mjs`（20 项端到端，含权限链路）。
+  verify-host.mjs`（24 项端到端：标题栏槽位/setQuery 扇出/按键中继/
+  双页主题推送/权限链路）。
 
 ### 6G.4 分离窗口的权限与主题（2026-09-25 补）
 
@@ -1122,7 +1123,15 @@ titlebar = "titlebar.html"   # 可选；launcher 内嵌时忽略
 - `show` / `query` / `enter` / `settings` / `theme` —— 视图页与标题栏页
   **都收到**（宿主扇出 + 就绪时重放）。典型用法：标题栏搜索框输入 →
   `app.setQuery(text)` → 宿主把 `query` 扇出（调用方也会收到**回声**，覆盖
-  输入框前先比较）→ 视图页 `on.query` 渲染结果。
+  输入框前先比较）→ 视图页 `on.query` 渲染结果。实机参考
+  `plugins/file-search`（标题栏图标 + 搜索框 + 拖动点；Enter/导航键在
+  输入框里以 body 上的非可编辑合成 keydown 中继给视图页的 `on.key`）。
+
+**实现注记（挂载）**：槽位组件必须**只创建一次**——把它写进反应式
+getter（如 `slot={cond ? <View /> : undefined}`）会在依赖变化时重新调用
+组件、重建 iframe，已接线的实例与存活的节点被拆散，槽位通道整体失灵。
+`pluginWindow.tsx` 在 App 作用域创建一次槽位元素，可见性交给
+响应式 classList。
 - `key` —— **只发给视图页**。标题栏页自己的按键就地处理：桥只转发
   「非可编辑目标」的按键（保护 IME 组合词），焦点在输入框里时 Esc 属于本页
   —— 约定先 `blur()`（下一个 Esc 走宿主路由关闭窗口），或页面自行调

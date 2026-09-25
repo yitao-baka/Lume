@@ -42,3 +42,17 @@ body {
   pointer-events: none;
   z-index: 10;
 }
+
+/* Slot host (pluginWindow.tsx creates it once): sizes the iframe and hides
+   the slot entirely for plugins without a titlebar page — non-interactive so
+   the chrome row's drag region shows through. */
+.titlebar-slot-host {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+}
+.titlebar-slot-host.titlebar-slot-empty {
+  visibility: hidden;
+  pointer-events: none;
+}

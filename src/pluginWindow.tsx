@@ -171,6 +171,19 @@ function App() {
     { class: "titlebar-frame", name: "titlebar" }
   );
   slotPost = slotView.post;
+  // The slot element is created EXACTLY ONCE, outside any reactive
+  // expression: a `<slotView.View />` written inline in the `slot={…}` prop
+  // getter is re-invoked whenever its dependencies change (titlebarHtml,
+  // pluginName), which strands the wired instance — the mounted iframe ends
+  // up with no message listener and the whole slot channel dies. One static
+  // element + a reactive classList (visibility only) keeps one component
+  // instance, one listener, one live iframe; plugins without a titlebar page
+  // just keep it empty and non-interactive (the drag region shows through).
+  const slotHost = (
+    <div class="titlebar-slot-host" classList={{ "titlebar-slot-empty": titlebarHtml() === "" }}>
+      <slotView.View />
+    </div>
+  );
 
   onMount(() => {
     // Fetch + bridge the view page (same as createDiskModeInstance).
@@ -306,7 +319,7 @@ function App() {
       <TitleBar
         title={pluginName()}
         pin
-        slot={titlebarHtml() ? <slotView.View /> : undefined}
+        slot={slotHost}
         onClose={() => void invoke("plugin_window_close", { id }).catch(() => {})}
       />
       <View />

@@ -6,6 +6,16 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **标题栏槽位消息通道失活** — `slot={titlebarHtml() ? <slotView.View /> :
+  undefined}` 把槽位组件写进反应式 prop getter：`titlebarHtml`/
+  `pluginName` 变化时 Solid 重新调用组件、重建 iframe，已接线的实例（消息
+  监听器 + frame 引用）与 DOM 中存活的 iframe 被拆散——槽位的 RPC 与事件
+  整体失灵，`titlebar` 槽位页收不到任何状态、其 RPC 也到不了宿主
+  （`titlebar-demo` 同样受影响）。现改为 App 作用域只创建一次槽位元素，
+  可见性交给响应式 classList（无 titlebar 页的插件保持空槽 + 拖动区）。
+
 ### Added
 
 - **分离窗口权限/主题补全 + `fs.bytes` 字节桥接（2026-09-25）** — 三项跟进，

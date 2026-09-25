@@ -100,6 +100,11 @@ pub async fn plugin_window_open(
     .resizable(true)
     .decorations(false)
     .shadow(true)
+    // Opaque canvas in the theme's surface color, same as the preview window:
+    // the plugin pages are cross-process (OOPIF) frames — with the default
+    // canvas their transparent pixels composite against WebView2's own dark
+    // background (#121212) instead of anything the host page paints.
+    .background_color(tauri::window::Color(30, 30, 32, 255))
     .visible(false)
     .initialization_script(&format!("window.__LUME_CONFIG__ = {config_json};"));
     builder = match remembered {
@@ -107,6 +112,9 @@ pub async fn plugin_window_open(
         None => builder.center(),
     };
     let win = builder.build().map_err(|e| e.to_string())?;
+    // shadow(true) windows draw DWM's documented 1px white border — suppress
+    // it (shadow + Win11 rounded corners stay).
+    crate::window::clear_dwm_border(&win);
     let app2 = app.clone();
     let id2 = id.clone();
     let win2 = win.clone();

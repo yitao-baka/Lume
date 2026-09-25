@@ -23,6 +23,14 @@ body {
   height: auto;
 }
 
+/* Chromium gives iframes a UA `border: 2px inset` unless suppressed — on the
+   detached window it renders as a bright stroke hugging the window edges (the
+   launcher's .plugin-frame already carries `border: none`; the slot iframe
+   needs it too). */
+.plugin-window-root iframe {
+  border: none;
+}
+
 /* Window-local toast backing `window.lume.app.toast` in the detached host
    (the launcher's toast lives in the main window). */
 #plugin-window-toast {

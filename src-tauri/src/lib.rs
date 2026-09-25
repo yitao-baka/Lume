@@ -164,6 +164,11 @@ pub fn run() {
             .visible(false)
             .initialization_script(&init_script)
             .build()?;
+            // suppress the documented 1px DWM white border on shadowed
+            // frameless windows (same as the detached plugin window).
+            if let Some(sw) = app.get_webview_window("settings") {
+                window::clear_dwm_border(&sw);
+            }
 
             // Satellite preview window (ROADMAP #15): all clipboard previews
             // (text / text files / images / audio / video) render here, docked
@@ -189,6 +194,8 @@ pub fn run() {
             if let Some(pv) = app.get_webview_window("preview") {
                 // tao maps focusable(false) → WS_EX_NOACTIVATE on Windows.
                 let _ = pv.set_focusable(false);
+                // suppress the documented 1px DWM white border.
+                window::clear_dwm_border(&pv);
             }
 
             // Build the System32 preset DB once (background), then refresh the

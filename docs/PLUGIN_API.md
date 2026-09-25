@@ -1124,7 +1124,7 @@ titlebar = "titlebar.html"   # 可选；launcher 内嵌时忽略
   **都收到**（宿主扇出 + 就绪时重放）。典型用法：标题栏搜索框输入 →
   `app.setQuery(text)` → 宿主把 `query` 扇出（调用方也会收到**回声**，覆盖
   输入框前先比较）→ 视图页 `on.query` 渲染结果。实机参考
-  `plugins/file-search`（标题栏图标 + 搜索框 + 拖动点；Enter/导航键在
+  `plugins/file-search`（标题栏图标 + 固定宽度搜索框；Enter/导航键在
   输入框里以 body 上的非可编辑合成 keydown 中继给视图页的 `on.key`）。
 
 **实现注记（挂载）**：槽位组件必须**只创建一次**——把它写进反应式

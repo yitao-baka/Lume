@@ -8,6 +8,18 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **分离窗口「白描边」与「纯黑」背景** — 两个渲染层问题叠加（用户观感反馈，
+  CDP 像素级实证）：① Chromium 给无 `border:none` 的 iframe 画 UA 默认
+  `border: 2px inset`（左深右浅的凹陷框，DPI 缩放下呈 2–3px 亮线）——
+  启动器侧 `.plugin-frame` 一直有 `border: none`，`pluginWindow.css` 漏了，
+  视图 iframe 与标题栏槽位 iframe 都中招，补 `.plugin-window-root iframe
+  { border: none }`；② 沙箱插件页是跨进程（OOPIF）frame，透明像素合成
+  WebView2 自己的暗色画布（#121212）而非宿主页背景，插件页现已自涂不透明
+  surface（插件侧 2.7.1），宿主给分离窗口设 `background_color(#1e1e20)`
+  画布兜底，并新增 `window::clear_dwm_border`（`DWMWA_BORDER_COLOR =
+  DWMWA_COLOR_NONE`）压掉 shadow(true) 无边框窗口文档记载的 1px 系统白边
+  ——阴影与 Win11 圆角保留，插件/设置/预览三个窗口统一应用
+  （`plugin_window.rs`、`lib.rs`、`window.rs`、`pluginWindow.css`）。
 - **标题栏槽位消息通道失活** — `slot={titlebarHtml() ? <slotView.View /> :
   undefined}` 把槽位组件写进反应式 prop getter：`titlebarHtml`/
   `pluginName` 变化时 Solid 重新调用组件、重建 iframe，已接线的实例（消息

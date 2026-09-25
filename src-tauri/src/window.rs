@@ -13,6 +13,8 @@ use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, State,
     WebviewWindow,
 };
+use windows::Win32::Foundation::COLORREF;
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Label of the launcher window defined in `tauri.conf.json`.
@@ -738,6 +740,27 @@ fn preview_page_url(app: &AppHandle) -> tauri::Url {
         tauri::Url::parse("http://tauri.localhost").unwrap()
     };
     base.join("preview.html").unwrap_or(base)
+}
+
+/// Remove the 1px system border DWM draws around frameless windows that keep
+/// their native shadow (`decorations(false)` + `shadow(true)`, opaque
+/// resizable ones — the detached plugin, settings and preview windows).
+/// The user sees it as a bright stroke around the window on Win11. Only the
+/// border line goes: the DWM drop shadow and the Win11 rounded corners stay.
+/// Pre-Win11 DWM rejects the attribute — ignore the result.
+pub fn clear_dwm_border(win: &WebviewWindow) {
+    if let Ok(hwnd) = win.hwnd() {
+        // DWMWA_COLOR_NONE — "draw no border".
+        let none = COLORREF(0xFFFF_FFFE);
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                std::ptr::from_ref(&none).cast(),
+                std::mem::size_of::<COLORREF>() as u32,
+            );
+        }
+    }
 }
 
 #[cfg(test)]

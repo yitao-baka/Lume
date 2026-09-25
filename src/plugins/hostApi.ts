@@ -9,6 +9,7 @@ import type {
   DialogOptions,
   DisplayInfo,
   FileSearchOut,
+  ForegroundInfo,
   HttpRequest,
   HttpResponse,
   PluginDoc,
@@ -140,6 +141,12 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
           plog.warn(id, `redirect target unavailable: ${target}`);
           services.showToast(t("pluginActionUnavailable", { id: target }));
         }
+      },
+      foreground: () => {
+        plog.debug(id, "app.foreground");
+        // The snapshot of the window that had focus before the summon; the
+        // Rust side gates the call on the `window` capability.
+        return invoke<ForegroundInfo | null>("plugin_foreground_context", { pluginId: id });
       },
     },
     clipboard: {

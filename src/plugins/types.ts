@@ -112,12 +112,18 @@ export interface PluginFeature {
   /** Unique code inside the plugin — delivered on enter. */
   code: string;
   /** `text` (default) | `files` | `img`. A `text` rule matches query text; a
-   * `files` rule matches OS drag-dropped files by `extensions`; an `img`
-   * rule matches the clipboard holding an image (read via
+   * `files` rule matches OS drag-dropped files by `extensions`/`fileType`; an
+   * `img` rule matches the clipboard holding an image (read via
    * `clipboard.readImage()`). */
   type: "text" | "files" | "img";
-  /** `files` rules: accepted extensions (case-insensitive; empty = any). */
+  /** `files` rules: accepted extensions (case-insensitive; empty = any).
+   * When non-empty, extension matching wins and folders never match. */
   extensions: string[];
+  /** `files` rules: a category instead of an extension list —
+   * `image` | `video` | `audio` | `document` | `text` | `folder` | `others`
+   * (P4). `folder` matches directories; the rest are extension tables over
+   * files. Ignored when `extensions` is non-empty. */
+  fileType: string | null;
   /** Row label; empty → the plugin name is used. */
   label: string;
   /** Regex matched against the query text. */
@@ -191,6 +197,11 @@ export interface PluginHostApi {
      * `enter` with `type: "redirect"`; providers/services get
      * `onFeature(info)`. Unknown ids are reported with a toast. */
     redirect(pluginId: string, opts?: { code?: string; payload?: string }): void;
+    /** The window that had focus before the launcher appeared (P4, ROADMAP
+     * #28): process name, window class, title and — when it was an Explorer
+     * folder view — the folder path. `null` when no foreground window was
+     * ever captured this session. Permission: `window`. */
+    foreground(): Promise<ForegroundInfo | null>;
   };
   clipboard: {
     /** Current system clipboard text (null = non-text/empty). */
@@ -392,6 +403,23 @@ export interface DisplayInfo {
   workWidth: number;
   workHeight: number;
   primary: boolean;
+}
+
+/** The window that had focus before the launcher appeared (P4, ROADMAP
+ * #28) — what `app.foreground()` returns and what a `type = "window"`
+ * feature's payload carries. Snapshot semantics: captured at summon time,
+ * not re-probed per call. */
+export interface ForegroundInfo {
+  /** Foreground process executable file name (e.g. "chrome.exe"; "" when
+   * it could not be resolved). */
+  process: string;
+  /** Win32 window class (e.g. "CabinetWClass" for Explorer folders). */
+  className: string;
+  /** Window caption text. */
+  title: string;
+  /** Local absolute folder path — set when the window was an Explorer
+   * filesystem view (Windows 11 tabs resolve the active tab). */
+  path?: string;
 }
 
 /** Optional lifecycle hooks for disk **service** plugins (headless). */

@@ -987,11 +987,38 @@ export function featureMatches(q: string): FeatureMatch[] {
   return out;
 }
 
-/** `type = "files"` rules (P2.2) matching a dropped file list: a rule fires
- * when its `extensions` filter (empty = any file) matches at least one drop,
- * bounded by min/maxLength as file counts. The payload carries only the
- * matching subset — a plugin that asked for `["md"]` never sees a `.png`. */
-export function fileFeatureMatches(paths: string[]): FeatureMatch[] {
+/** Extension → `fileType` category table (P4, ROADMAP #28). Curated, not
+ * exhaustive — anything unmapped is `others`. A plugin that needs precision
+ * declares `extensions` instead. */
+const FILE_TYPE_EXTS: Record<string, string[]> = {
+  image: ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tif", "tiff", "svg", "heic", "avif"],
+  video: ["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "ts"],
+  audio: ["mp3", "wav", "flac", "ogg", "m4a", "aac", "wma", "opus", "mid"],
+  document: ["doc", "docx", "dot", "dotx", "xls", "xlsx", "xlsm", "ppt", "pptx", "potx",
+    "pdf", "odt", "ods", "odp", "rtf", "pages", "numbers", "key", "epub"],
+  text: ["txt", "md", "markdown", "log", "csv", "tsv", "json", "xml", "yaml", "yml", "ini",
+    "toml", "html", "htm", "css", "js", "mjs", "ts", "tsx", "jsx", "py", "rs", "go", "sh",
+    "bat", "ps1", "sql", "gitignore"],
+};
+
+const extOf = (path: string): string => {
+  const name = path.split(/[\\/]/).pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  // No dot / dotfile: no usable extension.
+  return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
+};
+
+/** `type = "files"` rules (P2.2) matching a dropped file list, with P4
+ * `fileType` categories and folder matching. Matching semantics per rule:
+ * - `extensions` non-empty → files whose extension is listed (folders never
+ *   match — a directory named `x.md` is not a markdown file);
+ * - else `fileType` declared → `folder` matches directories, `others`
+ *   matches files outside every table, anything else is a table lookup;
+ * - neither → any **file** (a folder needs `fileType = "folder"`).
+ * `minLength`/`maxLength` bound the matched-subset count; the payload
+ * carries only the matching subset. `kinds` runs parallel to `paths`
+ * ("file" | "folder" | "missing", from the `file_kinds` command). */
+export function fileFeatureMatches(paths: string[], kinds: string[]): FeatureMatch[] {
   if (paths.length === 0) return [];
   const out: FeatureMatch[] = [];
   for (const p of plugins) {
@@ -1000,13 +1027,17 @@ export function fileFeatureMatches(paths: string[]): FeatureMatch[] {
     feats.forEach((f) => {
       if (!f?.code || f.type !== "files") return;
       const exts = (f.extensions ?? []).map((e) => e.toLowerCase().replace(/^\./, ""));
-      const matched = paths.filter((path) => {
-        if (exts.length === 0) return true;
-        const name = path.split(/[\\/]/).pop() ?? "";
-        const dot = name.lastIndexOf(".");
-        // No dot / dotfile: only matched by a filter that accepts any file.
-        if (dot <= 0) return exts.length === 0;
-        return exts.includes(name.slice(dot + 1).toLowerCase());
+      const kindOf = (i: number) => kinds[i] ?? "file";
+      const matched = paths.filter((path, i) => {
+        if (exts.length > 0) {
+          return kindOf(i) === "file" && exts.includes(extOf(path));
+        }
+        const fileType = f.fileType;
+        if (!fileType) return kindOf(i) === "file"; // no filter = any file, not folders
+        if (fileType === "folder") return kindOf(i) === "folder";
+        if (kindOf(i) !== "file") return false;
+        if (fileType === "others") return !Object.values(FILE_TYPE_EXTS).some((t) => t.includes(extOf(path)));
+        return (FILE_TYPE_EXTS[fileType] ?? []).includes(extOf(path));
       });
       if (matched.length === 0) return;
       if (f.minLength != null && matched.length < f.minLength) return;

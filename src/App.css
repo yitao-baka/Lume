@@ -1908,6 +1908,58 @@ body.settings-window #root {
   cursor: default;
 }
 
+/* 「安装插件…」 toolbar button (the .lupx picker). */
+.plg-install-btn {
+  flex: none;
+}
+
+/* The .lupx confirmation card — shown between the toolbar and the plugin
+   list while an install is pending confirmation. */
+.plg-install {
+  margin: 0 4px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plg-install-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plg-install-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.plg-install-stats {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.plg-install-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* Uninstall: a regular icon button until armed — then it reads as the
+   destructive action it is. */
+.plg-uninstall.armed {
+  background: rgba(229, 72, 77, 0.18);
+}
+
+.plg-uninstall.armed img {
+  filter: brightness(1.4);
+}
+
 /* The global 全部授权 label reads as a warning-level control. */
 .settings-sub-label.warn {
   color: #ffb020;

@@ -712,6 +712,7 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 | 任意路径写入 | `fs.writeFile` | `fs.write` |
 | 插件私有目录读写 | `fs.writeText/writeBytes/readPrivate/listPrivate/privatePath/removePrivate` | 无（属于插件自己） |
 | 回收站删除 | `app.trash` / `trash_to_recycle` | `trash` |
+| 前台窗口信息与 Explorer 当前文件夹 | `app.foreground` / `plugin_foreground_context` | `window`（P4，§6H.2） |
 | 插件私有 KV / 文档库 / 设置 | `storage.*`、`db.*`、`settings.*` | 无（插件自有数据） |
 
 > **现状（P3.2 起）**：本表就是**强制层**的输入——表里每一行未声明即被拒绝
@@ -785,8 +786,9 @@ type = "img"
   **激活**把命中的路径**子集**投递给 `onFeature({code, type: "files", payload: "",
   paths})`（mode 收 `onEnter`）——只匹配了 `extensions` 的文件在 `paths` 里。
   行在下一次隐藏/呼出后消失。查询非空时拖入也会把行追加进结果。
-  *未支持*：`fileType`（image/video/folder 等分类——没有可靠的免 IO 判据）与
-  文件夹（无扩展名规则无法表达）；按扩展名过滤即可覆盖绝大多数场景。
+  *P4 更新*：`file_type` 类别（image/video/audio/document/text/folder/others）
+  与文件夹匹配已支持——见 §6H.3；`extensions` 规则下文件夹不再命中（行为
+  收窄）。
 - **img**：剪贴板持有可解码图片（CF_DIB/DIBV5、截图工具的自定义 PNG、CF_BITMAP）
   时，**空查询主菜单**出现「<label>」行（激活 = `onFeature({code,
   type: "img", payload: ""})`）。像素由插件自己读：
@@ -1082,6 +1084,99 @@ detachable = true     # 允许分离为独立窗口
 
 ---
 
+## 6H. P4 前半：`.lupx` 安装/卸载、前台上下文与 files 规则 `file_type`（2026-09-25）
+
+> `docs/PLUGIN_GAP_ANALYSIS.md` P4 的第一块（ROADMAP #28）。三件事：分发
+> 脱离手工拷目录（`.lupx` + 安装确认 + 卸载）、把呼出前的前台窗口信息透出
+> 给插件（`app.foreground`，新权限词 `window`）、files 规则按类别匹配并支持
+> 文件夹（`file_type`）。浏览器 URL 读取（uTools `readCurrentBrowserUrl`）
+> 明确不在本块——完全 UIA 绿地，另立项。
+
+### 6H.1 `.lupx` 打包、安装与卸载
+
+`.lupx` = 一个 zip 包：`plugin.toml` + 插件资产。清单 `plugin.toml` 在**归档
+根**或在**唯一顶层目录内**（「右键压缩文件夹」产物可装；前缀外的散文件被
+忽略）。打包：`powershell -NoProfile -File scripts/pack_lupx.ps1 <插件目录>
+<输出.lupx>`。
+
+**安装流程（设置 → 插件）**：工具栏「安装插件…」→ 选 `.lupx` 文件 → 宿主
+`plugin_lupx_inspect` 只读校验并弹**内联确认卡**（名称/版本/kind/描述/
+**权限 chips（本地化）**/文件数与大小；已装同 id 显示「将覆盖 vX → vY」）→
+确认 → `plugin_lupx_install` 解压换位。这张卡就是权限模型的「安装时知情
+同意」时刻。**卸载**：每张磁盘插件卡（内置无）的卸载按钮，两段式确认
+（3 秒武装窗口）。
+
+Rust 侧（`plugin_install.rs`）语义：
+
+| 环节 | 行为 |
+|---|---|
+| 校验 | 清单解析（`parse_manifest`）+ 必须显式声明 `id`（包内无目录名可回退）+ `valid_plugin_id` 字符集；entry 名逐段守卫（`\`→`/` 规范化——PowerShell 兼容、拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点、单段 ≤120 字符）；单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096 |
+| 换位 | 解压到 `<base>/data/install-staging/<id>-<ts>`（**不在 `plugins/` 下**——半成品不会被扫描发现）→ 旧安装 rename 到 staging 备份 → rename 到位（**失败自动还原旧安装**）→ 清备份 |
+| 生效 | 双事件：`settings-applied`（清单刷新）+ `plugin-reload`（已加载模块立即从新文件重 import——**升级无需重启**） |
+| 卸载 | 删 `<plugins>/<id>/`（私有 `files/` 随目录走——它就在插件目录里；`data/plugin_store.db` 的文档**保留**）；目录不存在不算错（重复卸载幂等） |
+| 残留 | staging 目录在启动时整体清理（崩溃/被杀不留垃圾） |
+
+### 6H.2 `app.foreground` — 前台窗口快照（权限 `window`）
+
+```js
+const fg = await ctx.app.foreground();        // iframe 桥接：lume.app.foreground()
+fg.process;    // "chrome.exe"（前台进程 exe 文件名；解析不到 = ""）
+fg.className;  // "CabinetWClass"（Win32 窗口类，Explorer 文件夹 = CabinetWClass）
+fg.title;      // 窗口标题
+fg.path;       // 仅当是 Explorer 文件系统视图（Win11 解析活动标签页）
+```
+
+- **快照语义**：返回的是**呼出启动器前**的前台窗口（`FocusState.last_hwnd`，
+  热键呼出时捕获、复制不取走），不是每次调用实时探测；`null` = 本会话从未
+  经热键呼出过。呼出后用户点进别的窗口不会改变这个值——插件要在呼出瞬间
+  拿「用户此刻在哪」就是它。
+- `path` 与原生 Explorer 上下文栏（导航页「Windows 资源管理器」栏）同一
+  COM 解析链；`process` 是新增字段（limited-information 查询，无需提权）。
+- **权限 `window`**：新台账行（§6D.6）。没有声明时调用即被拒（前端守卫 +
+  Rust `plugin_foreground_context` 命令侧双重校验）。
+
+### 6H.3 files 规则 `file_type` 类别与文件夹匹配
+
+`[[features]]` 的 `files` 规则新增 **`file_type`**（TOML 键 snake_case，同
+`min_length` 惯例；前端 JSON 为 `fileType`）：
+
+```toml
+[[features]]
+code = "handle-folders"
+label = "文件夹工具：处理文件夹"
+type = "files"
+file_type = "folder"     # 只匹配文件夹
+min_length = 1
+
+[[features]]
+code = "handle-images"
+label = "图片工具：处理图片文件"
+type = "files"
+file_type = "image"      # 图片扩展名类别表（png/jpg/gif/webp/…）
+```
+
+类别词表：`image` / `video` / `audio` / `document` / `text` / `folder` /
+`others`（= 不在任何类别表里的文件；表在宿主 `registry.ts::FILE_TYPE_EXTS`
+内 curated，未映射的扩展名归 others）。**匹配语义**（三选一，按优先级）：
+
+1. `extensions` 非空 → 扩展名匹配，且**文件夹永不命中**（目录名带点不再
+   冒充扩展名——这是相对 P2.2 的行为收窄）；
+2. 否则 `file_type` 声明 → `folder` 只匹配目录；其余类别只在**文件**上按
+   表匹配；
+3. 都未声明 → 任意**文件**（不含文件夹——文件夹规则必须 `file_type = "folder"`）。
+
+文件夹判据是真实属性查询：拖入时宿主对新命令 `file_kinds(paths)`（
+`GetFileAttributesW`，`file/folder/missing` 逐路径）查询一次，结果与拖入
+路径平行存放、随隐藏/呼出清空——一次拖拽一次查询，无逐键 IO。类别未知
+（`missing`）的路径按文件处理。`min_length`/`max_length` 语义不变（命中
+子集计数）。
+
+示例：`examples/plugins/files-img-demo/`（extensions + folder + image 三类
+规则各一条）；实机脚本 `scripts/cdp_lupx_verify.mjs`（23 项）、
+`scripts/cdp_p2b_verify.mjs` fileType 段。
+
+---
+
 ## 7. 启停与状态管理
 
 - 启停集 = `settings.toml` 的 `plugins.disabled: string[]`（缺省 = 全启用）。
@@ -1169,8 +1264,12 @@ pluginBuiltin`。
   - `scripts/cdp_p3_verify.mjs` — P3 数据层/权限/私有文件/设置（45 项；
     其设置页面板一段的选择器落后于 26b0f3b 的插件页重设计，5 项历史性
     失败，与本轮无关）
-  - `scripts/cdp_p2b_verify.mjs` — P2 余项：files 拖入 / img 剪贴板图片 /
-    template="list" 列表模板 / 磁贴指针重排（17 项）
+  - `scripts/cdp_lupx_verify.mjs` — `.lupx` 安装/卸载（P4 前半）：inspect
+    形状与拒绝路径 → 安装未重启可用 → subdir/升级/卸载 → 设置页按钮与
+    两段式卸载（23 项）
+  - `scripts/cdp_p2b_verify.mjs` — P2 余项 + P4 `file_type`：files 拖入 /
+    img 剪贴板图片 / template="list" 列表模板 / 磁贴指针重排 /
+    folder·image·extensions 类别匹配（20 项）
   - `scripts/cdp_plugin_verify.mjs` — provider 行 + 沙箱化 mode 页 +
     插件面板截图
   - `scripts/cdp_settings_smoke.mjs` — 8 分区设置冒烟
@@ -1203,7 +1302,7 @@ pluginBuiltin`。
 
 ## 12. 路线
 
-已完成（细节见对应章节与 `docs/ROADMAP.md` #23–#26）：
+已完成（细节见对应章节与 `docs/ROADMAP.md` #23–#28）：
 
 - ✅ 权限强制层（`permissions` → 逐 RPC 校验 + 设置页 chips + 全部授权）—— §6F.4
 - ✅ 宿主能力面：HTTP 代理（打掉 CORS）、系统通知、剪贴板图片/文件、对话框、
@@ -1215,10 +1314,13 @@ pluginBuiltin`。
 - ✅ 插件私有文件目录（`<plugin>/files/`）与 `fs.write` 能力 —— §6F.2
 - ✅ 沙箱机制（opaque iframe + Rust 命令侧白名单 + 前端守卫双层防线）—— §6C、§9
 - ✅ mode 页独立窗口（`detachable` 清单字段 + 运行时插件窗口 + 跨窗口状态推送）—— §6G
+- ✅ `.lupx` 打包、安装确认与卸载；`app.foreground`（`window` 权限）；
+  files 规则 `file_type` 类别与文件夹匹配（P4 前半）—— §6H
 
-未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4）：
+未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4 后半）：
 
-- files 规则的 `fileType` 分类与文件夹匹配（§6E.1.1 未支持项）
-- `.lupx` 打包与安装确认、插件市场源、窗口匹配/超级面板、AI 宿主 API
-- 宿主窗口内插件逻辑的进程级隔离、签名校验（沙箱已覆盖 mode 页与命令侧，
-  §9 残余边界）
+- `.lupx` 市场源（静态索引 + 应用内安装 + 版本提示）、签名校验、
+  拖包/文件关联安装
+- 活动窗口匹配（`[[features]] type = "window"`）、浏览器 URL / 划词捕获
+  （UIA）、超级面板、AI 宿主 API
+- 宿主窗口内插件逻辑的进程级隔离（沙箱已覆盖 mode 页与命令侧，§9 残余边界）

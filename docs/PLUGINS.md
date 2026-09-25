@@ -43,9 +43,11 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
 （§5.8）。
 
 宿主能力 API（`ctx` / `window.lume`）：`app.hide/toast/setQuery/setPlaceholder/openPath/
-resize`、`clipboard.readText/writeText`、`storage.get/set/remove`（插件私有
+resize/foreground`、`clipboard.readText/writeText`、`storage.get/set/remove`（插件私有
 KV）、`search.files(q, max?)`（全盘文件秒搜 = `file_search` 门面，Everything /
 LumeSVC 引擎自动选择；**空查询 = 最近文件**，引擎默认按修改时间倒序）。
+`app.foreground()` 返回呼出前前台窗口快照 `{process, className, title, path?}`
+（`path` 仅当那是 Explorer 文件夹；权限 `window`，§6H.2）。
 mode 桥接 iframe 还会收到 `lume.on.key` 按键事件
 （模式激活时的 keydown 转发 {key,ctrlKey,shiftKey,altKey}——含焦点在 iframe
 内的情况；模式页自实现 ↑↓/Enter，插件可对自己的 document 监听
@@ -129,7 +131,10 @@ min_length = 2
 （拖文件到启动器 → 「<label>（N 个文件）」行，payload 是命中路径数组
 `info.paths`；`extensions = ["md", "txt"]` 过滤扩展名）或 `type = "img"`
 （剪贴板有图时空查询出行，插件用 `ctx.clipboard.readImage()` 读 PNG data
-URI）。示例 `examples/plugins/files-img-demo/`。
+URI）。**类别匹配（P4）**：`files` 规则还可以写 `file_type = "folder"`（只
+匹配文件夹）、`"image"`、`"video"`、`"audio"`、`"document"`、`"text"`、
+`"others"`（宿主维护扩展名类别表）；`extensions` 非空时优先且文件夹不再
+命中。示例 `examples/plugins/files-img-demo/`。
 
 **免 HTML 的列表模式（P2.5b）**：mode 插件声明 `template = "list"` 后不用写
 `view` —— 宿主用内置列表渲染 `search(q)` 返回的行（形状同 provider 结果），
@@ -206,10 +211,21 @@ permissions = ["network", "clipboard", "fs.write"]
 | 文件读取（文本/缩略图/图标） | `fs.read` |
 | 任意路径写入 | `fs.write` |
 | 回收站删除 | `trash` |
+| 前台窗口信息 / Explorer 当前文件夹（`app.foreground`） | `window` |
 
 不用声明的：`app.hide/toast/setQuery/openPath/…` 这类基础动作、插件自有数据
 （`storage`/`db`/`settings`）与私有目录 `files/`。完整台账与边界（含「这是
 前端关卡、不是沙箱」的说明）见 `docs/PLUGIN_API.md` §6D.6 与 §9。
+
+## 安装与卸载（`.lupx`，P4）
+
+插件包是 **`.lupx`**（zip：`plugin.toml` + 资产；清单在包根或唯一顶层目录
+内皆可）。安装：**设置 → 插件 → 工具栏「安装插件…」** → 选文件 → 确认卡
+（名称/版本/kind/描述/**权限 chips**/大小；已装同 id 显示覆盖警示）→ 确认
+即装即用（无需重启）。卸载：磁盘插件卡片上的卸载按钮（两段式确认）——插件
+目录（含私有 `files/`）删除，文档库数据保留。打包工具：
+`scripts/pack_lupx.ps1 <插件目录> <输出.lupx>`；手工安装（拷目录进
+`<base>/plugins/`）依旧有效。完整语义见 `docs/PLUGIN_API.md` §6H.1。
 
 ## 安全模型（v1 + P5 沙箱）
 

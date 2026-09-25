@@ -193,6 +193,33 @@ pub struct CursorPos {
     pub y: i32,
 }
 
+/// Path kind per index of the input list — what the `files` feature matcher
+/// needs to tell a folder from a file (ROADMAP #28: `fileType = "folder"`).
+/// `"missing"` = the path no longer exists (a drop of a since-deleted temp
+/// file). Launcher-internal (no plugin id, no permission): the frontend calls
+/// it once per drag-drop with the paths the OS handed over.
+#[tauri::command]
+pub fn file_kinds(paths: Vec<String>) -> Vec<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileAttributesW, FILE_ATTRIBUTE_DIRECTORY, INVALID_FILE_ATTRIBUTES,
+    };
+    paths
+        .into_iter()
+        .map(|p| {
+            let wide: Vec<u16> = p.encode_utf16().chain(std::iter::once(0)).collect();
+            let attrs = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+            if attrs == INVALID_FILE_ATTRIBUTES {
+                "missing".to_string()
+            } else if attrs & FILE_ATTRIBUTE_DIRECTORY.0 != 0 {
+                "folder".to_string()
+            } else {
+                "file".to_string()
+            }
+        })
+        .collect()
+}
+
 /// Cursor position in physical screen pixels.
 /// Permission: `screen` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]

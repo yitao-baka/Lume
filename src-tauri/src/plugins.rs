@@ -55,6 +55,16 @@ pub struct PluginFeature {
     /// empty = any file). JSON spelling is the same word.
     #[serde(default)]
     pub extensions: Vec<String>,
+    /// `files` rules: a category instead of an extension list —
+    /// `image` | `video` | `audio` | `document` | `text` | `folder` |
+    /// `others` (P4, ROADMAP #28; the frontend owns the extension→category
+    /// table; `folder` matches directories, the rest only files). Ignored
+    /// when `extensions` is non-empty.
+    #[serde(
+        default,
+        rename(serialize = "fileType", deserialize = "file_type")
+    )]
+    pub file_type: Option<String>,
     /// Row label. Empty → the plugin name is used.
     #[serde(default)]
     pub label: String,

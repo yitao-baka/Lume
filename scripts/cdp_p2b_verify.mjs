@@ -29,6 +29,9 @@ for (const id of ["files-img-demo", "list-demo"]) {
 const FIX_MD = `${BASE}/p2b_hello.md`;
 const FIX_TXT = `${BASE}/p2b_note.txt`;
 const FIX_PNG = `${BASE}/p2b_other.png`;
+const FIX_DIR = `${BASE}/p2b_folder`; // fileType="folder" 规则的真实文件夹夹具
+rmSync(FIX_DIR, { recursive: true, force: true });
+mkdirSync(FIX_DIR, { recursive: true });
 writeFileSync(FIX_MD, "hello from p2b 烟测文件\n");
 writeFileSync(FIX_TXT, "second text file\n");
 writeFileSync(FIX_PNG, "not a real png\n"); // 扩展名命中过滤的陪衬（不应进 payload）
@@ -181,6 +184,31 @@ await sleep(1500);
 names = await rowNames();
 check("drop rows clear after hide + re-summon",
   !names.some((n) => n.includes("文件处理器")), JSON.stringify(names.slice(0, 4)));
+
+// ── ①b fileType（P4, ROADMAP #28）：folder / image 类别规则 ──
+// 一次拖入 文件夹 + .png + .md：extensions 规则只报 .md（文件夹不再冒充
+// 扩展名），fileType=folder 只报文件夹，fileType=image 按类别表报 .png。
+const emit2 = await emitDrop([FIX_DIR, FIX_PNG, FIX_MD]);
+await sleep(1500);
+names = await rowNames();
+check("fileType drop accepted", emit2 === "emitted", emit2);
+check("fileType=folder row offered with the folder only",
+  names.some((n) => n.includes("文件夹工具：处理文件夹（1 个文件）")), JSON.stringify(names));
+check("fileType=image row offered with the image only",
+  names.some((n) => n.includes("图片工具：处理图片文件（1 个文件）")), JSON.stringify(names));
+check("extensions rule no longer counts the folder as .md-like",
+  names.some((n) => n.includes("文件处理器：处理文本文件（1 个文件）")), JSON.stringify(names));
+const folderRow = names.find((n) => n.includes("文件夹工具"));
+if (folderRow) {
+  const { clicked, text } = await clickAndToast(folderRow);
+  check("folder row clicked and paths delivered",
+    clicked === "clicked" && text.includes("收到 1 个文件夹"), text);
+}
+// 清场：隐藏再呼出，避免影响后续段落
+await invoke("toggle_launcher");
+await sleep(800);
+await invoke("toggle_launcher");
+await sleep(1500);
 
 // ── ③ list-demo：关键字进入 → 内置列表渲染 ──
 await type("清单");

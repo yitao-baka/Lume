@@ -36,6 +36,10 @@ arboard = "3.6"
 pinyin = "0.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
+# .lupx plugin packages (plugin_install.rs) — read + write zip archives.
+# Only the deflate codec: stored entries always work, the rest (bzip2/lzma/
+# aes) is dead weight for a plugin bundle.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Globalization",      # GetUserDefaultUILanguage (tray label locale)

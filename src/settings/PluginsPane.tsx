@@ -12,10 +12,26 @@
 
 import { createSignal, For, onMount, Show } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { t, type Messages } from "../i18n";
 import type { PluginManifest, PluginSetting } from "../plugins/types";
 import { Chip, Toggle } from "./controls";
 import reloadIcon from "../../res/icons/refresh.svg";
+import deleteIcon from "../../res/icons/delete.svg";
+
+/** What `plugin_lupx_inspect` reports about a picked `.lupx` archive — the
+ * confirmation card shows exactly this before anything is written. */
+interface LupxInfo {
+  id: string;
+  name: string;
+  version: string;
+  kind: string;
+  description: string;
+  permissions: string[];
+  fileCount: number;
+  totalBytes: number;
+  existingVersion: string | null;
+}
 
 /** Localized label for a plugin kind. */
 function kindLabel(kind: string): string {
@@ -38,6 +54,7 @@ const PERM_INFO: Record<string, { label: keyof Messages; desc: keyof Messages }>
   "fs.read": { label: "permFsRead", desc: "permFsReadDesc" },
   "fs.write": { label: "permFsWrite", desc: "permFsWriteDesc" },
   trash: { label: "permTrash", desc: "permTrashDesc" },
+  window: { label: "permWindow", desc: "permWindowDesc" },
 };
 
 function permLabel(perm: string): string {
@@ -48,6 +65,13 @@ function permLabel(perm: string): string {
 function permDesc(perm: string): string {
   const info = PERM_INFO[perm];
   return info ? t(info.desc) : perm;
+}
+
+/** Bytes → a short human string for the install card ("1.2 MB"). */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** Built-ins ship with an empty manifest description — give the two of them
@@ -95,6 +119,12 @@ export default function PluginsPane() {
    * plugin regardless of its manifest. Only effective while dev mode is on
    * (the backend gate); this pane is its only UI. */
   const [trustAll, setTrustAll] = createSignal(false);
+  /** `.lupx` install flow: the picked archive's inspected facts (null when
+   * no install is in flight), its source path, and a busy flag while a
+   * command runs. */
+  const [installInfo, setInstallInfo] = createSignal<LupxInfo | null>(null);
+  const [installPath, setInstallPath] = createSignal<string | null>(null);
+  const [installBusy, setInstallBusy] = createSignal(false);
   /** Which plugin's detail panel is open (one at a time keeps the list
    * scannable) and the declared-setting values loaded for it. */
   const [openId, setOpenId] = createSignal<string | null>(null);
@@ -233,6 +263,57 @@ export default function PluginsPane() {
     }
   }
 
+  /** `.lupx` install, step 1 — pick a file and validate it. The Rust side
+   * only reads: the card below shows the manifest (permissions included)
+   * and nothing is written until 确认安装. */
+  async function pickLupx() {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        filters: [{ name: "Lume Plugin", extensions: ["lupx"] }],
+      });
+      if (typeof picked !== "string") return; // cancelled
+      const info = await invoke<LupxInfo>("plugin_lupx_inspect", { sourcePath: picked });
+      setInstallPath(picked);
+      setInstallInfo(info);
+    } catch (err) {
+      showStatus(false, String(err));
+    }
+  }
+
+  /** `.lupx` install, step 2 — the user saw the manifest and confirmed. The
+   * Rust command extracts + swaps and emits `settings-applied` /
+   * `plugin-reload`, so the launcher picks the plugin up immediately. */
+  async function confirmInstall() {
+    const source = installPath();
+    const info = installInfo();
+    if (!source || !info) return;
+    setInstallBusy(true);
+    try {
+      await invoke("plugin_lupx_install", { sourcePath: source });
+      setInstallInfo(null);
+      setInstallPath(null);
+      await refresh();
+      showStatus(true, t("pluginsInstallDone", { name: info.name || info.id }));
+    } catch (err) {
+      showStatus(false, String(err));
+    } finally {
+      setInstallBusy(false);
+    }
+  }
+
+  /** Uninstall one disk plugin: the directory (its private `files/` with it)
+   * is deleted; the document store keeps the plugin's data. */
+  async function uninstall(p: PluginManifest) {
+    try {
+      await invoke("plugin_uninstall", { id: p.id });
+      await refresh();
+      showStatus(true, t("pluginUninstalled", { name: p.name || p.id }));
+    } catch (err) {
+      showStatus(false, String(err));
+    }
+  }
+
   return (
     <>
       <h2 class="settings-grouptitle">{t("plugins")}</h2>
@@ -279,7 +360,70 @@ export default function PluginsPane() {
             <span class="settings-sub-label warn">{t("pluginTrustAll")}</span>
           </label>
         </Show>
+        <button class="settings-action plg-install-btn" onClick={() => void pickLupx()}>
+          {t("pluginsInstall")}
+        </button>
       </div>
+
+      {/* `.lupx` confirmation card: the manifest facts (permissions included)
+          before anything is written — the informed-consent moment. */}
+      <Show when={installInfo()}>
+        {(info) => (
+          <div class="plg-install">
+            <div class="plg-install-head">
+              <span class="plg-install-title">{t("pluginsInstallTitle")}</span>
+              <span class="plg-name">{info().name || info().id}</span>
+              <span class="plg-ver">{info().version || "-"}</span>
+              <span class="plg-badge">{kindLabel(info().kind)}</span>
+            </div>
+            <Show when={info().description}>
+              <div class="plg-desc">{info().description}</div>
+            </Show>
+            <div class="plg-chiprow">
+              <For each={info().permissions}>
+                {(perm) => (
+                  <span class="plg-perm-chip" title={permDesc(perm)}>
+                    {permLabel(perm)}
+                  </span>
+                )}
+              </For>
+              <span class="plg-install-stats">
+                {t("pluginsInstallStats", {
+                  count: String(info().fileCount),
+                  size: formatBytes(info().totalBytes),
+                })}
+              </span>
+            </div>
+            <Show when={info().existingVersion !== null}>
+              <span class="plg-note warn">
+                {t("pluginsInstallOverwrite", {
+                  old: info().existingVersion || "-",
+                  new: info().version || "-",
+                })}
+              </span>
+            </Show>
+            <div class="plg-install-actions">
+              <button
+                class="settings-action settings-action-primary"
+                disabled={installBusy()}
+                onClick={() => void confirmInstall()}
+              >
+                {t("pluginsInstallConfirm")}
+              </button>
+              <button
+                class="settings-action"
+                disabled={installBusy()}
+                onClick={() => {
+                  setInstallInfo(null);
+                  setInstallPath(null);
+                }}
+              >
+                {t("pluginsInstallCancel")}
+              </button>
+            </div>
+          </div>
+        )}
+      </Show>
 
       <div class="plg-list">
         <For each={visible()} fallback={<div class="plg-empty">{t("pluginsEmpty")}</div>}>
@@ -292,6 +436,7 @@ export default function PluginsPane() {
               onToggleOpen={() => void toggleOpen(p)}
               onToggleEnabled={(v) => void toggle(p, v)}
               onReload={() => void reload(p)}
+              onUninstall={() => void uninstall(p)}
               onPutSetting={(key, value) => void putSetting(p, key, value)}
             />
           )}
@@ -307,8 +452,9 @@ export default function PluginsPane() {
 }
 
 /** One plugin card: icon tile + name row + description, an enable toggle
- * (and 重载 for disk plugins) on the right, and an expandable detail panel
- * below. The header click toggles the panel; the embedded controls don't. */
+ * (plus 重载/卸载 for disk plugins) on the right, and an expandable detail
+ * panel below. The header click toggles the panel; the embedded controls
+ * don't. */
 function PluginCard(props: {
   p: PluginManifest;
   open: boolean;
@@ -319,12 +465,28 @@ function PluginCard(props: {
   onToggleOpen: () => void;
   onToggleEnabled: (v: boolean) => void;
   onReload: () => void;
+  onUninstall: () => void;
   onPutSetting: (key: string, value: unknown) => void;
 }) {
   const p = () => props.p;
   const icon = () => pluginIcon(p());
   const tileChar = () => (p().name || p().id).trim().charAt(0).toUpperCase() || "·";
   const desc = () => pluginDescription(p());
+  /** Uninstall is destructive (the plugin directory goes) — the button arms
+   * on the first click and fires on the second, within a 3-second window. */
+  const [armUninstall, setArmUninstall] = createSignal(false);
+  let armTimer: ReturnType<typeof setTimeout> | undefined;
+  function clickUninstall() {
+    if (!armUninstall()) {
+      setArmUninstall(true);
+      clearTimeout(armTimer);
+      armTimer = setTimeout(() => setArmUninstall(false), 3000);
+      return;
+    }
+    clearTimeout(armTimer);
+    setArmUninstall(false);
+    props.onUninstall();
+  }
 
   return (
     <div class="plg-card" classList={{ open: props.open, off: !p().enabled }}>
@@ -363,6 +525,16 @@ function PluginCard(props: {
           <Show when={!p().builtin && props.devMode}>
             <button class="settings-icon-btn" title={t("pluginReload")} onClick={props.onReload}>
               <img class="settings-icon-btn-icon" src={reloadIcon} alt="" draggable={false} />
+            </button>
+          </Show>
+          <Show when={!p().builtin}>
+            <button
+              class="settings-icon-btn plg-uninstall"
+              classList={{ armed: armUninstall() }}
+              title={armUninstall() ? t("settingsConfirmAction") : t("pluginUninstallHint")}
+              onClick={clickUninstall}
+            >
+              <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
             </button>
           </Show>
           <Toggle checked={p().enabled} onChange={props.onToggleEnabled} />

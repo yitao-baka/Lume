@@ -51,6 +51,8 @@ export async function execHostRpc(
         code: (args as { code?: string }).code,
         payload: (args as { payload?: string }).payload,
       });
+    case "app.foreground":
+      return api.app.foreground();
     case "clipboard.writeImage":
       return api.clipboard.writeImage(a.data);
     case "clipboard.writeFiles":

@@ -152,7 +152,11 @@ function App() {
   const [selected, setSelected] = createSignal(0);
   // P2.2 — plugin entry rows for OS file drops (paths arrive via the Tauri
   // drag-drop handler) and for the clipboard image. Cleared on hide/summon.
+  // `droppedFileKinds` runs parallel to `droppedFiles` (P4, ROADMAP #28):
+  // "file" | "folder" | "missing" per path, so `fileType` rules can tell a
+  // directory from a file with one attributes query per drop.
   const [droppedFiles, setDroppedFiles] = createSignal<string[]>([]);
+  const [droppedFileKinds, setDroppedFileKinds] = createSignal<string[]>([]);
   const [clipboardImgOk, setClipboardImgOk] = createSignal(false);
   const [menu, setMenu] = createSignal<MenuState>(null);
 
@@ -439,6 +443,7 @@ function App() {
     activeMode()?.onHide?.();
     for (const p of allPlugins()) p.lifecycle?.onHide?.();
     setDroppedFiles([]); // P2.2 rows are one-shot: gone after the hide
+    setDroppedFileKinds([]);
     setClipboardImgOk(false);
     clearSearch();
     await invoke("hide_launcher");
@@ -543,7 +548,7 @@ function App() {
           sizer.scheduleResize();
         };
         const feats = [
-          ...fileFeatureMatches(droppedFiles()),
+          ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
           ...(clipboardImgOk() ? imgFeatureMatches() : []),
         ];
         rebuildEmpty(feats);
@@ -559,7 +564,7 @@ function App() {
               // Rebuild either way: the probe may have ADDED the row (image
               // appeared) or must DROP a stale one (clipboard changed back).
               rebuildEmpty([
-                ...fileFeatureMatches(droppedFiles()),
+                ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
                 ...(ok ? imgFeatureMatches() : []),
               ]);
             })
@@ -598,7 +603,7 @@ function App() {
           });
         }
         // P2.2: a file dropped while a query is up also offers its rows.
-        for (const f of fileFeatureMatches(droppedFiles())) {
+        for (const f of fileFeatureMatches(droppedFiles(), droppedFileKinds())) {
           extra.push(featureRowToEntry(f));
         }
         for (const f of files?.entries ?? []) {
@@ -1031,7 +1036,17 @@ function App() {
       setDroppedFiles(paths);
       setClipboardImgOk(false);
       if (mode() !== APPS_MODE) return;
-      void runSearch(appsQuery());
+      // Kinds before the search: the drop is async to begin with, so one
+      // attributes query keeps `fileType` rules from racing the first render.
+      void invoke<string[]>("file_kinds", { paths })
+        .then((kinds) => {
+          if (paths !== droppedFiles()) return; // a newer drop replaced this one
+          setDroppedFileKinds(kinds);
+        })
+        .catch(() => setDroppedFileKinds(paths.map(() => "file")))
+        .finally(() => {
+          if (mode() === APPS_MODE) void runSearch(appsQuery());
+        });
     });
     onCleanup(() => unlistenDrag());
 
@@ -1044,6 +1059,7 @@ function App() {
     const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
       for (const p of allPlugins()) p.lifecycle?.onShow?.();
       setDroppedFiles([]); // a fresh summon starts a clean main menu (P2.2)
+      setDroppedFileKinds([]);
       setClipboardImgOk(false);
       clearSearch();
       await Promise.all([nav.refreshRecent(), nav.refreshPins()]);

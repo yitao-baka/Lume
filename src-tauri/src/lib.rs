@@ -17,6 +17,7 @@ pub mod pipe;
 mod notify;
 mod plugin_fs;
 mod plugin_host;
+mod plugin_install;
 mod plugin_net;
 mod plugin_perm;
 mod plugin_store;
@@ -98,6 +99,9 @@ pub fn run() {
             // Installed layout: copy any exe-adjacent data/settings/languages
             // into the writable %LOCALAPPDATA% base before settings init.
             paths::migrate_installed();
+            // A killed process mid-`.lupx`-install must not leave staging
+            // junk under data/ (plugin_install.rs).
+            plugin_install::cleanup_staging(&paths::base_dir());
             // Settings: ensure settings/default.toml/settings.toml exist and
             // manage the effective settings state (docs/SETTINGS.md).
             settings::init(app);
@@ -320,6 +324,7 @@ pub fn run() {
             window::close_preview,
             window::get_preview_request,
             explorer::get_foreground_context,
+            explorer::plugin_foreground_context,
             explorer::open_terminal_in_folder,
             explorer::copy_path,
             explorer::trash_to_recycle,
@@ -369,6 +374,9 @@ pub fn run() {
             plugin_store::plugin_storage_get,
             plugin_store::plugin_storage_set,
             plugins::reload_plugin,
+            plugin_install::plugin_lupx_inspect,
+            plugin_install::plugin_lupx_install,
+            plugin_install::plugin_uninstall,
             plugin_window::plugin_window_open,
             plugin_window::plugin_window_ready,
             plugin_window::plugin_window_meta,
@@ -401,6 +409,7 @@ pub fn run() {
             plugin_host::plugin_dialog_save,
             plugin_host::plugin_cursor_pos,
             plugin_host::plugin_displays,
+            plugin_host::file_kinds,
             settings::set_plugin_enabled,
             settings::set_plugin_trusted,
             settings::set_plugin_dev_mode,

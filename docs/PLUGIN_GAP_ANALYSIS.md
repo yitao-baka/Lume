@@ -463,12 +463,22 @@ Lume 的既定架构约束（`docs/ARCHITECTURE.md`）：业务逻辑归 Rust、
 
 ### P4 生态（远期，单独立项）
 
+> **P4 前半已实现（2026-09-25，ROADMAP #28）**：`.lupx` 打包 + 安装确认 +
+> 卸载（`plugin_install.rs`，`zip` 只开 deflate；确认卡即「装时知情同意」，
+> 权限 chips 在卡上可见；staging 换位 + 失败还原 + 双事件即时生效），
+> `PLUGIN_API.md` §6H.1。`files` 规则的 `fileType` 分类与文件夹匹配也在此
+> 轮闭合（§6E.1.1 注记删除，`file_type` + `file_kinds` 属性查询）。
+> **仍留 P4 后半**：市场源、签名校验、`.lupx` 文件关联/拖包安装、
+> 浏览器 URL（UIA 绿地，明确不在本轮）、划词捕获/超级面板、AI 宿主 API。
+
 - **打包格式 `.lupx`**（zip：plugin.toml + assets，安装 = 解到 plugins/ +
-  二次确认弹窗，等价 `.upxs` 的「装时确认」而非审核）。
+  二次确认弹窗，等价 `.upxs` 的「装时确认」而非审核）。✅ 已实现（#28）
 - **市场源**：静态 JSON 索引（名称/版本/下载 URL/SHA-256）+ 应用内安装；
   受仓库网络约束须可配镜像。自动更新 = 启动时比对版本号提示。
 - **窗口匹配 / 超级面板**：`window` feature 与选区捕获是独立的系统能力
-  （可复用 `explorer.rs`/`input.rs` 的前台窗口探测），体量大，评估后单独立项。
+  （可复用 `explorer.rs`/`input.rs` 的前台窗口探测——`get_foreground_context`
+  已含 process/className/title/path，`app.foreground` 已透出（`window`
+  权限，#28）），体量大，评估后单独立项。
 - **AI 宿主 API**（`utools.ai` 形态）：视需求单独立项。
 
 ## 6. 与 ROADMAP / 文档的衔接

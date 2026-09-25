@@ -1,4 +1,4 @@
-# Files & Image Demo — P2.2 示例（files 拖入 + img 剪贴板图片进入）。
+# Files & Image Demo — P2.2 示例（files 拖入 + img 剪贴板图片进入）+ P4 fileType。
 #
 # 覆盖：
 #   ① type = "files"  把任意文件从资源管理器拖到 Lume 主菜单（或拖过来后按
@@ -6,18 +6,22 @@
 #                     数组投递给 onFeature（info.paths）
 #   ② type = "img"    剪贴板里是图片时，空查询主菜单出现「处理剪贴板图片」
 #                     行；激活后插件用 ctx.clipboard.readImage() 读 PNG data URI
+#   ③ fileType (P4)   按类别匹配：fileType = "folder"（只匹配文件夹）与
+#                     "image"（按扩展名类别表匹配图片文件），不写 extensions
 #
 # 安装：把整个 files-img-demo/ 目录拷进 <base>/plugins/，重启 Lume。
 # 用法：
 #   拖入 .md/.txt 文件 → 行「文件处理器：处理 N 个文件」→ 激活后 toast 报告
 #   路径，并把第一个文件的内容前 200 字符读出来（fs.readText，已声明 fs.read）
+#   拖入一个文件夹 → 行「文件夹工具：处理 N 个文件夹」→ 激活后 toast 报告路径
+#   拖入 .png/.jpg → 行「图片工具：处理 N 个图片文件」
 #   截一张图（或复制任意图片）→ 呼出 Lume → 空查询出「图片处理器」行 → 激活
 #   后 toast 报告图片的 base64 长度（真实读取发生）
 id = "files-img-demo"
 name = "文件处理器 (Files & Image Demo)"
 kind = "provider"
 version = "1.0.0"
-description = "P2.2 示例：type=files 文件拖入 + type=img 剪贴板图片进入"
+description = "P2.2 示例：type=files 文件拖入 + type=img 剪贴板图片进入 + P4 fileType"
 entry = "main.js"
 
 # fs.read（读拖入文件前 200 字符）+ clipboard（readImage / writeText）。
@@ -31,6 +35,25 @@ code = "handle-docs"
 label = "文件处理器：处理文本文件"
 type = "files"
 extensions = ["md", "txt"]
+min_length = 1
+
+# fileType 规则（P4, ROADMAP #28）：extensions 非空时优先，所以类别规则要
+# 单独一条。file_type = "folder" 只匹配文件夹；"image" 按图片扩展名类别表
+# 匹配；"others" = 不在任何类别表里的文件。合法类别：
+# image/video/audio/document/text/folder/others（TOML 键是 snake_case 的
+# file_type，与 min_length 一致；前端 JSON 才是 fileType）。
+[[features]]
+code = "handle-folders"
+label = "文件夹工具：处理文件夹"
+type = "files"
+file_type = "folder"
+min_length = 1
+
+[[features]]
+code = "handle-images"
+label = "图片工具：处理图片文件"
+type = "files"
+file_type = "image"
 min_length = 1
 
 # img 规则：剪贴板里有可解码图片（CF_DIB / 截图工具的自定义 PNG / CF_BITMAP）

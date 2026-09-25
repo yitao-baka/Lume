@@ -1874,3 +1874,78 @@ P0/P1/P2/P3 四套回归 **8/14/21/45 全过**；截图 `test/p2b_files.png`、
 用 `plugin:event|emit_to` 投回同一事件验证逻辑链，wry 的 OLE drop target
 （真实路径的来源）只在手工步骤覆盖（`docs/TESTING.md`「Plugin file drop」）；
 settings 窗口与预览窗口保持 handler 禁用（无文件拖入需求、避免波及文本拖拽）。
+
+## 28. 插件系统 P4 前半：`.lupx` 打包安装/卸载 + 前台上下文 API + files 规则 `file_type`（已实现）
+
+**状态：已实现（2026-09-25）。** 差距分析见 `docs/PLUGIN_GAP_ANALYSIS.md` P4
+（本条闭合其中的「打包格式 `.lupx` + 安装确认」与「前台文件夹路径透出」，
+`fileType`/文件夹闭合 `PLUGIN_API.md` §6E.1.1 的未支持注记；浏览器 URL 读取
+（UIA，完全绿地）明确**不在**本条范围；市场源、签名校验仍留 P4 后半）。
+API 文档见 `docs/PLUGIN_API.md` §6H。三件事：
+
+- **P4.1 `.lupx` 打包 + 安装/卸载（`plugin_install.rs`，新增 zip 依赖——只开
+  deflate feature）**：`.lupx` = zip；`plugin.toml` 在归档根**或唯一顶层目录
+  内**（兼容「右键压缩文件夹」，前缀外的散文件被忽略）。三命令：
+  `plugin_lupx_inspect`（只读校验 + 返回清单事实，**不落盘**）、
+  `plugin_lupx_install`（解压到 `<base>/data/install-staging/<id>-<ts>` →
+  旧安装 rename 到 staging 备份 → rename 换位（失败自动还原旧安装）→ 清备份
+  → `settings-applied` + `plugin-reload` 双事件——**升级中的已加载模块立即重
+  import，无需重启**）、`plugin_uninstall`（删 `<plugins>/<id>/`，私有
+  `files/` 随目录走，`data/plugin_store.db` 文档保留；重复卸载幂等）。守卫：
+  entry 名规范化 `\`→`/`（PowerShell `Compress-Archive` 兼容）+ 逐段
+  `safe_name` 同款校验（拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点，
+  单段 ≤120）、单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096；清单必须显式
+  声明 `id`（包内没有目录名可回退）。**确认卡**（设置 → 插件工具栏「安装
+  插件…」→ 文件选择 → 内联卡片）：名称/版本/kind/描述/**权限 chips（复用
+  PERM_INFO 本地化）**/文件数与大小，已装同 id 显示「将覆盖 vX → vY」——
+  这就是权限模型一直假设的「安装时知情同意」时刻。卸载按钮在每张磁盘插件
+  卡上（内置无），两段式确认（3s 武装窗口）。打包工具
+  `scripts/pack_lupx.ps1 <插件目录> <输出.lupx>`。staging 在启动时清理
+  （崩溃不留垃圾）。
+- **P4.2 前台上下文 API（`ctx.app.foreground()` / `lume.app.foreground`）**：
+  返回呼出前前台窗口的快照 `{process, className, title, path?, }`（null =
+  本会话从未经热键呼出过）——复用 `FocusState.last_hwnd`（`toggle_launcher`
+  捕获，复制不取走）+ `explorer.rs::resolve_context`（Explorer 路径 COM 解析
+  照旧），**新增 `process` 字段**（`input.rs::exe_of_pid` 的 limited-information
+  查询，无需提权；`get_foreground_context` 原生消费者同步受益，为 #29 窗口
+  匹配铺路）。Rust 命令 `plugin_foreground_context`，权限 **`window`**（新
+  台账行：`app.foreground → window`；匹配是宿主侧行为不需要权限，插件主动
+  读才声明——见 #29）。浏览器 URL（uTools `readCurrentBrowserUrl`）明确
+  不做：完全 UIA 绿地、按浏览器逐家适配、稳定性天然差，另立项。
+- **P4.3 files 规则 `file_type` 类别与文件夹匹配（闭合 §6E.1.1 注记）**：
+  `[[features]]` 的 `files` 规则新增 `file_type`（TOML snake_case，同
+  `min_length` 惯例；前端 JSON 为 `fileType`）：`image/video/audio/document/
+  text/folder/others`（前端 curated 扩展名类别表，未映射 = others；类别表
+  在 `registry.ts::FILE_TYPE_EXTS`）。**匹配语义**：`extensions` 非空 → 扩展名
+  匹配且**文件夹永不命中**（目录名带点不再冒充扩展名——行为收窄，文档已写
+  明）；否则 `file_type` 声明 → `folder` 只匹配目录、`others` = 表外的文件、
+  其余按表；两者都未声明 → 任意**文件**（文件夹必须 `file_type = "folder"`）。
+  文件夹判据 = 新内部命令 `file_kinds(paths)`（`GetFileAttributesW` 逐路径
+  属性查询，`file/folder/missing`，启动器自用无权限）：拖入时一次性查询
+  （drop handler 先 `file_kinds` 再 runSearch，消除竞态），kinds 信号与
+  paths 平行、随 hide/summon 清空。`min/max_length` 语义不变（命中子集计数）。
+
+**验证**：cargo test **185**（+7：entry 名守卫（`\`→`/` 规范化、`..`/盘符/
+保留设备名拒绝）、根/顶层目录两种布局 inspect、恶意包四连拒、安装→换位→
+升级 v1→v2、失败换位自动还原旧安装（staging 缺失注入）、前缀外散文件不落
+盘、卸载幂等与非法 id）、tsc/vite build/cargo build 干净、
+`scripts/cdp_lupx_verify.mjs` **23 项全过**（inspect 形状与四类拒绝、安装 →
+**未重启** provider 行直接可用、subdir 形状 + 前缀外忽略、升级
+existingVersion=1.0.0 → 2.0.0 + 重 import、卸载 → 行消失 + 重复卸载 +
+非法 id、设置页安装按钮/卸载按钮/两段式武装解除）、
+`scripts/cdp_p2b_verify.mjs` **20 项全过**（新增 fileType 段：一次拖入
+文件夹+png+md → folder/image/extensions 三规则各自只命中自己类别 +
+folder 激活路径真实投递；原 files/img/list/重排全回归）；
+截图 `test/lupx_settings.png`。
+
+**踩坑（值得记）**：① TOML 清单键是 **snake_case 的 `file_type`**（与
+`min_length` 同惯例）——示例初版写成 `fileType` 被 toml 解析器静默忽略，
+规则退化为「所有文件」，CDP 实机当场抓出（类别行把 .png/.md 都算进去了）；
+② CDP 验证里 provider 行断言的查询词不能撞全盘文件秒搜的命中（"demo" 被
+12 个示例插件的原生+文件结果占满 20 条上限，provider 追加在最后永远挤不进
+去），换无文件命中的词；③ 本仓库前端嵌在二进制里，改 Rust+前端后必须
+`pnpm build && cargo build` 再跑 CDP（#26 踩坑重申）。
+
+**未做（P4 后半）**：市场源（静态 JSON 索引 + 应用内安装 + 版本比对提示）、
+签名校验、`.lupx` 文件关联/拖包安装、宿主窗口内插件逻辑的进程级隔离、
+浏览器 URL / 划词捕获（UIA）、AI 宿主 API。

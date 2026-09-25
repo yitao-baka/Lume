@@ -32,6 +32,10 @@ use tauri::{AppHandle, Manager};
 pub struct ForegroundContext {
     pub hwnd: i32,
     pub pid: u32,
+    /// Foreground process executable file name (e.g. "chrome.exe"; empty when
+    /// it could not be resolved). Window-matching features (ROADMAP #29) and
+    /// the plugin-facing variant key on this.
+    pub process: String,
     #[serde(rename = "className")]
     pub class_name: String,
     pub title: String,
@@ -55,6 +59,37 @@ pub async fn get_foreground_context(app: AppHandle) -> Result<ForegroundContext,
         return Ok(empty_context());
     };
     tauri::async_runtime::spawn_blocking(move || resolve_context(hwnd))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The plugin-facing variant (`ctx.app.foreground()` / `lume.app.foreground()`):
+/// the same snapshot as `get_foreground_context`, gated by the `window`
+/// capability. `null` when no foreground window was ever captured (the
+/// launcher has not been summoned through the hotkey in this session yet).
+#[tauri::command]
+pub async fn plugin_foreground_context(
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+    app: AppHandle,
+) -> Result<Option<ForegroundContext>, String> {
+    use crate::window::FocusState;
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "window",
+    )?;
+    let hwnd = app
+        .try_state::<FocusState>()
+        .and_then(|f| *f.last_hwnd.lock().unwrap());
+    let Some(hwnd) = hwnd else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || Some(resolve_context(hwnd)))
         .await
         .map_err(|e| e.to_string())
 }
@@ -207,6 +242,7 @@ fn empty_context() -> ForegroundContext {
     ForegroundContext {
         hwnd: 0,
         pid: 0,
+        process: String::new(),
         class_name: String::new(),
         title: String::new(),
         path: None,
@@ -247,9 +283,13 @@ fn resolve_context(hwnd: isize) -> ForegroundContext {
 
     let path = resolve_explorer_path(hwnd);
     let is_explorer = path.is_some();
+    // The exe file name ("chrome.exe") — `input.rs`'s limited-information
+    // query needs no elevation and fails soft to an empty string.
+    let process = crate::input::exe_of_pid(pid).map(|(_, name)| name).unwrap_or_default();
     ForegroundContext {
         hwnd: hwnd as i32,
         pid,
+        process,
         class_name,
         title,
         path,

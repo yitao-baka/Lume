@@ -67,6 +67,7 @@ export const BRIDGE_SCRIPT = `
           payload: opts && opts.payload,
         });
       },
+      foreground: function () { return call("app.foreground"); },
     },
     fs: {
       readText: function (p) { return call("fs.readText", { path: p }); },

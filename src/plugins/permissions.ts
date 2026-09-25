@@ -34,6 +34,7 @@ import type { PluginHostApi, PluginManifest } from "./types";
 export const RPC_PERMISSION: Record<string, string> = {
   "app.notify": "notify",
   "app.trash": "trash",
+  "app.foreground": "window",
   "clipboard.readText": "clipboard",
   "clipboard.writeText": "clipboard",
   "clipboard.writeImage": "clipboard",

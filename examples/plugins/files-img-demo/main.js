@@ -45,7 +45,7 @@ export default function create(ctx) {
           name: "文件处理器 (Files & Image Demo)",
           path: `lume-plugin://demo/${encodeURIComponent(q)}`,
           description:
-            "拖一个 .md/.txt 文件到 Lume；或截图后空查询呼出 → 「图片处理器」行",
+            "拖 .md/.txt 或文件夹/图片到 Lume；或截图后空查询呼出 → 「图片处理器」行",
           enter: true,
         },
       ]),
@@ -54,8 +54,15 @@ export default function create(ctx) {
       void item;
     },
     onFeature: (info) => {
-      if (info.type === "files") void handleFiles(info.paths ?? []);
-      else if (info.type === "img") void handleImage();
+      if (info.type === "files") {
+        // folders 走只报路径的分支（readText 读不了目录）；extensions 命中的
+        // 文本文件走真实读取；fileType=image 只报清单。
+        if (info.code === "handle-folders") {
+          ctx.app.toast(`收到 ${info.paths.length} 个文件夹：${info.paths.join("、")}`);
+        } else {
+          void handleFiles(info.paths ?? []);
+        }
+      } else if (info.type === "img") void handleImage();
       else ctx.app.toast(`feature ${info.code}: ${info.payload.slice(0, 40)}`);
     },
   };

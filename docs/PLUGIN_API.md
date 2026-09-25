@@ -452,7 +452,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**（P1.1）——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated` |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框（P1.4）。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
 | `screen` | `cursor()` / `displays()` | 光标位置与显示器列表（P1.5），单位是**物理像素**；`displays()` 每项含 `x/y/width/height`、工作区 `workX/workY/workWidth/workHeight`、`primary` |
-| `fs` | `readText(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` / `writeText(name, text)` / `writeBytes(name, base64)` / `readPrivate(name)` / `listPrivate()` / `privatePath(name)` / `removePrivate(name)` / `writeFile(path, text)` | 文件读写能力。读取与任意路径写入（`writeFile`）**需要声明**（`fs.read` / `fs.write`，§6D.6）；`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`thumb` / `videoPoster` 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null）。`writeText`/`writeBytes`/`readPrivate`/`listPrivate`/`privatePath`/`removePrivate` 操作**插件私有目录** `<plugin>/files/`（无需权限，单文件 10 MiB，`name` 只能是文件名 —— 见 §6F.2） |
+| `fs` | `readText(path)` / `bytes(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` / `writeText(name, text)` / `writeBytes(name, base64)` / `readPrivate(name)` / `listPrivate()` / `privatePath(name)` / `removePrivate(name)` / `writeFile(path, text)` | 文件读写能力。读取与任意路径写入（`writeFile`）**需要声明**（`fs.read` / `fs.write`，§6D.6）；`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`bytes` 返回**原始字节**（base64，≤ 32 MB，超出 reject）——P5 沙箱后页面是 opaque origin，`fetch(asset://)` 被 CORS 拒绝，pdf.js/SheetJS 这类要在 JS 里解二进制的渲染器从这里取字节（2026-09-25 起）；`thumb` / `videoPoster` 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null）。`writeText`/`writeBytes`/`readPrivate`/`listPrivate`/`privatePath`/`removePrivate` 操作**插件私有目录** `<plugin>/files/`（无需权限，单文件 10 MiB，`name` 只能是文件名 —— 见 §6F.2） |
 | `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV —— v1 契约的**兼容垫片**，内部就是文档库里的 `__storage` 文档（§6F.1）；新代码请用 `db` |
 | `db` | `get(id)` / `put(doc)` / `remove(doc\|id, rev?)` / `allDocs({idStartsWith?, limit?})` / `bulkDocs(docs)` | **文档库**（P3.1，§6F.1）：uTools/CouchDB 形状的文档（`_id` + `_rev` 乐观锁），持久化在 `<base>/data/plugin_store.db`。冲突 reject，消息以 `conflict:` 开头 |
 | `settings` | `all()` / `get(key)` | 本插件声明式设置的**生效值**（manifest 默认值 ⊕ 用户改过的值，P3.4，§6F.3） |
@@ -468,6 +468,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 | `enter` | `{code, type, payload}` | 声明式进入规则命中本模式（P2.1）或别的插件 `app.redirect` 过来（P2.5）。`type` = `"regex" \| "over" \| "redirect"`，`payload` = 命中的查询文本（redirect 时为发送方给的 payload）。**页面在 `load` 之后才会收到状态重放**（见下） |
 | `subInput` | `string` | 本模式调 `app.setSubInput` 接管搜索框后，每一次按键（P2.3） |
 | `settings` | `Record<string, unknown>` | 用户在设置页改动了本插件的声明式设置（P3.4）；页面 `load` 后的握手会重放当前值 |
+| `theme` | `"light" \| "dark"` | 启动器颜色模式推送（2026-09-25 起）。沙箱后页面读不到宿主文档，宿主在就绪握手重放当前值，并在 `data-theme` 每次变更（设置页切换、system 跟随系统）时推给本模式页与分离窗口——深浅色跟随启动器的权威来源 |
 | `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。转发链路（P5 沙箱化后）：页面内非可编辑目标、未被页面 `preventDefault` 的 keydown 由**桥接脚本**转发给宿主 → 宿主在其窗口重放该键（Esc 分层/Tab 切模式/箭头导航照旧）→ 根路由消费的键异步回执 `preventDefault`（迟滞消费——Tab 这类移动焦点的键，iframe 内默认动作可能已先发生；Esc 契约不受影响，页面在**自己 document** 上的冒泡监听里 `preventDefault` 即同步消费，被消费的按键不再转发）。焦点在插件 iframe 内时同样送达。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
 
 **状态重放（重要）**：桥接脚本在 `<head>`、页面自己的 `lume.on.*` 赋值在 `</body>`
@@ -708,7 +709,7 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 | 文件对话框 | `dialog.*` / `plugin_dialog_*` | `dialog` |
 | 光标与显示器 | `screen.*` / `plugin_cursor_pos`、`plugin_displays` | `screen` |
 | 全盘文件搜索 | `search.files` / `file_search` | `search.files` |
-| 文件读取（文本/缩略图/图标） | `fs.readText/thumb/videoPoster/icon` | `fs.read` |
+| 文件读取（文本/字节/缩略图/图标） | `fs.readText/bytes/thumb/videoPoster/icon` | `fs.read` |
 | 任意路径写入 | `fs.writeFile` | `fs.write` |
 | 插件私有目录读写 | `fs.writeText/writeBytes/readPrivate/listPrivate/privatePath/removePrivate` | 无（属于插件自己） |
 | 回收站删除 | `app.trash` / `trash_to_recycle` | `trash` |
@@ -990,8 +991,8 @@ permissions = ["network", "clipboard", "fs.write"]
 
 - **台账**（单一事实源 = §6D.6 表）：`app.notify→notify`、`app.trash→trash`、
   `clipboard.*→clipboard`、`http.request→network`、`dialog.*→dialog`、
-  `screen.*→screen`、`search.files→search.files`、`fs.readText/thumb/videoPoster/
-  icon→fs.read`、`fs.writeFile→fs.write`。
+  `screen.*→screen`、`search.files→search.files`、`fs.readText/bytes/thumb/
+  videoPoster/icon→fs.read`、`fs.writeFile→fs.write`。
 - **无需声明**：基础动作（`app.hide/toast/setQuery/setPlaceholder/openPath/
   revealPath/resize/setSubInput/redirect`）、插件自有数据（`storage.*`、`db.*`、
   `settings.*`）、私有目录（`fs.writeText` 等）。
@@ -1078,9 +1079,24 @@ detachable = true     # 允许分离为独立窗口
   （注册表），独立窗口只是视图；`onQuery` 在窗口内不会到来（没有共享搜索框）。
 - `detachable = true` 声明的窗口是**运行时创建**的（lume 首例）——主窗口/
   设置/预览仍是启动时创建。按插件复用窗口（重复 open = 聚焦）。
-- 依赖启动器搜索框的模式（子输入框、query 驱动）**不要**声明 `detachable`。
+- 依赖启动器搜索框的模式（子输入框、query 驱动）**不要**声明 `detachable`；
+  确要在分离后保留输入的模式应在页面里**自带搜索框**（判别手法见
+  `plugins/file-search`：`app.setQuery` 仅在启动器回声，一次探针即可分辨
+  本页是否在宿主搜索框所在的窗口）。
 - 示例 `examples/plugins/hello-mode/`（`detachable = true`）；实机脚本
-  `scripts/cdp_plugin_window_verify.mjs`。
+  `scripts/cdp_plugin_window_verify.mjs` + `plugins/file-search/scripts/
+  verify-host.mjs`（20 项端到端，含权限链路）。
+
+### 6G.4 分离窗口的权限与主题（2026-09-25 补）
+
+- **权限台账必须接线**：`setPermissionSource` 原本只在启动器窗口的
+  registry 里调用，独立窗口没有 registry——所有需要权限的能力在窗口里
+  一律被拒（fail-closed 成了 fail-all）。`pluginWindow.tsx` 现在在加载
+  视图前经 `get_plugins` 接线，并在 settings-applied 时刷新（启用态/
+  权限清单可能在窗口存续期间变化）。
+- **主题推送**：窗口页自己会应用颜色模式，但 iframe 读不到——registry
+  监听本窗口 `data-theme` 变更，向模式页 `postEv("theme", mode)`、向分离
+  窗口经 `plugin_window_push_state` 携带/推送 `theme`（§6C 事件表）。
 
 ---
 

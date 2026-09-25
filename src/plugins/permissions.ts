@@ -49,6 +49,7 @@ export const RPC_PERMISSION: Record<string, string> = {
   "screen.displays": "screen",
   "search.files": "search.files",
   "fs.readText": "fs.read",
+  "fs.bytes": "fs.read",
   "fs.thumb": "fs.read",
   "fs.videoPoster": "fs.read",
   "fs.icon": "fs.read",

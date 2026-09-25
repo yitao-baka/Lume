@@ -304,6 +304,12 @@ export interface PluginHostApi {
     /** Text file preview, lossy-UTF8 decoded; rejects for files > 512KB —
      * show a "preview first 512KB" style message on rejection. */
     readText(path: string): Promise<string>;
+    /** Raw file bytes, base64-encoded (≤ 32 MB, rejects above). The byte
+     * channel for binary preview renderers (pdf.js, SheetJS): the P5 sandbox
+     * made plugin pages opaque origins, so fetch(asset://) is CORS-refused
+     * there and `<img>`/`<video>` (which bypass CORS) cannot hand bytes to
+     * JS. Permission: `fs.read`. */
+    bytes(path: string): Promise<string>;
     /** Shell thumbnail as a base64 PNG data URI (usable in `<img src>`).
      * Rejects when the shell has no thumbnail provider for the file. */
     thumb(path: string): Promise<string>;

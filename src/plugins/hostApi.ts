@@ -318,6 +318,13 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         // 512KB" message; binary content comes back lossy-UTF8 decoded.
         return invoke<string>("get_file_text", { path });
       },
+      bytes: (path: string) => {
+        plog.debug(id, "fs.bytes:", path);
+        // Raw bytes, base64 (≤32 MB, Rust side). The P5 sandbox made plugin
+        // pages opaque origins, so fetch(asset://) is CORS-refused there —
+        // binary preview renderers (pdf.js / SheetJS) get their bytes here.
+        return invoke<string>("get_file_bytes", { path });
+      },
       thumb: (path: string) => {
         plog.debug(id, "fs.thumb:", path);
         return invoke<string>("get_file_thumb", { path }); // base64 PNG data URI

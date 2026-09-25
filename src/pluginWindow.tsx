@@ -24,7 +24,8 @@ import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { applyColorMode } from "./theme";
-import type { FeatureEnterInfo, PluginServices } from "./plugins/types";
+import type { FeatureEnterInfo, PluginManifest, PluginServices } from "./plugins/types";
+import { setPermissionSource } from "./plugins/permissions";
 import { createIframeView, injectBridge } from "./plugins/iframeBridge";
 import { execHostRpc } from "./plugins/rpc";
 import { fetchDiskFile } from "./plugins/disk";
@@ -120,7 +121,17 @@ function App() {
         dir = meta.dir;
         view = meta.view;
         document.title = meta.name || id;
-        return fetchDiskFile(dir + "\\" + view);
+        // The permission ledger's manifest source lives in the registry, which
+        // only runs in the launcher window — wire it here from the same
+        // command the settings pane uses, BEFORE the view HTML lands (the
+        // page's first guarded RPC would otherwise be refused with
+        // "unknown plugin": this window has no registry to look manifests up).
+        const wirePerms = invoke<PluginManifest[]>("get_plugins")
+          .then((list) => {
+            setPermissionSource((pid) => list.find((x) => x.id === pid));
+          })
+          .catch((err) => plog.error(id, "permission source wire failed:", err));
+        return wirePerms.then(() => fetchDiskFile(dir + "\\" + view));
       })
       .then((html) => {
         View.setHtml(injectBridge(html));
@@ -139,6 +150,7 @@ function App() {
       query?: string | null;
       enter?: FeatureEnterInfo | null;
       settings?: Record<string, unknown> | null;
+      theme?: string | null;
     }>("plugin-state", (e) => {
       const s = e.payload;
       plog.debug(id, "plugin-state:", JSON.stringify(s).slice(0, 200));
@@ -150,6 +162,7 @@ function App() {
       if (typeof s.query === "string") post("query", s.query);
       if (s.enter) post("enter", s.enter);
       if (s.settings) post("settings", s.settings);
+      if (s.theme) post("theme", s.theme);
     }).then((u) => (unlisteners.push(u), undefined));
 
     // Re-focus: replay `show` into the page (the window never unloads, so
@@ -158,10 +171,14 @@ function App() {
       (u) => (unlisteners.push(u), undefined)
     );
 
-    // Theme follows the launcher's settings while the window is open.
+    // Theme follows the launcher's settings while the window is open; the
+    // permission source rides along (启用/权限清单可能在窗口存续期间变化).
     void listen("settings-applied", () => {
       void invoke<{ appearance?: { color_mode?: string } }>("get_settings")
         .then((s) => applyColorMode(s.appearance?.color_mode ?? "system"))
+        .catch(() => {});
+      void invoke<PluginManifest[]>("get_plugins")
+        .then((list) => setPermissionSource((pid) => list.find((x) => x.id === pid)))
         .catch(() => {});
     }).then((u) => (unlisteners.push(u), undefined));
 

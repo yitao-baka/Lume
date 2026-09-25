@@ -350,6 +350,7 @@ pub fn run() {
             clipboard::clear_clipboard,
             clipboard::set_clipboard_paused,
             clipboard::get_file_text,
+            clipboard::get_file_bytes,
             clipboard::get_file_thumb,
             clipboard::get_video_thumb,
             clipboard::get_clipboard_image,

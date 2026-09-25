@@ -86,6 +86,8 @@ export async function execHostRpc(
       return api.screen.displays();
     case "fs.readText":
       return api.fs.readText(a.path);
+    case "fs.bytes":
+      return api.fs.bytes(a.path);
     case "fs.thumb":
       return api.fs.thumb(a.path);
     case "fs.videoPoster":

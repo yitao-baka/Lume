@@ -71,6 +71,7 @@ export const BRIDGE_SCRIPT = `
     },
     fs: {
       readText: function (p) { return call("fs.readText", { path: p }); },
+      bytes: function (p) { return call("fs.bytes", { path: p }); },
       thumb: function (p) { return call("fs.thumb", { path: p }); },
       videoPoster: function (p) { return call("fs.videoPoster", { path: p }); },
       icon: function (paths) { return call("fs.icon", { paths: paths }); },

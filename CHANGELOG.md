@@ -8,6 +8,22 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **分离窗口权限/主题补全 + `fs.bytes` 字节桥接（2026-09-25）** — 三项跟进，
+  补齐 P5/P6 落地后插件生态实际会遇到的三处缺口：
+  ① **分离窗口权限台账接线**（修复）：`setPermissionSource` 原本只在启动器
+  窗口的 registry 里调用，独立窗口没有 registry——所有需要权限的能力
+  （`search.files`/`fs.read`/`clipboard`/`trash`）在分离窗口里一律被拒为
+  「unknown plugin」。`pluginWindow.tsx` 现在在加载视图前经 `get_plugins`
+  接线，settings-applied 时随主题一起刷新；
+  ② **`fs.bytes(path)` 桥接**（新 `fs.read` 能力）：P5 沙箱让 mode 页成为
+  opaque origin，`fetch(asset://)` 被 CORS 拒绝——pdf.js/SheetJS 这类要在
+  JS 里解二进制的预览渲染器失去字节通道；`bytes` 返回 base64 原始字节
+  （≤ 32 MB，Rust 侧 `get_file_bytes`），图片/音视频走 `<img>`/`<video>`
+  标签不受影响；
+  ③ **`lume.on.theme` 颜色模式推送**：沙箱后插件页读不到宿主文档，registry
+  监听 `data-theme` 变更，向模式页 post、向分离窗口经
+  `plugin_window_push_state` 携带/推送 `theme`，就绪握手一并重放——插件
+  深浅色跟随启动器的权威来源（§6C 事件表、§6G.4）。
 - **mode 插件页独立窗口（P6）** — mode 插件可在清单声明 `detachable = true`，
   激活该模式时页面右上角悬停出现「在独立窗口打开」按钮：点击后启动器隐藏、
   插件页面在自己的窗口里打开（窗口标题 = 插件名，默认尺寸取清单 `height`，

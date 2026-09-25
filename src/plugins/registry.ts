@@ -366,10 +366,22 @@ function createDiskModeInstance(
     push: (show) => {
       void invoke("plugin_window_push_state", {
         id: m.id,
-        state: { show, query: query(), enter: enterPayload, settings: settingsValues },
+        state: { show, query: query(), enter: enterPayload, settings: settingsValues, theme: currentThemeMode() },
       }).catch((err) => plog.error(m.id, "detached state push failed:", err));
     },
+    pushTheme: (t) => {
+      void invoke("plugin_window_push_state", { id: m.id, state: { theme: t } }).catch((err) =>
+        plog.error(m.id, "detached theme push failed:", err)
+      );
+    },
     onShow: () => hook("onShow"),
+  });
+  // Theme replays (P5 sandbox follow-up): the opaque iframe cannot read the
+  // launcher document, so the host pushes the color mode — on the ready
+  // handshake below and on every `data-theme` flip (see the observer at the
+  // bottom of this module).
+  themePosters.set(m.id, (t) => {
+    if (viewReady) postEv("theme", t);
   });
   const { View, post } = createIframeView(
     (method, args) => execHostRpc(m.id, method, args),
@@ -379,6 +391,7 @@ function createDiskModeInstance(
       // raced the srcdoc document).
       postEv("query", query());
       postEv("show");
+      postEv("theme", currentThemeMode());
       if (enterPayload) postEv("enter", enterPayload);
       if (settingsValues) postEv("settings", settingsValues);
     }
@@ -505,6 +518,7 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   }
   moduleCache.clear();
   detachedSuppliers.delete(id);
+  themePosters.delete(id);
   return true;
 }
 
@@ -858,8 +872,37 @@ const detachedIds = new Set<string>();
 /** Per detached disk mode: a state pusher + the logic-side onShow hook. */
 const detachedSuppliers = new Map<
   string,
-  { push: (show: boolean) => void; onShow: () => void }
+  { push: (show: boolean) => void; pushTheme: (t: string) => void; onShow: () => void }
 >();
+
+// ── Theme push (P5 sandbox follow-up) ──
+//
+// The sandboxed mode iframe cannot read the launcher document (opaque
+// origin), so the read-the-host-palette trick plugins used pre-P5 is dead.
+// The host owns the color mode, so it pushes it: `lume.on.theme = (mode) => …`
+// receives `"light" | "dark"` on the ready handshake and whenever the
+// launcher's `data-theme` flips (颜色模式 setting, or the OS in system mode).
+/** Per disk mode page: the closure that posts a theme value into its iframe
+ * (no-op until the page's view is ready). */
+const themePosters = new Map<string, (t: string) => void>();
+
+/** The launcher's current color mode (`data-theme` on this document). */
+export function currentThemeMode(): "light" | "dark" {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function postThemeEverywhere() {
+  const t = currentThemeMode();
+  for (const post of themePosters.values()) post(t);
+  for (const s of detachedSuppliers.values()) s.pushTheme(t);
+}
+
+// applyColorMode writes `data-theme` (and system mode rewrites it on OS
+// flips) — one observer covers every path.
+new MutationObserver(postThemeEverywhere).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ["data-theme"],
+});
 
 /** True when the mode page currently lives in its own window. */
 export function isPluginDetached(id: string): boolean {

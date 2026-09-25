@@ -1605,6 +1605,20 @@ pub fn get_file_text(path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Read a file's raw bytes (base64) for preview renderers that must decode
+/// binary content in JS (pdf.js, SheetJS). The P5 sandbox made plugin pages
+/// opaque origins, so `fetch(asset://…)` is CORS-refused there — this bridge
+/// call restores the byte channel the asset protocol used to provide
+/// (fs.read permission, frontend ledger). Cap mirrors the thumbnail path.
+#[tauri::command]
+pub fn get_file_bytes(path: String) -> Result<String, String> {
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err("file too large to preview (cap 32 MB)".into());
+    }
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 /// Downscale an image file to a small base64 thumbnail for the preview pane.
 /// The webview decodes only a ≤`THUMB_MAX`-px PNG here — never the full-size
 /// image — so a large screenshot doesn't leave a huge decoded bitmap sitting

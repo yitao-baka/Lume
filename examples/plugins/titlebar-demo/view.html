@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 14px "Segoe UI", sans-serif; margin: 0; padding: 10px 16px;
+         background: transparent; color: #f2f2f2; }
+  .dim { opacity: .6; font-size: 12px; margin: 4px 0 10px; }
+  .item { padding: 7px 10px; border-radius: 7px; }
+  .none { opacity: .55; padding: 7px 10px; }
+</style>
+</head>
+<body>
+  <div class="dim">标题栏里的搜索框是第二个桥接 iframe（清单 titlebar 字段）——
+    它调 app.setQuery，查询经宿主送到本页的 lume.on.query。</div>
+  <div id="list"></div>
+  <script>
+    var FRUITS = ["apple 苹果", "banana 香蕉", "cherry 樱桃", "durian 榴莲",
+                  "grape 葡萄", "mango 芒果", "orange 橙子", "peach 桃子",
+                  "pear 梨", "watermelon 西瓜"];
+    var list = document.getElementById("list");
+    var query = "";
+
+    function render() {
+      var q = query.trim().toLowerCase();
+      var hits = FRUITS.filter(function (f) {
+        return !q || f.toLowerCase().indexOf(q) >= 0;
+      });
+      list.innerHTML = hits.length
+        ? hits.map(function (f) { return '<div class="item">' + f + "</div>"; }).join("")
+        : '<div class="none">无匹配结果</div>';
+    }
+
+    // 查询来源：标题栏搜索框（app.setQuery）与 launcher 的推送都汇到这里。
+    lume.on.query = function (q) { query = q || ""; render(); };
+
+    // 主题跟随（宿主推送 "dark" | "light"）。
+    lume.on.theme = function (mode) {
+      document.body.style.color = mode === "light" ? "#1f2328" : "#f2f2f2";
+    };
+
+    render();
+  </script>
+</body>
+</html>

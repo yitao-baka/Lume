@@ -34,7 +34,9 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   见 `docs/PLUGIN_API.md` §6G；示例 `examples/plugins/hello-mode/`；
   基于宿主 `search.files` 能力的完整文件搜索模式见
   `examples/plugins/file-search/`；`template = "list"` 免 HTML 列表模式见
-  `examples/plugins/list-demo/`）
+  `examples/plugins/list-demo/`；可分离模式还可声明 `titlebar` HTML ——
+  独立窗口标题栏内嵌第二个桥接 iframe（uTools 式搜索框等自由内容），
+  见 `examples/plugins/titlebar-demo/`）
 - `service` — 无 UI 生命周期钩子（`onShow`/`onHide`/`onQuery`）
 
 `keywords` 的匹配分级为 精确 → 前缀 → 拼音首字母 → 拼音全拼（后端预计算
@@ -43,7 +45,7 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
 （§5.8）。
 
 宿主能力 API（`ctx` / `window.lume`）：`app.hide/toast/setQuery/setPlaceholder/openPath/
-resize/foreground`、`clipboard.readText/writeText`、`storage.get/set/remove`（插件私有
+resize/dragWindow/foreground`、`clipboard.readText/writeText`、`storage.get/set/remove`（插件私有
 KV）、`search.files(q, max?)`（全盘文件秒搜 = `file_search` 门面，Everything /
 LumeSVC 引擎自动选择；**空查询 = 最近文件**，引擎默认按修改时间倒序）。
 `app.foreground()` 返回呼出前前台窗口快照 `{process, className, title, path?}`

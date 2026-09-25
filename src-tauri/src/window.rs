@@ -356,6 +356,44 @@ pub fn close_settings(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// ── Self-chrome window controls ──
+/// The frameless settings/plugin windows draw their own titlebar
+/// (src/components/TitleBar.tsx); these commands are its backend. Tauri
+/// injects the `window` parameter as the CALLING window, so a page can only
+/// ever control itself — no label validation needed, and the opaque plugin
+/// iframe (which cannot invoke commands) has no path here. Custom commands
+/// are ungated by ACL by design (see capabilities/plugin-windows.json).
+
+/// Minimize the calling window (titlebar ─ button).
+#[tauri::command]
+pub fn window_minimize(window: WebviewWindow) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())
+}
+
+/// Toggle maximize/restore on the calling window (titlebar □/❐ button; the
+/// chrome's double-click is Tauri's built-in `internal_toggle_maximize`).
+/// Returns the new maximized state so the titlebar can swap its glyph.
+#[tauri::command]
+pub fn window_toggle_maximize(window: WebviewWindow) -> Result<bool, String> {
+    let next = !window.is_maximized().map_err(|e| e.to_string())?;
+    if next {
+        window.maximize().map_err(|e| e.to_string())?;
+    } else {
+        window.unmaximize().map_err(|e| e.to_string())?;
+    }
+    Ok(next)
+}
+
+/// Toggle always-on-top ("pin", titlebar 📌 button) on the calling window.
+/// Returns the new state; session-scoped only — windows are created unpinned
+/// and the pin never persists into settings.
+#[tauri::command]
+pub fn window_toggle_pin(window: WebviewWindow) -> Result<bool, String> {
+    let next = !window.is_always_on_top().map_err(|e| e.to_string())?;
+    window.set_always_on_top(next).map_err(|e| e.to_string())?;
+    Ok(next)
+}
+
 /// Apply the window-geometry settings to the launcher immediately (used by
 /// Save / Apply). Width applies now; the chosen initial position applies now
 /// too when 记住位置 is off (so picking a corner gives instant feedback), and

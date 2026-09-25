@@ -201,6 +201,12 @@ pub struct PluginManifest {
     /// rendered in a sandboxed iframe inside the launcher page).
     #[serde(default)]
     pub view: String,
+    /// Mode plugins: titlebar HTML file (relative to the plugin dir) for the
+    /// detached window — a second sandboxed iframe rendered between the
+    /// title and the window controls (docs/PLUGIN_API.md §6G). Unused while
+    /// the mode lives inside the launcher.
+    #[serde(default)]
+    pub titlebar: String,
     /// Mode plugins: `template = "list"` declares the built-in list template —
     /// the plugin ships only `entry` logic and the host renders its rows in
     /// the standard list component (`view` is not needed).
@@ -266,6 +272,8 @@ pub struct PluginInfo {
     pub entry: String,
     /// View HTML file (disk mode plugins).
     pub view: String,
+    /// Titlebar HTML file (disk mode plugins, detached window only).
+    pub titlebar: String,
     /// Mode plugins: `"list"` = built-in list template (no `view` needed).
     pub template: String,
     /// Global keywords (mode plugins).
@@ -440,6 +448,7 @@ pub fn list_plugins(
             enabled: enabled(id),
             entry: String::new(),
             view: String::new(),
+            titlebar: String::new(),
             template: String::new(),
             keywords: Vec::new(),
             height: None,
@@ -481,6 +490,7 @@ pub fn list_plugins(
             enabled: enabled(&m.id),
             entry: resolve_entry(&dir, &m.entry),
             view: m.view,
+            titlebar: m.titlebar,
             template: m.template,
             keywords: m.keywords,
             height: m.height,

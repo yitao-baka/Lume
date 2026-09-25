@@ -1,7 +1,9 @@
 /* Lume launcher surface — minimal, focused, theme-aware
-   (docs/UI_GUIDELINES.md). The palette lives in the `--*` custom properties
-   below; `src/theme.ts` sets `data-theme` on <html> per the 颜色模式 setting.
-   Defaults here = dark (matches the historical theme, no flash before JS). */
+   (docs/UI_GUIDELINES.md). The palette lives in src/theme.css (shared with
+   the settings/plugin window surfaces); `src/theme.ts` sets `data-theme` on
+   <html> per the 颜色模式 setting. */
+
+@import "./theme.css";
 
 * {
   box-sizing: border-box;
@@ -14,41 +16,10 @@ html {
   background-color: transparent;
   -webkit-font-smoothing: antialiased;
   user-select: none;
+  color: var(--text);
 
   /* Solid default so bars render at the right size before JS applies settings. */
   --entry-size: 110px;
-
-  /* Dark palette (default). */
-  --bg: rgba(30, 30, 32, 0.75);            /* launcher panel over the Acrylic */
-  --surface: #1e1e20;                      /* settings window / solid panels */
-  --surface-raised: rgba(38, 38, 40, 0.97);/* context menu */
-  --text: #f2f2f2;
-  --text-secondary: rgba(242, 242, 242, 0.6);
-  --text-muted: rgba(242, 242, 242, 0.45);
-  --text-faint: rgba(242, 242, 242, 0.35);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --hover: rgba(255, 255, 255, 0.08);
-  --selected: rgba(255, 255, 255, 0.14);
-  /* Bundled SVGs use dark `#333` strokes — invert so they read as light icons. */
-  --icon-filter: invert(1);
-  color: var(--text);
-}
-
-:root[data-theme="light"] {
-  --bg: rgba(248, 249, 250, 0.92);
-  --surface: #fbfbfd;
-  --surface-raised: #ffffff;
-  --text: #1f2328;
-  --text-secondary: rgba(31, 35, 40, 0.65);
-  --text-muted: rgba(31, 35, 40, 0.5);
-  --text-faint: rgba(31, 35, 40, 0.38);
-  --border: rgba(31, 35, 40, 0.1);
-  --border-strong: rgba(31, 35, 40, 0.2);
-  --hover: rgba(31, 35, 40, 0.06);
-  --selected: rgba(31, 35, 40, 0.08);
-  /* #333 strokes already read as dark icons on the light theme. */
-  --icon-filter: none;
 }
 
 /* Transparent chrome so the Acrylic backdrop and CSS rounded corners show. */
@@ -1066,7 +1037,8 @@ body.reorder-dragging {
 }
 
 /* ---------------------------------------------------------------------------
-   Settings window (docs/SETTINGS.md) — a decorated, solid-background window.
+   Settings window (docs/SETTINGS.md) — frameless with a solid background;
+   the topbar doubles as the draggable chrome (src/components/TitleBar.tsx).
 --------------------------------------------------------------------------- */
 
 /* Disk mode plugin page — the bridged iframe fills the launcher below the
@@ -1098,13 +1070,18 @@ body.settings-window #root {
   overflow: hidden;
 }
 
-/* Top bar: app name + the 设置搜索框 (filters nav + content sections). */
+/* Top bar: app name + the 设置搜索框 (filters nav + content sections) + the
+   window-control cluster (doubles as the draggable chrome row). */
 .settings-topbar {
   flex: none;
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 12px 18px 10px;
+  padding: 12px 8px 10px 18px;
+}
+
+.settings-topbar .titlebar-buttons {
+  margin-left: auto;
 }
 
 .settings-appname {

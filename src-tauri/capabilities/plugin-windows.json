@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "plugin-windows",
-  "description": "Detached plugin windows (labels plugin-*): resize (app.resize RPC), hide (app.hide RPC) and event listening. Custom plugin_window_* commands are ungated by design — they validate the plugin id server-side.",
+  "description": "Detached plugin windows (labels plugin-*): resize (app.resize RPC), hide (app.hide RPC) and event listening. Frameless (custom titlebar): dragging + maximize-state read for src/components/TitleBar.tsx; window control buttons go through custom commands (ungated, self-window only). Custom plugin_window_* commands are ungated by design — they validate the plugin id server-side.",
   "windows": [
     "plugin-*"
   ],
@@ -10,6 +10,8 @@
     "core:window:allow-set-size",
     "core:window:allow-inner-size",
     "core:window:allow-scale-factor",
-    "core:window:allow-hide"
+    "core:window:allow-hide",
+    "core:window:allow-start-dragging",
+    "core:window:allow-is-maximized"
   ]
 }

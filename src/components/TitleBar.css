@@ -1,0 +1,99 @@
+/* Self-drawn window chrome (src/components/TitleBar.tsx) — the titlebar for
+   the frameless settings/plugin windows. Depends only on the shared tokens
+   from src/theme.css, no App.css component styles (docs/UI_GUIDELINES.md
+   "Window chrome"). */
+
+.titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 40px;
+  padding: 0 6px 0 16px;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.titlebar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* With a plugin slot the title steps aside: the slot (plugin's titlebar
+   page iframe) takes the remaining width. */
+.titlebar.has-slot .titlebar-title {
+  flex: none;
+}
+
+/* Plugin titlebar page container (pluginWindow.tsx passes the iframe as
+   the `slot` prop). The drag region on the container covers only its own
+   gap — inside the iframe the plugin document rules, dragging via
+   lume.app.dragWindow(). */
+.titlebar-slot {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+}
+
+.titlebar-slot iframe {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
+.titlebar-buttons {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.titlebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: default;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.titlebar-btn svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.titlebar-btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.titlebar-btn.active {
+  color: var(--text);
+  background: var(--selected);
+}
+
+/* Windows convention: close stands out on hover. */
+.titlebar-close:hover {
+  color: #ffffff;
+  background: #e81123;
+}

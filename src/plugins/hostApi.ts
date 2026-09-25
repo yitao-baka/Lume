@@ -118,6 +118,10 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         plog.debug(id, "app.resize:", size);
         services.resizeWindow(size ?? {});
       },
+      dragWindow: () => {
+        plog.debug(id, "app.dragWindow");
+        services.dragWindow();
+      },
       notify: async (title, body) => {
         plog.debug(id, "app.notify:", title);
         await invoke("plugin_notify", { title, body, pluginId: id });

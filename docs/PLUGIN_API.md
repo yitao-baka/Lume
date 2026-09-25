@@ -96,6 +96,7 @@ export default {
 | `permissions` | string[] | `[]` | **能力声明，P3.2 起强制**：台账（§6D.6）里的能力没声明就调用 → 明确拒绝（fail-closed），设置页每行显示这些 chip。「全部授权」可整插件放行。 |
 | `entry` | string | `""` | 入口 JS（相对插件目录）。provider 必填；mode 可选（逻辑钩子）；service 必填（钩子）。**可以是目录**（多文件打包产物）— 此时实际加载其中的 `index.js`，目录内文件的相对 `import` 由宿主改写为 blob URL（§5.6）。 |
 | `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
+| `titlebar` | string | `""` | **mode 专属，仅独立窗口**（§6G）— 标题栏 HTML 页（相对插件目录）：渲染为标题与窗口控制按钮之间的第二个桥接 iframe，与 `view` 同一沙箱与 `window.lume` 能力（uTools 式搜索框等自由内容）。launcher 内嵌时忽略。示例 `examples/plugins/titlebar-demo/`。 |
 | `template` | string | `""` | mode 插件：`"list"` = 用内置列表模板渲染 `entry` 逻辑的行，**免 `view` HTML**（§6E.5） |
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
@@ -1063,12 +1064,15 @@ detachable = true     # 允许分离为独立窗口
 |---|---|---|
 | `app.hide()` | 隐藏启动器 | 隐藏**插件窗口**（再激活 = 重新聚焦） |
 | `app.resize({w,h})` | 改启动器窗口高度 | 改**插件窗口**尺寸（宽高独立，最小 360×240） |
+| `app.dragWindow()` | 拖动启动器窗口 | 拖动**插件窗口**（标题栏页的空白区约定，见 §6G.5） |
 | `app.toast(text)` | 启动器底部 toast | 窗口内浮动 toast |
-| `app.setQuery` / `setPlaceholder` / `setSubInput` / `removeSubInput` | 生效 | **不可用**（没有共享搜索框，调用被忽略并记 debug 日志） |
+| `app.setQuery(q)` | 覆写启动器搜索框查询 | **生效** — 查询住在本窗口的 iframe 里：把 `query` 事件扇出到视图页与标题栏页（调用方也会收到回声）。标题栏搜索框驱动视图就靠它 |
+| `app.setPlaceholder` / `setSubInput` / `removeSubInput` | 生效 | **不可用**（没有共享搜索框，调用被忽略并记 debug 日志） |
 | `app.redirect(pluginId, …)` | 切页/投递 | 经 Rust `plugin-window-redirect` 转回启动器路由（目标可以是另一个插件） |
-| `lume.on.show` / `hide` | 模式切入/启动器隐藏 | 窗口打开/聚焦 → `show`；无对应 `hide`（关闭即销毁） |
-| `lume.on.key` | 模式激活时由根路由转发 | 窗口页直接转发全部非可编辑按键；**未被消费的 Esc 关闭窗口** |
-| `lume.on.query` / `subInput` | 搜索框输入 | 不会触发 |
+| `lume.on.show` / `hide` | 模式切入/启动器隐藏 | 窗口打开/聚焦 → `show`（视图页与标题栏页都收）；无对应 `hide`（关闭即销毁） |
+| `lume.on.key` | 模式激活时由根路由转发 | 窗口页直接转发全部非可编辑按键（含标题栏页转发出来的）；**未被消费的 Esc 关闭窗口** |
+| `lume.on.query` | 搜索框输入 | `app.setQuery` / 启动器推送时触发（视图页与标题栏页都收） |
+| `lume.on.subInput` | 子输入接管 | 不会触发 |
 
 其余能力（`clipboard` / `http` / `dialog` / `screen` / `fs` / `storage` / `db` /
 `settings` / `search.files`）两个宿主完全一致。
@@ -1080,9 +1084,10 @@ detachable = true     # 允许分离为独立窗口
 - `detachable = true` 声明的窗口是**运行时创建**的（lume 首例）——主窗口/
   设置/预览仍是启动时创建。按插件复用窗口（重复 open = 聚焦）。
 - 依赖启动器搜索框的模式（子输入框、query 驱动）**不要**声明 `detachable`；
-  确要在分离后保留输入的模式应在页面里**自带搜索框**（判别手法见
-  `plugins/file-search`：`app.setQuery` 仅在启动器回声，一次探针即可分辨
-  本页是否在宿主搜索框所在的窗口）。
+  确要在分离后保留输入的模式应在页面里**自带搜索框**——首选清单 `titlebar`
+  字段（§6G.5，输入经 `app.setQuery` 驱动视图，uTools 式），或页内自建输入框
+  （判别手法见 `plugins/file-search`：`app.setQuery` 仅在启动器回声，一次
+  探针即可分辨本页是否在宿主搜索框所在的窗口）。
 - 示例 `examples/plugins/hello-mode/`（`detachable = true`）；实机脚本
   `scripts/cdp_plugin_window_verify.mjs` + `plugins/file-search/scripts/
   verify-host.mjs`（20 项端到端，含权限链路）。
@@ -1097,6 +1102,37 @@ detachable = true     # 允许分离为独立窗口
 - **主题推送**：窗口页自己会应用颜色模式，但 iframe 读不到——registry
   监听本窗口 `data-theme` 变更，向模式页 `postEv("theme", mode)`、向分离
   窗口经 `plugin_window_push_state` 携带/推送 `theme`（§6C 事件表）。
+
+### 6G.5 标题栏页（清单 `titlebar`，2026-09-25 补）
+
+可分离模式可以在清单里声明 `titlebar = "titlebar.html"`：独立窗口的标题栏
+中间（标题与窗口控制按钮之间）会渲染**第二个桥接 iframe**——与 `view` 同一
+沙箱（opaque origin，无宿主 DOM / Tauri 内部访问）、同一 `window.lume`
+能力、同一权限台账；页面高度约为 30px（单行工具条/搜索框的尺寸）。
+
+```toml
+kind = "mode"
+detachable = true
+view = "view.html"
+titlebar = "titlebar.html"   # 可选；launcher 内嵌时忽略
+```
+
+**事件与数据流**（与视图页同收一份数据，键分发规则不同）：
+
+- `show` / `query` / `enter` / `settings` / `theme` —— 视图页与标题栏页
+  **都收到**（宿主扇出 + 就绪时重放）。典型用法：标题栏搜索框输入 →
+  `app.setQuery(text)` → 宿主把 `query` 扇出（调用方也会收到**回声**，覆盖
+  输入框前先比较）→ 视图页 `on.query` 渲染结果。
+- `key` —— **只发给视图页**。标题栏页自己的按键就地处理：桥只转发
+  「非可编辑目标」的按键（保护 IME 组合词），焦点在输入框里时 Esc 属于本页
+  —— 约定先 `blur()`（下一个 Esc 走宿主路由关闭窗口），或页面自行调
+  `app.hide()`。
+- 窗口控制按钮（钉住/最小化/最大化/关闭）与拖动间隙归宿主；**iframe 内的
+  事件不会越过文档边界**，宿主拖动区覆盖不到——空白区拖窗口调
+  `app.dragWindow()`（仅用户手势内调用有意义）。
+
+示例：`examples/plugins/titlebar-demo/`（标题栏搜索框 + 拖动区，输入驱动
+视图列表过滤）。
 
 ---
 

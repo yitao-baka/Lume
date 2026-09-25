@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { height: 100%; margin: 0; }
+  /* 标题栏页：只有 ~30px 高，内容必须贴合一行。初始按深色画，
+     lume.on.theme 到达后跟随（宿主在状态推送和主题切换时都会发）。 */
+  body { display: flex; align-items: center; gap: 8px; padding: 0 4px;
+         font: 13px "Segoe UI", sans-serif; color: #f2f2f2;
+         background: transparent; }
+  body.light { color: #1f2328; }
+  input { flex: 1; min-width: 0; height: 26px; padding: 0 10px;
+          border: 1px solid rgba(128,128,128,.4); border-radius: 6px;
+          background: transparent; color: inherit; outline: none; }
+  input:focus { border-color: #5ac8fa; }
+  input::placeholder { color: rgba(128,128,128,.7); }
+  #grip { flex: none; width: 34px; height: 26px; border-radius: 6px;
+          display: flex; align-items: center; justify-content: center;
+          opacity: .5; cursor: default; }
+  #grip:hover { background: rgba(128,128,128,.2); }
+</style>
+</head>
+<body>
+  <input id="q" type="text" placeholder="在标题栏里搜索…" spellcheck="false" autocomplete="off">
+  <div id="grip" title="拖动窗口">⠿</div>
+  <script>
+    var input = document.getElementById("q");
+
+    // 输入 → 宿主 → 视图：setQuery 是本窗口的查询通道（独立窗口没有
+    // launcher 搜索框，查询就住在自己的 iframe 里）。回声会回来，直接
+    // 覆盖输入框即可。
+    input.addEventListener("input", function () {
+      lume.app.setQuery(input.value);
+    });
+    lume.on.query = function (q) {
+      if (q !== input.value) input.value = q || "";
+    };
+
+    // 主题跟随（宿主推送 "dark" | "light"）。
+    lume.on.theme = function (mode) {
+      document.body.classList.toggle("light", mode === "light");
+    };
+
+    // iframe 里的事件不会越过文档边界 —— 拖窗口要显式请求（空白区约定）。
+    document.getElementById("grip").addEventListener("mousedown", function () {
+      lume.app.dragWindow();
+    });
+
+    // 每次呼出聚焦搜索框（uTools 式）。
+    lume.on.show = function () { input.focus(); };
+
+    // Esc 契约：桥只转发「非可编辑目标」的按键（保护 IME 组合词），所以
+    // 焦点在输入框里时 Esc 属于本页。这里先失焦 —— 下一个 Esc 走宿主
+    // 路由关闭窗口；页面也可以选择在 Esc 时调 lume.app.hide()。
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !e.isComposing) input.blur();
+    });
+  </script>
+</body>
+</html>

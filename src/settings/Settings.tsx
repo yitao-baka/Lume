@@ -11,6 +11,7 @@ import { createEffect, createMemo, createSignal, For, Match, Show, Switch, onMou
 import { invoke } from "@tauri-apps/api/core";
 import { resolveLocale, setLocale, t, type Messages } from "../i18n";
 import { applyColorMode } from "../theme";
+import { TitleBarControls, useChromeControls } from "../components/TitleBar";
 import AppearancePane from "./AppearancePane";
 import LauncherPane from "./LauncherPane";
 import ClipboardPane from "./ClipboardPane";
@@ -126,6 +127,10 @@ export default function Settings() {
   const [toast, setToast] = createSignal<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /** Window chrome (frameless titlebar): button state + drag/dblclick
+      handlers shared with the topbar row. */
+  const chrome = useChromeControls();
+
   onMount(() => {
     void invoke<SettingsData>("get_settings")
       .then(setSettings)
@@ -235,8 +240,12 @@ export default function Settings() {
 
   return (
     <div class="settings">
-      <header class="settings-topbar">
-        <span class="settings-appname">Lume</span>
+      {/* The frameless window's chrome row: dragging from the empty space
+          (direct clicks only — input/buttons block it, per Tauri's
+          data-tauri-drag-region semantics, which also owns the built-in
+          double-click maximize) + the window-control cluster. */}
+      <header class="settings-topbar" data-tauri-drag-region>
+        <span class="settings-appname" data-tauri-drag-region>Lume</span>
         <div class="settings-search">
           <img class="settings-search-icon" src={searchIcon} alt="" draggable={false} />
           <input
@@ -247,6 +256,10 @@ export default function Settings() {
             onInput={(e) => setQuery(e.currentTarget.value)}
           />
         </div>
+        <TitleBarControls
+          controls={chrome}
+          onClose={() => void invoke("close_settings").catch(() => {})}
+        />
       </header>
       <div class="settings-content">
         <aside class="settings-sidebar" role="tablist" aria-label={t("settings")}>

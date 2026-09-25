@@ -8,6 +8,12 @@
 //! (query / `enter` payloads / declarative settings) is pushed from the main
 //! window's registry over `plugin_window_push_state` → `plugin-state`.
 //!
+//! The windows are frameless (opaque, system-rounded on Win11) — the page
+//! draws its own titlebar via the shared `src/components/TitleBar.tsx`, and
+//! the window-control buttons run through the self-chrome commands in
+//! `window.rs` (`window_minimize` / `window_toggle_maximize` /
+//! `window_toggle_pin`, all scoped to the calling window).
+//!
 //! Lifecycle:
 //! - `plugin_window_open` creates (hidden → show) or focuses the window.
 //!   Re-open with an existing window = raise + focus (idempotent).
@@ -78,6 +84,11 @@ pub async fn plugin_window_open(
         .unwrap_or((720.0, fallback_height));
     // Theme before first paint, same as the main/settings windows.
     let config_json = serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".into());
+    // Frameless like the launcher — the page draws its own titlebar
+    // (src/pluginWindow.tsx + src/components/TitleBar.tsx). Opaque (no
+    // transparent): Win11 rounds the corners via DWM and tao keeps its native
+    // invisible resize borders, which a transparent resizable window would
+    // turn into a visible dead zone (see window.rs redock notes).
     let mut builder = WebviewWindowBuilder::new(
         &app,
         &label,
@@ -87,6 +98,8 @@ pub async fn plugin_window_open(
     .inner_size(width, height)
     .min_inner_size(360.0, 240.0)
     .resizable(true)
+    .decorations(false)
+    .shadow(true)
     .visible(false)
     .initialization_script(&format!("window.__LUME_CONFIG__ = {config_json};"));
     builder = match remembered {
@@ -146,6 +159,7 @@ pub fn plugin_window_meta(
     Ok(serde_json::json!({
         "dir": m.dir,
         "view": m.view,
+        "titlebar": m.titlebar,
         "name": m.name,
     }))
 }
@@ -199,6 +213,13 @@ pub fn plugin_window_close(id: String, app: AppHandle) -> Result<(), String> {
 /// `settings.plugins.window_bounds` — silent, no settings-applied: a
 /// geometry write must not re-run the frontend refresh pipeline.
 fn remember_bounds(app: &AppHandle, id: &str, win: &tauri::WebviewWindow) {
+    // A close while maximized must not store the maximized geometry — the
+    // restore path would reopen a huge non-maximized window. Skip the write
+    // and keep the last normal bounds instead (there is no maximized flag in
+    // `WindowBounds`, and rcNormalPosition plumbing is not worth it).
+    if win.is_maximized().unwrap_or(false) {
+        return;
+    }
     let scale = win.scale_factor().unwrap_or(1.0);
     let size = win.inner_size().ok().map(|s| s.to_logical::<f64>(scale));
     let pos = win.outer_position().ok().map(|p| p.to_logical::<f64>(scale));

@@ -142,7 +142,13 @@ pub fn run() {
             .initialization_script(&init_script)
             .build()?;
 
-            // Settings window (replaces tauri.conf.json windows[1]).
+            // Settings window (replaces tauri.conf.json windows[1]). Frameless
+            // like the launcher — the page draws its own titlebar
+            // (src/settings/Settings.tsx .settings-topbar +
+            // src/components/TitleBar.tsx). Opaque (no transparent): Win11
+            // rounds the corners via DWM and tao keeps its native invisible
+            // resize borders, which a transparent resizable window would turn
+            // into a visible dead zone (see window.rs redock notes).
             tauri::WebviewWindowBuilder::new(
                 app,
                 "settings",
@@ -153,7 +159,8 @@ pub fn run() {
             .min_inner_size(560.0, 420.0)
             .center()
             .resizable(true)
-            .decorations(true)
+            .decorations(false)
+            .shadow(true)
             .visible(false)
             .initialization_script(&init_script)
             .build()?;
@@ -318,6 +325,9 @@ pub fn run() {
             window::hide_launcher,
             window::open_settings,
             window::close_settings,
+            window::window_minimize,
+            window::window_toggle_maximize,
+            window::window_toggle_pin,
             window::apply_position,
             window::get_work_area,
             window::show_preview,

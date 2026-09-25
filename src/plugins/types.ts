@@ -38,6 +38,11 @@ export interface PluginManifest {
   entry: string;
   /** View HTML file (disk mode plugins, relative to the plugin dir). */
   view: string;
+  /** Titlebar HTML file (disk mode plugins, relative to the plugin dir): a
+   * second sandboxed iframe rendered in the detached window's titlebar,
+   * between the title and the window controls. Unused while the mode lives
+   * inside the launcher. See docs/PLUGIN_API.md §6G. */
+  titlebar: string;
   /** Mode plugins: `"list"` = the built-in list template renders the plugin's
    * rows (no `view` needed; the plugin ships only `entry` logic). */
   template: string;
@@ -194,6 +199,11 @@ export interface PluginHostApi {
      * holds until the next content-driven resize (Navigate auto-fit or a
      * mode switch re-applies the configured size). */
     resize(size: { width?: number; height?: number }): void;
+    /** Begin moving the host window from a pointer interaction inside the
+     * page. Only meaningful from a user-gesture handler (mousedown) — the
+     * detached titlebar page uses it because events inside an iframe never
+     * reach the host's drag region (docs/PLUGIN_API.md §6G). */
+    dragWindow(): void;
     /** System notification (P1.2) — reaches the user while the launcher is
      * hidden (the in-app toast cannot). Rendered through the shell's
      * notification area; title/body are truncated by the shell's field
@@ -503,6 +513,9 @@ export interface PluginServices {
   /** Resize the launcher window (logical px; omitted axes keep their size).
    * Backs the disk-plugin `app.resize` bridge RPC. */
   resizeWindow(size: { width?: number; height?: number }): void;
+  /** `app.dragWindow` bridge RPC — begin moving the host window (the
+   * launcher while in-launcher, the plugin's own window when detached). */
+  dragWindow(): void;
   /** Search-box ownership (P2.3): `opts` claims it for `pluginId`, `null`
    * releases it. Only the active mode's owner receives keystrokes. */
   setSubInput(pluginId: string, opts: { placeholder?: string; value?: string } | null): void;

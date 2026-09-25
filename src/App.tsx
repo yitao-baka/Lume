@@ -331,6 +331,11 @@ function App() {
         .then(() => invoke("apply_position"))
         .catch((err) => console.error("resize failed:", err));
     },
+    dragWindow: () => {
+      // Drag the launcher itself from plugin content (same as the search
+      // row's drag region). Needs a user gesture to be useful.
+      void getCurrentWindow().startDragging();
+    },
     setSubInput: (pluginId, opts) => {
       // P2.3 — one owner at a time; `null` releases. Releasing is a no-op when
       // some other plugin holds the box (a plugin can never steal or drop

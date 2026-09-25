@@ -1,0 +1,15 @@
+# Titlebar Demo — 标题栏槽位示例（docs/PLUGIN_API.md §6G）。
+# 清单声明 titlebar = "..." 后，独立窗口的标题栏中间（标题与窗口控制按钮
+# 之间）会渲染第二个桥接 iframe —— 和 view 同一沙箱、同一 window.lume 能力。
+# 安装：把本文件夹复制到 <base>/plugins/，重启 Lume（或触发一次设置变更），
+# 输入关键词 "titlebar" 进入模式，然后悬停模式页点「在独立窗口打开」。
+id = "titlebar-demo"
+name = "Titlebar Demo"
+version = "1.0.0"
+kind = "mode"
+description = "示例：独立窗口标题栏内嵌插件搜索框（uTools 式），空白区拖动窗口，输入驱动视图列表"
+keywords = ["titlebar", "标题栏"]
+view = "view.html"        # 主视图 —— 结果列表（lume.on.query 过滤）
+titlebar = "titlebar.html" # 标题栏页 —— 搜索框 + 拖动区（第二个桥接 iframe）
+height = 480
+detachable = true

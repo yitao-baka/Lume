@@ -6,17 +6,23 @@
 //! iframe, the same `execHostRpc` answers `window.lume` traffic, and the
 //! same permission layers (frontend ledger + Rust whitelist) apply. What
 //! differs is the `PluginServices` — this window answers window-locally
-//! (toast / hide / resize) and forwards launcher-bound actions (query /
-//! placeholder / sub-input are meaningless here; redirect goes back through
-//! the launcher over a Rust event).
+//! (toast / hide / resize / drag) and forwards launcher-bound actions
+//! (placeholder / sub-input are meaningless here; redirect goes back through
+//! the launcher over a Rust event). `setQuery` is real here: the query lives
+//! in this window's iframes (the titlebar page drives the view through it).
+//!
+//! Titlebar slot (optional manifest `titlebar` field): a SECOND bridge
+//! iframe rendered inside the chrome row (src/components/TitleBar.tsx),
+//! same sandbox, same RPC router. State pushes fan out to both iframes;
+//! keys forwarded out of the slot still reach the view via `lume.on.key`.
 //!
 //! State flow: the page announces itself with `plugin_window_ready` → the
 //! launcher's registry pushes `{show, query, enter, settings}` as the
-//! `plugin-state` event → this page posts each piece into the iframe. A
+//! `plugin-state` event → this page posts each piece into the iframes. A
 //! hidden window never re-loads on re-show, so re-focus only needs a
 //! `plugin-window-shown` → `show` replay.
 
-import { onCleanup, onMount } from "solid-js";
+import { createSignal, onCleanup, onMount } from "solid-js";
 import { render } from "solid-js/web";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -24,6 +30,7 @@ import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { applyColorMode } from "./theme";
+import { TitleBar } from "./components/TitleBar";
 import type { FeatureEnterInfo, PluginManifest, PluginServices } from "./plugins/types";
 import { setPermissionSource } from "./plugins/permissions";
 import { createIframeView, injectBridge } from "./plugins/iframeBridge";
@@ -40,6 +47,29 @@ function App() {
   const cfg = (window as unknown as { __LUME_CONFIG__?: { appearance?: { color_mode?: string } } })
     .__LUME_CONFIG__;
   applyColorMode(cfg?.appearance?.color_mode ?? "system");
+
+  // Titlebar label — the manifest name once plugin_window_meta answers.
+  const [pluginName, setPluginName] = createSignal(id);
+  /** The titlebar page's HTML — set only when the manifest declares a
+      `titlebar` file and it loaded (drives the slot in the chrome row). */
+  const [titlebarHtml, setTitlebarHtml] = createSignal("");
+
+  // Last state pushed from the launcher, cached: the titlebar page's ready
+  // handshake replays it locally (the registry answers only the view's).
+  const lastState: {
+    show?: boolean;
+    query?: string | null;
+    enter?: FeatureEnterInfo | null;
+    settings?: Record<string, unknown> | null;
+    theme?: string | null;
+  } = {};
+
+  let slotPost: ((type: string, payload?: unknown) => void) | undefined;
+  /** Fan an event out to every mounted iframe (view + titlebar slot). */
+  const fan = (type: string, payload?: unknown) => {
+    post(type, payload);
+    slotPost?.(type, payload);
+  };
 
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   const localToast = (text: string) => {
@@ -76,8 +106,14 @@ function App() {
     setModePlaceholder: () => {
       plog.debug(id, "setPlaceholder ignored in the detached window (no search box here)");
     },
-    setQuery: () => {
-      plog.debug(id, "setQuery ignored in the detached window (no search box here)");
+    setQuery: (q) => {
+      // Real here (the launcher's search box is not reachable): a detached
+      // window keeps its query in THIS window's iframes. The titlebar
+      // page's search box drives the view's result list through it; the
+      // echo back to the caller matches the launcher's own setQuery →
+      // on.query round-trip.
+      lastState.query = q;
+      fan("query", q);
     },
     resizeWindow: (size) => {
       void (async () => {
@@ -87,6 +123,13 @@ function App() {
         const height = Math.max(240, Math.round(size?.height ?? cur.height));
         await win.setSize(new LogicalSize(width, height));
       })().catch((err) => plog.error(id, "resize failed:", err));
+    },
+    dragWindow: () => {
+      // Events inside the slot iframe never reach the host drag region —
+      // the titlebar page calls this on its blank areas instead.
+      void getCurrentWindow().startDragging().catch((err) =>
+        plog.error(id, "drag failed:", err)
+      );
     },
     setSubInput: () => {
       plog.debug(id, "setSubInput ignored in the detached window");
@@ -112,15 +155,33 @@ function App() {
     }
   );
 
+  // Titlebar slot viewer (optional manifest `titlebar`): the same bridge and
+  // RPC router, one row up. Its ready handshake replays the cached state
+  // locally — plugin_window_ready is NOT re-invoked, so the launcher's
+  // registry never double-pushes.
+  const slotView = createIframeView(
+    (method, args) => execHostRpc(id, method, args, services),
+    () => {
+      if (lastState.show) slotPost?.("show");
+      if (typeof lastState.query === "string") slotPost?.("query", lastState.query);
+      if (lastState.enter) slotPost?.("enter", lastState.enter);
+      if (lastState.settings) slotPost?.("settings", lastState.settings);
+      if (lastState.theme) slotPost?.("theme", lastState.theme);
+    },
+    { class: "titlebar-frame", name: "titlebar" }
+  );
+  slotPost = slotView.post;
+
   onMount(() => {
     // Fetch + bridge the view page (same as createDiskModeInstance).
     let dir = "";
     let view = "";
-    void invoke<{ dir: string; view: string; name: string }>("plugin_window_meta", { id })
+    void invoke<{ dir: string; view: string; titlebar: string; name: string }>("plugin_window_meta", { id })
       .then((meta) => {
         dir = meta.dir;
         view = meta.view;
         document.title = meta.name || id;
+        setPluginName(meta.name || id);
         // The permission ledger's manifest source lives in the registry, which
         // only runs in the launcher window — wire it here from the same
         // command the settings pane uses, BEFORE the view HTML lands (the
@@ -131,6 +192,19 @@ function App() {
             setPermissionSource((pid) => list.find((x) => x.id === pid));
           })
           .catch((err) => plog.error(id, "permission source wire failed:", err));
+        // Titlebar page (optional manifest `titlebar`): same permission-wire
+        // order as the view; a failure just leaves the slot empty (the
+        // chrome row stays title + controls). setHtml runs BEFORE the signal
+        // mounts the iframe so it renders with its document in place.
+        if (meta.titlebar) {
+          void wirePerms
+            .then(() => fetchDiskFile(dir + "\\" + meta.titlebar))
+            .then((html) => {
+              slotView.View.setHtml(injectBridge(html));
+              setTitlebarHtml(html);
+            })
+            .catch((err) => plog.error(id, "titlebar load failed:", err));
+        }
         return wirePerms.then(() => fetchDiskFile(dir + "\\" + view));
       })
       .then((html) => {
@@ -158,16 +232,36 @@ function App() {
       // append-only history, since pushes interleave (shown vs enter).
       const w = window as unknown as { __pluginStates?: unknown[] };
       (w.__pluginStates ??= []).push(s);
-      if (s.show) post("show");
-      if (typeof s.query === "string") post("query", s.query);
-      if (s.enter) post("enter", s.enter);
-      if (s.settings) post("settings", s.settings);
-      if (s.theme) post("theme", s.theme);
+      // Fan out to every mounted iframe (view + titlebar slot) and cache for
+      // the slot's ready replay.
+      if (s.show) {
+        lastState.show = true;
+        fan("show");
+      }
+      if (typeof s.query === "string") {
+        lastState.query = s.query;
+        fan("query", s.query);
+      }
+      if (s.enter) {
+        lastState.enter = s.enter;
+        fan("enter", s.enter);
+      }
+      if (s.settings) {
+        lastState.settings = s.settings;
+        fan("settings", s.settings);
+      }
+      if (s.theme) {
+        lastState.theme = s.theme;
+        fan("theme", s.theme);
+      }
     }).then((u) => (unlisteners.push(u), undefined));
 
     // Re-focus: replay `show` into the page (the window never unloads, so
     // this is all a re-summon needs).
-    void listen<string>("plugin-window-shown", () => post("show")).then(
+    void listen<string>("plugin-window-shown", () => {
+      lastState.show = true;
+      fan("show");
+    }).then(
       (u) => (unlisteners.push(u), undefined)
     );
 
@@ -205,6 +299,16 @@ function App() {
 
   return (
     <div class="plugin-window-root">
+      {/* Frameless chrome row — the pin toggle makes sense only here (a
+          detached window a user keeps on top while working elsewhere). The
+          slot hosts the plugin's titlebar page (optional manifest
+          `titlebar` field) between the title and the window controls. */}
+      <TitleBar
+        title={pluginName()}
+        pin
+        slot={titlebarHtml() ? <slotView.View /> : undefined}
+        onClose={() => void invoke("plugin_window_close", { id }).catch(() => {})}
+      />
       <View />
       <div id="plugin-window-toast" role="status" />
     </div>

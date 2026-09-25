@@ -57,6 +57,7 @@ export const BRIDGE_SCRIPT = `
       resize: function (size) {
         return call("app.resize", { width: size && size.width, height: size && size.height });
       },
+      dragWindow: function () { return call("app.dragWindow"); },
       notify: function (title, body) { return call("app.notify", { title: title, body: body }); },
       setSubInput: function (opts) { return call("app.setSubInput", { opts: opts }); },
       removeSubInput: function () { return call("app.removeSubInput"); },
@@ -273,10 +274,18 @@ export const PLUGIN_FRAME_SANDBOX = "allow-scripts allow-forms allow-popups allo
  * (the page hosted on its own). Host-specific behaviour is limited to the
  * key/focus messages: the launcher re-dispatches keys into its router and
  * re-focuses the search box; a detached host ignores the focus request and
- * delivers keys itself. */
+ * delivers keys itself.
+ *
+ * Multiple viewers can coexist in one host page (the detached window mounts
+ * a second one for the plugin's titlebar page): every instance filters
+ * messages by `e.source === frame.contentWindow`, so sibling iframes never
+ * see each other's traffic. `opts` renames the iframe class and sets the
+ * frame's `window.name` (arrives in `__lumeReady.frame`) so the host can
+ * tell the ready announcements apart. */
 export function createIframeView(
   onRpc: (method: string, args: Record<string, unknown>) => Promise<unknown>,
   onReady?: () => void,
+  opts?: { class?: string; name?: string }
 ): { View: Component & { setHtml(html: string): void }; post: (type: string, payload?: unknown) => void } {
   let frame: HTMLIFrameElement | undefined;
   const [srcdoc, setSrcdoc] = createSignal("");
@@ -357,7 +366,8 @@ export function createIframeView(
     });
     return (
       <iframe
-        class="plugin-frame"
+        class={opts?.class ?? "plugin-frame"}
+        name={opts?.name}
         srcdoc={srcdoc()}
         title="plugin"
         sandbox={PLUGIN_FRAME_SANDBOX}

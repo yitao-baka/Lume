@@ -40,6 +40,8 @@ export async function execHostRpc(
         width: args.width as number | undefined,
         height: args.height as number | undefined,
       });
+    case "app.dragWindow":
+      return api.app.dragWindow();
     case "app.notify":
       return api.app.notify(a.title, a.body);
     case "app.setSubInput":

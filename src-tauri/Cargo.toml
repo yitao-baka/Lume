@@ -36,10 +36,15 @@ arboard = "3.6"
 pinyin = "0.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
+# .lupx plugin packages (plugin_install.rs) — read + write zip archives.
+# Only the deflate codec: stored entries always work, the rest (bzip2/lzma/
+# aes) is dead weight for a plugin bundle.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Globalization",      # GetUserDefaultUILanguage (tray label locale)
   "Win32_Graphics_Gdi",       # HBITMAP, GetDIBits, GetDC for icon conversion
+  "Win32_Graphics_Dwm",       # clear_dwm_border: DWMWA_BORDER_COLOR on frameless windows
   "Win32_System_Com",         # CoInitializeEx / CoUninitialize
   "Win32_System_Variant",     # VARIANT / VT_I4 (explorer folder path via IShellWindows)
   "Win32_UI_Shell_Common",    # SHGetPathFromIDListW / IPersistFolder2::GetCurFolder (explorer)
@@ -64,6 +69,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Diagnostics_ToolHelp", # svc: process snapshot (Everything dormancy probe)
   "Win32_System_WindowsProgramming", # usnidx: DRIVE_FIXED (volume discovery)
   "Win32_System_RemoteDesktop", # svc: ProcessIdToSessionId (Everything dormancy probe)
+  "Win32_Networking_WinHttp",  # plugin host: WinHTTP request path (no CORS, system proxy)
 ] }
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
@@ -72,4 +78,10 @@ windows-sys = { version = "0.59", features = [
   "Win32_UI_Input",            # GetAsyncKeyState (mid-drag detection)
   "Win32_System_DataExchange", # GetClipboardSequenceNumber for the listener
 ] }
+
+# Dependency crates get line tables only: full debuginfo for every dep was the
+# bulk of target/debug (tens of GB of PDBs). Workspace crates keep full
+# debuginfo, so debugging Lume's own code is unaffected. Remove to restore.
+[profile.dev.package."*"]
+debug = "line-tables-only"
 

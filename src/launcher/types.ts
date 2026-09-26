@@ -14,6 +14,31 @@ export interface AppEntry {
   id: number;
   name: string;
   path: string;
+  /** Provider extras (P0.2): optional second line under the name in the
+   * results grid. */
+  description?: string;
+  /** Explicit icon (provider rows) — wins over the cached icon pipeline. */
+  icon?: string;
+  /** Set on provider rows declared with `enter`: activation calls the
+   * provider's `onEnter(item)` instead of launch_app; `path` is a synthetic
+   * dedup key in that case. */
+  providerEnter?: { pluginId: string; item: unknown };
+  /** Set on provider rows declared with `drill`: activation descends one
+   * level (`provider.select`) — the returned rows replace the grid and Esc
+   * pops back. `filterable` is true when the provider implements `filter`,
+   * so the search box keeps feeding the drilled level. */
+  providerDrill?: { pluginId: string; item: unknown; filterable: boolean };
+  /** Set on declarative-entry rows (`[[features]]` / redirect): activation
+   * enters the plugin with this payload (P2.1). `files`/`img` rows (P2.2)
+   * carry the dropped paths in `paths`. */
+  featureEnter?: {
+    pluginId: string;
+    code: string;
+    type: "regex" | "over" | "redirect" | "files" | "img" | "window";
+    payload: string;
+    paths?: string[];
+    window?: { process: string; className: string; title: string; path?: string };
+  };
 }
 
 /** One `file_search` hit — the AppEntry fields plus file metadata. The

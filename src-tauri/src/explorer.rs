@@ -32,6 +32,10 @@ use tauri::{AppHandle, Manager};
 pub struct ForegroundContext {
     pub hwnd: i32,
     pub pid: u32,
+    /// Foreground process executable file name (e.g. "chrome.exe"; empty when
+    /// it could not be resolved). Window-matching features (ROADMAP #29) and
+    /// the plugin-facing variant key on this.
+    pub process: String,
     #[serde(rename = "className")]
     pub class_name: String,
     pub title: String,
@@ -55,6 +59,37 @@ pub async fn get_foreground_context(app: AppHandle) -> Result<ForegroundContext,
         return Ok(empty_context());
     };
     tauri::async_runtime::spawn_blocking(move || resolve_context(hwnd))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The plugin-facing variant (`ctx.app.foreground()` / `lume.app.foreground()`):
+/// the same snapshot as `get_foreground_context`, gated by the `window`
+/// capability. `null` when no foreground window was ever captured (the
+/// launcher has not been summoned through the hotkey in this session yet).
+#[tauri::command]
+pub async fn plugin_foreground_context(
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+    app: AppHandle,
+) -> Result<Option<ForegroundContext>, String> {
+    use crate::window::FocusState;
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "window",
+    )?;
+    let hwnd = app
+        .try_state::<FocusState>()
+        .and_then(|f| *f.last_hwnd.lock().unwrap());
+    let Some(hwnd) = hwnd else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || Some(resolve_context(hwnd)))
         .await
         .map_err(|e| e.to_string())
 }
@@ -129,8 +164,32 @@ pub fn copy_path(path: String) -> Result<(), String> {
 /// Move files/folders to the Recycle Bin. No permanent-delete fallback: any
 /// shell failure is an Err. One batched `SHFileOperationW` (pFrom carries all
 /// paths) — the shell cost, and any progress UI, is paid once.
+/// Permission: `trash` when called by a plugin (plugin_id given); the native
+/// shared context menu calls without one and is main-window only.
 #[tauri::command]
-pub async fn trash_to_recycle(paths: Vec<String>) -> Result<(), String> {
+pub async fn trash_to_recycle(
+    paths: Vec<String>,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<(), String> {
+    if let Err(err) = crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "trash",
+    ) {
+        eprintln!("[explorer] trash denied: {err}");
+        return Err(err);
+    }
+    trash_impl(paths).await
+}
+
+/// The shell operation behind `trash_to_recycle`, without the permission
+/// gate (unit tests call this directly — they cannot build Tauri state).
+async fn trash_impl(paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
         return Ok(());
     }
@@ -183,6 +242,7 @@ fn empty_context() -> ForegroundContext {
     ForegroundContext {
         hwnd: 0,
         pid: 0,
+        process: String::new(),
         class_name: String::new(),
         title: String::new(),
         path: None,
@@ -223,9 +283,13 @@ fn resolve_context(hwnd: isize) -> ForegroundContext {
 
     let path = resolve_explorer_path(hwnd);
     let is_explorer = path.is_some();
+    // The exe file name ("chrome.exe") — `input.rs`'s limited-information
+    // query needs no elevation and fails soft to an empty string.
+    let process = crate::input::exe_of_pid(pid).map(|(_, name)| name).unwrap_or_default();
     ForegroundContext {
         hwnd: hwnd as i32,
         pid,
+        process,
         class_name,
         title,
         path,
@@ -242,15 +306,30 @@ fn resolve_context(hwnd: isize) -> ForegroundContext {
 /// the active tab's shell window inside the `CabinetWClass` tab host) and
 /// visible (the active tab) — then its folder is resolved via `IFolderView` →
 /// `IPersistFolder2` → `GetCurFolder`.
+///
+/// The COM hop is marshalled to explorer.exe and, on a pump-less STA thread,
+/// occasionally stalls far longer than a summon can wait (observed in the
+/// field: the caller — the launcher-shown pipeline — hung with no error). The
+/// worker thread is therefore detached with a **600 ms receive timeout**: a
+/// stalled resolve returns `None` in time and the worker drains on its own
+/// when the shell answers (it dies right after — nothing joins it).
 fn resolve_explorer_path(hwnd: isize) -> Option<String> {
-    let result = std::thread::spawn(move || com_resolve_path(hwnd))
-        .join()
-        .ok()
-        .flatten();
-    if result.is_none() {
-        eprintln!("[explorer] no folder path for hwnd {hwnd:#x}");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(com_resolve_path(hwnd));
+    });
+    match rx.recv_timeout(std::time::Duration::from_millis(600)) {
+        Ok(result) => {
+            if result.is_none() {
+                eprintln!("[explorer] no folder path for hwnd {hwnd:#x}");
+            }
+            result
+        }
+        Err(_) => {
+            eprintln!("[explorer] folder resolve timed out for hwnd {hwnd:#x}");
+            None
+        }
     }
-    result
 }
 
 /// The COM `IShellWindows` query on a dedicated STA thread. COM is initialized
@@ -403,7 +482,7 @@ mod tests {
         let path = std::env::temp_dir().join("lume-trash-test-9f3a.txt");
         std::fs::write(&path, "trash me").unwrap();
         assert!(path.exists());
-        tauri::async_runtime::block_on(trash_to_recycle(vec![path.to_string_lossy().into_owned()]))
+        tauri::async_runtime::block_on(crate::explorer::trash_impl(vec![path.to_string_lossy().into_owned()]))
             .expect("trash_to_recycle");
         assert!(!path.exists());
     }
@@ -412,7 +491,7 @@ mod tests {
     /// call, no silent success.
     #[test]
     fn trash_rejects_missing_path() {
-        let err = tauri::async_runtime::block_on(trash_to_recycle(vec![
+        let err = tauri::async_runtime::block_on(crate::explorer::trash_impl(vec![
             r"C:\definitely\missing\9f3a.bin".into(),
         ]))
         .unwrap_err();

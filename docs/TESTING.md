@@ -32,6 +32,18 @@ frontend, shows no console window and does not need `localhost:1420` running —
 that is what to double-click / distribute. The debug exe only works with the
 dev server.
 
+### Plugin file drop / pin reorder (P2.2)
+
+1. **Real OS file drag** — the automated script simulates the `tauri://drag-drop`
+   event, but the OLE drop target itself (where the real paths come from) can
+   only be exercised by hand: drag a `.md` file from Explorer onto the launcher
+   (summon it with the hotkey while holding the drag) — a
+   「文件处理器：处理 N 个文件」 row should appear (`files-img-demo` installed).
+2. **Pin reorder still works** — press a pinned box, move past ~6px, drop on
+   another slot: the order persists (`reorder_pins`). With the Tauri drag-drop
+   handler now enabled, in-page HTML5 drag is unavailable — reordering is
+   pointer-event based, so a plain click must still launch the app.
+
 ### Launcher basics
 
 1. **Shortcut registers** — the console logs which combo won, e.g.

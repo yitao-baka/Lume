@@ -1,0 +1,8 @@
+# Sandbox Probe — CDP 沙箱验证夹具（scripts/cdp_sandbox_verify.mjs 专用）。
+# mode 页在 opaque-origin 沙箱 iframe 里自检并把结果写进自己的 storage；
+# 脚本从宿主窗口读回（plugin_storage_get）逐项断言。
+id = "sandbox-probe"
+name = "Sandbox Probe"
+kind = "mode"
+keywords = ["sbprobe"]
+view = "view.html"

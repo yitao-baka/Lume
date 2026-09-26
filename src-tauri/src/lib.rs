@@ -14,6 +14,14 @@ mod icons;
 pub mod input;
 pub mod paths;
 pub mod pipe;
+mod notify;
+mod plugin_fs;
+mod plugin_host;
+mod plugin_install;
+mod plugin_net;
+mod plugin_perm;
+mod plugin_store;
+mod plugin_window;
 mod plugins;
 mod pins;
 pub mod recent;
@@ -81,6 +89,7 @@ pub fn run() {
         .manage(window::FocusState::default())
         .manage(dirwatch::DirWatchState::default())
         .manage(window::PreviewState::default())
+        .manage(plugin_perm::PluginPermState::default())
         .plugin(hotkey::build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -90,6 +99,9 @@ pub fn run() {
             // Installed layout: copy any exe-adjacent data/settings/languages
             // into the writable %LOCALAPPDATA% base before settings init.
             paths::migrate_installed();
+            // A killed process mid-`.lupx`-install must not leave staging
+            // junk under data/ (plugin_install.rs).
+            plugin_install::cleanup_staging(&paths::base_dir());
             // Settings: ensure settings/default.toml/settings.toml exist and
             // manage the effective settings state (docs/SETTINGS.md).
             settings::init(app);
@@ -121,11 +133,22 @@ pub fn run() {
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
-            .disable_drag_drop_handler()
+            // P2.2: the Tauri drag-drop handler is ENABLED here (the only
+            // window) so OS file drags arrive as `tauri://drag-drop` with real
+            // paths (WebView2's HTML5 drop never exposes paths). The handler
+            // swallows non-file HTML5 drags, which is why pinned-bar reordering
+            // runs on pointer events (src/launcher/navigate.ts) and the other
+            // windows keep it disabled.
             .initialization_script(&init_script)
             .build()?;
 
-            // Settings window (replaces tauri.conf.json windows[1]).
+            // Settings window (replaces tauri.conf.json windows[1]). Frameless
+            // like the launcher — the page draws its own titlebar
+            // (src/settings/Settings.tsx .settings-topbar +
+            // src/components/TitleBar.tsx). Opaque (no transparent): Win11
+            // rounds the corners via DWM and tao keeps its native invisible
+            // resize borders, which a transparent resizable window would turn
+            // into a visible dead zone (see window.rs redock notes).
             tauri::WebviewWindowBuilder::new(
                 app,
                 "settings",
@@ -136,10 +159,16 @@ pub fn run() {
             .min_inner_size(560.0, 420.0)
             .center()
             .resizable(true)
-            .decorations(true)
+            .decorations(false)
+            .shadow(true)
             .visible(false)
             .initialization_script(&init_script)
             .build()?;
+            // suppress the documented 1px DWM white border on shadowed
+            // frameless windows (same as the detached plugin window).
+            if let Some(sw) = app.get_webview_window("settings") {
+                window::clear_dwm_border(&sw);
+            }
 
             // Satellite preview window (ROADMAP #15): all clipboard previews
             // (text / text files / images / audio / video) render here, docked
@@ -165,6 +194,8 @@ pub fn run() {
             if let Some(pv) = app.get_webview_window("preview") {
                 // tao maps focusable(false) → WS_EX_NOACTIVATE on Windows.
                 let _ = pv.set_focusable(false);
+                // suppress the documented 1px DWM white border.
+                window::clear_dwm_border(&pv);
             }
 
             // Build the System32 preset DB once (background), then refresh the
@@ -301,12 +332,16 @@ pub fn run() {
             window::hide_launcher,
             window::open_settings,
             window::close_settings,
+            window::window_minimize,
+            window::window_toggle_maximize,
+            window::window_toggle_pin,
             window::apply_position,
             window::get_work_area,
             window::show_preview,
             window::close_preview,
             window::get_preview_request,
             explorer::get_foreground_context,
+            explorer::plugin_foreground_context,
             explorer::open_terminal_in_folder,
             explorer::copy_path,
             explorer::trash_to_recycle,
@@ -332,6 +367,7 @@ pub fn run() {
             clipboard::clear_clipboard,
             clipboard::set_clipboard_paused,
             clipboard::get_file_text,
+            clipboard::get_file_bytes,
             clipboard::get_file_thumb,
             clipboard::get_video_thumb,
             clipboard::get_clipboard_image,
@@ -353,9 +389,49 @@ pub fn run() {
             settings::save_last_page,
             settings::set_remember_checks,
             plugins::get_plugins,
-            plugins::plugin_storage_get,
-            plugins::plugin_storage_set,
+            plugin_store::plugin_storage_get,
+            plugin_store::plugin_storage_set,
+            plugins::reload_plugin,
+            plugin_install::plugin_lupx_inspect,
+            plugin_install::plugin_lupx_install,
+            plugin_install::plugin_uninstall,
+            plugin_window::plugin_window_open,
+            plugin_window::plugin_window_ready,
+            plugin_window::plugin_window_meta,
+            plugin_window::plugin_window_redirect,
+            plugin_window::plugin_window_push_state,
+            plugin_window::plugin_window_close,
+            plugin_store::plugin_db_get,
+            plugin_store::plugin_db_put,
+            plugin_store::plugin_db_remove,
+            plugin_store::plugin_db_all_docs,
+            plugin_store::plugin_db_bulk_docs,
+            plugin_store::plugin_settings_get,
+            plugin_store::plugin_settings_put,
+            plugin_fs::plugin_fs_private_write,
+            plugin_fs::plugin_fs_private_write_b64,
+            plugin_fs::plugin_fs_private_read,
+            plugin_fs::plugin_fs_private_list,
+            plugin_fs::plugin_fs_private_path,
+            plugin_fs::plugin_fs_private_remove,
+            plugin_fs::plugin_fs_write_any,
+            plugin_net::plugin_http_fetch,
+            notify::plugin_notify,
+            clipboard::plugin_clipboard_write_image,
+            clipboard::plugin_clipboard_write_files,
+            clipboard::plugin_clipboard_read_files,
+            clipboard::plugin_clipboard_has_image,
+            clipboard::plugin_clipboard_read_image,
+            clipboard::plugin_clipboard_paste,
+            plugin_host::plugin_dialog_open,
+            plugin_host::plugin_dialog_save,
+            plugin_host::plugin_cursor_pos,
+            plugin_host::plugin_displays,
+            plugin_host::file_kinds,
             settings::set_plugin_enabled,
+            settings::set_plugin_trusted,
+            settings::set_plugin_dev_mode,
+            settings::set_plugin_trust_all,
             clipboard::get_clipboard_text,
             clipboard::set_clipboard_text,
             svc::svc_status,

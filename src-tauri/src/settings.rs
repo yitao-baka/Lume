@@ -12,6 +12,7 @@
 //! All functions take the base directory explicitly so unit tests can point
 //! at a temp dir without touching the real portable layout.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -43,6 +44,52 @@ pub struct Settings {
 pub struct Plugins {
     #[serde(default)]
     pub disabled: Vec<String>,
+    /// Ids granted **every** capability they ask for, declared or not (P3.2).
+    /// The explicit-placement trust model already says the user vouches for a
+    /// plugin; this is the escape hatch for a plugin under development that
+    /// starts using a new capability before its manifest catches up.
+    /// **Gated by `dev_mode`**: while it is off, `get_plugins` reports every
+    /// plugin as untrusted, so stale ids in this list grant nothing.
+    #[serde(default)]
+    pub trusted: Vec<String>,
+    /// Global plugin developer mode. Off (the default) hides the developer
+    /// options in 设置 → 插件 (重载 / 开发 badge) and gates BOTH escape
+    /// hatches below; on, they show and take effect.
+    #[serde(default)]
+    pub dev_mode: bool,
+    /// **Trust every disk plugin** — a single global switch (effective only
+    /// while `dev_mode` is on) replacing the old per-plugin trusted toggles.
+    /// The per-plugin `trusted` list is still honored, but the settings pane
+    /// only ever writes this flag.
+    #[serde(default)]
+    pub trust_all: bool,
+    /// Detached plugin windows' remembered geometry, per plugin id (P6).
+    /// Written silently by the window's CloseRequested handler; restored on
+    /// the next `plugin_window_open`.
+    #[serde(default)]
+    pub window_bounds: HashMap<String, WindowBounds>,
+}
+
+/// One detached plugin window's remembered geometry (logical px).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WindowBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Remember one plugin window's geometry (called from the window's
+/// `CloseRequested` handler). Silent on purpose — no `settings-applied`:
+/// a geometry write must not re-run the frontend refresh pipeline.
+pub fn remember_plugin_window_bounds(app: &AppHandle, id: &str, bounds: WindowBounds) {
+    let state = app.state::<SettingsState>();
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.window_bounds.insert(id.to_string(), bounds);
+    if write_settings_light(&paths::base_dir(), &next).is_ok() {
+        *guard = next;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,6 +487,10 @@ impl Default for Settings {
             },
             plugins: Plugins {
                 disabled: Vec::new(),
+                trusted: Vec::new(),
+                dev_mode: false,
+                trust_all: false,
+                window_bounds: HashMap::new(),
             },
             automation: Automation {
                 enabled: true,
@@ -771,6 +822,72 @@ pub fn set_plugin_enabled(
     Ok(())
 }
 
+/// Grant (or revoke) one plugin **all** capabilities regardless of what its
+/// manifest declares (P3.2). Light write like `set_plugin_enabled`; the
+/// registry re-reads the manifest list on `settings-applied`.
+#[tauri::command]
+pub fn set_plugin_trusted(
+    id: String,
+    trusted: bool,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    if trusted {
+        if !next.plugins.trusted.iter().any(|t| t == &id) {
+            next.plugins.trusted.push(id);
+        }
+    } else {
+        next.plugins.trusted.retain(|t| t != &id);
+    }
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Global plugin developer mode — toggles the developer options in
+/// 设置 → 插件 (重载 / 全部授权 / 开发 badge) and gates the `trusted`
+/// list (`get_plugins` reports untrusted while this is off). Light write
+/// with the same immediate `settings-applied` semantics.
+#[tauri::command]
+pub fn set_plugin_dev_mode(
+    enabled: bool,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.dev_mode = enabled;
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Global 全部授权 — trust **every** disk plugin regardless of what its
+/// manifest declares. Only effective while `plugins.dev_mode` is on (the
+/// `get_plugins` gate); the settings pane shows the switch under the same
+/// developer-options gate. Light write like `set_plugin_dev_mode`.
+#[tauri::command]
+pub fn set_plugin_trust_all(
+    enabled: bool,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.trust_all = enabled;
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -786,6 +903,51 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// Global 全部授权 defaults to off and round-trips through a light
+    /// write (its *effectiveness* is gated by dev_mode in `get_plugins`).
+    #[test]
+    fn plugin_trust_all_defaults_off_and_round_trips() {
+        let base = temp_base("trust-all");
+        ensure_settings_files(&base).unwrap();
+        assert!(!read_settings(&base).plugins.trust_all, "default off");
+        let mut next = read_settings(&base);
+        next.plugins.trust_all = true;
+        write_settings_light(&base, &next).unwrap();
+        assert!(read_settings(&base).plugins.trust_all);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// Plugin developer mode defaults to off (both when the whole
+    /// `[plugins]` table is absent and when only the key is missing) and
+    /// round-trips through a light write alongside the trusted list.
+    #[test]
+    fn plugin_dev_mode_defaults_off_and_round_trips() {
+        let base = temp_base("dev-mode");
+        ensure_settings_files(&base).unwrap();
+        assert!(!read_settings(&base).plugins.dev_mode, "default off");
+        // Table present, key missing → serde default off. Built from the
+        // serialized defaults minus the dev_mode line (a minimal TOML would
+        // fail to parse: Settings has required fields outside [plugins]).
+        let text = toml::to_string_pretty(&Settings::default()).unwrap();
+        let without_dev_mode = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("dev_mode"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), without_dev_mode).unwrap();
+        let s = read_settings(&base);
+        assert!(!s.plugins.dev_mode);
+        // Light-write path persists the flag next to the trusted list.
+        let mut next = s;
+        next.plugins.dev_mode = true;
+        next.plugins.trusted.push("demo".into());
+        write_settings_light(&base, &next).unwrap();
+        let reloaded = read_settings(&base);
+        assert!(reloaded.plugins.dev_mode);
+        assert_eq!(reloaded.plugins.trusted, vec!["demo".to_string()]);
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]

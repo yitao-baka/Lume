@@ -1650,3 +1650,357 @@ PgDn/方向键/NumLock/小键盘 `/`/PrintScreen，即 MSDN 的 0xE0 集合）�
   `schtasks /query /tn Lume\LumeAgent` 显示 Ready；对一个**以管理员运行**的目标
   配规则 → 触发 → 按键送达；关掉代理时同一规则只记 `needs_agent`；UAC 取消 →
   界面提示取消且状态不变。
+
+## 23. 插件系统 P0：拼音关键字 + provider 动作条目 + 热重载 + 多文件入口（已实现）
+
+**状态：已实现（2026-09-21）。** 差距分析与后续阶段（P1–P4）见
+`docs/PLUGIN_GAP_ANALYSIS.md`（vs uTools 调研）。
+
+四项全部落地，一次实机冒烟（`scripts/cdp_p0_verify.mjs`，8 项断言全过）：
+
+- **P0.1 关键字拼音匹配**：`plugins.rs` 在扫描清单时用 `cache::pinyin_for`
+  （改为 `pub(crate)`）为每个 `keywords` 预计算 `(full, initials)`，随
+  `get_plugins` 下发（`keywordsPinyin`，serde camelCase rename）；前端
+  `modeKeywordMatches` 放宽为分级匹配：精确 → 前缀 → 拼音首字母前缀 →
+  拼音全拼前缀（多插件命中按级排序）。输入 `ms`/`miao` 可唤出「秒搜」。
+  **坑**：`LauncherPlugin` 注册时漏拷 `keywordsPinyin`（后端数据对了前端
+  仍是 undefined）——首轮冒烟抓到。
+- **P0.2 provider 动作条目**：`ProviderResult` 新增可选 `description`
+  （结果网格第二行副标题，`.result-box-desc`）/`icon`（data:/http(s):/asset:/
+  blob: 直通、其余按文件路径 asset 解析；显式图标行不再走 `get_app_icons`
+  管线）/`enter`（激活不调 `launch_app`，改为回调 provider 的
+  `onEnter(item)`——启动器不隐藏，插件自行 `app.hide()`；`path` 可省，
+  宿主生成 `lume-plugin://` 合成去重键）。示例 `examples/plugins/actions/`。
+- **P0.3 热重载**：清单新增 `development`（每次 settings-applied 自动卸载
+  重载）；设置 → 插件 磁盘插件行新增「↻ 重载」按钮 → 新命令
+  `reload_plugin` → `plugin-reload` 事件 → 注册表 `reloadDiskPlugin`（卸载
+  该 id 的磁盘注册项 + 清空模块缓存 + 重读清单重加载；内置插件无按钮）。
+  mode/service/provider 三分支统一登记 `registeredDiskIds`，卸载绝不误伤
+  同名内置插件。
+- **P0.4 多文件 ESM 入口**：清单 `entry` 可指向目录（Rust `resolve_entry`
+  解析为其中 `index.js`）；前端 `compileDiskModule` 递归把相对 import
+  （`./x.js`、`../y.js`，含动态 `import()` 与无扩展名 → `.js`/`index.js`
+  解析）改写为 blob URL，按路径缓存、重载时清空。裸包名不支持（打包时内联）。
+  actions 示例即 `entry = "dist/"` + 两文件相对导入，端到端验证。
+
+**验证**：cargo test 141（+2：keywords 拼音、entry 目录解析）、tsc/vite
+build 干净、`cdp_p0_verify.mjs` 8 项（动作条目点击 → 剪贴板写入 + toast +
+启动器保持打开；ms/miao/秒搜 三级匹配；reload 后 provider 仍工作）；
+截图 `test/p0_provider_rows.png`（icon+副行）、`test/p0_settings_plugins.png`
+（重载按钮）。顺手修了一个存量 tsc 错误（`hostApi.ts` 缺
+`PluginFileSearchOptions` 类型导入）。
+
+## 24. 插件系统 P1：宿主能力面（HTTP / 通知 / 剪贴板 / 对话框 / 屏幕，已实现）
+
+**状态：已实现（2026-09-21）。** 差距分析见 `docs/PLUGIN_GAP_ANALYSIS.md` P1，
+API 文档见 `docs/PLUGIN_API.md` §6D。
+
+五项宿主能力，全部走「一个 Rust 命令 + 一条权限声明」的形态，零新增 crate
+（HTTP 用 `windows` crate 的 WinHTTP，通知用 `Shell_NotifyIconW`）：
+
+- **P1.1 宿主 HTTP（`plugin_net.rs`）**：WinHTTP 客户端（Schannel TLS、自动
+  系统代理、跟随重定向、gzip/deflate 自动解压），Rust 工作线程 + `spawn_blocking`，
+  http/https 限定、超时 1–60s（默认 10s）、响应 4MiB 截断上报。**这是 P1 的
+  核心价值**：页面 `fetch` 受 CORS 限制，翻译/查词这类最大一类插件此前做不了。
+  4 个单测用 `std::net::TcpListener` 起本地服务器（GET/POST/协议拒绝/截断），
+  实机脚本另做 CORS 对照（页面直连失败 vs 宿主成功）。
+- **P1.2 系统通知（`notify.rs`）**：自注册**隐藏**通知图标（`NIS_HIDDEN`，
+  不占用托盘）+ `NIF_INFO` 气泡（Win10/11 由 shell 渲染进通知中心）；懒创建、
+  复用。**为什么不用 tauri-plugin-notification / WinRT toast**：toast API 对
+  非打包（便携版）应用需要 AUMID + 开始菜单快捷方式，气泡路径无此前提。
+  实机：`cargo test -- --ignored live_notify` 通过（shell 接受注册与投递）；
+  **本机气泡不可见**——对照实验证明 PowerShell `NotifyIcon.ShowBalloonTip`
+  同样不显示，即系统级抑制，非实现问题（脚本已如实报告该差异）。
+- **P1.3 剪贴板扩展（`clipboard.rs`）**：`writeImage`（PNG base64/data URI，
+  32MB 上限）、`writeFiles`（CF_HDROP）、`readFiles`、`paste`（复用
+  `auto_paste` 完整流程：隐藏 → 交还焦点 → Ctrl+V；载荷留在剪贴板）。
+  顺手补了 `auto_paste` 两条回退分支的日志（此前静默回退为纯复制）。
+- **P1.4 文件对话框（`plugin_host.rs`）**：`tauri-plugin-dialog` 的 Rust 侧
+  blocking API + `spawn_blocking`；取消解析为 `[]`/`null`（非错误）。走 Rust
+  命令而非给启动器窗口加 `dialog:default` 能力，插件攻击面不扩大。
+- **P1.5 光标与显示器（`plugin_host.rs`）**：`GetCursorPos` + `EnumDisplayMonitors`
+  /`GetMonitorInfoW`，物理像素；2 个单测（唯一主屏、光标落在某台显示器内）。
+
+前端三条路径同步（内置/磁盘工厂 `ctx`、iframe 桥接 `window.lume`），
+`http.request` 返回体附 `text()`/`json()` 便利方法；示例
+`examples/plugins/host-tools/`（输入 `h:` 出动作面板）。
+
+**验证**：cargo test **149**（+4 HTTP、+2 通知、+2 屏幕，另 1 个 ignored live 过）、
+tsc/vite build 干净、`scripts/cdp_p1_verify.mjs` **14 项全过**（CORS 对照、
+通知投递、图片/文件剪贴板往返、对话框 ESC 取消、屏幕几何、paste 隐藏启动器 +
+日志证明走完整路径）；新工具 `scripts/ps_lume_windows.ps1`（OS 侧窗口可见性探测
+——WebView2 隐藏时 `document.visibilityState` 不变，这条实测结论已写进脚本注释）。
+
+## 25. 插件系统 P2：入口矩阵与搜索链路（已实现）
+
+**状态：核心已实现（2026-09-21）。** 差距分析见 `docs/PLUGIN_GAP_ANALYSIS.md` P2，
+API 文档见 `docs/PLUGIN_API.md` §6E。四项：
+
+- **声明式进入（`[[features]]`，任意 kind）**：manifest 子表声明 `code` /
+  `label` / `regex` / `over` / `min_length` / `max_length` / `icon`；命中即在
+  导航结果追加「<label>」行（与「进入 <插件>」关键字行同级），激活把查询作为
+  payload 投递给 mode 的 `onEnter` 或 provider/service 的 `onFeature`。
+  正则**在前端**编译并按插件+规则缓存；**匹配空串的正则被忽略**（`.*` 之类，
+  否则每次按键都出行——uTools 同款守卫），非法正则记 error 跳过。Rust 侧用
+  serde 定向 rename 让 TOML 保持 snake_case、JSON 下发 camelCase。
+- **子输入框（P2.3）**：`app.setSubInput({placeholder?, value?})` 接管主搜索框，
+  按键逐字送到插件的 `onSubInput`（mode 页面收 `lume.on.subInput`），期间不触发
+  常规搜索；`removeSubInput` 交还，且切模式/再次呼出/插件重载都会自动释放
+  （单拥有者，非拥有者调用无效）。
+- **provider 二级下钻（P2.4）**：行上加 `drill: true` → 激活调 `select(item)`，
+  返回行替换网格；Esc 回上一级（新增根级 `onGridEscape` 分层，先于模式 Esc）；
+  实现 `filter` 时下钻期间按键喂给它做层内过滤，没实现则输入离开下钻层。
+- **插件互跳（P2.5）**：`app.redirect(pluginId, {code?, payload?})` → mode 切页 +
+  `onEnter({type:"redirect"})`，provider/service 走 `onFeature`；目标不可用时
+  宿主 toast（新 i18n 键 `pluginActionUnavailable`）。
+
+**顺带修掉一个真实竞态**（P0/P1 遗留）：mode 页的 `query`/`show`/`enter` 曾在
+iframe 文档加载完成前投递而**静默丢失**。根因有两层：① 桥接脚本在 `<head>`，
+页面自己的 `lume.on.*` 赋值在 `</body>`；② `viewReady` 只表示 HTML 已取回，
+不表示文档已加载。现在桥接在页面 **`load`** 后发 `__lumeReady` 握手，宿主随即
+重放 `query` → `show` → 本次进入载荷；`enter` 载荷在模式 `reset()` 前一直保留
+以便新文档重放。文档写明「状态重放」语义（处理器需幂等、同步赋值）。
+
+**验证**：cargo test **151**（+2 features 解析/下发；另 1 个 ignored live 过）、
+tsc/vite build 干净、`scripts/cdp_p2_verify.mjs` **21 项全过**（over/regex 命中
+与 min_length 边界、catch-all 守卫、payload 投递到剪贴板、下钻/过滤/Esc 回退、
+subInput 接管与自动释放、redirect 载荷回显），P0/P1 两套冒烟无回归；
+截图 `test/p2_redirect_enter.png`、`test/p2_subinput.png`。
+
+**余项已补齐**（2026-09-22，见 #27）：`files` 文件拖入、`img` 剪贴板图片进入、
+`template = "list"` 官方列模板。
+
+## 26. 插件系统 P3：数据层、权限强制层、私有文件与声明式设置（已实现）
+
+**状态：已实现（2026-09-21）。** 差距分析见 `docs/PLUGIN_GAP_ANALYSIS.md` P3，
+API 文档见 `docs/PLUGIN_API.md` §6F。四项：
+
+- **P3.1 文档库（`ctx.db`）**：独立的 `<base>/data/plugin_store.db`（**不进
+  `lume.db`**，卸载 = 删一个文件，插件写坏也波及不到剪贴板/固定项）。单表
+  `docs(plugin_id, id, rev, json)`，契约与 uTools/CouchDB 同形：
+  `get/put/remove/allDocs({idStartsWith,limit})/bulkDocs`，`_rev` 乐观锁
+  （无 `_rev` = 新建，撞已有文档即 `conflict:` 报错；`_rev` 不符即
+  `conflict:`；删除要求 rev 匹配，无 tombstone）。上限：单文档 512 KB、
+  每插件 2000 篇（= `allDocs` 上限）、`bulkDocs` 单批 1000 篇；`bulkDocs`
+  在一个事务里逐条返回结果（冲突只影响该条）。`__` 前缀文档是宿主内部
+  （`__settings` / `__storage`），`db.*` 读不到、写被拒。
+- **P3.1 迁移**：v1 的 `<plugin>/storage.json` 在**进程首次访问 store 时**搬进
+  该插件的 `__storage` 文档，文件改名 `storage.json.migrated`（只改名不删）。
+  幂等：db 里已有 `__storage` 则文件直接退场。`storage.*` 保留为兼容垫片
+  （整个 read-modify-write 走 IMMEDIATE 事务，两个并发调用不会互相丢键）。
+- **P3.2 权限强制层**：`permissions` 从「预留声明位」变成**强制门**。台账
+  （`PLUGIN_API.md` §6D.6）是单一事实源：`app.notify→notify`、
+  `clipboard.*→clipboard`、`http.request→network`、`dialog.*→dialog`、
+  `screen.*→screen`、`search.files→search.files`、`fs.read*→fs.read`、
+  `fs.writeFile→fs.write`、`app.trash→trash`；`app.*` 基础动作、插件的
+  自有数据（`storage/db/settings`）与私有目录无需声明。校验点是
+  `createHostApi` 返回的 API 对象（`guardHostApi` 逐方法包一层），所以
+  **插件逻辑（跑在启动器窗口、直接持有 API）与 iframe 桥接两条路径都被覆盖**
+  —— 这一点是实机脚本抓出来的：初版只在桥接入口校验，插件的 provider 逻辑
+  绕过整层。拒绝是 fail-closed（未知插件也拒），文案带缺失的能力词，
+  并写 `[plugins(id)] permission denied: …`。设置 → 插件每行显示权限 chips
+  与「全部授权」（`settings.plugins.trusted`，开发逃生门）。
+- **P3.3 私有文件（`ctx.fs.writeText/readPrivate/listPrivate/privatePath/
+  removePrivate`）**：`<plugin>/files/`，无需权限（属于插件自己）；
+  `fs.writeFile` 写任意绝对路径才是 `fs.write` 能力。文件名只能是名字
+  （无分隔符 / 不是 `.`/`..` / 不是 `NUL`、`CON` 等保留设备名 —— Windows 上
+  `<dir>\NUL` 是设备不是文件），单文件 10 MiB。
+- **P3.4 声明式设置（`[[settings]]` + `ctx.settings.get/all` + `onSettings`）**：
+  manifest 声明 `key/label/type(toggle|select|text)/default/options`，设置页
+  自动渲染（select 用 chip 组），值存在插件 `__settings` 文档里，**manifest 即
+  schema**（未声明的键写入被拒）。改动经 `plugin-settings` 事件从设置窗送到
+  启动器，再交给 mode 的 `onSettings` / provider / service 钩子与页面
+  `lume.on.settings`（页面加载后的握手会重放当前值）。
+
+**验证**：cargo test **168**（+17：store 的 rev 契约/上限/内部前缀/allDocs
+过滤/bulk 逐条结果/迁移幂等/settings 默认值合并；fs 私有目录的越界与设备名
+守卫；manifest settings 解析与 trusted 上报）、tsc/vite build 干净、
+`scripts/cdp_p3_verify.mjs` **45 项全过**（保存→库内容、乐观锁双向验证、
+bulkDocs、权限拒绝/放行各一次、私有文件落盘、迁移改名、设置改值后端到端、
+设置页 chips/开关/控件渲染）、P0/P1/P2 三套冒烟无回归（8/14/21）；
+截图 `test/p3_notes.png`、`test/p3_plugin_pane.png`。
+
+**踩坑（值得记）**：debug exe 的 `frontendDist` 资源是**编译期嵌进二进制**的
+——改完前端必须重新 `cargo build` 才能让 CDP 冒烟跑到新代码，否则测的是上一版
+bundle（本轮排查权限层「不生效」的真凶就是这个）。
+
+**未做**（留待 P4）：`.lupx` 打包、市场源、窗口匹配/超级面板、AI 宿主 API；
+逐能力开关的细粒度授权（现只有「全部授权」）与云同步（见差距分析 §4）。
+
+## 27. 插件系统 P2 余项：文件拖入、剪贴板图片进入、内置列表模板（已实现）
+
+**状态：已实现（2026-09-22）。** 差距分析 `docs/PLUGIN_GAP_ANALYSIS.md` P2.2 /
+P2.5b，API 文档 `docs/PLUGIN_API.md` §6E.1.1 / §6E.5。示例
+`examples/plugins/files-img-demo/`、`examples/plugins/list-demo/`，实机脚本
+`scripts/cdp_p2b_verify.mjs`（17 项）。
+
+- **`type = "files"`（文件拖入）**：`[[features]]` 规则加 `type`（缺省
+  `text`）与 `extensions`（大小写不敏感、不带点；空 = 任意文件），
+  `min_length`/`max_length` 在该类型下是文件数边界。Tauri drag-drop handler
+  在主窗口**启用**（此前因磁贴重排被禁用）——WebView2 的 HTML5 drop 拿不到
+  真实路径，只有 OLE drop target（wry 的 handler）能给出 `paths`；拖入
+  （呼出时拖住文件按热键）出行「<label>（N 个文件）」，激活把命中**子集**
+  投递 `onFeature/onEnter({type: "files", paths})`；行在下一次隐藏/呼出清空。
+  **代价**：handler 会吞掉非文件 HTML5 拖拽 —— 磁贴重排从 HTML5 DnD 重写为
+  **指针事件**（按下 → 6px 阈值 → 行列插入点计算，复用原有算法；拖后一次
+  click 被吞掉避免误启动；`body.reorder-dragging` 防误选文本）。`fileType`
+  分类与文件夹匹配明确未做（无免 IO 判据，见 §6E.1.1）。
+- **`type = "img"`（剪贴板图片进入）**：新命令 `plugin_clipboard_has_image`
+  （CF_DIB / CF_BITMAP / 截图工具自定义 PNG —— 名称探测与读取链完全一致，
+  probe 和 reader 不会互相矛盾）+ `plugin_clipboard_read_image`（复用剪贴板
+  历史的采集链：arboard → 自定义 PNG → CF_BITMAP → PNG data URI）。空查询
+  主菜单出「<label>」行，**每次空查询渲染探测一次**（截图后不出键即出行；
+  剪贴板换回文本后陈旧行消失），激活后插件用 `ctx.clipboard.readImage()`
+  （新 host API / 桥接 `lume.clipboard.readImage`，`clipboard` 权限）取图。
+- **`template = "list"`（内置列表模板）**：mode 插件声明后**免 `view`**，
+  `entry` 逻辑跑在启动器窗口（provider 同款信任模型与 ctx），内置 Solid 列表
+  组件（`.plugin-list-*`）渲染 `search(q)` 的行；↑/↓/Enter 走共享键盘导航
+  （宿主读 `rows()`/`selected()`/`activate()`），点击行 → `onEnter(item)`。
+  声明式 feature 命中投递 `onFeature`，**投递后宿主重跑一次该模式的搜索**
+  （quick-add 这类改行源的钩子立即反映到列表）。
+- **配套**：mode feature 投递后重跑搜索（上面第三条）；空查询下拖拽/img 行
+  替代栏目条 —— `NavigateView` 与 keyRouter 增加 `forceGrid` 通道，键盘方向键
+  在行集上导航而不是栏目区。
+
+**验证**：cargo test **169**（+1：files/img/template 解析与 JSON 形状）、
+tsc/vite build/cargo build 干净、`scripts/cdp_p2b_verify.mjs` **17 项全过**
+（无图无行 → SetImage 出行 → readImage 真读到 PNG；拖入 3 文件只出行 2 个
+命中文本 + fs.readText 真读到内容；拖拽行 hide/summon 清空；list-demo 关键字
+进入 → 内置列表渲染 → quick-add 加行 → 指针重排交换固定项并持久化）、
+P0/P1/P2/P3 四套回归 **8/14/21/45 全过**；截图 `test/p2b_files.png`、
+`test/p2b_list.png`。
+
+**边界（诚实记录）**：自动化里真实 OS 拖拽不可合成 —— `tauri://drag-drop`
+用 `plugin:event|emit_to` 投回同一事件验证逻辑链，wry 的 OLE drop target
+（真实路径的来源）只在手工步骤覆盖（`docs/TESTING.md`「Plugin file drop」）；
+settings 窗口与预览窗口保持 handler 禁用（无文件拖入需求、避免波及文本拖拽）。
+
+## 28. 插件系统 P4 前半：`.lupx` 打包安装/卸载 + 前台上下文 API + files 规则 `file_type`（已实现）
+
+**状态：已实现（2026-09-25）。** 差距分析见 `docs/PLUGIN_GAP_ANALYSIS.md` P4
+（本条闭合其中的「打包格式 `.lupx` + 安装确认」与「前台文件夹路径透出」，
+`fileType`/文件夹闭合 `PLUGIN_API.md` §6E.1.1 的未支持注记；浏览器 URL 读取
+（UIA，完全绿地）明确**不在**本条范围；市场源、签名校验仍留 P4 后半）。
+API 文档见 `docs/PLUGIN_API.md` §6H。三件事：
+
+- **P4.1 `.lupx` 打包 + 安装/卸载（`plugin_install.rs`，新增 zip 依赖——只开
+  deflate feature）**：`.lupx` = zip；`plugin.toml` 在归档根**或唯一顶层目录
+  内**（兼容「右键压缩文件夹」，前缀外的散文件被忽略）。三命令：
+  `plugin_lupx_inspect`（只读校验 + 返回清单事实，**不落盘**）、
+  `plugin_lupx_install`（解压到 `<base>/data/install-staging/<id>-<ts>` →
+  旧安装 rename 到 staging 备份 → rename 换位（失败自动还原旧安装）→ 清备份
+  → `settings-applied` + `plugin-reload` 双事件——**升级中的已加载模块立即重
+  import，无需重启**）、`plugin_uninstall`（删 `<plugins>/<id>/`，私有
+  `files/` 随目录走，`data/plugin_store.db` 文档保留；重复卸载幂等）。守卫：
+  entry 名规范化 `\`→`/`（PowerShell `Compress-Archive` 兼容）+ 逐段
+  `safe_name` 同款校验（拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点，
+  单段 ≤120）、单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096；清单必须显式
+  声明 `id`（包内没有目录名可回退）。**确认卡**（设置 → 插件工具栏「安装
+  插件…」→ 文件选择 → 内联卡片）：名称/版本/kind/描述/**权限 chips（复用
+  PERM_INFO 本地化）**/文件数与大小，已装同 id 显示「将覆盖 vX → vY」——
+  这就是权限模型一直假设的「安装时知情同意」时刻。卸载按钮在每张磁盘插件
+  卡上（内置无），两段式确认（3s 武装窗口）。打包工具
+  `scripts/pack_lupx.ps1 <插件目录> <输出.lupx>`。staging 在启动时清理
+  （崩溃不留垃圾）。
+- **P4.2 前台上下文 API（`ctx.app.foreground()` / `lume.app.foreground`）**：
+  返回呼出前前台窗口的快照 `{process, className, title, path?, }`（null =
+  本会话从未经热键呼出过）——复用 `FocusState.last_hwnd`（`toggle_launcher`
+  捕获，复制不取走）+ `explorer.rs::resolve_context`（Explorer 路径 COM 解析
+  照旧），**新增 `process` 字段**（`input.rs::exe_of_pid` 的 limited-information
+  查询，无需提权；`get_foreground_context` 原生消费者同步受益，为 #29 窗口
+  匹配铺路）。Rust 命令 `plugin_foreground_context`，权限 **`window`**（新
+  台账行：`app.foreground → window`；匹配是宿主侧行为不需要权限，插件主动
+  读才声明——见 #29）。浏览器 URL（uTools `readCurrentBrowserUrl`）明确
+  不做：完全 UIA 绿地、按浏览器逐家适配、稳定性天然差，另立项。
+- **P4.3 files 规则 `file_type` 类别与文件夹匹配（闭合 §6E.1.1 注记）**：
+  `[[features]]` 的 `files` 规则新增 `file_type`（TOML snake_case，同
+  `min_length` 惯例；前端 JSON 为 `fileType`）：`image/video/audio/document/
+  text/folder/others`（前端 curated 扩展名类别表，未映射 = others；类别表
+  在 `registry.ts::FILE_TYPE_EXTS`）。**匹配语义**：`extensions` 非空 → 扩展名
+  匹配且**文件夹永不命中**（目录名带点不再冒充扩展名——行为收窄，文档已写
+  明）；否则 `file_type` 声明 → `folder` 只匹配目录、`others` = 表外的文件、
+  其余按表；两者都未声明 → 任意**文件**（文件夹必须 `file_type = "folder"`）。
+  文件夹判据 = 新内部命令 `file_kinds(paths)`（`GetFileAttributesW` 逐路径
+  属性查询，`file/folder/missing`，启动器自用无权限）：拖入时一次性查询
+  （drop handler 先 `file_kinds` 再 runSearch，消除竞态），kinds 信号与
+  paths 平行、随 hide/summon 清空。`min/max_length` 语义不变（命中子集计数）。
+
+**验证**：cargo test **185**（+7：entry 名守卫（`\`→`/` 规范化、`..`/盘符/
+保留设备名拒绝）、根/顶层目录两种布局 inspect、恶意包四连拒、安装→换位→
+升级 v1→v2、失败换位自动还原旧安装（staging 缺失注入）、前缀外散文件不落
+盘、卸载幂等与非法 id）、tsc/vite build/cargo build 干净、
+`scripts/cdp_lupx_verify.mjs` **23 项全过**（inspect 形状与四类拒绝、安装 →
+**未重启** provider 行直接可用、subdir 形状 + 前缀外忽略、升级
+existingVersion=1.0.0 → 2.0.0 + 重 import、卸载 → 行消失 + 重复卸载 +
+非法 id、设置页安装按钮/卸载按钮/两段式武装解除）、
+`scripts/cdp_p2b_verify.mjs` **20 项全过**（新增 fileType 段：一次拖入
+文件夹+png+md → folder/image/extensions 三规则各自只命中自己类别 +
+folder 激活路径真实投递；原 files/img/list/重排全回归）；
+截图 `test/lupx_settings.png`。
+
+**踩坑（值得记）**：① TOML 清单键是 **snake_case 的 `file_type`**（与
+`min_length` 同惯例）——示例初版写成 `fileType` 被 toml 解析器静默忽略，
+规则退化为「所有文件」，CDP 实机当场抓出（类别行把 .png/.md 都算进去了）；
+② CDP 验证里 provider 行断言的查询词不能撞全盘文件秒搜的命中（"demo" 被
+12 个示例插件的原生+文件结果占满 20 条上限，provider 追加在最后永远挤不进
+去），换无文件命中的词；③ 本仓库前端嵌在二进制里，改 Rust+前端后必须
+`pnpm build && cargo build` 再跑 CDP（#26 踩坑重申）。
+
+**未做（P4 后半）**：市场源（静态 JSON 索引 + 应用内安装 + 版本比对提示）、
+签名校验、`.lupx` 文件关联/拖包安装、宿主窗口内插件逻辑的进程级隔离、
+浏览器 URL / 划词捕获（UIA）、AI 宿主 API。
+
+## 29. 插件系统 P4：活动窗口匹配（`[[features]] type = "window"`，已实现）
+
+**状态：已实现（2026-09-25）。** uTools `window` feature 的对位能力：按
+**呼出启动器前的前台窗口**触发插件——呼出时空查询主菜单出现「<label>」行，
+激活把窗口信息投递给 `onFeature`/`onEnter`（`info.window`）。探测层完全
+复用 #28 的基建（`FocusState.last_hwnd` 快照 + `ForegroundContext` 的
+process/className/title/path），本条只做清单字段 + 前端匹配 + 行渲染。
+API 文档见 `docs/PLUGIN_API.md` §6H.4。
+
+- **清单**：`[[features]]` 新增 `type = "window"` 与三维匹配字段
+  `process`（exe 文件名或去 `.exe` 的 stem，忽略大小写，对齐
+  `automation.rs::matches_rule` 先例）、`class`（Win32 窗口类，精确、忽略
+  大小写）、`title`（大小写不敏感子串，`/…/` 包裹为正则——复用 text 规则
+  的编译缓存与守卫）。**字段内 OR、字段间 AND；三字段全空 = 永不命中**
+  （与 text 规则「无 regex 无 over 永不命中」对称）。
+- **触发时机**：每次呼出（launcher-shown）由宿主拉取前台快照（**仅当存在
+  启用的 window 规则时才发 IPC**——`hasWindowFeatures()` 门控），空查询
+  主菜单出行（非空查询不出现，uTools 同）；行走既有 `featureRowToEntry`/
+  `featureEnter` 管线，激活路径 `services.enterPlugin` 零改动，payload 携带
+  `window = {process, className, title, path?}`；隐藏即清空（summon-scoped，
+  与 files 行一致）。
+- **forceGrid 接线**：空查询主菜单在「有 window 匹配行」时切到网格
+  （与 files/img 行同语义）——**注意条件必须是「匹配行数 > 0」而不是
+  「快照非空」**，否则呼出永远顶掉栏目条（实机抓出过）。
+- **权限语义**：匹配是宿主侧行为不需要权限，行 payload 只携带命中插件
+  自己的窗口信息；主动读取（`app.foreground`）才声明 `window`（#28）。
+- **超时加固（顺带的真实 bug）**：`resolve_explorer_path` 的 STA COM
+  join **无超时**，跨套间调用偶发长阻塞会把 launcher-shown 管线整个挂住
+  （本机实机抓到：呼出后无响应）。改为 channel + `recv_timeout(600ms)`，
+  超时返回 `None`、worker 线程分离自清。
+- **示例** `examples/plugins/window-demo/`（notepad process 规则、
+  process+title AND 规则、Explorer class 规则三条各演示一个维度）。
+
+**验证**：tsc/vite build/cargo build 干净、cargo test 185 无回归、
+`scripts/cdp_window_feature_verify.mjs` **11 项全过**（真实前台窗口：
+PowerShell AppActivate 激活编辑器 → toggle_launcher 呼出捕获 → process
+维度出行、process+title AND 正负例、行点击 payload 完整投递
+（进程/类名/标题）、前台切换后行消失、`app.foreground` 权限拒绝/放行/
+fail-closed）、`scripts/cdp_lupx_verify.mjs` 23 项与
+`scripts/cdp_p2b_verify.mjs` 22 项无回归；截图
+`test/window_feature_rows.png`。
+
+**踩坑（值得记）**：① 本机 `System32\notepad.exe` 可能是 Store 版 stub
+（`-PassThru` 的 PID 没有窗口）或被 Notepad3 等文件关联替换——自动化激活
+按**标题前缀** AppActivate、process 规则写双词通吃；② 前端 `plog` 未导入
+时 vite build 不报错（esbuild 不做类型检查），运行时 ReferenceError 把
+`.then` 回调静默炸掉——**tsc --noEmit 必须在构建前跑**（本轮排查
+「匹配成功但行不渲染」的真凶）；③ forceGrid 条件写成「快照非空」会顶掉
+栏目条，必须以「匹配行数 > 0」为准。
+
+**未做（P4 后半，不变）**：市场源（静态 JSON 索引 + 应用内安装 + 版本提示）、
+签名校验、`.lupx` 文件关联/拖包安装、浏览器 URL / 划词捕获（UIA）、
+超级面板（光标小窗 + 模拟 Ctrl+C 选区捕获）、AI 宿主 API、宿主窗口内插件
+逻辑的进程级隔离。

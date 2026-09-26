@@ -172,9 +172,53 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 
 ### 8. 插件（`plugins`）
 
-内置 + 磁盘插件一览（`get_plugins`）：每行 = 名称 + 类型/来源/版本 chips +
-启停 toggle（写 `settings.plugins.disabled`，`settings-applied` 后启动器
-重读注册表；关闭活动模式插件自动回导航页）。格式与开发见 `docs/PLUGINS.md`。
+> **重设计（2026-09-22）**：从扁平行列表升级为插件管理器式卡片布局
+> （`PluginsPane.tsx`，样式类 `plg-*`）。
+
+**工具栏**：概要行（「共 N 个插件 · M 个已启用」）+ 分段筛选
+（全部 / 已启用 / 已停用 / 磁盘插件）+ 关键词筛选输入框（按名称 / id /
+描述 / 关键词子串匹配）；无匹配时显示空态「没有匹配的插件」。最右是
+**全局开发者选项**（即时生效轻量写，权限层的唯一入口）：
+
+- **「开发者模式」**（`plugins.dev_mode`，默认关）：关闭时**隐藏全部
+  开发者选项**（卡片上的重载按钮、「开发」徽章与下面的全部授权开关），
+  且后端 `get_plugins` 把所有插件上报为 `trusted=false`——trusted 列表
+  与全部授权都授予不了任何能力（权限层 fail-closed 到声明能力）；开启时
+  显示并生效，随后重读插件清单。
+- **「全部授权」**（`plugins.trust_all`，橙色警示文案，**仅在开发者模式
+  开启时显示**，2026-09-22 起取代旧的逐插件授权开关）：对所有磁盘插件
+  跳过能力检查。生效条件 = dev_mode 开 ∧ trust_all 开（`list_plugins`
+  的 `trust_all` 参数把全部磁盘插件上报为 trusted）；设置页不再提供
+  逐插件的 trusted 切换（旧 `trusted` 列表仍被尊重，但 UI 不再写入）。
+
+**插件卡片**（每个插件一张）：
+
+- 左侧 40px 图标块：manifest `icon` 经 asset 协议解析（与启动器 pill
+  同规则）；无图标时按类型着色的首字母块（模式 = 蓝 / 服务 = 紫 /
+  搜索提供 = 绿）。
+- 名称（粗体）+ 版本 + 徽章（「内置」accent 蓝 /「磁盘」中性 /
+  「开发」橙）；第二行描述（内置插件用本地化文案
+  `pluginDescClipboard` / `pluginDescPreview`，磁盘插件用 manifest
+  `description`）；第三行类型 + 关键词预览。
+- 右侧：重载按钮（仅磁盘插件，`reload_plugin`）+ 启停 toggle +
+  展开箭头。点击卡片头展开详情；已停用的卡片整卡降透明度并去饱和。
+
+**详情面板**（单开，展开一卡收起其它）：
+
+- 关键词 chips、进入规则（`[[features]]`：label + 类型小标 文本/文件/图片）。
+- **权限**（仅磁盘插件）：manifest `permissions` 逐词映射为本地化
+  能力 chips（剪贴板/网络/通知/对话框/屏幕信息/全盘搜索/读取文件/
+  写入文件/回收站，悬停显示一句话说明）+ 强制说明文案。逐插件的
+  「全部授权」开关已并入工具栏的全局开发者选项（见上）。
+- **声明式设置**（`[[settings]]`，P3.4）：toggle / select chips /
+  文本输入；值 ≠ 默认时在该行下方显示「默认 {value}」提示；写入经
+  `plugin_settings_put`，插件经 `plugin-settings` 事件收到变更。
+- **信息**：ID 与磁盘位置（等宽字体，可选中复制）。
+
+启停 / 全部授权 / 重载均给出本地化的 2.4s 状态反馈（成功 / 失败）。
+启停语义不变：写 `settings.plugins.disabled`，`settings-applied` 后
+启动器重读注册表；关闭活动模式插件自动回导航页。格式与开发见
+`docs/PLUGINS.md`。
 
 ### 9. 关于（`about`）
 
@@ -194,6 +238,49 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   about* / clipIgnoreEmpty），三语言同步。
 - 验证：`cargo test` 74 通过（含 `legacy_user_dirs_migrate_to_key_value_index`）、
   `tsc --noEmit` + `vite build` 干净。
+
+## 实现说明（2026-09-22 全部授权并入全局开发者选项）
+
+- 用户反馈：逐插件的「全部授权」行本身就是开发者选项，应并入全局。
+  卡片详情里的授权行删除（`.plg-trust` 样式一并移除），改为工具栏
+  dev_mode 开关旁的**全局「全部授权」**（`plugins.trust_all`，默认关，
+  新命令 `set_plugin_trust_all`，仅 dev_mode 开时显示）。
+- `list_plugins` 增加 `trust_all: bool` 参数（`is_trusted` 短路为真）；
+  `get_plugins` 的门控扩为：dev_mode 关 → trusted 空 + trust_all=false；
+  dev_mode 开 → 透传 trusted 列表与 trust_all。`set_plugin_trusted`
+  命令保留（列表仍被尊重）但设置页不再调用。
+- i18n：删 `pluginToastTrustedOn/Off`、`pluginTrustHint`，增
+  `pluginsTrustAll{Hint,On,Off}` ×3 语言。
+- 测试：`plugin_trust_all_defaults_off_and_round_trips`。
+
+## 实现说明（2026-09-22 全局开发者模式）
+
+- `settings.plugins.dev_mode`（Rust `Plugins` 结构，`#[serde(default)]`，
+  默认关）；新命令 `set_plugin_dev_mode`（轻量写 + `settings-applied`，
+  与 `set_plugin_enabled` / `set_plugin_trusted` 同款）。
+- **trusted 门控在 `get_plugins`**（`plugins.rs`）：dev_mode 关时以空表
+  调 `list_plugins`，所有插件上报 `trusted=false` —— 前端权限层
+  （`permissions.ts`）无需改动即 fail-closed 到声明能力；残留 trusted id
+  不授予任何能力。
+- 插件页：工具栏最右「开发者模式」开关（初值经 `get_settings` 读取）；
+  关闭时隐藏重载按钮 / 「开发」徽章 / 「全部授权」行，开启时显示并在
+  切换后重读清单。i18n +5 键 ×3（`pluginsDevMode{,Hint,On,Off}`）。
+- 测试：`plugin_dev_mode_defaults_off_and_round_trips`（整表缺失 / 缺键
+  均默认关 + 轻量写往返）。
+
+## 实现说明（2026-09-22 插件页重设计）
+
+- `PluginsPane.tsx` 全量重写（卡片 + 详情面板），样式为 `App.css` 的
+  `plg-*` 块（旧 `settings-plugin-*` 类删除）；重载按钮复用
+  `settings-icon-btn` + `res/icons/refresh.svg`。
+- i18n 新增 ~45 键 × 3 语言（筛选/概要/空态、详情分区标题、能力词
+  `perm*` 标签 + 说明、内置插件描述、操作反馈 `pluginToast*`、
+  `pluginSettingDefault`）；`Settings.tsx` 的 `SECTION_SEARCH_KEYS.plugins`
+  补齐新键（能力词与分区标题可被设置搜索命中）。
+- 验证：`tsc --noEmit` + `vite build` + `cargo build` 干净；
+  `scripts/cdp_plugins_pane_verify.mjs` 6 项全过（工具栏/卡片结构/详情
+  面板/筛选输入/已停用筛选空态/声明式设置渲染），截图
+  `test/plg_dark_list.png`、`test/plg_light_detail.png`（双主题目检）。
 
 ## 实现说明（2026-09-19 提权代理）
 

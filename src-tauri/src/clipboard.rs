@@ -1288,6 +1288,260 @@ pub fn set_clipboard_text(text: String) -> Result<(), String> {
     cb.set_text(text).map_err(|e| e.to_string())
 }
 
+// ── Plugin host clipboard surface (P1.3 of docs/PLUGIN_GAP_ANALYSIS.md) ──
+//
+// Plugins could already read/write text; these add the other two payload kinds
+// (PNG images, CF_HDROP file lists) plus the paste-into-the-previous-window
+// action, reusing the exact internals the clipboard mode uses (the same
+// auto_paste flow, the same HDROP writer) so behaviour cannot drift.
+
+/// Reject an implausible image payload before decoding (the IPC layer carries
+/// whatever a plugin sends; the decode is the expensive part).
+const MAX_PLUGIN_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+
+/// Decode a base64 payload that may be a `data:image/png;base64,…` URI.
+fn decode_image_payload(data: &str) -> Result<Vec<u8>, String> {
+    let b64 = match data.split_once(',') {
+        Some((head, rest)) if head.starts_with("data:") => rest,
+        _ => data,
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|e| format!("bad base64: {e}"))?;
+    if bytes.is_empty() {
+        return Err("empty image payload".into());
+    }
+    if bytes.len() > MAX_PLUGIN_IMAGE_BYTES {
+        return Err(format!("image too large ({} bytes)", bytes.len()));
+    }
+    Ok(bytes)
+}
+
+/// Put a PNG (base64 or data URI) on the clipboard as an image.
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
+#[tauri::command]
+pub fn plugin_clipboard_write_image(
+    data: String,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
+    let png = decode_image_payload(&data)?;
+    let rgba = image::load_from_memory(&png)
+        .map_err(|e| format!("decode image: {e}"))?
+        .to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let img = arboard::ImageData {
+        width: w as usize,
+        height: h as usize,
+        bytes: Cow::Owned(rgba.into_raw()),
+    };
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    cb.set_image(img).map_err(|e| e.to_string())?;
+    eprintln!("[plugins] clipboard.writeImage: {w}x{h}");
+    Ok(())
+}
+
+/// Put a file/folder list on the clipboard as CF_HDROP (Explorer-style copy).
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
+#[tauri::command]
+pub fn plugin_clipboard_write_files(
+    paths: Vec<String>,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
+    if paths.is_empty() {
+        return Err("no paths given".into());
+    }
+    eprintln!("[plugins] clipboard.writeFiles: {} path(s)", paths.len());
+    set_files_to_clipboard(&paths)
+}
+
+/// The clipboard's current file list (empty when it holds something else).
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
+#[tauri::command]
+pub fn plugin_clipboard_read_files(
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<Vec<String>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
+    Ok(read_file_list().unwrap_or_default())
+}
+
+/// Whether the clipboard currently holds an image in any format the reader
+/// below (`plugin_clipboard_read_image`) can decode: CF_DIB/DIBV5 (arboard),
+/// a plain CF_BITMAP, or a screenshot tool's custom PNG format. Never throws
+/// for "not an image" — `Ok(false)` — because the empty-query probe calls
+/// this on every summon. A CF_HDROP file list is NOT an image (the capture
+/// chain checks files before bitmaps for the same reason).
+#[tauri::command]
+pub fn plugin_clipboard_has_image() -> Result<bool, String> {
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            // Another process holds the clipboard open — nothing sensible to
+            // report right now.
+            return Ok(false);
+        }
+        let _guard = OpenClipboardGuard;
+        if IsClipboardFormatAvailable(8 /* CF_DIB */).is_ok()
+            || IsClipboardFormatAvailable(2 /* CF_BITMAP */).is_ok()
+        {
+            return Ok(true);
+        }
+        if IsClipboardFormatAvailable(CF_HDROP).is_ok() {
+            return Ok(false);
+        }
+        // Custom formats: the same name check `read_custom_png_image` uses,
+        // so the probe and the reader can never disagree.
+        let mut fmt: u32 = 0;
+        loop {
+            fmt = EnumClipboardFormats(fmt);
+            if fmt == 0 {
+                break;
+            }
+            if fmt == CF_HDROP {
+                continue;
+            }
+            let mut name = [0u16; 80];
+            let n = GetClipboardFormatNameW(fmt, &mut name);
+            if n <= 0 {
+                continue;
+            }
+            let nm = String::from_utf16_lossy(&name[..n as usize]).to_lowercase();
+            if nm.contains("png") || nm.contains("image/png") {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// Read the clipboard's image as a `data:image/png;base64,…` URI (plugin
+/// `clipboard.readImage`). Same acquisition chain as the history capture
+/// (`arboard` CF_DIB → custom PNG → CF_BITMAP) so the two can never disagree.
+/// None when the clipboard holds no decodable image.
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
+#[tauri::command]
+pub fn plugin_clipboard_read_image(
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+) -> Result<Option<String>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
+    let png = if let Ok(mut cb) = arboard::Clipboard::new() {
+        cb.get_image().ok().and_then(|img| encode_png(&img))
+    } else {
+        None
+    }
+    .or_else(read_custom_png_image)
+    .or_else(read_cf_bitmap_image);
+    Ok(png.map(|bytes| {
+        format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+    }))
+}
+
+/// Write one payload to the clipboard and paste it into the window that had
+/// focus before the launcher appeared (the clipboard mode's auto_paste flow:
+/// hide the launcher, restore focus, Ctrl+V). Exactly one payload is expected.
+/// Like a normal copy, the payload STAYS on the clipboard afterwards.
+/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
+#[tauri::command]
+pub fn plugin_clipboard_paste(
+    text: Option<String>,
+    image: Option<String>,
+    files: Option<Vec<String>>,
+    plugin_id: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<crate::settings::SettingsState>,
+    focus: State<crate::window::FocusState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        "clipboard",
+    )?;
+    let given = [text.is_some(), image.is_some(), files.is_some()]
+        .iter()
+        .filter(|x| **x)
+        .count();
+    if given == 0 {
+        return Err("paste needs one of text / image / files".into());
+    }
+    if given > 1 {
+        return Err("paste takes exactly one of text / image / files".into());
+    }
+    eprintln!(
+        "[plugins] clipboard.paste: {}",
+        if text.is_some() {
+            "text"
+        } else if image.is_some() {
+            "image"
+        } else {
+            "files"
+        }
+    );
+    auto_paste(&app, &focus, || {
+        if let Some(t) = text {
+            let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+            return cb.set_text(t).map_err(|e| e.to_string());
+        }
+        if let Some(img) = image {
+            let png = decode_image_payload(&img)?;
+            let rgba = image::load_from_memory(&png)
+                .map_err(|e| format!("decode image: {e}"))?
+                .to_rgba8();
+            let data = arboard::ImageData {
+                width: rgba.width() as usize,
+                height: rgba.height() as usize,
+                bytes: Cow::Owned(rgba.into_raw()),
+            };
+            let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+            return cb.set_image(data).map_err(|e| e.to_string());
+        }
+        let files = files.unwrap_or_default();
+        if files.is_empty() {
+            return Err("no paths given".into());
+        }
+        set_files_to_clipboard(&files)
+    })
+}
+
 #[tauri::command]
 pub fn search_clipboard(
     query: String,
@@ -1349,6 +1603,20 @@ pub fn get_file_text(path: String) -> Result<String, String> {
         return Err("file too large to preview".into());
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Read a file's raw bytes (base64) for preview renderers that must decode
+/// binary content in JS (pdf.js, SheetJS). The P5 sandbox made plugin pages
+/// opaque origins, so `fetch(asset://…)` is CORS-refused there — this bridge
+/// call restores the byte channel the asset protocol used to provide
+/// (fs.read permission, frontend ledger). Cap mirrors the thumbnail path.
+#[tauri::command]
+pub fn get_file_bytes(path: String) -> Result<String, String> {
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err("file too large to preview (cap 32 MB)".into());
+    }
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 /// Downscale an image file to a small base64 thumbnail for the preview pane.
@@ -1429,11 +1697,13 @@ fn auto_paste(
 
     let Some(hwnd_raw) = maybe_hwnd else {
         // No target window recorded — fall back to a plain copy.
+        eprintln!("[clipboard] paste: no target window recorded — copied without pasting");
         return set();
     };
 
     if !unsafe { IsWindow(Some(HWND(hwnd_raw as *mut std::ffi::c_void))) }.as_bool() {
         // Window is gone — fall back to a plain copy.
+        eprintln!("[clipboard] paste: target window is gone — copied without pasting");
         return set();
     }
 

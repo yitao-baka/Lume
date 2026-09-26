@@ -1,0 +1,62 @@
+# 速记 (Notes) — P3 示例（ROADMAP #26）。
+#
+# 覆盖：
+#   ① 文档库      ctx.db.get/put/remove/allDocs/bulkDocs（<base>/data/plugin_store.db）
+#                 — _rev 乐观锁：同一 _rev 写两次，第二次被 `conflict:` 拒绝
+#   ② 声明式设置  [[settings]] → 设置 → 插件的「设置项」自动渲染；
+#                 改完插件立刻收到 onSettings（见 main.js）
+#   ③ 私有文件    ctx.fs.writeText → plugins/notes/files/（无需权限）；
+#                 导出到任意路径 = ctx.fs.writeFile，需要 fs.write 声明
+#   ④ 权限强制层  下面 permissions 声明了 clipboard/dialog/fs.write；
+#                 main.js 里有一行演示「未声明 network 调 http.request 被拒绝」
+#
+# 安装：把整个 notes/ 目录拷进 <base>/plugins/，重启 Lume（或触发一次设置
+# 变更）。用法：输入任意文本出现「速记：保存这段文字」行，激活即落一条笔记；
+# 输入「笔记」/「notes」列出全部笔记与演示动作行。
+id = "notes"
+name = "速记 (Notes)"
+version = "1.0.0"
+kind = "provider"
+description = "P3 示例：文档库（_rev 乐观锁）+ 声明式设置 + 私有文件 + 权限强制层"
+entry = "main.js"
+
+# P3.2 起强制：宿主按此表放行 RPC，未声明的能力调用会被明确拒绝。
+# （设置 → 插件的插件行会显示这几个 chip，并带「全部授权」开关。）
+permissions = ["clipboard", "dialog", "fs.write"]
+
+# 输入 1..80 字符且不是列表关键字时命中 → 出现「速记：保存这段文字」行。
+# 负向先行断言把「笔记」「notes」排除掉，避免和列表查询撞行
+# （匹配空串的正则会被宿主忽略，这条不会）。
+[[features]]
+code = "save"
+label = "速记：保存这段文字"
+regex = "^(?!笔记$)(?!notes$).{1,80}$"
+
+# ── 声明式设置（P3.4）──
+# 清单即 schema：未在这里声明的键永远写不进去（plugin_settings_put 会拒绝）。
+
+[[settings]]
+key = "prefix"
+label = "列表前缀"
+type = "text"
+default = "· "
+
+[[settings]]
+key = "autoCopy"
+label = "保存后自动复制"
+type = "toggle"
+default = false
+
+[[settings]]
+key = "sort"
+label = "排序"
+type = "select"
+default = "newest"
+
+[[settings.options]]
+value = "newest"
+label = "最新在前"
+
+[[settings.options]]
+value = "oldest"
+label = "最早在前"

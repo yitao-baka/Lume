@@ -25,23 +25,147 @@ export interface PluginManifest {
   version: string;
   kind: string;
   description: string;
+  /** Capability words the plugin declares (`permissions = [...]` in the
+   * manifest). Enforced since P3.2: an RPC whose permission is missing here
+   * is refused (unless `trusted`). See `docs/PLUGIN_API.md` §6D.6. */
   permissions: string[];
   builtin: boolean;
+  /** 「全部授权」 (settings `plugins.trusted`): every capability check passes,
+   * declared or not. Built-ins are never in this list (they are compiled in). */
+  trusted: boolean;
   enabled: boolean;
   /** Entry JS file (disk plugins, relative to the plugin dir). */
   entry: string;
   /** View HTML file (disk mode plugins, relative to the plugin dir). */
   view: string;
+  /** Titlebar HTML file (disk mode plugins, relative to the plugin dir): a
+   * second sandboxed iframe rendered in the detached window's titlebar,
+   * between the title and the window controls. Unused while the mode lives
+   * inside the launcher. See docs/PLUGIN_API.md §6G. */
+  titlebar: string;
+  /** Mode plugins: `"list"` = the built-in list template renders the plugin's
+   * rows (no `view` needed; the plugin ships only `entry` logic). */
+  template: string;
   /** Global keywords (uTools-style mode entry). */
   keywords: string[];
   /** Mode plugins: the mode page's preferred window height (logical px);
    * null = use the global 设置 → 窗口大小 → 高度. */
   height: number | null;
+  /** Mode plugins: the page may be detached into its own window (P6). The
+   * detach affordance (mode-page button + pill) only shows for plugins that
+   * declare this. */
+  detachable: boolean;
   /** Mode plugins: pill icon (relative to the plugin dir; resolved to a
    * URL by the registry). Empty = no pill image. */
   icon: string;
+  /** Development flag (manifest `development`): the registry reloads the
+   * plugin from disk on every refresh (settings-applied) — code edits take
+   * effect without a restart. */
+  development: boolean;
+  /** Backend-computed pinyin of `keywords` (same order) — lets the frontend
+   * match "miao"/"ms" against the Chinese keyword 「秒搜」 without a pinyin
+   * library. Empty entries when the plugin has no keywords. */
+  keywordsPinyin: { full: string; initials: string }[];
+  /** Declarative entry rules (`[[features]]` in the manifest, any kind):
+   * a query the rule matches offers an 「<label>」 row that enters the plugin
+   * with the query text as payload. See `PluginFeature`. */
+  features: PluginFeature[];
+  /** Declarative settings (`[[settings]]`, P3.4) — rendered by 设置 → 插件;
+   * the values live in the plugin's `__settings` document and reach the
+   * plugin through `settings.all()` / `settings.get()` + `onSettings`. */
+  settings: PluginSetting[];
   /** Absolute plugin directory (disk plugins; empty for built-ins). */
   dir: string;
+}
+
+/** One manifest-declared setting (P3.4). The manifest is the schema: only
+ * declared keys can be written, so a renamed key cannot leave stale values. */
+export interface PluginSetting {
+  /** Key the plugin reads (`settings.get(key)`). */
+  key: string;
+  /** Pane label (the manifest's `label`, falling back to the key). */
+  label: string;
+  /** Input kind: `"toggle"` | `"select"` | `"text"` (unknown → text). */
+  type: "toggle" | "select" | "text" | string;
+  /** Value in effect until the user changes it. */
+  default: unknown;
+  /** `select` choices (`label` empty → the value is shown). */
+  options: { value: string; label: string }[];
+}
+
+/** A stored document (P3.1): the plugin's own fields plus the store's
+ * bookkeeping. `_rev` is the optimistic lock a write must present. */
+export type PluginDoc = Record<string, unknown> & { _id: string; _rev: number };
+
+/** A document to write: no `_rev` = "this is new" (an existing document then
+ * conflicts), `_rev` = "replace exactly the version I read". */
+export type PluginDocInput = Record<string, unknown> & { _id: string; _rev?: number };
+
+/** One `bulkDocs` outcome — a conflict is reported per entry. */
+export interface BulkDocResult {
+  _id: string;
+  _rev: number | null;
+  error: string | null;
+}
+
+/** One declarative entry rule (uTools-style feature). `regex` is compiled and
+ * matched **in the frontend** (JS `RegExp`, case-insensitive, cached per
+ * plugin+rule); a pattern that matches the empty string is ignored (it would
+ * fire on every keystroke — the same rule uTools applies to catch-all
+ * patterns). */
+export interface PluginFeature {
+  /** Unique code inside the plugin — delivered on enter. */
+  code: string;
+  /** `text` (default) | `files` | `img` | `window`. A `text` rule matches
+   * query text; a `files` rule matches OS drag-dropped files by
+   * `extensions`/`fileType`; an `img` rule matches the clipboard holding an
+   * image (read via `clipboard.readImage()`); a `window` rule matches the
+   * window that had focus before the launcher appeared. */
+  type: "text" | "files" | "img" | "window";
+  /** `files` rules: accepted extensions (case-insensitive; empty = any).
+   * When non-empty, extension matching wins and folders never match. */
+  extensions: string[];
+  /** `files` rules: a category instead of an extension list —
+   * `image` | `video` | `audio` | `document` | `text` | `folder` | `others`
+   * (P4). `folder` matches directories; the rest are extension tables over
+   * files. Ignored when `extensions` is non-empty. */
+  fileType: string | null;
+  /** `window` rules: foreground-window matchers. Within one field the
+   * values OR, across fields they AND; a rule with no field at all never
+   * matches. `process` = exe file name or stem (case-insensitive); `class` =
+   * exact Win32 window class (case-insensitive); `title` = case-insensitive
+   * substring, or a regex when wrapped in `/…/`. */
+  process: string[];
+  class: string[];
+  title: string[];
+  /** Row label; empty → the plugin name is used. */
+  label: string;
+  /** Regex matched against the query text. */
+  regex: string;
+  /** Match any non-empty text (used when `regex` is empty). */
+  over: boolean;
+  /** Optional bounds (characters for text rules; file counts for `files`). */
+  minLength: number | null;
+  maxLength: number | null;
+  /** Optional row icon (relative to the plugin dir). */
+  icon: string;
+}
+
+/** Payload delivered when a declarative entry rule fires. */
+export interface FeatureEnterInfo {
+  /** The rule's `code`. */
+  code: string;
+  /** How the entry was reached: a manifest rule, `app.redirect`, dropped
+   * files (`files`), the clipboard image (`img`) or the foreground window
+   * (`window`). */
+  type: "regex" | "over" | "redirect" | "files" | "img" | "window";
+  /** The matched query text (or the redirect payload; "" for files/img/
+   * window). */
+  payload: string;
+  /** `files` rules: the dropped file paths (the matched subset). */
+  paths?: string[];
+  /** `window` rules: the foreground window that matched. */
+  window?: ForegroundInfo;
 }
 
 /** The capability surface handed to disk plugin factories (v2, uTools-
@@ -75,12 +199,71 @@ export interface PluginHostApi {
      * holds until the next content-driven resize (Navigate auto-fit or a
      * mode switch re-applies the configured size). */
     resize(size: { width?: number; height?: number }): void;
+    /** Begin moving the host window from a pointer interaction inside the
+     * page. Only meaningful from a user-gesture handler (mousedown) — the
+     * detached titlebar page uses it because events inside an iframe never
+     * reach the host's drag region (docs/PLUGIN_API.md §6G). */
+    dragWindow(): void;
+    /** System notification (P1.2) — reaches the user while the launcher is
+     * hidden (the in-app toast cannot). Rendered through the shell's
+     * notification area; title/body are truncated by the shell's field
+     * widths. */
+    notify(title: string, body: string): Promise<void>;
+    /** Take over the launcher's search box (P2.3): subsequent keystrokes are
+     * delivered to this plugin's `onSubInput` instead of running a search.
+     * `placeholder` replaces the box's hint while owned; `value` writes an
+     * initial text. The host clears ownership on mode switch / next summon. */
+    setSubInput(opts?: { placeholder?: string; value?: string }): void;
+    /** Give the search box back to the host. */
+    removeSubInput(): void;
+    /** Jump to another plugin (P2.5): a mode is switched to and receives an
+     * `enter` with `type: "redirect"`; providers/services get
+     * `onFeature(info)`. Unknown ids are reported with a toast. */
+    redirect(pluginId: string, opts?: { code?: string; payload?: string }): void;
+    /** The window that had focus before the launcher appeared (P4, ROADMAP
+     * #28): process name, window class, title and — when it was an Explorer
+     * folder view — the folder path. `null` when no foreground window was
+     * ever captured this session. Permission: `window`. */
+    foreground(): Promise<ForegroundInfo | null>;
   };
   clipboard: {
     /** Current system clipboard text (null = non-text/empty). */
     readText(): Promise<string | null>;
     /** Write plain text to the system clipboard. */
     writeText(text: string): Promise<void>;
+    /** Put a PNG on the clipboard (base64 or a `data:image/png;base64,…` URI). */
+    writeImage(data: string): Promise<void>;
+    /** Put a file/folder list on the clipboard as CF_HDROP (Explorer-style
+     * copy). */
+    writeFiles(paths: string[]): Promise<void>;
+    /** The clipboard's current file list (empty when it holds something
+     * else). */
+    readFiles(): Promise<string[]>;
+    /** The clipboard's image as a `data:image/png;base64,…` URI (null when it
+     * holds no decodable image). Same sources the clipboard mode captures:
+     * CF_DIB/DIBV5, screenshot tools' custom PNG, CF_BITMAP. */
+    readImage(): Promise<string | null>;
+    /** Write one payload and paste it into the window that had focus before
+     * the launcher appeared (hide → Ctrl+V). Exactly one field. The payload
+     * stays on the clipboard afterwards, like a normal copy. */
+    paste(payload: { text?: string; image?: string; files?: string[] }): Promise<void>;
+  };
+  /** Host-side HTTP (P1.1) — no CORS: the request runs in a Rust worker via
+   * WinHTTP (Schannel TLS, automatic system proxy). http/https only, default
+   * timeout 10s (≤60s), response truncated at 4 MiB with `truncated` set. */
+  http: {
+    request(req: HttpRequest): Promise<HttpResponse>;
+  };
+  /** Native file pickers (P1.4). Cancelling resolves to `[]` / `null` — not
+   * an error, the plugin decides what to say. */
+  dialog: {
+    open(opts?: DialogOptions): Promise<string[]>;
+    save(opts?: DialogOptions): Promise<string | null>;
+  };
+  /** Screen geometry (P1.5) in **physical** pixels. */
+  screen: {
+    cursor(): Promise<{ x: number; y: number }>;
+    displays(): Promise<DisplayInfo[]>;
   };
   /** Plugin-scoped key/value store persisted to
    * `<base>/plugins/<id>/storage.json` (values are JSON-serialized). */
@@ -89,13 +272,54 @@ export interface PluginHostApi {
     set(key: string, value: unknown): Promise<void>;
     remove(key: string): Promise<void>;
   };
+  /** Plugin-scoped **document** store (P3.1) — `<base>/data/plugin_store.db`,
+   * a separate SQLite database so a plugin's data can be dropped wholesale.
+   * uTools/CouchDB-shaped: documents carry `_rev`, and a write that presents a
+   * stale one rejects with a message starting `conflict:` so the plugin can
+   * re-read and retry. `storage` stays as the v1 key/value shim.
+   *
+   * Caps: 512 KB per document, 2000 documents per plugin (also the
+   * `allDocs` limit), 1000 documents per `bulkDocs` call. Ids starting with
+   * `__` are host-owned and refused (they back `settings` and `storage`). */
+  db: {
+    /** The document, or null when it doesn't exist. */
+    get(id: string): Promise<PluginDoc | null>;
+    /** Create (no `_rev`) or replace (matching `_rev`); resolves with the
+     * stored `_id`/`_rev`, rejects with a `conflict: …` message otherwise. */
+    put(doc: PluginDocInput): Promise<{ _id: string; _rev: number }>;
+    /** Delete what you read — pass the document (its `_rev` is used) or an
+     * id plus the rev you read. */
+    remove(doc: PluginDoc | string, rev?: number): Promise<void>;
+    /** This plugin's documents, id-ordered; `__`-prefixed (host) documents
+     * are never listed. */
+    allDocs(opts?: { idStartsWith?: string; limit?: number }): Promise<PluginDoc[]>;
+    /** One transaction, per-document outcomes: a conflict is reported for
+     * that entry while the rest of the batch still lands. */
+    bulkDocs(docs: PluginDocInput[]): Promise<BulkDocResult[]>;
+  };
+  /** Declarative settings (P3.4). The manifest's `[[settings]]` block is the
+   * schema — the settings pane renders it and these calls read the values.
+   * `all()` is the natural call on page load; `onSettings` fires on change. */
+  settings: {
+    /** Every declared setting with its effective value (defaults ⊕ user). */
+    all(): Promise<Record<string, unknown>>;
+    /** One setting's effective value (null when it isn't declared). */
+    get<T = unknown>(key: string): Promise<T | null>;
+  };
   /** Filesystem reads for preview-style plugins. Arbitrary-path access is
-   * part of the v1 trust model (§9 安全模型: 显式放置即信任); the future
-   * permissions enforcement layer will gate it. */
+   * part of the v1 trust model (§9 安全模型: 显式放置即信任) — since P3.2 the
+   * host enforces the declared `fs.read` permission; a plugin's **own**
+   * `files/` dir needs none. */
   fs: {
     /** Text file preview, lossy-UTF8 decoded; rejects for files > 512KB —
      * show a "preview first 512KB" style message on rejection. */
     readText(path: string): Promise<string>;
+    /** Raw file bytes, base64-encoded (≤ 32 MB, rejects above). The byte
+     * channel for binary preview renderers (pdf.js, SheetJS): the P5 sandbox
+     * made plugin pages opaque origins, so fetch(asset://) is CORS-refused
+     * there and `<img>`/`<video>` (which bypass CORS) cannot hand bytes to
+     * JS. Permission: `fs.read`. */
+    bytes(path: string): Promise<string>;
     /** Shell thumbnail as a base64 PNG data URI (usable in `<img src>`).
      * Rejects when the shell has no thumbnail provider for the file. */
     thumb(path: string): Promise<string>;
@@ -105,6 +329,26 @@ export interface PluginHostApi {
     /** Shell icons for a batch of paths — same shape as `get_app_icons`
      * (`icon` is a data/asset URI or null when extraction failed). */
     icon(paths: string[]): Promise<{ path: string; icon: string | null }[]>;
+    /** Write text into the plugin's own `files/` dir (P3.3) — no permission
+     * needed, the directory belongs to the plugin. Resolves with the absolute
+     * path (handy for `openPath` / `paste` / an `<img src>`). `name` is a file
+     * name, never a path; ≤10 MiB. */
+    writeText(name: string, text: string): Promise<string>;
+    /** Write base64 bytes into `files/` (attachments, images; a
+     * `data:…;base64,` prefix is accepted). Resolves with the path. */
+    writeBytes(name: string, base64: string): Promise<string>;
+    /** Read one of the plugin's own files (lossy UTF-8). */
+    readPrivate(name: string): Promise<string>;
+    /** The plugin's own `files/` dir (empty when nothing was written yet). */
+    listPrivate(): Promise<{ name: string; size: number; mtime: number }[]>;
+    /** Absolute path of a file in `files/` without reading or writing it. */
+    privatePath(name: string): Promise<string>;
+    /** Delete one of the plugin's own files (a missing file is not an error). */
+    removePrivate(name: string): Promise<void>;
+    /** Write text to an **arbitrary** absolute path — the `fs.write`
+     * capability, refused unless the manifest declares it (or the plugin is
+     * 全部授权). The parent directory must exist; ≤10 MiB. */
+    writeFile(path: string, text: string): Promise<void>;
   };
   /** Whole-drive file search — the unified `file_search` facade (ROADMAP
    * #20): a running Everything when present, the LumeSVC self-hosted USN
@@ -135,12 +379,93 @@ export interface PluginFileSearchOptions {
   folder?: boolean;
 }
 
+/** One request for `http.request` (P1.1). */
+export interface HttpRequest {
+  /** Absolute http/https URL. */
+  url: string;
+  /** HTTP verb (default GET). Alphabetic only. */
+  method?: string;
+  headers?: Record<string, string>;
+  /** UTF-8 request body. */
+  body?: string;
+  /** Binary request body (base64); wins over `body`. */
+  bodyBase64?: string;
+  /** 1000–60000 ms (default 10000). */
+  timeoutMs?: number;
+}
+
+/** `http.request` reply. `body` is base64 (decode with `atob`) — the
+ * convenience wrapper the plugins see also carries `text()`/`json()`. */
+export interface HttpResponse {
+  status: number;
+  /** Response headers, keys lowercased. */
+  headers: Record<string, string>;
+  body: string;
+  /** True when the 4 MiB cap cut the body short. */
+  truncated: boolean;
+}
+
+/** Shared picker options for `dialog.open` / `dialog.save` (P1.4). */
+export interface DialogOptions {
+  title?: string;
+  /** Directory the picker opens in. */
+  defaultPath?: string;
+  /** Pre-filled file name. */
+  fileName?: string;
+  /** `extensions` without dots; an empty list means "all files". */
+  filters?: { name: string; extensions: string[] }[];
+  /** `dialog.open` only: allow several files (default false). */
+  multiple?: boolean;
+  /** `dialog.open` only: pick directories instead of files. */
+  folder?: boolean;
+}
+
+/** One monitor (P1.5), physical pixels. */
+export interface DisplayInfo {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Work area (the monitor minus the taskbar). */
+  workX: number;
+  workY: number;
+  workWidth: number;
+  workHeight: number;
+  primary: boolean;
+}
+
+/** The window that had focus before the launcher appeared (P4, ROADMAP
+ * #28) — what `app.foreground()` returns and what a `type = "window"`
+ * feature's payload carries. Snapshot semantics: captured at summon time,
+ * not re-probed per call. */
+export interface ForegroundInfo {
+  /** Foreground process executable file name (e.g. "chrome.exe"; "" when
+   * it could not be resolved). */
+  process: string;
+  /** Win32 window class (e.g. "CabinetWClass" for Explorer folders). */
+  className: string;
+  /** Window caption text. */
+  title: string;
+  /** Local absolute folder path — set when the window was an Explorer
+   * filesystem view (Windows 11 tabs resolve the active tab). */
+  path?: string;
+}
+
 /** Optional lifecycle hooks for disk **service** plugins (headless). */
 export interface ServiceHooks {
   onShow?(): void;
   onHide?(): void;
   /** Every Navigate keystroke (non-empty query). */
   onQuery?(q: string): void;
+  /** A declarative entry rule of this plugin fired (P2.1) — the headless
+   * handler runs without any UI (e.g. transform the text and copy it). */
+  onFeature?(info: FeatureEnterInfo): void;
+  /** The service took over the search box (`app.setSubInput`) — keystrokes
+   * arrive here (P2.3). */
+  onSubInput?(text: string): void;
+  /** The user changed this plugin's declared settings (P3.4) — `values` is
+   * the effective set (`settings.all()`), delivered on change. */
+  onSettings?(values: Record<string, unknown>): void;
 }
 
 /** What a disk **mode** plugin's factory returns. The page UI lives in
@@ -188,6 +513,18 @@ export interface PluginServices {
   /** Resize the launcher window (logical px; omitted axes keep their size).
    * Backs the disk-plugin `app.resize` bridge RPC. */
   resizeWindow(size: { width?: number; height?: number }): void;
+  /** `app.dragWindow` bridge RPC — begin moving the host window (the
+   * launcher while in-launcher, the plugin's own window when detached). */
+  dragWindow(): void;
+  /** Search-box ownership (P2.3): `opts` claims it for `pluginId`, `null`
+   * releases it. Only the active mode's owner receives keystrokes. */
+  setSubInput(pluginId: string, opts: { placeholder?: string; value?: string } | null): void;
+  /** The plugin id currently owning the search box (null = the host owns it). */
+  subInputOwner(): string | null;
+  /** Switch to a plugin's mode and/or deliver a declarative entry payload
+   * (P2.1 features + P2.5 redirect). Returns false when the target is
+   * unknown or unloaded. */
+  enterPlugin(pluginId: string, info: FeatureEnterInfo): boolean;
 }
 
 /** Structural subset of the shared MenuState (avoids a launcher import). */
@@ -221,6 +558,15 @@ export interface ModeInstance {
   activate(): void;
   /** Handle a key while this mode is active; true = consumed. */
   onKey(e: KeyboardEvent, ctx: ModeKeyContext): boolean;
+  /** A declarative entry rule targeted this mode (P2.1) — the payload is the
+   * matched query text. Called after the mode is switched to. */
+  onEnter?(info: FeatureEnterInfo): void;
+  /** The mode took over the search box (`app.setSubInput`): every keystroke
+   * arrives here instead of running the mode's own search (P2.3). */
+  onSubInput?(text: string): void;
+  /** The user changed this plugin's settings (P3.4); disk mode pages get the
+   * same values as a `lume.on.settings` event. */
+  onSettings?(values: Record<string, unknown>): void;
   /** Consume Esc (e.g. leave multi-select); true = handled, root won't hide. */
   onEscape(): boolean;
   /** Satellite preview request for the selected row (null = hide). */
@@ -263,12 +609,29 @@ export interface PreviewService {
   clear(): void;
 }
 
-/** A search result contributed by a provider — AppEntry-shaped, so the
- * results grid, activation (launch_app opens files AND URLs) and the icon
- * pipeline treat provider rows exactly like app rows. */
+/** A search result contributed by a provider. Plain `{name, path}` rows
+ * activate exactly like native results (launch_app opens files AND URLs);
+ * the optional fields turn a row into a richer or plugin-activated entry. */
 export interface ProviderResult {
   name: string;
-  path: string;
+  /** File path or URL opened on activation. Optional when `enter` is set
+   * (an action row that doesn't open anything) — the host generates a
+   * synthetic unique key for deduplication. */
+  path?: string;
+  /** Optional second line rendered under the name in the results grid. */
+  description?: string;
+  /** Explicit icon: data:/http(s):/asset:/blob: URIs pass through, anything
+   * else is treated as a file path (resolved via the asset protocol).
+   * Omitted → the regular icon pipeline for `path`. */
+  icon?: string;
+  /** Marker: activating this row calls the provider's `onEnter(item)`
+   * instead of launch_app. The launcher stays open — the plugin decides
+   * when to hide itself (ctx.app.hide). */
+  enter?: boolean;
+  /** Marker: activating this row drills down — calls the provider's
+   * `select(item)` and replaces the grid with its rows (Esc returns to the
+   * parent level). Requires the provider to implement `select`. */
+  drill?: boolean;
 }
 
 /** A Navigate-page bar (栏目) contributed by a plugin — rendered on the
@@ -293,6 +656,22 @@ export interface NavBarContribution {
  * (appended after the native index, deduped by path). */
 export interface ProviderInstance {
   search(query: string): Promise<ProviderResult[]>;
+  /** Called when the user activates a row whose `enter` was set. The same
+   * result object `search` returned comes back (extra plugin fields are
+   * preserved). Exceptions are logged and isolated like search errors. */
+  onEnter?(item: ProviderResult): void;
+  /** Called when a declarative entry rule of this plugin fires (P2.1). */
+  onFeature?(info: FeatureEnterInfo): void;
+  /** Drill-down (P2.4): the rows one level below `item`. Activating a row
+   * marked `drill` calls this; its rows become the grid content and Esc
+   * returns to the previous level. */
+  select?(item: ProviderResult): Promise<ProviderResult[]> | ProviderResult[];
+  /** Optional: while drilled into `item`, typing in the search box asks for
+   * matching rows instead of running a normal search. Without it the box
+   * keeps its usual meaning and typing leaves the drilled level. */
+  filter?(item: ProviderResult, query: string): Promise<ProviderResult[]> | ProviderResult[];
+  /** The user changed this plugin's declared settings (P3.4). */
+  onSettings?(values: Record<string, unknown>): void;
 }
 
 /** A plugin: manifest identity + its already-created contributions.
@@ -317,6 +696,15 @@ export interface LauncherPlugin {
   navBars?: () => Promise<NavBarContribution[]> | NavBarContribution[];
   /** Global keywords + display name (uTools-style mode entry). */
   keywords?: string[];
+  /** Backend-computed pinyin of `keywords` (same order) — consumed by
+   * `modeKeywordMatches` for the tiered (exact → prefix → initials → full
+   * pinyin) matching. */
+  keywordsPinyin?: { full: string; initials: string }[];
+  /** Declarative entry rules (P2.1) — consumed by `featureMatches`. */
+  features?: PluginFeature[];
+  /** Absolute plugin directory (disk plugins) — used to resolve relative
+   * feature icons. */
+  dir?: string;
   pluginName?: string;
   /** Headless lifecycle hooks (disk service plugins). */
   lifecycle?: ServiceHooks;

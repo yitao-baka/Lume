@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font:13px sans-serif;padding:12px">
+<div id="out">probe running…</div>
+<script>
+// 沙箱自检：全部断言在 opaque-origin iframe 内执行，结果经 lume.storage
+// 落到插件私有数据（脚本从宿主侧读回）。按键/焦点转发同样由本页自行派发
+// 合成事件驱动——宿主侧只观察结果。
+var results = {};
+function done() {
+  document.getElementById("out").textContent = JSON.stringify(results);
+  lume.storage.set("probe", JSON.stringify(results));
+}
+window.addEventListener("load", function () {
+  results.origin = window.location.origin;
+  results.srcdoc = window.location.href === "about:srcdoc";
+  try { window.localStorage; results.localStorage = "reachable"; }
+  catch (e) { results.localStorage = "blocked"; }
+  try { results.parentDoc = parent.document ? "reachable" : "null"; }
+  catch (e) { results.parentDoc = "blocked"; }
+  try { results.parentInternals = typeof parent.__TAURI_INTERNALS__; }
+  catch (e) { results.parentInternals = "threw"; }
+  results.ownDoc = typeof document;
+  results.hasLume = typeof window.lume;
+
+  // 按键转发：bridge 把非可编辑目标的 keydown 转给宿主路由，路由回投
+  // lume.on.key——异步回路，等一拍再收结果。
+  window.__keys = [];
+  lume.on.key = function (k) { window.__keys.push(k.key); };
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }));
+  document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+
+  setTimeout(function () {
+    results.keysAfterA = window.__keys.slice();
+    // Tab 由脚本经 query 事件遥控（"tab"）——自派会把模式切走、抢在脚本
+    // 读回结果之前卸载本页。
+    lume.on.query = function (q) {
+      if (q === "tab") {
+        document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+      }
+    };
+    done();
+  }, 700);
+});
+</script>
+</body>
+</html>

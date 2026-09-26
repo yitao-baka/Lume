@@ -35,6 +35,28 @@ surface is a frameless, transparent, always-on-top window with a Windows
 - Letter tiles: deterministic 10-color palette, dark-on-light text, rounded
   8px — an interim stand-in for real app icons.
 
+## Window chrome
+
+- The settings window and the detached plugin windows are **frameless**
+  (`decorations(false)` + `shadow(true)`, opaque) and draw their own
+  titlebar with the shared `src/components/TitleBar.tsx`: the settings
+  topbar embeds `<TitleBarControls>`, plugin windows use the standalone
+  `<TitleBar>` row.
+- Opaque on purpose — Win11 rounds the corners via DWM and tao keeps its
+  native invisible resize borders (a transparent resizable window would
+  turn those borders into a visible dead zone). Win10 gets square corners.
+- Dragging: `data-tauri-drag-region` on the chrome row (direct clicks only
+  — buttons/inputs keep their own semantics). Double-click maximize/restore
+  is Tauri's built-in drag-region behavior (`internal_toggle_maximize`,
+  granted by `core:default`); minimize / pin / close run through
+  `window_minimize` / `window_toggle_maximize` (maximize button) /
+  `window_toggle_pin` / each window's own close path.
+- Controls follow the `.icon-btn` language (34×30 hover target, 6px
+  radius, `--text-muted` → `--text` on hover, `--hover` fill); close
+  flashes the Windows caption red `#e81123`.
+- Palette tokens live in `src/theme.css`, shared by every themed surface;
+  the preview window stays self-contained (always dark).
+
 ## Behavior
 
 - The launcher is content — never the point. No decorative motion, no

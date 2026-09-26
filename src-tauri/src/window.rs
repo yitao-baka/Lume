@@ -13,6 +13,8 @@ use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, State,
     WebviewWindow,
 };
+use windows::Win32::Foundation::COLORREF;
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
 /// Label of the launcher window defined in `tauri.conf.json`.
@@ -354,6 +356,44 @@ pub fn close_settings(app: AppHandle) -> Result<(), String> {
     // Settings now hidden → Low; the preview stays as it was.
     sync_aux_memory_targets(&app);
     Ok(())
+}
+
+/// ── Self-chrome window controls ──
+/// The frameless settings/plugin windows draw their own titlebar
+/// (src/components/TitleBar.tsx); these commands are its backend. Tauri
+/// injects the `window` parameter as the CALLING window, so a page can only
+/// ever control itself — no label validation needed, and the opaque plugin
+/// iframe (which cannot invoke commands) has no path here. Custom commands
+/// are ungated by ACL by design (see capabilities/plugin-windows.json).
+
+/// Minimize the calling window (titlebar ─ button).
+#[tauri::command]
+pub fn window_minimize(window: WebviewWindow) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())
+}
+
+/// Toggle maximize/restore on the calling window (titlebar □/❐ button; the
+/// chrome's double-click is Tauri's built-in `internal_toggle_maximize`).
+/// Returns the new maximized state so the titlebar can swap its glyph.
+#[tauri::command]
+pub fn window_toggle_maximize(window: WebviewWindow) -> Result<bool, String> {
+    let next = !window.is_maximized().map_err(|e| e.to_string())?;
+    if next {
+        window.maximize().map_err(|e| e.to_string())?;
+    } else {
+        window.unmaximize().map_err(|e| e.to_string())?;
+    }
+    Ok(next)
+}
+
+/// Toggle always-on-top ("pin", titlebar 📌 button) on the calling window.
+/// Returns the new state; session-scoped only — windows are created unpinned
+/// and the pin never persists into settings.
+#[tauri::command]
+pub fn window_toggle_pin(window: WebviewWindow) -> Result<bool, String> {
+    let next = !window.is_always_on_top().map_err(|e| e.to_string())?;
+    window.set_always_on_top(next).map_err(|e| e.to_string())?;
+    Ok(next)
 }
 
 /// Apply the window-geometry settings to the launcher immediately (used by
@@ -700,6 +740,27 @@ fn preview_page_url(app: &AppHandle) -> tauri::Url {
         tauri::Url::parse("http://tauri.localhost").unwrap()
     };
     base.join("preview.html").unwrap_or(base)
+}
+
+/// Remove the 1px system border DWM draws around frameless windows that keep
+/// their native shadow (`decorations(false)` + `shadow(true)`, opaque
+/// resizable ones — the detached plugin, settings and preview windows).
+/// The user sees it as a bright stroke around the window on Win11. Only the
+/// border line goes: the DWM drop shadow and the Win11 rounded corners stay.
+/// Pre-Win11 DWM rejects the attribute — ignore the result.
+pub fn clear_dwm_border(win: &WebviewWindow) {
+    if let Ok(hwnd) = win.hwnd() {
+        // DWMWA_COLOR_NONE — "draw no border".
+        let none = COLORREF(0xFFFF_FFFE);
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                std::ptr::from_ref(&none).cast(),
+                std::mem::size_of::<COLORREF>() as u32,
+            );
+        }
+    }
 }
 
 #[cfg(test)]

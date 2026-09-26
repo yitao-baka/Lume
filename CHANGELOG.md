@@ -6,8 +6,78 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **分离窗口「白描边」与「纯黑」背景** — 两个渲染层问题叠加（用户观感反馈，
+  CDP 像素级实证）：① Chromium 给无 `border:none` 的 iframe 画 UA 默认
+  `border: 2px inset`（左深右浅的凹陷框，DPI 缩放下呈 2–3px 亮线）——
+  启动器侧 `.plugin-frame` 一直有 `border: none`，`pluginWindow.css` 漏了，
+  视图 iframe 与标题栏槽位 iframe 都中招，补 `.plugin-window-root iframe
+  { border: none }`；② 沙箱插件页是跨进程（OOPIF）frame，透明像素合成
+  WebView2 自己的暗色画布（#121212）而非宿主页背景，插件页现已自涂不透明
+  surface（插件侧 2.7.1），宿主给分离窗口设 `background_color(#1e1e20)`
+  画布兜底，并新增 `window::clear_dwm_border`（`DWMWA_BORDER_COLOR =
+  DWMWA_COLOR_NONE`）压掉 shadow(true) 无边框窗口文档记载的 1px 系统白边
+  ——阴影与 Win11 圆角保留，插件/设置/预览三个窗口统一应用
+  （`plugin_window.rs`、`lib.rs`、`window.rs`、`pluginWindow.css`）。
+- **标题栏槽位消息通道失活** — `slot={titlebarHtml() ? <slotView.View /> :
+  undefined}` 把槽位组件写进反应式 prop getter：`titlebarHtml`/
+  `pluginName` 变化时 Solid 重新调用组件、重建 iframe，已接线的实例（消息
+  监听器 + frame 引用）与 DOM 中存活的 iframe 被拆散——槽位的 RPC 与事件
+  整体失灵，`titlebar` 槽位页收不到任何状态、其 RPC 也到不了宿主
+  （`titlebar-demo` 同样受影响）。现改为 App 作用域只创建一次槽位元素，
+  可见性交给响应式 classList（无 titlebar 页的插件保持空槽 + 拖动区）。
+
 ### Added
 
+- **分离窗口权限/主题补全 + `fs.bytes` 字节桥接（2026-09-25）** — 三项跟进，
+  补齐 P5/P6 落地后插件生态实际会遇到的三处缺口：
+  ① **分离窗口权限台账接线**（修复）：`setPermissionSource` 原本只在启动器
+  窗口的 registry 里调用，独立窗口没有 registry——所有需要权限的能力
+  （`search.files`/`fs.read`/`clipboard`/`trash`）在分离窗口里一律被拒为
+  「unknown plugin」。`pluginWindow.tsx` 现在在加载视图前经 `get_plugins`
+  接线，settings-applied 时随主题一起刷新；
+  ② **`fs.bytes(path)` 桥接**（新 `fs.read` 能力）：P5 沙箱让 mode 页成为
+  opaque origin，`fetch(asset://)` 被 CORS 拒绝——pdf.js/SheetJS 这类要在
+  JS 里解二进制的预览渲染器失去字节通道；`bytes` 返回 base64 原始字节
+  （≤ 32 MB，Rust 侧 `get_file_bytes`），图片/音视频走 `<img>`/`<video>`
+  标签不受影响；
+  ③ **`lume.on.theme` 颜色模式推送**：沙箱后插件页读不到宿主文档，registry
+  监听 `data-theme` 变更，向模式页 post、向分离窗口经
+  `plugin_window_push_state` 携带/推送 `theme`，就绪握手一并重放——插件
+  深浅色跟随启动器的权威来源（§6C 事件表、§6G.4）。
+- **mode 插件页独立窗口（P6）** — mode 插件可在清单声明 `detachable = true`，
+  激活该模式时页面右上角悬停出现「在独立窗口打开」按钮：点击后启动器隐藏、
+  插件页面在自己的窗口里打开（窗口标题 = 插件名，默认尺寸取清单 `height`，
+  关闭时记忆几何、下次分离原位恢复）。窗口内是**同一个沙箱桥接 iframe**
+  （`plugin.html` 第三个 Vite 入口），`window.lume` 契约不变，仅宿主语义随
+  窗口调整（`app.hide` = 隐藏窗口、`app.resize` = 改窗口尺寸、toast 窗口内
+  浮动、`setQuery`/子输入框不可用、`redirect` 经 Rust 事件转回启动器路由、
+  未消费 Esc 关闭窗口）。再次激活已分离的模式（pill/Tab/关键字/redirect）
+  = 聚焦其窗口；禁用/重载插件自动关窗。插件**逻辑钩子**始终留在启动器窗口，
+  页面状态经 `plugin_window_push_state` → `plugin-state` 事件跨窗口推送
+  （就绪握手对齐桥内 `__lumeReady` 重放）。窗口为**运行时创建**（`plugin-<id>`
+  标签，lume 首例，按插件复用）；新能力文件 `capabilities/plugin-windows.json`
+  （glob `plugin-*`）。示例 hello-mode 已声明 `detachable`；实机脚本
+  `scripts/cdp_plugin_window_verify.mjs`
+  （`src-tauri/src/plugin_window.rs`、`src-tauri/src/plugins.rs`、
+  `src/plugin.html`、`src/pluginWindow.tsx`、`src/plugins/{registry,rpc,types}.ts`、
+  `src/App.tsx`）。
+- **插件沙箱机制（P5）** — mode 页 iframe 从同源 srcdoc 升级为 **opaque-origin
+  沙箱**（`sandbox="allow-scripts allow-forms allow-popups allow-modals"`，
+  无 allow-same-origin）：插件页够不到宿主文档与 `parent.__TAURI_INTERNALS__`、
+  不能导航顶层窗口（原 §9 承认的同源绕过关死）。按键/焦点转发移入桥接脚本
+  （postMessage 协议 + 消费回执迟滞 preventDefault），Esc「页面 preventDefault
+  即消费」契约不变；页内 `localStorage` 不可用（用 `ctx.storage`/`db`）、页内
+  `fetch` 受 CORS 限制（用 `lume.http.request`）。同时新增 **Rust 命令侧权限
+  白名单** `plugin_perm.rs`：每个宿主能力命令（notify/clipboard/http/dialog/
+  screen/search.files/fs.write/trash）按调用方 plugin_id 对照清单
+  `permissions` 再校验一次（fail-closed，缓存随 `get_plugins`/`reload_plugin`
+  刷新；`file_search`/`trash_to_recycle` 的原生路径 = main 窗口且不带 id）。
+  权限层从「前端知情同意」升级为「前端 + 命令侧双层防线」；7 项 Rust 单测 +
+  `scripts/cdp_sandbox_verify.mjs` 14 项实机验证（探针插件在沙箱内自检）
+  （`src-tauri/src/plugin_perm.rs`、`src/plugins/{iframeBridge,permissions,
+  hostApi}.ts`）。
 - **提权注入代理（Elevation agent）** — 新增第三个二进制 `lume-agent.exe`：一个
   极小的**高完整性**助手，唯一能力是「向指定前台窗口发送一次配置好的组合键」。
   解决的是自动动作对**以管理员权限运行的目标程序**永远不生效——根因是 UIPI

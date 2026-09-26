@@ -1,0 +1,43 @@
+/* Shared theme tokens — the palette `--*` custom properties used by every
+   themed window surface (launcher, settings, detached plugin windows).
+   `src/theme.ts` sets `data-theme` on <html> per the 颜色模式 setting, and the
+   theme-push pipeline (registry.ts → plugin-state / settings-applied) keeps
+   every open window in sync. Defaults = dark (the historical theme, no flash
+   before JS).
+   Split out of App.css so the plugin window host page — which must not load
+   the launcher's component styles — gets the same tokens. The preview window
+   deliberately stays self-contained (always dark, no variables).
+   (docs/UI_GUIDELINES.md) */
+
+/* Dark palette (default). */
+:root {
+  --bg: rgba(30, 30, 32, 0.75);            /* launcher panel over the Acrylic */
+  --surface: #1e1e20;                      /* settings window / solid panels */
+  --surface-raised: rgba(38, 38, 40, 0.97);/* context menu */
+  --text: #f2f2f2;
+  --text-secondary: rgba(242, 242, 242, 0.6);
+  --text-muted: rgba(242, 242, 242, 0.45);
+  --text-faint: rgba(242, 242, 242, 0.35);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --hover: rgba(255, 255, 255, 0.08);
+  --selected: rgba(255, 255, 255, 0.14);
+  /* Bundled SVGs use dark `#333` strokes — invert so they read as light icons. */
+  --icon-filter: invert(1);
+}
+
+:root[data-theme="light"] {
+  --bg: rgba(248, 249, 250, 0.92);
+  --surface: #fbfbfd;
+  --surface-raised: #ffffff;
+  --text: #1f2328;
+  --text-secondary: rgba(31, 35, 40, 0.65);
+  --text-muted: rgba(31, 35, 40, 0.5);
+  --text-faint: rgba(31, 35, 40, 0.38);
+  --border: rgba(31, 35, 40, 0.1);
+  --border-strong: rgba(31, 35, 40, 0.2);
+  --hover: rgba(31, 35, 40, 0.06);
+  --selected: rgba(31, 35, 40, 0.08);
+  /* #333 strokes already read as dark icons on the light theme. */
+  --icon-filter: none;
+}

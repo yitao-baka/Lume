@@ -1,0 +1,66 @@
+/* Detached plugin window (P6) — the host page for a mode plugin living in
+   its own window. The shared TitleBar (src/components/TitleBar.tsx) sits
+   above the bridged iframe; the iframe fills the rest. Colors follow the
+   shared theme variables (src/theme.css — same tokens as the launcher). */
+
+@import "./theme.css";
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--surface);
+}
+
+.plugin-window-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.plugin-window-root .plugin-frame {
+  flex: 1;
+  height: auto;
+}
+
+/* Chromium gives iframes a UA `border: 2px inset` unless suppressed — on the
+   detached window it renders as a bright stroke hugging the window edges (the
+   launcher's .plugin-frame already carries `border: none`; the slot iframe
+   needs it too). */
+.plugin-window-root iframe {
+  border: none;
+}
+
+/* Window-local toast backing `window.lume.app.toast` in the detached host
+   (the launcher's toast lives in the main window). */
+#plugin-window-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  max-width: 70%;
+  padding: 7px 14px;
+  border-radius: 8px;
+  background: var(--surface-raised, rgba(30, 30, 32, 0.92));
+  color: var(--text);
+  font: 13px/1.4 sans-serif;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Slot host (pluginWindow.tsx creates it once): sizes the iframe and hides
+   the slot entirely for plugins without a titlebar page — non-interactive so
+   the chrome row's drag region shows through. */
+.titlebar-slot-host {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+}
+.titlebar-slot-host.titlebar-slot-empty {
+  visibility: hidden;
+  pointer-events: none;
+}

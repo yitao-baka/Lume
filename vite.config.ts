@@ -30,12 +30,14 @@ export default defineConfig(async () => ({
     },
   },
   // Multi-page build: the satellite preview window loads its own tiny page
-  // (preview.html → src/preview.tsx), so the prod bundle must emit both.
+  // (preview.html → src/preview.tsx) and detached plugin windows their own
+  // (plugin.html → src/pluginWindow.tsx), so the prod bundle must emit all.
   build: {
     rollupOptions: {
       input: {
         main: "index.html",
         preview: "preview.html",
+        plugin: "plugin.html",
       },
     },
   },

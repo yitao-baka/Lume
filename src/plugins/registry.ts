@@ -11,10 +11,14 @@
 
 import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import type { LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginManifest, PluginServices } from "./types";
+import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { createHostApi } from "./hostApi";
 import { createIframeView, injectBridge } from "./iframeBridge";
+import { createListTemplateMode } from "./listTemplate";
+import { fetchDiskFile } from "./disk";
+import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
+import { setPermissionSource } from "./permissions";
 export {
   APPS_MODE,
   type LauncherPlugin,
@@ -78,10 +82,7 @@ export function allPlugins(): LauncherPlugin[] {
 }
 
 /** Enabled provider instances (contributed by registered and disk plugins). */
-export function providerPlugins(): {
-  id: string;
-  instance: { search(query: string): Promise<{ name: string; path: string }[]> };
-}[] {
+export function providerPlugins(): { id: string; instance: ProviderInstance }[] {
   return plugins
     .filter((p) => p.provider && isEnabled(p.id))
     .map((p) => ({ id: p.id, instance: p.provider! }));
@@ -102,6 +103,10 @@ export function providerPlugins(): {
 // reserved for a future enforcement layer). The mode view iframe is
 // same-origin (srcdoc) — no sandbox beyond that trust decision.
 const loadedDiskIds = new Set<string>();
+/** Ids that this module actually registered into `plugins` (disk loads only)
+ * — unload removes exactly these, never a built-in that happens to share an
+ * id with a disk manifest. */
+const registeredDiskIds = new Set<string>();
 let pluginServices: PluginServices | null = null;
 
 /** Wire the composition-root services (the host API needs them). Call once
@@ -110,22 +115,113 @@ export function setPluginServices(services: PluginServices) {
   pluginServices = services;
 }
 
-async function importDiskModule(dir: string, entry: string): Promise<any> {
-  const url = convertFileSrc(dir + "\\" + entry);
-  const text = await fetch(url).then((r) => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.text();
-  });
-  const blob = new Blob([text], { type: "text/javascript" });
-  return import(URL.createObjectURL(blob));
+// ── Multi-file ESM module loader (P0.4) ──
+//
+// A disk entry may be a single ES Module file or a bundled multi-file build
+// (e.g. an esbuild/vite product — the Rust side resolves an `entry` directory
+// to `index.js` inside it). Relative imports (`./x.js`, `../y.js`) are
+// rewritten to blob URLs: every referenced file is fetched via the asset
+// protocol, compiled the same way (recursively, cached by path), and the
+// specifier is replaced with its blob URL before `import()`. Bare package
+// names are NOT resolved — bundle the dependencies in (standard practice for
+// launcher plugins; no node_modules on disk).
+
+/** Static `from "..."` / bare `import "..."` / dynamic `import("...")` with a
+ * relative specifier. */
+const RELATIVE_IMPORT_RE =
+  /(from\s*|import\s*\(\s*|import\s*)(["'])(\.{1,2}\/[^"']+)\2/g;
+
+/** One blob-imported module: its URL (for parent rewrites) + namespace. */
+interface CompiledModule {
+  url: string;
+  mod: unknown;
 }
 
-async function fetchDiskFile(path: string): Promise<string> {
-  const text = await fetch(convertFileSrc(path)).then((r) => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.text();
-  });
-  return text;
+/** Path → compiled module promise. Cache across loads within a session;
+ * cleared on plugin reload so re-imported code is re-read from disk. */
+const moduleCache = new Map<string, Promise<CompiledModule>>();
+
+/** Normalized cache key for a module path. */
+function moduleKey(p: string): string {
+  return p.replace(/\//g, "\\").toLowerCase();
+}
+
+/** The directory part of a Windows path (any separator mix). */
+function parentDir(p: string): string {
+  const norm = p.replace(/\//g, "\\");
+  const i = norm.lastIndexOf("\\");
+  return i > 0 ? norm.slice(0, i) : norm;
+}
+
+/** Resolve `dir` + relative `spec` (`./x.js`, `../../y/z.js`) to a plain
+ * Windows path without drive-dependent logic. */
+function resolveRelative(dir: string, spec: string): string {
+  const parts = (dir + "\\" + spec.replace(/\//g, "\\")).split("\\");
+  const out: string[] = [];
+  for (const part of parts) {
+    if (!part || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return out.join("\\");
+}
+
+/** Fetch a module file's text. Without an extension, `.js` then
+ * `<dir>/index.js` are tried (extensionless relative imports). */
+async function fetchModuleText(path: string): Promise<string> {
+  const candidates = /\.[a-zA-Z0-9]+$/.test(path)
+    ? [path]
+    : [path + ".js", path + "\\index.js"];
+  let lastErr: unknown;
+  for (const c of candidates) {
+    try {
+      return await fetchDiskFile(c);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr ?? new Error(`module not found: ${path}`);
+}
+
+/** Compile one module (and, recursively, its relative imports) from disk. */
+function compileDiskModule(absPath: string): Promise<CompiledModule> {
+  const key = moduleKey(absPath);
+  const cached = moduleCache.get(key);
+  if (cached) return cached;
+  const compiled = (async (): Promise<CompiledModule> => {
+    const text = await fetchModuleText(absPath);
+    const dir = parentDir(absPath);
+    const deps = new Map<string, Promise<string>>(); // specifier → blob URL
+    for (const m of text.matchAll(RELATIVE_IMPORT_RE)) {
+      const spec = m[3];
+      if (!deps.has(spec)) {
+        deps.set(
+          spec,
+          compileDiskModule(resolveRelative(dir, spec)).then((c) => c.url)
+        );
+      }
+    }
+    const urls = new Map<string, string>(
+      await Promise.all(
+        [...deps.entries()].map(
+          async ([s, pr]) => [s, await pr] as [string, string]
+        )
+      )
+    );
+    const rewritten = text.replace(RELATIVE_IMPORT_RE, (m, pre, q, spec) => {
+      const url = urls.get(spec);
+      return url ? pre + q + url + q : m;
+    });
+    const url = URL.createObjectURL(new Blob([rewritten], { type: "text/javascript" }));
+    return { url, mod: await import(url) };
+  })();
+  moduleCache.set(key, compiled);
+  return compiled;
+}
+
+async function importDiskModule(dir: string, entry: string): Promise<any> {
+  const joined = dir + "\\" + entry.replace(/\//g, "\\");
+  return (await compileDiskModule(joined)).mod;
 }
 
 /** Accepts both the legacy plain-object form and the v2 factory form.
@@ -142,7 +238,7 @@ function resolveLogic(def: unknown, api: ReturnType<typeof createHostApi>): Reco
   return (def && typeof def === "object" ? def : {}) as Record<string, unknown>;
 }
 
-function callHook(id: string, logic: Record<string, unknown>, name: string, ...args: unknown[]) {
+export function callHook(id: string, logic: Record<string, unknown>, name: string, ...args: unknown[]) {
   const fn = logic[name];
   if (typeof fn === "function") {
     try {
@@ -223,62 +319,24 @@ function navBarsContribution(
   };
 }
 
-/** Route a bridge RPC ("app.hide" / "storage.get" / …) to the host API. */
+// ── Capability permissions (P3.2) ──
+//
+// The ledger, the fail-closed check and the guard that applies it to every
+// host API live in `permissions.ts`; this module only wires the manifest
+// lookup the check consults (the manifests signal is owned here). The guard
+// runs inside `createHostApi`, so both paths a disk plugin has — its logic in
+// this window and its mode page over the bridge — are covered.
+setPermissionSource((id) => manifests().find((x) => x.id === id));
+
+/** Route a bridge RPC ("app.hide" / "storage.get" / …) to the host API.
+ * The router lives in `rpc.ts` so a detached plugin window can answer the
+ * same bridge traffic for its own page. */
 async function execHostRpc(
   id: string,
   method: string,
   args: Record<string, unknown>
 ): Promise<unknown> {
-  plog.debug(id, "rpc →", method, args);
-  const api = createHostApi(id, pluginServices!);
-  const a = args as Record<string, string>;
-  switch (method) {
-    case "app.hide":
-      return api.app.hide();
-    case "app.toast":
-      return api.app.toast(a.text, a.opts as never);
-    case "app.setQuery":
-      return api.app.setQuery(a.q);
-    case "app.setPlaceholder":
-      return api.app.setPlaceholder(a.text);
-    case "app.openPath":
-      return api.app.openPath(a.path);
-    case "app.revealPath":
-      return api.app.revealPath(a.path);
-    case "app.trash":
-      return api.app.trash(args.paths as string[]);
-    case "app.resize":
-      return api.app.resize({
-        width: args.width as number | undefined,
-        height: args.height as number | undefined,
-      });
-    case "fs.readText":
-      return api.fs.readText(a.path);
-    case "fs.thumb":
-      return api.fs.thumb(a.path);
-    case "fs.videoPoster":
-      return api.fs.videoPoster(a.path);
-    case "fs.icon":
-      return api.fs.icon(args.paths as string[]);
-    case "clipboard.readText":
-      return api.clipboard.readText();
-    case "clipboard.writeText":
-      return api.clipboard.writeText(a.text);
-    case "storage.get":
-      return api.storage.get(a.key);
-    case "storage.set":
-      return api.storage.set(a.key, (args as { value: unknown }).value);
-    case "storage.remove":
-      return api.storage.remove(a.key);
-    case "search.files": {
-      // Second arg: legacy number (= max) or { offset, max, sort }.
-      const o = args.opts as { offset?: number; max?: number; sort?: string } | undefined;
-      return api.search.files(a.q, o);
-    }
-    default:
-      plog.error(id, "unknown lume rpc:", method);
-      throw new Error(`unknown lume rpc: ${method}`);
-  }
+  return execHostRpcShared(id, method, args, pluginServices!);
 }
 
 /** Build the ModeInstance for a disk mode plugin (bridged iframe UI). */
@@ -290,7 +348,54 @@ function createDiskModeInstance(
   const [query, setQuerySig] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   const hook = (name: string, ...args: unknown[]) => callHook(m.id, logic, name, ...args);
-  const { View, post } = createIframeView((method, args) => execHostRpc(m.id, method, args));
+  // How this page was entered (`[[features]]` payload / redirect). Kept until
+  // the mode resets and REPLAYED on every ready handshake: the View mounts
+  // (and the srcdoc document loads) only when the mode becomes active, so an
+  // enter delivered while the document is still loading would be lost — and
+  // a fresh document needs the payload again the way it needs query/show.
+  let enterPayload: FeatureEnterInfo | null = null;
+  // Declarative settings (P3.4) delivered to this page. Kept so the ready
+  // handshake can replay them: the pane may change a value while the mode is
+  // not active (the srcdoc document doesn't exist yet), and a fresh document
+  // needs the current values again.
+  let settingsValues: Record<string, unknown> | null = null;
+  // Detached-window state pusher (P6): while the page lives in its own
+  // window, this window's iframe is unmounted — page state travels over the
+  // Rust `plugin-window` event channel instead of postMessage.
+  detachedSuppliers.set(m.id, {
+    push: (show) => {
+      void invoke("plugin_window_push_state", {
+        id: m.id,
+        state: { show, query: query(), enter: enterPayload, settings: settingsValues, theme: currentThemeMode() },
+      }).catch((err) => plog.error(m.id, "detached state push failed:", err));
+    },
+    pushTheme: (t) => {
+      void invoke("plugin_window_push_state", { id: m.id, state: { theme: t } }).catch((err) =>
+        plog.error(m.id, "detached theme push failed:", err)
+      );
+    },
+    onShow: () => hook("onShow"),
+  });
+  // Theme replays (P5 sandbox follow-up): the opaque iframe cannot read the
+  // launcher document, so the host pushes the color mode — on the ready
+  // handshake below and on every `data-theme` flip (see the observer at the
+  // bottom of this module).
+  themePosters.set(m.id, (t) => {
+    if (viewReady) postEv("theme", t);
+  });
+  const { View, post } = createIframeView(
+    (method, args) => execHostRpc(m.id, method, args),
+    () => {
+      // The page's bridge is live and its handlers are assigned: push the
+      // current state (this also covers the initial load, where the loader
+      // raced the srcdoc document).
+      postEv("query", query());
+      postEv("show");
+      postEv("theme", currentThemeMode());
+      if (enterPayload) postEv("enter", enterPayload);
+      if (settingsValues) postEv("settings", settingsValues);
+    }
+  );
   // Events (query/show/hide) mirror into the plugin log so a silent page is
   // distinguishable from one that never received anything.
   const postEv = (type: string, payload?: unknown) => {
@@ -307,8 +412,9 @@ function createDiskModeInstance(
       plog.info(m.id, "mode view ready (html", html.length, "bytes)");
       viewReady = true;
       View.setHtml(injectBridge(html));
-      postEv("query", query());
-      postEv("show");
+      // query/show are NOT posted here: setting the srcdoc only starts the
+      // document load, so the bridge has no listener yet. The ready handshake
+      // (see the onReady callback above) delivers the page state once live.
     })
     .catch((err) => {
       plog.error(m.id, "view load failed:", err);
@@ -336,6 +442,9 @@ function createDiskModeInstance(
     },
     reset: () => {
       setSelected(0);
+      // A fresh summon starts a new page state — the previous entry payload
+      // no longer describes how this round began.
+      enterPayload = null;
       if (viewReady) postEv("show");
       hook("onShow");
       services.scheduleResize();
@@ -371,20 +480,71 @@ function createDiskModeInstance(
       if (viewReady) postEv("hide");
       hook("onHide");
     },
+    onEnter: (info) => {
+      enterPayload = info;
+      if (detachedIds.has(m.id)) {
+        // The page lives in its own window — the payload travels over the
+        // event channel (the in-launcher iframe is not mounted).
+        detachedSuppliers.get(m.id)?.push(false);
+      }
+      if (viewReady) postEv("enter", info);
+      hook("onEnter", info);
+    },
+    onSubInput: (text) => {
+      if (viewReady) postEv("subInput", text);
+      hook("onSubInput", text);
+    },
+    onSettings: (values) => {
+      settingsValues = values;
+      if (detachedIds.has(m.id)) detachedSuppliers.get(m.id)?.push(false);
+      if (viewReady) postEv("settings", values);
+      hook("onSettings", values);
+    },
     View,
   };
 }
 
-/** Load every not-yet-loaded, enabled disk plugin from the manifests. */
+/** Unload one disk plugin's contributions (hot reload, P0.3): drop its
+ * registrations, forget its load attempt and clear the module cache so a
+ * re-import re-reads the code from disk. (The cache is global — already-
+ * imported modules of other plugins stay alive; only future loads recompile.)
+ * Returns false when the id was never loaded from disk. */
+export async function unloadDiskPlugin(id: string): Promise<boolean> {
+  if (!registeredDiskIds.has(id)) return false;
+  registeredDiskIds.delete(id);
+  loadedDiskIds.delete(id);
+  for (let i = plugins.length - 1; i >= 0; i--) {
+    if (plugins[i].id === id) plugins.splice(i, 1);
+  }
+  moduleCache.clear();
+  detachedSuppliers.delete(id);
+  themePosters.delete(id);
+  return true;
+}
+
+/** Hot-reload one disk plugin (settings-pane 重载 button → `plugin-reload`
+ * event). Re-reads manifests so manifest edits apply too; unknown ids are
+ * reported back as false. */
+export async function reloadDiskPlugin(id: string): Promise<boolean> {
+  const had = await unloadDiskPlugin(id);
+  // Re-read manifests first: a renamed/removed plugin must not be resurrected
+  // from a stale manifest list, and new keywords/features need a fresh read.
+  try {
+    setManifests(await invoke<PluginManifest[]>("get_plugins"));
+  } catch (err) {
+    plog.error(null, "reload: get_plugins failed:", err);
+  }
+  await loadDiskPlugins();
+  return had;
+}
+
+/** Load every not-yet-loaded, enabled disk plugin from the manifests.
+ * Manifests flagged `development` are unloaded first, so editing their code
+ * takes effect on the next refresh (settings-applied) without a restart. */
 export async function loadDiskPlugins() {
   const services = pluginServices;
   let loadedAny = false;
   for (const m of manifests()) {
-    if (loadedDiskIds.has(m.id)) {
-      plog.debug(m.id, "skip load: already loaded this session");
-      continue;
-    }
-    loadedDiskIds.add(m.id); // mark regardless of outcome — never retry-spam
     if (m.builtin || !m.enabled || !m.dir) {
       plog.debug(
         m.id,
@@ -393,7 +553,12 @@ export async function loadDiskPlugins() {
       );
       continue;
     }
-
+    if (m.development) await unloadDiskPlugin(m.id);
+    if (loadedDiskIds.has(m.id)) {
+      plog.debug(m.id, "skip load: already loaded this session");
+      continue;
+    }
+    loadedDiskIds.add(m.id); // mark regardless of outcome — never retry-spam
     try {
       if (m.kind === "provider" && m.entry) {
         const def = await importDiskModule(m.dir, m.entry);
@@ -404,8 +569,15 @@ export async function loadDiskPlugins() {
           continue;
         }
         const navBars = navBarsContribution(m.id, logic);
+        const rawOnEnter = logic.onEnter;
+        const rawOnFeature = logic.onFeature;
+        const rawSelect = logic.select;
+        const rawFilter = logic.filter;
+        const rawOnSettings = logic.onSettings;
         definePlugin({
           id: m.id,
+          features: m.features ?? [],
+          dir: m.dir,
           provider: {
             search: (q) => {
               try {
@@ -416,11 +588,110 @@ export async function loadDiskPlugins() {
                 return Promise.reject(err);
               }
             },
+            ...(typeof rawOnEnter === "function"
+              ? {
+                  onEnter: (item: ProviderResult) => {
+                    try {
+                      (rawOnEnter as (it: ProviderResult) => void)(item);
+                    } catch (err) {
+                      plog.error(m.id, "provider onEnter failed:", err);
+                    }
+                  },
+                }
+              : {}),
+            ...(typeof rawOnFeature === "function"
+              ? {
+                  onFeature: (info: FeatureEnterInfo) => {
+                    try {
+                      (rawOnFeature as (i: FeatureEnterInfo) => void)(info);
+                    } catch (err) {
+                      plog.error(m.id, "provider onFeature failed:", err);
+                    }
+                  },
+                }
+              : {}),
+            ...(typeof rawSelect === "function"
+              ? {
+                  select: async (item: ProviderResult) => {
+                    const rows = await (
+                      rawSelect as (it: ProviderResult) => Promise<ProviderResult[]> | ProviderResult[]
+                    )(item);
+                    return Array.isArray(rows) ? rows : [];
+                  },
+                }
+              : {}),
+            ...(typeof rawFilter === "function"
+              ? {
+                  filter: async (item: ProviderResult, q: string) => {
+                    const rows = await (
+                      rawFilter as (
+                        it: ProviderResult,
+                        q: string
+                      ) => Promise<ProviderResult[]> | ProviderResult[]
+                    )(item, q);
+                    return Array.isArray(rows) ? rows : [];
+                  },
+                }
+              : {}),
+            ...(typeof rawOnSettings === "function"
+              ? {
+                  onSettings: (values: Record<string, unknown>) => {
+                    try {
+                      (rawOnSettings as (v: Record<string, unknown>) => void)(values);
+                    } catch (err) {
+                      plog.error(m.id, "provider onSettings failed:", err);
+                    }
+                  },
+                }
+              : {}),
           },
           ...(navBars ? { navBars } : {}),
         });
+        registeredDiskIds.add(m.id);
+        // Declarative settings (P3.4): hand the plugin its effective values
+        // now, so a logic hook can act on them without waiting for a change.
+        void applyPluginSettings(m.id);
         loadedAny = true;
-        plog.info(m.id, `loaded provider (entry=${m.entry}${navBars ? ", navBars" : ""})`);
+        plog.info(
+          m.id,
+          `loaded provider (entry=${m.entry}${navBars ? ", navBars" : ""}` +
+            `${typeof rawOnEnter === "function" ? ", onEnter" : ""}` +
+            `${typeof rawOnFeature === "function" ? ", onFeature" : ""}` +
+            `${typeof rawSelect === "function" ? ", select" : ""}` +
+            `${typeof rawFilter === "function" ? ", filter" : ""}` +
+            `${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
+        );
+      } else if (m.kind === "mode" && m.template === "list" && m.entry) {
+        // Built-in list template (P2.5b): no view HTML — the entry logic runs
+        // host-side (provider trust model) and the built-in list component
+        // renders its rows.
+        const logic = resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!));
+        const instance = createListTemplateMode(m, logic, services!);
+        definePlugin({
+          id: m.id,
+          modeMeta: {
+            labelKey: "",
+            placeholderKey: "",
+            icon: resolvePluginIcon(m.icon, m.dir) ?? "",
+            label: m.name || m.id,
+          },
+          keywords: m.keywords,
+          keywordsPinyin: m.keywordsPinyin ?? [],
+          features: m.features ?? [],
+          dir: m.dir,
+          pluginName: m.name || m.id,
+          mode: instance,
+        });
+        registeredDiskIds.add(m.id);
+        // Declarative settings (P3.4): hand the plugin its effective values
+        // now, so a logic hook can act on them without waiting for a change.
+        void applyPluginSettings(m.id);
+        loadedAny = true;
+        plog.info(
+          m.id,
+          `loaded mode (template=list, entry=${m.entry}` +
+            `${m.height != null ? `, height=${m.height}` : ""}${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
+        );
       } else if (m.kind === "mode" && m.view) {
         const logic = m.entry
           ? resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!))
@@ -436,10 +707,17 @@ export async function loadDiskPlugins() {
             label: m.name || m.id,
           },
           keywords: m.keywords,
+          keywordsPinyin: m.keywordsPinyin ?? [],
+          features: m.features ?? [],
+          dir: m.dir,
           pluginName: m.name || m.id,
           mode: instance,
           ...(navBars ? { navBars } : {}),
         });
+        registeredDiskIds.add(m.id);
+        // Declarative settings (P3.4): hand the plugin its effective values
+        // now, so a logic hook can act on them without waiting for a change.
+        void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(
           m.id,
@@ -456,9 +734,18 @@ export async function loadDiskPlugins() {
             onShow: () => void callHook(m.id, logic, "onShow"),
             onHide: () => void callHook(m.id, logic, "onHide"),
             onQuery: (q) => void callHook(m.id, logic, "onQuery", q),
+            onFeature: (info) => void callHook(m.id, logic, "onFeature", info),
+            onSubInput: (text) => void callHook(m.id, logic, "onSubInput", text),
+            onSettings: (values) => void callHook(m.id, logic, "onSettings", values),
           },
+          features: m.features ?? [],
+          dir: m.dir,
           ...(navBars ? { navBars } : {}),
         });
+        registeredDiskIds.add(m.id);
+        // Declarative settings (P3.4): hand the plugin its effective values
+        // now, so a logic hook can act on them without waiting for a change.
+        void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(m.id, `loaded service (entry=${m.entry}${navBars ? ", navBars" : ""})`);
       } else {
@@ -466,7 +753,8 @@ export async function loadDiskPlugins() {
           m.id,
           `unusable manifest: kind=${m.kind}` +
             (m.kind === "provider" && !m.entry ? " — provider requires `entry`" : "") +
-            (m.kind === "mode" && !m.view ? " — mode requires `view`" : "") +
+            (m.kind === "mode" && m.template !== "list" && !m.view ? " — mode requires `view`" : "") +
+            (m.kind === "mode" && m.template === "list" && !m.entry ? " — template=list requires `entry`" : "") +
             (m.kind === "service" && !m.entry ? " — service requires `entry`" : "")
         );
       }
@@ -480,22 +768,70 @@ export async function loadDiskPlugins() {
   if (loadedAny) setManifests((prev) => [...prev]);
 }
 
+/** Load a plugin's effective settings (P3.4) and hand them to its
+ * contribution hooks. Called when a disk plugin is loaded and whenever the
+ * settings window changes a value (the Rust `plugin-settings` event) — the
+ * plugin instance lives in this window, the pane lives in the settings one, so
+ * the values have to be pushed across. */
+export async function applyPluginSettings(id: string): Promise<void> {
+  const p = plugins.find((x) => x.id === id);
+  if (!p) return;
+  let values: Record<string, unknown>;
+  try {
+    values = (await invoke<Record<string, unknown>>("plugin_settings_get", { id })) ?? {};
+  } catch (err) {
+    plog.error(id, "settings load failed:", err);
+    return;
+  }
+  plog.debug(id, "settings →", values);
+  try {
+    p.mode?.onSettings?.(values);
+    p.provider?.onSettings?.(values);
+    p.lifecycle?.onSettings?.(values);
+  } catch (err) {
+    plog.error(id, "onSettings failed:", err);
+  }
+}
+
 /** Global keywords (uTools-style) of enabled mode plugins → Navigate offers
- * an 「进入 <name>」 row when the query matches one exactly. */
+ * an 「进入 <name>」 row when the query matches one. Matching tiers, best
+ * first: exact (case-insensitive) → prefix → pinyin initials prefix → full
+ * pinyin prefix. Pinyin comes precomputed from the backend (`keywordsPinyin`)
+ * — the frontend has no pinyin table of its own. */
 export function modeKeywordMatches(q: string): { id: ModeId; name: string }[] {
   const needle = q.trim().toLowerCase();
   if (!needle) return [];
-  return plugins
-    .filter((p) => p.mode && isEnabled(p.id))
-    .filter((p) =>
-      ((p as { keywords?: string[] }).keywords ?? []).some(
-        (k) => k.trim().toLowerCase() === needle
-      )
-    )
-    .map((p) => ({
-      id: p.id,
-      name: (p as { pluginName?: string }).pluginName ?? p.id,
-    }));
+  const hits: { id: ModeId; name: string; tier: number }[] = [];
+  for (const p of plugins) {
+    if (!p.mode || !isEnabled(p.id)) continue;
+    const kws = (p as { keywords?: string[] }).keywords ?? [];
+    const pys = (p as { keywordsPinyin?: { full: string; initials: string }[] })
+      .keywordsPinyin ?? [];
+    let best = Infinity;
+    kws.forEach((k, i) => {
+      const kl = k.trim().toLowerCase();
+      let tier = Infinity;
+      if (kl === needle) tier = 0;
+      else if (kl.startsWith(needle)) tier = 1;
+      else {
+        const py = pys[i];
+        if (py) {
+          if (py.initials.startsWith(needle)) tier = 2;
+          else if (py.full.startsWith(needle)) tier = 3;
+        }
+      }
+      if (tier < best) best = tier;
+    });
+    if (best < Infinity) {
+      hits.push({
+        id: p.id,
+        name: (p as { pluginName?: string }).pluginName ?? p.id,
+        tier: best,
+      });
+    }
+  }
+  hits.sort((a, b) => a.tier - b.tier);
+  return hits.map(({ id, name }) => ({ id, name }));
 }
 
 /** Enabled plugins contributing Navigate bars (栏目), in registration
@@ -519,6 +855,392 @@ export function modePlugins(): {
   return plugins
     .filter((p) => p.mode && isEnabled(p.id))
     .map((p) => ({ id: p.id, instance: p.mode!, modeMeta: p.modeMeta }));
+}
+
+// ── Detached plugin windows (P6) ──
+//
+// A disk mode plugin declaring `detachable` can move its page into its own
+// window (label `plugin-<id>`, page plugin.html). The plugin's **logic** (the
+// entry hooks) stays here in the launcher window — the detached window is
+// only the view. While a plugin is detached:
+// - its postMessage bridge cannot reach this window's iframe (not mounted),
+//   so page state is pushed over Rust events (`plugin_window_push_state`);
+// - `onEnter` / `onSettings` payloads travel the same way;
+// - activating the mode (pill / Tab / keyword / redirect) raises the window
+//   instead of switching pages here.
+const detachedIds = new Set<string>();
+/** Per detached disk mode: a state pusher + the logic-side onShow hook. */
+const detachedSuppliers = new Map<
+  string,
+  { push: (show: boolean) => void; pushTheme: (t: string) => void; onShow: () => void }
+>();
+
+// ── Theme push (P5 sandbox follow-up) ──
+//
+// The sandboxed mode iframe cannot read the launcher document (opaque
+// origin), so the read-the-host-palette trick plugins used pre-P5 is dead.
+// The host owns the color mode, so it pushes it: `lume.on.theme = (mode) => …`
+// receives `"light" | "dark"` on the ready handshake and whenever the
+// launcher's `data-theme` flips (颜色模式 setting, or the OS in system mode).
+/** Per disk mode page: the closure that posts a theme value into its iframe
+ * (no-op until the page's view is ready). */
+const themePosters = new Map<string, (t: string) => void>();
+
+/** The launcher's current color mode (`data-theme` on this document). */
+export function currentThemeMode(): "light" | "dark" {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function postThemeEverywhere() {
+  const t = currentThemeMode();
+  for (const post of themePosters.values()) post(t);
+  for (const s of detachedSuppliers.values()) s.pushTheme(t);
+}
+
+// applyColorMode writes `data-theme` (and system mode rewrites it on OS
+// flips) — one observer covers every path.
+new MutationObserver(postThemeEverywhere).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ["data-theme"],
+});
+
+/** True when the mode page currently lives in its own window. */
+export function isPluginDetached(id: string): boolean {
+  return detachedIds.has(id);
+}
+
+/** Track detach state (set after a successful `plugin_window_open`, cleared
+ * by the `plugin-window-closed` event). */
+export function setPluginDetached(id: string, detached: boolean): void {
+  if (detached) detachedIds.add(id);
+  else detachedIds.delete(id);
+}
+
+/** Currently detached ids (consistency cleanup after settings changes). */
+export function detachedPluginIds(): string[] {
+  return [...detachedIds];
+}
+
+/** The manifest declares the mode detachable (settings-pane chip + the
+ * detach button read this). */
+export function isPluginDetachable(id: string): boolean {
+  return manifests().find((x) => x.id === id)?.detachable ?? false;
+}
+
+/** `plugin-window-ready` — the detached page's bridge is live; push the
+ * current state (the cross-window ready handshake) and fire onShow. Also
+ * (re)marks the plugin detached: the window's existence is the ground truth
+ * (the launcher may have missed its own detach bookkeeping — e.g. after a
+ * reload — and the events arrive before any close). */
+export function onPluginWindowReady(id: string): void {
+  const s = detachedSuppliers.get(id);
+  if (!s) return;
+  detachedIds.add(id);
+  s.push(true);
+  s.onShow();
+}
+
+/** `plugin-window-shown` — a detached window was opened/focused again:
+ * replay `show` into the page and fire the logic hook. Same self-healing
+ * tracking as ready. */
+export function onPluginWindowShown(id: string): void {
+  const s = detachedSuppliers.get(id);
+  if (!s) return;
+  detachedIds.add(id);
+  s.push(true);
+  s.onShow();
+}
+
+/** `plugin-window-closed` — the window is gone; the mode returns to the
+ * normal in-launcher behaviour. */
+export function onPluginWindowClosed(id: string): void {
+  detachedIds.delete(id);
+}
+
+// ── Declarative entry rules (P2.1: `[[features]]` in the manifest) ──
+//
+// A feature matches the query text and offers an 「<label>」 row whose
+// activation enters the plugin with the text as payload. Matching happens
+// here (JS RegExp); the manifest only carries the pattern. Compiled patterns
+// are cached per plugin+index; a pattern matching the empty string is
+// dropped (it would fire on every keystroke — the same rule uTools applies).
+
+const featureRegexCache = new Map<string, RegExp | null>();
+
+function compileFeatureRegex(pluginId: string, idx: number, pattern: string): RegExp | null {
+  const key = `${pluginId}#${idx}`;
+  const hit = featureRegexCache.get(key);
+  if (hit !== undefined) return hit;
+  let out: RegExp | null = null;
+  try {
+    const re = new RegExp(pattern, "i");
+    if (re.test("")) {
+      plog.warn(pluginId, `feature[${idx}] regex matches the empty string — ignored`);
+    } else {
+      out = re;
+    }
+  } catch (err) {
+    plog.error(pluginId, `feature[${idx}] bad regex "${pattern}":`, err);
+  }
+  featureRegexCache.set(key, out);
+  return out;
+}
+
+/** A fired entry rule: the row data + what the plugin receives on enter. */
+export interface FeatureMatch extends FeatureEnterInfo {
+  pluginId: string;
+  label: string;
+  icon?: string;
+}
+
+/** Entry rules of enabled plugins matching a query (empty query → none). */
+export function featureMatches(q: string): FeatureMatch[] {
+  const query = q.trim();
+  if (!query) return [];
+  const out: FeatureMatch[] = [];
+  for (const p of plugins) {
+    if (!isEnabled(p.id)) continue;
+    const feats = (p as { features?: PluginFeature[] }).features ?? [];
+    feats.forEach((f, i) => {
+      if (!f?.code) return;
+      // files/img rules never match query text — fileFeatureMatches /
+      // imgFeatureMatches own them.
+      if (f.type && f.type !== "text") return;
+      const len = query.length;
+      if (f.minLength != null && len < f.minLength) return;
+      if (f.maxLength != null && len > f.maxLength) return;
+      let type: FeatureEnterInfo["type"] = "over";
+      if (f.regex) {
+        const re = compileFeatureRegex(p.id, i, f.regex);
+        if (!re || !re.test(query)) return;
+        type = "regex";
+      } else if (!f.over) {
+        return; // a rule with neither regex nor over never matches
+      }
+      out.push({
+        pluginId: p.id,
+        code: f.code,
+        type,
+        payload: query,
+        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+      });
+    });
+  }
+  return out;
+}
+
+/** Extension → `fileType` category table (P4, ROADMAP #28). Curated, not
+ * exhaustive — anything unmapped is `others`. A plugin that needs precision
+ * declares `extensions` instead. */
+const FILE_TYPE_EXTS: Record<string, string[]> = {
+  image: ["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tif", "tiff", "svg", "heic", "avif"],
+  video: ["mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "ts"],
+  audio: ["mp3", "wav", "flac", "ogg", "m4a", "aac", "wma", "opus", "mid"],
+  document: ["doc", "docx", "dot", "dotx", "xls", "xlsx", "xlsm", "ppt", "pptx", "potx",
+    "pdf", "odt", "ods", "odp", "rtf", "pages", "numbers", "key", "epub"],
+  text: ["txt", "md", "markdown", "log", "csv", "tsv", "json", "xml", "yaml", "yml", "ini",
+    "toml", "html", "htm", "css", "js", "mjs", "ts", "tsx", "jsx", "py", "rs", "go", "sh",
+    "bat", "ps1", "sql", "gitignore"],
+};
+
+const extOf = (path: string): string => {
+  const name = path.split(/[\\/]/).pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  // No dot / dotfile: no usable extension.
+  return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
+};
+
+/** `type = "files"` rules (P2.2) matching a dropped file list, with P4
+ * `fileType` categories and folder matching. Matching semantics per rule:
+ * - `extensions` non-empty → files whose extension is listed (folders never
+ *   match — a directory named `x.md` is not a markdown file);
+ * - else `fileType` declared → `folder` matches directories, `others`
+ *   matches files outside every table, anything else is a table lookup;
+ * - neither → any **file** (a folder needs `fileType = "folder"`).
+ * `minLength`/`maxLength` bound the matched-subset count; the payload
+ * carries only the matching subset. `kinds` runs parallel to `paths`
+ * ("file" | "folder" | "missing", from the `file_kinds` command). */
+export function fileFeatureMatches(paths: string[], kinds: string[]): FeatureMatch[] {
+  if (paths.length === 0) return [];
+  const out: FeatureMatch[] = [];
+  for (const p of plugins) {
+    if (!isEnabled(p.id)) continue;
+    const feats = (p as { features?: PluginFeature[] }).features ?? [];
+    feats.forEach((f) => {
+      if (!f?.code || f.type !== "files") return;
+      const exts = (f.extensions ?? []).map((e) => e.toLowerCase().replace(/^\./, ""));
+      const kindOf = (i: number) => kinds[i] ?? "file";
+      const matched = paths.filter((path, i) => {
+        if (exts.length > 0) {
+          return kindOf(i) === "file" && exts.includes(extOf(path));
+        }
+        const fileType = f.fileType;
+        if (!fileType) return kindOf(i) === "file"; // no filter = any file, not folders
+        if (fileType === "folder") return kindOf(i) === "folder";
+        if (kindOf(i) !== "file") return false;
+        if (fileType === "others") return !Object.values(FILE_TYPE_EXTS).some((t) => t.includes(extOf(path)));
+        return (FILE_TYPE_EXTS[fileType] ?? []).includes(extOf(path));
+      });
+      if (matched.length === 0) return;
+      if (f.minLength != null && matched.length < f.minLength) return;
+      if (f.maxLength != null && matched.length > f.maxLength) return;
+      out.push({
+        pluginId: p.id,
+        code: f.code,
+        type: "files",
+        payload: "",
+        paths: matched,
+        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+      });
+    });
+  }
+  return out;
+}
+
+/** `type = "img"` rules (P2.2) — offered on the empty-query main menu while
+ * the clipboard holds an image (the caller probes `plugin_clipboard_has_image`
+ * once per summon, never per keystroke). The plugin reads the pixels itself
+ * via `clipboard.readImage()`. */
+export function imgFeatureMatches(): FeatureMatch[] {
+  const out: FeatureMatch[] = [];
+  for (const p of plugins) {
+    if (!isEnabled(p.id)) continue;
+    const feats = (p as { features?: PluginFeature[] }).features ?? [];
+    feats.forEach((f) => {
+      if (!f?.code || f.type !== "img") return;
+      out.push({
+        pluginId: p.id,
+        code: f.code,
+        type: "img",
+        payload: "",
+        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+      });
+    });
+  }
+  return out;
+}
+
+/** `type = "window"` rules (P4, ROADMAP #29) — offered on the empty-query
+ * main menu when the window that had focus before the launcher appeared
+ * matches the rule's declared dimensions. Matching: within one field the
+ * values OR, across fields they AND; a rule with no field at all never
+ * matches (symmetric with a text rule that has neither regex nor over).
+ * The payload carries the matched window info so a plugin can adapt (e.g.
+ * offer actions for the file the user is looking at). */
+export function windowFeatureMatches(fg: ForegroundInfo | null): FeatureMatch[] {
+  if (!fg) return [];
+  const process = fg.process.toLowerCase();
+  const processStem = process.replace(/\.exe$/, "");
+  const className = fg.className.toLowerCase();
+  const out: FeatureMatch[] = [];
+  for (const p of plugins) {
+    if (!isEnabled(p.id)) continue;
+    const feats = (p as { features?: PluginFeature[] }).features ?? [];
+    feats.forEach((f, idx) => {
+      if (!f?.code || f.type !== "window") return;
+      const procs = (f.process ?? []).map((v) => v.toLowerCase());
+      const classes = (f.class ?? []).map((v) => v.toLowerCase());
+      const titles = f.title ?? [];
+      if (procs.length === 0 && classes.length === 0 && titles.length === 0) return;
+      if (procs.length > 0 && !procs.some((v) => v === process || v === processStem)) return;
+      if (classes.length > 0 && !classes.includes(className)) return;
+      if (titles.length > 0 && !titles.some((v) => titleValueMatches(p.id, idx, v, fg.title))) return;
+      out.push({
+        pluginId: p.id,
+        code: f.code,
+        type: "window",
+        payload: "",
+        window: fg,
+        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+      });
+    });
+  }
+  return out;
+}
+
+/** One `title` matcher value: a case-insensitive substring, or a regex when
+ * wrapped in `/…/` (compiled through the same cache/guards as the text-rule
+ * patterns — same plugin+rule key space, invalid and empty-matching patterns
+ * are dropped). */
+function titleValueMatches(pluginId: string, ruleIdx: number, value: string, title: string): boolean {
+  const wrapped = /^\/(.*)\/$/.exec(value.trim());
+  if (!wrapped) return title.toLowerCase().includes(value.toLowerCase());
+  const re = compileFeatureRegex(pluginId, ruleIdx, wrapped[1]);
+  return re ? re.test(title) : false;
+}
+
+/** Whether any enabled plugin declares a `type = "window"` rule — gates the
+ * per-summon foreground-context fetch (zero IPC when unused). */
+export function hasWindowFeatures(): boolean {
+  return plugins.some(
+    (p) =>
+      isEnabled(p.id) &&
+      ((p as { features?: PluginFeature[] }).features ?? []).some((f) => f?.type === "window")
+  );
+}
+
+/** Route a declarative entry payload to its plugin: a mode receives
+ * `onEnter` (the root switches to it first), a provider/service its
+ * `onFeature`. Returns false when nothing consumed it (unknown id or no
+ * handler) so the caller can tell the user. */
+export function deliverFeature(pluginId: string, info: FeatureEnterInfo): boolean {
+  const p = plugins.find((x) => x.id === pluginId);
+  if (!p || !isEnabled(pluginId)) return false;
+  const label = (p as { pluginName?: string }).pluginName ?? pluginId;
+  try {
+    if (p.mode?.onEnter) {
+      p.mode.onEnter(info);
+      return true;
+    }
+    if (p.provider?.onFeature) {
+      p.provider.onFeature(info);
+      return true;
+    }
+    if (p.lifecycle?.onFeature) {
+      p.lifecycle.onFeature(info);
+      return true;
+    }
+  } catch (err) {
+    plog.error(pluginId, "feature enter failed:", err);
+    return true; // the handler ran (and threw) — not an "unhandled" case
+  }
+  plog.warn(pluginId, `no feature handler for code="${info.code}" (${label})`);
+  return false;
+}
+
+/** Deliver one keystroke to the plugin owning the search box (P2.3). */
+export function deliverSubInput(pluginId: string, text: string): boolean {
+  const p = plugins.find((x) => x.id === pluginId);
+  if (!p || !isEnabled(pluginId)) return false;
+  try {
+    if (p.mode?.onSubInput) {
+      p.mode.onSubInput(text);
+      return true;
+    }
+    if (p.lifecycle?.onSubInput) {
+      p.lifecycle.onSubInput(text);
+      return true;
+    }
+  } catch (err) {
+    plog.error(pluginId, "onSubInput failed:", err);
+    return true;
+  }
+  plog.warn(pluginId, "sub-input text dropped: no onSubInput handler");
+  return false;
+}
+
+/** The contribution kind a plugin registered (for feature/redirect targets). */
+export function pluginKind(id: string): "mode" | "provider" | "service" | null {
+  const p = plugins.find((x) => x.id === id);
+  if (!p || !isEnabled(id)) return null;
+  if (p.mode) return "mode";
+  if (p.provider) return "provider";
+  if (p.lifecycle) return "service";
+  return null;
 }
 
 /** Find a plugin's mode instance by id (undefined when disabled/absent). */

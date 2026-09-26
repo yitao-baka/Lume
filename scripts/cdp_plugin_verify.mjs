@@ -4,7 +4,7 @@ import { spawn, execSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
-spawn("src-tauri/target/release/lume.exe", [], {
+spawn("src-tauri/target/debug/lume.exe", [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9222" },
   stdio: "ignore",
 });
@@ -55,10 +55,13 @@ console.log("results:", JSON.stringify(names));
 console.log("provider loaded:", await m.evalJs(`!!Array.from(document.querySelectorAll(".result-box-name")).find((n) => n.textContent.includes("zzqx"))`));
 await m.shot("plugin_provider_search.png");
 
-// ── iframe keydown forwarding + focus hand-off (mode plugins) ──
-// Enter the file-search mode, click inside the plugin iframe (focus lands in
-// the iframe), then: Tab in the iframe must switch the mode back to Navigate,
-// and typing in the host search box must reach the plugin as lume.on.query.
+// ── mode page iframe under the sandbox (P5) ──
+// Enter the file-search mode; the page renders and the iframe is an
+// opaque-origin sandbox now: the host cannot reach into it (no
+// contentDocument / lume readback). The in-iframe behaviours — keydown
+// forwarding → lume.on.key, mousedown focus hand-off, Tab switching back —
+// are exercised from INSIDE the sandbox by scripts/cdp_sandbox_verify.mjs
+// (probe plugin); this script only checks the host-side contract.
 const typeQ = (q) => m.evalJs(`(() => { const i = document.getElementById("search-input"); i.focus(); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
 await typeQ("秒搜");
 await sleep(1500);
@@ -70,69 +73,21 @@ await m.evalJs(`[...document.querySelectorAll(".result-box")][${kwIdx}].dispatch
 await sleep(200);
 await m.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }))`);
 await sleep(1200);
-const frameUp = await m.evalJs(`!!document.querySelector(".plugin-frame")`);
-console.log("file-search mode entered:", frameUp);
-
-// Listen on the plugin side before any key flows.
-await m.evalJs(`(() => {
+const frameUp = await m.evalJs(`(() => {
   const f = document.querySelector(".plugin-frame");
-  f.contentWindow.__queryEvents = [];
-  f.contentWindow.lume.on.query = (q) => f.contentWindow.__queryEvents.push(q);
-  return "ok";
+  if (!f) return false;
+  const doc = f.contentDocument; // cross-origin → null
+  return (f.getAttribute("sandbox") ?? "").includes("allow-scripts") && doc === null;
 })()`);
+console.log("file-search mode entered, iframe sandboxed (opaque):", frameUp);
 
-// ① Click a non-editable spot in the iframe → focus must bounce back to the
-//    host search box (mousedown hand-off).
-await m.evalJs(`(() => {
-  const d = document.querySelector(".plugin-frame").contentDocument;
-  (d.querySelector(".row") || d.body).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-  return "ok";
-})()`);
-await sleep(300);
-const focusBack = await m.evalJs(
-  `document.activeElement === document.getElementById("search-input")`,
-);
-console.log("focus hand-off after iframe click:", focusBack);
-
-// ② Tab inside the iframe → forwarded to the host router → mode switches
-//    back to Navigate (the iframe unmounts).
-await m.evalJs(`(() => {
-  const f = document.querySelector(".plugin-frame");
-  const t = f.contentDocument.body;
-  t.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
-  return "ok";
-})()`);
-await sleep(800);
-const tabSwitched = await m.evalJs(
-  `!document.querySelector(".plugin-frame") && !!document.querySelector(".section-view, .results")`,
-);
-console.log("Tab in iframe switched back to navigate:", tabSwitched);
-
-// ③ Re-enter the mode and type in the host box → lume.on.query reaches the
-//    plugin (focus in the iframe must not break the host pipeline).
-await typeQ("秒搜");
-await sleep(1500);
-const kwIdx2 = await m.evalJs(
-  `[...document.querySelectorAll(".result-box")].findIndex((el) => el.textContent.includes("进入 文件秒搜"))`,
-);
-await m.evalJs(`[...document.querySelectorAll(".result-box")][${kwIdx2}].dispatchEvent(new MouseEvent("click", { bubbles: true })); "ok"`);
-await sleep(200);
-await m.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }))`);
-await sleep(1200);
-// The iframe was remounted on re-entry — (re)attach the plugin-side listener.
-await m.evalJs(`(() => {
-  const f = document.querySelector(".plugin-frame");
-  f.contentWindow.__queryEvents = [];
-  f.contentWindow.lume.on.query = (q) => f.contentWindow.__queryEvents.push(q);
-  return "ok";
-})()`);
+// Typing in the host box while the mode is up must not break the pipeline
+// (the page receives lume.on.query inside the sandbox — see the sandbox
+// verify script for the in-iframe assertions).
 await typeQ("lume");
-await sleep(2000);
-const queryReached = await m.evalJs(
-  `(() => { const f = document.querySelector(".plugin-frame"); if (!f) return null;
-     return { events: f.contentWindow.__queryEvents, last: f.contentWindow.__queryEvents[f.contentWindow.__queryEvents.length - 1] }; })()`,
-);
-console.log("lume.on.query events at plugin:", JSON.stringify(queryReached));
+await sleep(1500);
+const stillUp = await m.evalJs(`!!document.querySelector(".plugin-frame")`);
+console.log("mode page survives host typing:", stillUp);
 await m.shot("plugin_iframe_keys.png");
 
 // ── Settings → 插件 pane (the window is created at startup; open via gear). ──
@@ -155,10 +110,10 @@ if (!settingsT) { console.error("settings missing"); process.exit(1); }
 const s = await connect(settingsT.webSocketDebuggerUrl);
 await s.evalJs(`[...document.querySelectorAll(".settings-nav")].find((b) => /插件|Plugins|外掛/.test(b.textContent))?.click(); "ok"`);
 await sleep(800);
-const rows = await s.evalJs(`Array.from(document.querySelectorAll(".settings-sub-label")).map((l) => l.textContent.trim().slice(0, 30))`);
+const rows = await s.evalJs(`Array.from(document.querySelectorAll(".plg-name")).map((l) => l.textContent.trim().slice(0, 30))`);
 console.log("plugin rows:", JSON.stringify(rows));
 await s.shot("plugin_settings_pane.png");
 
-const ok = frameUp && focusBack && tabSwitched && queryReached?.last === "lume";
+const ok = frameUp && stillUp && rows.length > 0;
 console.log(ok ? "PLUGIN VERIFY OK" : "PLUGIN VERIFY FAILED");
 process.exit(ok ? 0 : 1);

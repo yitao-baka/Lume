@@ -1,7 +1,9 @@
 /* Lume launcher surface — minimal, focused, theme-aware
-   (docs/UI_GUIDELINES.md). The palette lives in the `--*` custom properties
-   below; `src/theme.ts` sets `data-theme` on <html> per the 颜色模式 setting.
-   Defaults here = dark (matches the historical theme, no flash before JS). */
+   (docs/UI_GUIDELINES.md). The palette lives in src/theme.css (shared with
+   the settings/plugin window surfaces); `src/theme.ts` sets `data-theme` on
+   <html> per the 颜色模式 setting. */
+
+@import "./theme.css";
 
 * {
   box-sizing: border-box;
@@ -14,41 +16,10 @@ html {
   background-color: transparent;
   -webkit-font-smoothing: antialiased;
   user-select: none;
+  color: var(--text);
 
   /* Solid default so bars render at the right size before JS applies settings. */
   --entry-size: 110px;
-
-  /* Dark palette (default). */
-  --bg: rgba(30, 30, 32, 0.75);            /* launcher panel over the Acrylic */
-  --surface: #1e1e20;                      /* settings window / solid panels */
-  --surface-raised: rgba(38, 38, 40, 0.97);/* context menu */
-  --text: #f2f2f2;
-  --text-secondary: rgba(242, 242, 242, 0.6);
-  --text-muted: rgba(242, 242, 242, 0.45);
-  --text-faint: rgba(242, 242, 242, 0.35);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --hover: rgba(255, 255, 255, 0.08);
-  --selected: rgba(255, 255, 255, 0.14);
-  /* Bundled SVGs use dark `#333` strokes — invert so they read as light icons. */
-  --icon-filter: invert(1);
-  color: var(--text);
-}
-
-:root[data-theme="light"] {
-  --bg: rgba(248, 249, 250, 0.92);
-  --surface: #fbfbfd;
-  --surface-raised: #ffffff;
-  --text: #1f2328;
-  --text-secondary: rgba(31, 35, 40, 0.65);
-  --text-muted: rgba(31, 35, 40, 0.5);
-  --text-faint: rgba(31, 35, 40, 0.38);
-  --border: rgba(31, 35, 40, 0.1);
-  --border-strong: rgba(31, 35, 40, 0.2);
-  --hover: rgba(31, 35, 40, 0.06);
-  --selected: rgba(31, 35, 40, 0.08);
-  /* #333 strokes already read as dark icons on the light theme. */
-  --icon-filter: none;
 }
 
 /* Transparent chrome so the Acrylic backdrop and CSS rounded corners show. */
@@ -113,6 +84,36 @@ body,
   flex-direction: column;
   min-height: 0;
   padding: 6px;
+  position: relative;
+}
+
+/* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。 */
+.detach-btn {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font: 12px/1.4 sans-serif;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.results:hover .detach-btn,
+.detach-btn:focus-visible {
+  opacity: 1;
+}
+
+.detach-btn:hover {
+  color: var(--text);
 }
 
 .hint {
@@ -616,6 +617,57 @@ body,
   color: var(--text-faint);
 }
 
+/* Built-in plugin list template (P2.5b, manifest template = "list"): a flat
+   row list under the search box — icon + name + description, one selection. */
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px 10px;
+  overflow-y: auto;
+}
+
+.plugin-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.plugin-list-row:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.plugin-list-selected,
+.plugin-list-row.plugin-list-selected {
+  background: rgba(128, 128, 128, 0.22);
+}
+
+.plugin-list-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  filter: var(--icon-filter);
+}
+
+.plugin-list-name {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.plugin-list-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 /* Bottom toast (150ms ease-out), centered in the window. */
 .toast {
   position: fixed;
@@ -786,6 +838,12 @@ body,
   opacity: 0.25;
 }
 
+/* Pointer-reorder in progress: no accidental text selection while dragging. */
+body.reorder-dragging {
+  user-select: none;
+  cursor: grabbing;
+}
+
 /* Insertion point marker — a white left border on the item that the dragged
    item would be placed before. */
 .result-box.result-insert-before {
@@ -932,6 +990,17 @@ body,
   font-size: 12px;
 }
 
+/* Provider rows' optional second line (plugin description). */
+.result-box-desc {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
 /* Apps / Clipboard mode switch in the search row. */
 .mode-switch {
   flex: none;
@@ -968,7 +1037,8 @@ body,
 }
 
 /* ---------------------------------------------------------------------------
-   Settings window (docs/SETTINGS.md) — a decorated, solid-background window.
+   Settings window (docs/SETTINGS.md) — frameless with a solid background;
+   the topbar doubles as the draggable chrome (src/components/TitleBar.tsx).
 --------------------------------------------------------------------------- */
 
 /* Disk mode plugin page — the bridged iframe fills the launcher below the
@@ -1000,13 +1070,18 @@ body.settings-window #root {
   overflow: hidden;
 }
 
-/* Top bar: app name + the 设置搜索框 (filters nav + content sections). */
+/* Top bar: app name + the 设置搜索框 (filters nav + content sections) + the
+   window-control cluster (doubles as the draggable chrome row). */
 .settings-topbar {
   flex: none;
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 12px 18px 10px;
+  padding: 12px 8px 10px 18px;
+}
+
+.settings-topbar .titlebar-buttons {
+  margin-left: auto;
 }
 
 .settings-appname {
@@ -1746,25 +1821,438 @@ body.settings-window #root {
   filter: var(--icon-filter);
 }
 
-/* 「插件」页 — plugin rows: name + kind/built-in/version chips + toggle. */
-.settings-plugin-meta {
+/* 「插件」页 — modern plugin-manager cards: a summary/filter toolbar, one
+   card per plugin (icon tile + name + description + enable toggle) and an
+   expandable detail panel (keywords / entry rules / permissions / declared
+   settings / location). */
+.plg-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 4px 12px;
+}
+
+.plg-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+}
+
+.plg-filter-chips {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--hover);
+}
+
+.plg-filter-chip {
+  padding: 3px 12px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.plg-filter-chip:hover {
+  color: var(--text);
+}
+
+.plg-filter-chip.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.plg-filter-input {
+  flex: none;
+  width: 170px;
+  padding: 5px 10px;
+}
+
+/* Global developer-mode switch at the toolbar's right end. */
+.plg-devmode {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  cursor: default;
+}
+
+/* 「安装插件…」 toolbar button (the .lupx picker). */
+.plg-install-btn {
+  flex: none;
+}
+
+/* The .lupx confirmation card — shown between the toolbar and the plugin
+   list while an install is pending confirmation. */
+.plg-install {
+  margin: 0 4px 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plg-install-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plg-install-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.plg-install-stats {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.plg-install-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* Uninstall: a regular icon button until armed — then it reads as the
+   destructive action it is. */
+.plg-uninstall.armed {
+  background: rgba(229, 72, 77, 0.18);
+}
+
+.plg-uninstall.armed img {
+  filter: brightness(1.4);
+}
+
+/* The global 全部授权 label reads as a warning-level control. */
+.settings-sub-label.warn {
+  color: #ffb020;
+}
+
+.plg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.plg-empty {
+  padding: 28px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.plg-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  overflow: hidden;
+  transition: opacity 0.15s ease, border-color 0.15s ease;
+}
+
+.plg-card.open {
+  border-color: var(--border-strong);
+}
+
+/* A disabled plugin stays readable but visibly recedes. */
+.plg-card.off {
+  opacity: 0.55;
+}
+
+.plg-card.off img {
+  filter: grayscale(0.9);
+}
+
+.plg-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.plg-head:hover {
+  background: var(--hover);
+}
+
+.plg-tile {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hover);
+}
+
+.plg-tile img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.plg-tile-letter {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Kind-tinted letter tiles (real plugin icons keep their own colors). */
+.plg-tile.mode {
+  background: rgba(90, 200, 250, 0.14);
+  color: #5ac8fa;
+}
+
+.plg-tile.service {
+  background: rgba(177, 140, 255, 0.16);
+  color: #b18cff;
+}
+
+.plg-tile.provider {
+  background: rgba(63, 191, 127, 0.16);
+  color: #3fbf7f;
+}
+
+.plg-main {
+  flex: 1;
   min-width: 0;
 }
 
-.settings-plugin-chips {
-  display: inline-flex;
-  gap: 6px;
-  margin-left: 8px;
+.plg-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.settings-chip-mini {
+.plg-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plg-ver {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.plg-badge {
+  flex: none;
   padding: 1px 8px;
-  border: 1px solid var(--border-strong);
   border-radius: 10px;
   font-size: 11px;
+  border: 1px solid var(--border-strong);
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+.plg-badge.builtin {
+  border-color: rgba(90, 200, 250, 0.4);
+  color: #5ac8fa;
+  background: rgba(90, 200, 250, 0.08);
+}
+
+.plg-badge.dev {
+  border-color: rgba(255, 176, 32, 0.45);
+  color: #ffb020;
+  background: rgba(255, 176, 32, 0.08);
+}
+
+.plg-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plg-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 0;
+}
+
+.plg-keywords-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plg-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plg-chev {
+  flex: none;
+  width: 14px;
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: center;
+  transition: transform 0.15s ease;
+}
+
+.plg-chev.open {
+  transform: rotate(90deg);
+}
+
+/* The expanded detail panel, inset under the card head. */
+.plg-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 16px 14px 66px;
+  border-top: 1px solid var(--border);
+}
+
+.plg-dsec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plg-dlabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.plg-chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plg-kw-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.plg-feature {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Tiny inline tag inside feature chips (rule type). */
+.settings-chip-mini {
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.plg-perm-chip {
+  padding: 2px 10px;
+  border: 1px solid rgba(90, 200, 250, 0.4);
+  border-radius: 10px;
+  background: rgba(90, 200, 250, 0.08);
+  font-size: 12px;
+  color: #5ac8fa;
+  cursor: help;
+}
+
+.plg-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.plg-note.warn {
+  color: #ffb020;
+}
+
+/* 全部授权 row — visually flagged as the dangerous escape hatch. */
+.plg-trust {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 176, 32, 0.35);
+  border-radius: 10px;
+  background: rgba(255, 176, 32, 0.06);
+}
+
+.plg-kv {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plg-k {
+  flex: none;
+  width: 52px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.plg-v {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.plg-v.mono,
+.plg-v[title] {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.plg-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plg-default-hint {
+  padding-left: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 
 /* 「关于」页 — description + version / license / author / homepage rows. */
 .settings-about-desc {

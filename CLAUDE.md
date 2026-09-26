@@ -167,12 +167,198 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   `src-tauri/src/bin/lume-agent.rs`)
 - Auto-start at logon — settings toggle writes/removes the
   `HKCU\...\CurrentVersion\Run` `Lume` value (registry is the source of truth)
+- Plugin system — `<base>/plugins/<id>/plugin.toml` + contributions
+  (`provider` / `mode` / `service` / `navBars` / `[[features]]` / `[[settings]]`);
+  the built-ins (clipboard, preview) go through the same registry + enabled set.
+  Host capabilities (`src/plugins/hostApi.ts`) reach plugins by three paths —
+  built-in factory `ctx`, disk factory `ctx`, mode-page `window.lume` bridge —
+  and every capability on the ledger is gated by the manifest's `permissions`
+  (P3.2; `src/plugins/permissions.ts` + the §6D.6 table, 「全部授权」 escape
+  hatch). Plugin data lives in `<base>/data/plugin_store.db`
+  (`src-tauri/src/plugin_store.rs`: `_rev` documents, `__`-prefixed host docs),
+  private files in `<plugin>/files/` (`src-tauri/src/plugin_fs.rs`). Docs:
+  `docs/PLUGIN_API.md` (reference), `docs/PLUGINS.md` (guide), examples
+  `examples/plugins/*`, smokes `scripts/cdp_p0..p3_verify.mjs`
 - Single instance — a named mutex (`lib.rs` `acquire_single_instance`) held for
   the process lifetime; a second launch of `lume.exe` exits immediately
 
 ## Current iteration
 
-**提权代理后续修理与生命周期（ROADMAP #22 follow-up, complete) — as of 2026-09-20**:
+**插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
+工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，`set_plugin_dev_mode`
+轻量写即时生效）。关闭时**插件页隐藏全部开发者选项**（重载按钮 / 「开发」徽章），
+且 **trusted 门控在 `get_plugins`**——所有插件上报 `trusted=false`，权限层
+fail-closed 到声明能力（`permissions.ts` 零改动）。用户反馈后**逐插件「全部授权」
+行已删除**（含 `.plg-trust` 样式与 `pluginTrustHint` 等键）：改为工具栏里的**全局
+「全部授权」**（`plugins.trust_all`，`set_plugin_trust_all`，橙色警示文案，仅
+dev_mode 开时显示；`list_plugins` 新增 `trust_all` 参数把全部磁盘插件上报
+trusted）。不变量：**任何逃生门生效必须 dev_mode 开**（`get_plugins` 是唯一
+上报路径，绕过 = 权限层失守）；旧 `trusted` 列表仍被尊重但设置页不再写入
+（`set_plugin_trusted` 命令保留）。测试 `plugin_dev_mode_defaults_off_and_
+round_trips` / `plugin_trust_all_defaults_off_and_round_trips`；文档
+PLUGIN_API §6F.4 / SETTINGS §8 同步。
+
+**Prior: 设置 → 插件页重设计（卡片式插件管理器, complete) — as of 2026-09-22**:
+`src/settings/PluginsPane.tsx` 全量重写 —— 工具栏（概要 + 全部/已启用/
+已停用/磁盘插件 分段筛选 + 关键词筛选输入）+ 每插件一张卡片（40px 图标块，
+manifest `icon` 走 asset 协议、无图标按 kind 着色首字母；名称 + 版本 +
+内置/磁盘/开发徽章 + 描述 + 类型/关键词预览；重载 + 启停 toggle）+ 点击
+展开的详情面板（关键词 chips、`[[features]]` 进入规则、`permissions` 映射
+成本地化能力 chips + 强制说明 + 橙色警示「全部授权」行、`[[settings]]`
+声明式设置（≠默认时显示「默认 {value}」）、ID/位置等宽信息）。启停/授权/
+重载语义与命令不变，仅 UI；已停用卡片整卡降透明度。i18n +~45 键 ×3，
+`SECTION_SEARCH_KEYS.plugins` 补齐；样式 = `App.css` 的 `plg-*` 块（旧
+`settings-plugin-*` 删除）。验证：tsc/vite/cargo build 干净、
+`scripts/cdp_plugins_pane_verify.mjs` 6 项全过、双主题截图目检
+（`test/plg_dark_list.png`、`test/plg_light_detail.png`）。Spec:
+`docs/SETTINGS.md` §8。
+
+**Prior: 插件系统 P2 余项 · 文件拖入 / 剪贴板图片进入 / 内置列表模板（complete) —
+as of 2026-09-22**: 差距分析 P2.2 / P2.5b（`docs/PLUGIN_GAP_ANALYSIS.md`），
+ROADMAP #27、API 文档 `docs/PLUGIN_API.md` §6E.1.1 / §6E.5，示例
+`examples/plugins/files-img-demo/`、`examples/plugins/list-demo/`。三条**新
+不变量**：
+
+1. **主窗口的 Tauri drag-drop handler 现在是启用的**（`lib.rs`；此前因磁贴
+   重排禁用）。原因：WebView2 的 HTML5 drop 拿不到真实路径，只有 wry 的 OLE
+   drop target 能给出 `paths` —— 这是 `type = "files"` 的数据来源。**代价**：
+   handler 吞掉非文件 HTML5 拖拽，所以**磁贴重排必须是 pointer events 版**
+   （`navigate.ts`：按下 → 6px 阈值 → 行列插入点；拖后吞一次 click；改回
+   HTML5 DnD = 重排失灵 + 拖拽行失效）。settings/preview 窗口保持禁用。
+   `fileType` 分类与文件夹匹配明确未做（见 §6E.1.1 未支持项）。
+2. **剪贴板 probe 与 reader 必须同链**：`plugin_clipboard_has_image` 的格式
+   判定（CF_DIB / CF_BITMAP / 名称含 png 的自定义格式、HDROP 优先排除）与
+   `plugin_clipboard_read_image` 的采集链（arboard → 自定义 PNG → CF_BITMAP）
+   是同一份逻辑的镜像 —— 改一边必须改另一边，否则空查询菜单的 img 行会与
+   `clipboard.readImage()` 的结果矛盾。`clipboard.readImage` 是新宿主能力，
+   权限 `clipboard`（`RPC_PERMISSION` 两处登记）。
+3. **`template = "list"` 的 mode 免 `view`**（`registry.ts` 专属分支 +
+   `listTemplate.tsx`）：`entry` 逻辑跑在启动器窗口（provider 信任模型），
+   内置列表渲染 `search(q)` 行；**声明式 feature 投递后宿主重跑一次该模式的
+   搜索**（`enterPlugin` mode 分支）—— 改行源的钩子（quick-add）必须靠它
+   反映到列表。`ModeInstance.rows()` 与 `ClipboardItem` 的类型耦合依旧
+   （cast + 注释），泛化仍留待后续。
+
+**验证**：cargo test **169**、tsc/vite build/cargo build 干净、
+`scripts/cdp_p2b_verify.mjs` **17 项全过**（img 行出现/消失/readImage 真读、
+拖入 3 文件出行 2 个命中文本 + fs.readText 真读、hide/summon 清空、list-demo
+内置列表渲染 + quick-add + 指针重排持久化）、P0/P1/P2/P3 回归 **8/14/21/45
+全过**；截图 `test/p2b_files.png`、`test/p2b_list.png`。**边界**：自动化不能
+合成真实 OS 拖拽 —— `tauri://drag-drop` 用 `plugin:event|emit_to` 投回同一
+事件验证逻辑链，OLE 真实路径链路只有手工步骤（`docs/TESTING.md`）。
+
+**Prior: 插件系统 P3 数据层 · 权限强制层 · 私有文件 · 声明式设置（complete) —
+as of 2026-09-21**: 差距分析（`docs/PLUGIN_GAP_ANALYSIS.md`）第四阶段，
+ROADMAP #26、API 文档 `docs/PLUGIN_API.md` §6F、示例 `examples/plugins/notes/`。
+四条**新不变量**，后续改动必须守住：
+
+1. **插件数据的落点是 `<base>/data/plugin_store.db`**（`plugin_store.rs`），
+   **独立于 `lume.db`**——卸载 = 删一个文件，插件写坏也波及不到剪贴板/固定项。
+   单表 `docs(plugin_id, id, rev, json)`；`_rev` 乐观锁（无 `_rev` = 新建，撞已有
+   即 `conflict:`；删除要 rev 匹配；无 tombstone）；上限 512 KB/文档、
+   2000 篇/插件（= `allDocs` 上限）、1000/`bulkDocs` 批。**`__` 前缀是宿主内部
+   文档**（`__settings` / `__storage`），`db.*` 读不到、写被拒。v1 的
+   `storage.json` 在**进程首次访问 store 时**迁进 `__storage`（文件改名
+   `storage.json.migrated`，只改名不删），`storage.*` 是垫片（IMMEDIATE 事务）。
+2. **权限强制层在 `src/plugins/permissions.ts`**：台账 `RPC_PERMISSION`
+   （`app.notify→notify`、`clipboard.*→clipboard`、`http.request→network`、
+   `dialog.*→dialog`、`screen.*→screen`、`search.files→search.files`、
+   `fs.read*→fs.read`、`fs.writeFile→fs.write`、`app.trash→trash`）是
+   `PLUGIN_API.md` §6D.6 的实现，**新增宿主命令必须两边同时登记**。
+   校验点是 `createHostApi` 里的 `guardHostApi`（逐方法包一层），所以**插件逻辑
+   （启动器窗口内直接持有 API）与 mode 桥接两条路径都覆盖**——初版只在桥接入口
+   校验，provider 逻辑整层绕过，被 `cdp_p3_verify` 当场抓出。fail-closed（未知
+   插件也拒），拒绝文案带缺失能力词；「全部授权」= `settings.plugins.trusted`。
+   **边界**：这是**前端**关卡，mode 页同源可绕过 IPC —— 真正的沙箱留 P4，文档与
+   设置页不得暗示已经隔离。
+3. **插件私有目录是 `<plugin>/files/`**（`plugin_fs.rs`，无需权限，10 MiB/文件）：
+   文件名只能是名字——拒绝分隔符、`.`/`..`、结尾空格/点，以及 `NUL`/`CON`/`COM1`
+   等保留设备名（`<dir>\NUL` 是设备不是文件）。任意路径写入是 `fs.writeFile`
+   （`fs.write` 能力），不自动造父目录。
+4. **声明式设置（`[[settings]]`）以 manifest 为 schema**：`plugin_settings_put`
+   拒绝未声明的键（否则作者改键名后老值阴魂不散）；生效值 = 默认值 ⊕ 存储值；
+   改动经 Rust `plugin-settings` 事件从设置窗送到启动器 → mode `onSettings` /
+   provider / service 钩子 + 页面 `lume.on.settings`（页面 `load` 握手会重放）。
+
+**验证**：cargo test **168**（+17：store rev 契约/上限/内部前缀/allDocs 过滤/
+bulk 逐条/迁移幂等/settings 默认值合并、fs 越界与设备名守卫、manifest settings
+与 trusted 上报）、tsc/vite build 干净、`scripts/cdp_p3_verify.mjs` **45 项全过**、
+P0/P1/P2 三套冒烟无回归（8/14/21）；截图 `test/p3_notes.png`、
+`test/p3_plugin_pane.png`。
+
+**踩坑（务必记住）**：debug/release exe 的 `frontendDist` 资源**在编译期嵌进
+二进制**——改完前端只跑 `vite build` 时，exe 仍在服务上一版 bundle。跑 CDP 冒烟
+前必须 `cargo build`（本轮「权限层不生效」排查了半天的真凶）。
+
+**Prior: 插件系统 P2 入口矩阵与搜索链路（complete) — as of 2026-09-21**: 差距分析
+（`docs/PLUGIN_GAP_ANALYSIS.md`）第三阶段核心，ROADMAP #25、API 文档
+`docs/PLUGIN_API.md` §6E。四项：① **声明式进入 `[[features]]`**（任意 kind）——
+`code`/`label`/`regex`/`over`/`min_length`/`max_length`/`icon`，命中在导航结果
+追加「<label>」行（与关键字行同级），激活把查询作为 payload 投递给 mode 的
+`onEnter` 或 provider/service 的 `onFeature`；正则在**前端**编译缓存，**匹配空串
+的规则被忽略**（`.*` 之类，否则每次按键出行），非法正则记 error 跳过；Rust 用
+serde 定向 rename 保持 TOML snake_case / JSON camelCase。② **子输入框**——
+`app.setSubInput({placeholder,value})` 接管主搜索框（按键进 `onSubInput`，不再触发
+常规搜索），单拥有者、切模式/呼出/重载自动释放。③ **provider 二级下钻**——
+行标 `drill: true` → `select(item)` 的行替换网格，Esc 回上一级（新增根级
+`onGridEscape` 分层，先于模式 Esc），实现 `filter` 则层内输入过滤。④ **插件互跳
+`app.redirect`**——mode 切页 + `onEnter({type:"redirect"})`，目标不可用 toast。
+**顺带修掉 P0/P1 遗留的真实竞态**：mode 页 `query`/`show`/`enter` 曾在 iframe 文档
+就绪前投递而静默丢失（根因：桥接脚本在 `<head>` 而页面 `lume.on.*` 赋值在
+`</body>`；`viewReady` 只表示 HTML 已取回）——现在桥接在页面 `load` 后发
+`__lumeReady` 握手，宿主重放 `query`→`show`→本次进入载荷，`enter` 载荷保留到
+`reset()` 以便新文档重放（文档已写明「状态重放 / 处理器需幂等」）。验证：cargo
+test **151**（+2）、tsc/build 干净、`scripts/cdp_p2_verify.mjs` **21 项全过**、
+P0/P1 冒烟无回归；示例 `examples/plugins/text-tools/`（features+下钻+filter+
+redirect）与 hello-mode 新增 subInput/enter 演示按钮。
+
+**Prior: 插件系统 P1 宿主能力面（HTTP / 通知 / 剪贴板 / 对话框 / 屏幕，complete)
+— as of 2026-09-21**: 差距分析（`docs/PLUGIN_GAP_ANALYSIS.md`）第二阶段，
+ROADMAP #24、API 文档 `docs/PLUGIN_API.md` §6D。**零新增 crate**：HTTP 用
+`windows` crate 的 WinHTTP（新增 feature `Win32_Networking_WinHttp`），通知用
+`Shell_NotifyIconW`。① **`plugin_net.rs`**——宿主 HTTP（Schannel TLS + 系统代理
++ 跟随重定向 + gzip 解压；`spawn_blocking`；http/https 限定、超时 1–60s、4MiB
+截断上报），打掉页面 `fetch` 的 CORS 限制（翻译/查词类插件的命门）；4 个单测用
+本地 `TcpListener` 起服务器验证 GET/POST/协议拒绝/截断。② **`notify.rs`**——
+自注册**隐藏**通知图标（`NIS_HIDDEN`，不占托盘）+ `NIF_INFO` 气泡；**刻意不用
+WinRT toast**（非打包/便携应用需要 AUMID + 开始菜单快捷方式）。③ **剪贴板
+扩展**（`clipboard.rs`）——`writeImage`（PNG，32MB 上限）/`writeFiles`（CF_HDROP）/
+`readFiles`/`paste`（复用 `auto_paste`：隐藏→还焦点→Ctrl+V），并给 auto_paste
+的两条静默回退分支补了日志。④ **`plugin_host.rs`**——原生文件对话框
+（`tauri-plugin-dialog` blocking API + `spawn_blocking`，取消 = `[]`/`null`，
+走 Rust 命令以免给启动器窗口加 `dialog:default` 能力）与光标/显示器几何
+（物理像素）。前端三路径（内置/磁盘工厂 `ctx`、iframe `window.lume`）同步，
+`http.request` 附 `text()`/`json()`；示例 `examples/plugins/host-tools/`（`h:`
+出动作面板）。验证：cargo test **149**（+8）、tsc/build 干净、
+`scripts/cdp_p1_verify.mjs` **14 项全过**（页面对比 CORS 直连失败 vs 宿主成功、
+图片/文件剪贴板往返、对话框 ESC 取消、屏幕几何、paste 隐藏启动器 + 日志证据）。
+**实测结论**：① WebView2 隐藏窗口时 `document.visibilityState` 仍是 "visible"
+→ 窗口可见性只能从 OS 侧探测，已产出 `scripts/ps_lume_windows.ps1`（并排除
+Tao 内部事件窗口——它的 `MainWindowHandle` 会误导）；② **本机不显示任何通知
+气泡**（PowerShell `NotifyIcon.ShowBalloonTip` 对照实验同样不显示 → 系统级抑制），
+脚本如实报告该差异而非假装通过。
+
+**Prior: 插件系统 P0（拼音关键字 + provider 动作条目 + 热重载 + 多文件入口，complete)
+— as of 2026-09-21**: 对齐 uTools 差距分析（`docs/PLUGIN_GAP_ANALYSIS.md`）的
+第一阶段，ROADMAP #23。① **关键字拼音匹配**——`plugins.rs` 扫描时为
+`keywords` 预计算拼音（复用 `cache::pinyin_for`，`keywordsPinyin` 字段 serde
+camelCase 下发；**坑**：mode 插件注册时漏拷该字段到 `LauncherPlugin` 会导致
+前端匹配静默失效），`modeKeywordMatches` 分级匹配：精确 → 前缀 → 首字母 →
+全拼（`ms`/`miao` 唤出「秒搜」）。② **provider 动作条目**——`ProviderResult`
+新增可选 `description`（网格副行 `.result-box-desc`）/`icon`（data:/URL 直通、
+路径走 asset；显式图标行跳过图标管线）/`enter`（激活回调 `onEnter(item)` 而非
+`launch_app`，启动器不隐藏；`path` 可省，宿主生成 `lume-plugin://` 合成去重键）。
+③ **热重载**——清单 `development` 字段（每次 settings-applied 自动重载）+
+设置 → 插件 磁盘行「↻ 重载」按钮（`reload_plugin` 命令 → `plugin-reload`
+事件 → `reloadDiskPlugin`：卸载 + 清模块缓存 + 重读清单；`registeredDiskIds`
+保证卸载不误伤内置）。④ **多文件 ESM 入口**——清单 `entry` 可为目录（Rust
+解析为 `index.js`），前端 `compileDiskModule` 递归把相对 import 改写为 blob
+URL（按路径缓存；裸包名不支持）。示例 `examples/plugins/actions/`（即多文件
+形态）。验证：cargo test 141（+2）、tsc/build 干净、
+`scripts/cdp_p0_verify.mjs` 8 项全过（截图 `test/p0_provider_rows.png`、
+`test/p0_settings_plugins.png`）。顺手修存量 tsc 错误（hostApi.ts 缺类型导入）。
+
+**Prior: 提权代理后续修理与生命周期（ROADMAP #22 follow-up, complete) — as of 2026-09-20**:
 四个问题的实机修复与一个生命周期改动。
 ① **注册失败的根因**：`schtasks /Create /XML` 拒绝带 `encoding=` 属性的 XML 声明
 （`<?xml… encoding="UTF-8"?>`），报 `错误: 任务 XML 格式错误 (1,40) 无法切换编码`；

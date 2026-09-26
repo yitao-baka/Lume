@@ -79,3 +79,9 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_DataExchange", # GetClipboardSequenceNumber for the listener
 ] }
 
+# Dependency crates get line tables only: full debuginfo for every dep was the
+# bulk of target/debug (tens of GB of PDBs). Workspace crates keep full
+# debuginfo, so debugging Lume's own code is unaffected. Remove to restore.
+[profile.dev.package."*"]
+debug = "line-tables-only"
+

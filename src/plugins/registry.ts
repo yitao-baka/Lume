@@ -19,6 +19,7 @@ import { fetchDiskFile } from "./disk";
 import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
+import { currentThemeMode } from "../theme";
 export {
   APPS_MODE,
   type LauncherPlugin,
@@ -885,11 +886,6 @@ const detachedSuppliers = new Map<
 /** Per disk mode page: the closure that posts a theme value into its iframe
  * (no-op until the page's view is ready). */
 const themePosters = new Map<string, (t: string) => void>();
-
-/** The launcher's current color mode (`data-theme` on this document). */
-export function currentThemeMode(): "light" | "dark" {
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
-}
 
 function postThemeEverywhere() {
   const t = currentThemeMode();

@@ -326,6 +326,26 @@ before adding a field:
   routing (page `handleQuery` interception → `subInput` ownership → search)
   and placeholder resolution (`subInput` → page `placeholder()` → plugin
   `setPlaceholder` map).
+- **拼接几何 (the seam)**: the surface is one continuous panel. The search row
+  carries no bottom border and `.results` has no inset, so the page area
+  starts exactly at the search row's bottom edge and runs to the launcher
+  border on the left, right and bottom. Each page brings its own inner padding
+  (`.result-grid` 8px, bar grids 10px, `.plugin-list` 10px, `.clip-list`
+  `0 6px 4px`) — a page that wants an inset owns it. `WINDOW_PAD`
+  (`src/launcher/types.ts`) is the fit-height slop for this geometry: changing
+  one without the other leaves an empty strip under the content or clips the
+  page.
+- **Page canvas (disk plugin pages)**: a mode page is an opaque-origin iframe.
+  With a dark `color-scheme` — every mirrored-palette plugin sets one —
+  Chromium paints an **opaque #121212 canvas** for a transparent root
+  background, and host-painted backgrounds are invisible under such a frame
+  (`background` on the iframe element does nothing); the splice then shows a
+  near-black page inside the panel. The host therefore injects the page's
+  default canvas in `injectBridge`:
+  `html{background:var(--lume-page-bg,<the theme's --surface>)}`, and the
+  bridge keeps `--lume-page-bg` in step with theme flips (the `theme` event).
+  A plugin that paints its own `html`/`body` background still wins (its rule
+  comes later in the document).
 - `src/plugins/` — **every page below the search box is a plugin**
   implementing the `ModeInstance` page contract (`src/plugins/types.ts`):
   - `navigate/` — the built-in **home page** (id `"apps"`, `home: true`, the

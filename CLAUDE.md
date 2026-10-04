@@ -204,16 +204,29 @@ NavigateView / index 工厂），**所有页面（导航首页、剪贴板、磁
 feature 行 → 文件命中 → provider）与拖入/剪贴板图片/前台窗口 feature 行状态、
 下钻、`lume-mode://`/`featureEnter`/`providerDrill` 激活分支全部归导航页；
 搜索召回 / 记住上次页面（`last_page = "apps"` 值不变）/ subInput / 防抖持久化
-留壳。导航首页**不进 设置→插件 启停列表**（默认页不可关）。**坑**：① 页面
+留壳。导航首页**不进 设置→插件 启停列表**（默认页不可关）。**拼接缝（同日补做，
+uTools 式无缝）**：搜索行去掉下边框、`.results` 去掉 6px 内衬（页面内衬改由各页
+自给：`.result-grid` 8 / 栏网格 10 / `.plugin-list` 10 / `.clip-list` `0 6px 4px`），
+`WINDOW_PAD` 20→8 与几何同步；磁盘插件页 iframe 改 flex 填充（原 `100vh - 60px`
+在搜索行高度不吻合时会溢出错位），画布默认由 `injectBridge` 注入
+`html{background:var(--lume-page-bg,<主题 --surface>)}` 并经 `theme` 事件随主题
+翻转（`currentThemeMode`/`PANEL_SURFACE_BG` 移入 `src/theme.ts`）。**坑**：① 页面
 `activate` 与壳的 Enter 路径都要 `markEntryOpened`（点击路径不经壳）；②
 `onShow` 在召唤搜索**之后**调用——空菜单自动选中依赖 `search` 先把 zone 归
 grid 的顺序；③ `.result-selected` 是跨页共用类名，页面内的滚动跟随 effect 必须
-按 `services.mode()` 门控。验证：cargo test 185 无回归、`cdp_p2b_verify` 22 项
-/ `cdp_clipboard_smoke` / `test/_shell_nav_check` 10 项全过、`cdp_p2_verify`
+按 `services.mode()` 门控；④ **暗色 `color-scheme` + 透明根背景的插件页会被
+Chromium 画成不透明 #121212 画布**（宿主元素背景对 sandbox iframe 不可见，
+`.plugin-frame` 上写 background 无效）——这是拼接处「页面比面板黑一截」的根因，
+只能给插件页 html 一个背景兜底；⑤ `.results` 无内衬后，新页面/新部件的内衬必须
+自己给，且 `WINDOW_PAD` 必须与 `.results` 的垂直内衬保持同步（fit 高度）。验证：
+cargo test 185 无回归、`cdp_p2b_verify` 22 项 / `cdp_clipboard_smoke` /
+`test/_shell_nav_check` 10 项 / `test/_seam_probe` 10 项全过、`cdp_p2_verify`
 17/21（余 4 项为 P5 前的 `iframe.contentDocument` 陈旧探针，enter 载荷经插件
-日志证实已投递）；行为逐项对照旧实现（合并顺序、forceGrid、Esc 分层、
-Shift+Enter、搜索召回 TTL、记住页面、placeholder 三级解析、切模式 reset
-语义）。改前端后须 `cargo build` 再实机冒烟（前端编译期嵌入 exe）。
+日志证实已投递）；拼接处像素采样：搜索行与页面同色（暗色 29,29,32 vs
+30,30,32；浅色 248,248,250 vs 251,251,253）、四缘无亮线、插件页无溢出。行为逐项
+对照旧实现（合并顺序、forceGrid、Esc 分层、Shift+Enter、搜索召回 TTL、记住页面、
+placeholder 三级解析、切模式 reset 语义）。改前端后须 `cargo build` 再实机冒烟
+（前端编译期嵌入 exe）。
 
 **Prior: 插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
 工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，`set_plugin_dev_mode`

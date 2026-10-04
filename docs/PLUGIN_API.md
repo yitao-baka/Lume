@@ -570,6 +570,20 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 关闭插件的 pill 自动消失，Tab 循环也随之跳过。导航首页是注册表中的第一个
 mode（id `"apps"`，`home: true`），它的 pill 即最左侧「导航」。
 
+**拼接面（页面画布）**——宿主对页面的两条保证：
+
+1. **几何**：搜索行与页面共用一块连续面板。搜索行无下边框、页面区无内衬，页面
+   内容直贴搜索行底边与窗口的左/右/下边；需要留白就由页面自己给（现有页面的
+   内衬见 ARCHITECTURE「拼接几何」）。`fit` 页的窗口高度含 `WINDOW_PAD` 余量。
+2. **画布**：磁盘插件的 `view` 页是**不透明源（sandbox）iframe**——宿主元素背景
+   对它不可见。暗色 `color-scheme`（镜像主题配色的插件都会设）下，根背景透明的
+   文档会被 Chromium 画成**不透明 #121212 画布**，在拼接处露出明显色阶。宿主
+   因此在 `injectBridge` 注入默认画布
+   `html{background:var(--lume-page-bg,<主题 --surface>)}`，桥接在 `theme` 事件
+   到来时切换该变量（主题翻转即时跟随）。**插件自己写 `html`/`body` 背景即覆盖
+   该默认**（文档更靠后，优先级更高）；自绘背景时请与 `lume.on.theme` 给出的
+   明暗保持一致，否则拼接处同样会出现色阶。
+
 ### 6B.2 `ModeKeyContext`
 
 ```ts

@@ -11,6 +11,12 @@ surface is a frameless, transparent, always-on-top window with a Windows
 - Panel: `border-radius: 12px`, semi-transparent dark fill
   (`rgba(30, 30, 32, 0.75)`), hairline border `rgba(255,255,255,0.08)`,
   soft shadow `0 8px 40px rgba(0,0,0,0.35)`.
+- **One continuous panel (uTools splice)**: the search row and the page below
+  it are the same surface — no divider line under the search row, no inset
+  around the page area. The page area starts at the search row's bottom edge
+  and runs to the panel border on the left/right/bottom; inner padding belongs
+  to the page (see ARCHITECTURE 拼接几何). A frame or tint step at that seam
+  is a bug, not a style.
 - Font: `"Segoe UI Variable Text", "Segoe UI", system-ui`; base 16px;
   antialiased; `user-select: none`.
 

@@ -48,12 +48,13 @@ body,
   overflow: hidden;
 }
 
+/* 搜索行：uTools 式拼接的上半部。无下边框 —— 与下方页面共用同一块面板底色，
+   拼接处不再出现横线；14px 的底部内边距就是页面内容与输入框之间的呼吸空隙。 */
 .search {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 18px 20px 14px;
-  border-bottom: 1px solid var(--border);
 }
 
 .search-icon {
@@ -78,12 +79,15 @@ body,
   color: var(--text-faint);
 }
 
+/* 拼接下半部：页面直贴搜索行与窗口三边（无外框内衬）。内衬由各页面自己给
+   （.result-grid 8px、条栏 10px、.plugin-list 10px、插件自己），否则页面会被
+   一圈窗口底色包住，看起来像「页面带边框」。 */
 .results {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 6px;
+  padding: 0;
   position: relative;
 }
 
@@ -329,12 +333,15 @@ body,
   font-weight: 600;
 }
 
-/* Virtual list viewport (scrolls internally; fixed window height). */
+/* Virtual list viewport (scrolls internally; fixed window height). The side
+   padding keeps row highlights off the window edge now that the page area is
+   full-bleed (it used to come from the .results inset). */
 .clip-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
+  padding: 0 6px 4px;
 }
 
 .clip-list::-webkit-scrollbar {
@@ -1043,13 +1050,18 @@ body.reorder-dragging {
 --------------------------------------------------------------------------- */
 
 /* Disk mode plugin page — the bridged iframe fills the launcher below the
-   search row (the page scrolls internally). */
+   search row. Flex-fill (not a `100vh - N` guess): the frame's height follows
+   the actual results box, so no strip or clipped row at the bottom. The frame
+   element paints nothing — the page's canvas comes from the host-injected
+   default (iframeBridge `injectBridge`), which is the only thing that can
+   reach a sandboxed page's root. */
 .plugin-frame {
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
-  height: calc(100vh - 60px);
   border: none;
   display: block;
-  background: var(--surface);
+  background: transparent;
 }
 
 /* The launcher leaves the body transparent (Acrylic); the settings window

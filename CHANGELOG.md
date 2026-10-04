@@ -8,6 +8,19 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **主窗口「拼接缝」四缘露框 + 插件页比面板黑一截** — 用户观感反馈（页面
+  边缘与搜索框连接不完美，上下左右都有边框），两处叠加：① 几何——搜索行的
+  `border-bottom` + `.results` 的 6px 内衬把每个页面包成内缩的卡片，四缘露出
+  面板底色；现搜索行无下边框、`.results` 无内衬，页面直贴搜索行底边与窗口
+  左/右/下边，内衬改由各页自给（`.result-grid` 8 / 栏网格 10 / `.plugin-list`
+  10 / `.clip-list` `0 6px 4px`），`WINDOW_PAD` 20 → 8 同步；磁盘插件页
+  iframe 由 `100vh - 60px` 改 flex 填充（搜索行高度与常数不吻合时溢出错位）。
+  ② 画布——`color-scheme: dark` + 透明根背景的插件页被 Chromium 画成**不透明
+  #121212 画布**（与面板差 ≈20 级色阶），且宿主元素背景对 sandbox iframe 不可
+  见（`.plugin-frame` 上写 background 无效）；现由 `injectBridge` 给每个插件页
+  注入 `html{background:var(--lume-page-bg,<主题 --surface>)}` 并由桥接随
+  `theme` 事件切换，插件自绘 html/body 背景仍覆盖默认（`iframeBridge.tsx`、
+  `theme.ts`、`App.css`、`launcher/types.ts`）。
 - **分离窗口「白描边」与「纯黑」背景** — 两个渲染层问题叠加（用户观感反馈，
   CDP 像素级实证）：① Chromium 给无 `border:none` 的 iframe 画 UA 默认
   `border: 2px inset`（左深右浅的凹陷框，DPI 缩放下呈 2–3px 亮线）——

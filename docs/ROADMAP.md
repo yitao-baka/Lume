@@ -2084,8 +2084,38 @@ Tab 循环）。**环境注意**：`cdp_p2*_verify` 依赖 `hello-mode`/`list-de
 启用态（禁用时 redirect/列表段与其后的重排段会连锁失败——重排段的召唤依赖
 前置点击置位 entryOpened 以越过搜索召回）。
 
+### 30.4 拼接缝修复（同日补做，uTools 式无缝）
+
+首版拼接遗留一圈「边框」：搜索行 `border-bottom` + `.results` 6px 内衬把页面
+包成一块内缩的卡片，插件页还不透明 —— 四缘都露出面板底色。修复：
+
+- **几何**：搜索行去掉下边框；`.results` 内衬 6px → 0（页面直贴搜索行底边与
+  窗口左/右/下边），内衬改由各页自给（`.result-grid` 8 / 栏网格 10 /
+  `.plugin-list` 10 / `.clip-list` `0 6px 4px`）；`WINDOW_PAD` 20 → 8 同步。
+- **插件页 iframe**：`height: calc(100vh - 60px)` → flex 填充（搜索行实际高度
+  与常数不吻合时会溢出错位/裁掉底行）。
+- **页面画布**（像素级实证的渲染层根因）：`color-scheme: dark` + 透明根背景的
+  插件页被 Chromium 画成**不透明 #121212 画布**（#121212 vs 面板 #1e1e20 ≈
+  20 级色阶），且宿主元素背景对 sandbox iframe 不可见（`.plugin-frame` 上写
+  background 无效）。宿主统一注入默认画布
+  `html{background:var(--lume-page-bg,<主题 --surface>)}`（`injectBridge`），
+  桥接在 `theme` 事件里切换该变量随主题翻转；插件自绘 html/body 背景仍覆盖
+  默认。`currentThemeMode`/`PANEL_SURFACE_BG` 移入 `src/theme.ts`（宿主与
+  插件窗口共用）。
+
+验证（debug exe 重嵌前端 + CDP 像素采样）：搜索行与页面同色（暗色
+29,29,32 vs 30,30,32；浅色 248,248,250 vs 251,251,253）、四缘无亮线、
+`_seam_probe` **10/10**（几何 flush / 无内衬 / iframe 无溢出 / 画布注入）、
+剪贴板行内衬 6.67px 且状态栏贴底、主题翻转即时跟随；回归：`_shell_nav_check`
+10/10、`cdp_p2b_verify` 22/22、`cdp_p2_verify` 17/21（同旧基线 4 项陈旧探针）。
+用**用户实机插件版本**（file-search 2.4.0，透明 body）复现的对照证据：修复前
+页面 #121212；修复后与面板同色。
+
 ### 后续（不在本轮）
 
 搜索源 provider 化（原生索引 / 文件搜索抽成 first-party `SearchSource`）、
 pill 排序/隐藏设置、§10.4 剪贴板页重设计（本重构为其结构前置——只动
-`src/plugins/clipboard/` 即可）。
+`src/plugins/clipboard/` 即可）。**已知残余**：面板是 Acrylic 半透明
+（`--bg` 75%），插件页画布是主题实体色 `--surface` —— 壁纸较亮时两者仍会有
+几级色阶（宿主无法预知 Acrylic 的合成结果）；要完全归零需要面板不透明
+（放弃 Acrylic），未做。

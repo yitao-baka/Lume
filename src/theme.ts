@@ -30,3 +30,13 @@ function onSystemChange(): void {
     ? "light"
     : "dark";
 }
+
+/** The document's current color mode — the single source of truth for anything
+ * that must hand a theme value to another surface (plugin page canvases). */
+export function currentThemeMode(): "light" | "dark" {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+/** The theme's solid panel surface per color mode (`--surface` in theme.css).
+ * Plugin page canvases default to it — see `injectBridge`. */
+export const PANEL_SURFACE_BG = { dark: "#1e1e20", light: "#fbfbfd" } as const;

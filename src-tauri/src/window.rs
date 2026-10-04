@@ -416,6 +416,8 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
     // shows it, so a mode switch must repaint it (system mode also lands here:
     // save/apply is the only path that re-reads the mode).
     set_panel_frame_border(&window, &settings.appearance.color_mode);
+    // Same mode drives the theme-matched app icon (taskbar + tray).
+    crate::appicon::apply(app, &settings.appearance.color_mode);
     if !settings.appearance.remember_position {
         apply_initial_position(&window, &settings.appearance).map_err(|e| e.to_string())?;
     }

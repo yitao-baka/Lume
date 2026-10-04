@@ -115,6 +115,9 @@ pub async fn plugin_window_open(
     // shadow(true) windows draw DWM's documented 1px white border — suppress
     // it (shadow + Win11 rounded corners stay).
     crate::window::clear_dwm_border(&win);
+    // Created after startup, so `appicon::apply` never covered this window —
+    // theme-match its taskbar icon here.
+    crate::appicon::apply_window(&win, &snapshot.appearance.color_mode);
     let app2 = app.clone();
     let id2 = id.clone();
     let win2 = win.clone();

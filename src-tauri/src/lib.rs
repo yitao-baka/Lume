@@ -1,5 +1,6 @@
 mod apps;
 pub mod agent;
+pub mod appicon;
 pub mod cache;
 mod automation;
 mod clipboard;
@@ -308,6 +309,7 @@ pub fn run() {
                             .map(|s| s.current().appearance.color_mode.clone())
                             .unwrap_or_else(|| "system".into());
                         window::set_panel_frame_border(&themed, &mode);
+                        appicon::apply(&app_handle, &mode);
                     }
                 });
             }
@@ -346,6 +348,9 @@ pub fn run() {
             recent::init(app);
             // System tray icon (Restart / Exit right-click menu).
             tray::setup(app);
+            // Theme-matched app icon (dark/light artwork pair) on the windows'
+            // taskbar icons and the tray (docs/ROADMAP.md #31).
+            appicon::apply(app.handle(), &current.appearance.color_mode);
             // All three webviews start hidden — swap their idle memory out now so
             // the launch baseline is minimal. The first hotkey restores Normal
             // in `window::show` (before the window is painted).

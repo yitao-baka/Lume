@@ -2209,3 +2209,32 @@ pill 排序/隐藏设置、§10.4 剪贴板页重设计（本重构为其结构�
 已知残余」已由 #30.6 归零：面板 / 边框条 / 页面画布为同一个不透明值，不再
 随壁纸漂移。）另：#30.7 只把「页面首载」路径上的重命令 async 化了，
 `search_apps`（每次击键）等仍在主线程——若后续感到输入卡顿，同一手法处理。
+
+## 31. 主题感知应用图标（已实现）
+
+弃用 `software.png`（与旧 `src-tauri/icons/128x128.png` 同哈希——旧 artwork
+家族的源图），新增主题图标对 `res/icons/application_dark_mode.png`（白鸽，
+暗色主题用）与 `application_white_mode.png`（黑鸽，浅色主题用）。
+
+- **运行时主题匹配（`src-tauri/src/appicon.rs`）**：两 PNG `include_bytes!`
+  内嵌，解码后 Lanczos3 缩到 256×256（= icon.ico 顶层；shell 自缩到托盘/
+  任务栏/Alt+Tab 尺寸，`OnceLock` 每主题缓存解码结果与 HICON）。主题判定与
+  `window::panel_surface_rgb` 同一规则（显式 dark/light 直接映射，system 沿
+  主窗口 `theme()`）——图标与 DWM 边框条永不打架。应用点：启动 setup、
+  保存/应用（`window::apply_settings`）、system 模式下 OS 主题翻转（lib.rs
+  `WindowEvent::ThemeChanged`）→ main/settings/preview 三窗口 + 托盘
+  （`tray.rs` 固定 id `lume-tray`，`tray_by_id` 定位后 `set_icon`）；运行期
+  创建的分离插件窗口在 `plugin_window.rs` 创建处补挂。
+- **坑：tauri 的 `set_icon` 只喂 ICON_SMALL**（标题栏小图标——无边框窗口
+  根本不显示）；任务栏/Alt+Tab 用的是 ICON_BIG，此前从未有人设置，shell
+  一直兜底用 exe 内嵌图标。现以 `CreateIcon`（BGRA 像素序 + 反转 alpha 的
+  AND mask，镜像 tray-icon 的 RGBA→HICON 转换）构建 HICON，`WM_SETICON`
+  同时喂 ICON_BIG / ICON_SMALL（同一 HICON，进程生命周期缓存）。
+- **静态 exe 图标**：Explorer / 安装器场景无法跟主题——`src-tauri/icons/*`
+  用 `tauri icon` 从 application_white_mode.png 重新生成（浅底上黑鸽可见；
+  重新生成后删除 CLI 新增的 android/ios 目录与 64x64.png，仓库形态不变）；
+  `res/icons/software.png` 删除（bundle 资源 glob 自动收窄）。
+- 验证：cargo test 185 无回归；实机 `test/_icon_check.mjs`（CDP 切
+  dark/light，`test/_icon_probe.ps1` 读各窗口 ICON_BIG 像素均值亮度：暗色
+  三窗口全 255.0（白鸽）、浅色全 0.0（黑鸽）、无 `[appicon]` 错误日志）+
+  用户手动目检任务栏/托盘随主题翻转通过。

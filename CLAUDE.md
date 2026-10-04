@@ -140,6 +140,15 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
   restored to Normal before show; ROADMAP #18)
 - System tray icon — left-click toggles the launcher, right-click menu has
   Restart / Exit (`src-tauri/src/tray.rs`)
+- Theme-aware app icon — the `res/icons/` dark/light artwork pair
+  (`application_dark_mode.png` white dove / `application_white_mode.png` black
+  dove; `software.png` retired) is applied at runtime to every window's
+  taskbar icon and the tray, resolving the color mode the same way as the DWM
+  frame strip (`src-tauri/src/appicon.rs`; hooks in lib.rs setup +
+  `WindowEvent::ThemeChanged`, `window::apply_settings`, plugin-window
+  creation). tauri's `set_icon` only feeds ICON_SMALL — the taskbar icon is
+  ICON_BIG, set here via `WM_SETICON`. The static exe icon (`src-tauri/icons/*`)
+  cannot follow the theme and is regenerated from the light variant.
 - Auto-sizing window — `resizeToContent()` in `src/App.tsx` fits the window
   height to the results, capped by the settings 窗口大小 → 高度 (default
   520px); width follows the settings value

@@ -6,6 +6,10 @@
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
+/// Fixed tray id — `appicon::apply` looks the tray up by it to swap the icon
+/// when the color mode changes.
+pub const TRAY_ID: &str = "lume-tray";
+
 /// Create the tray icon; logs and skips if there is no default window icon.
 pub fn setup(app: &tauri::App) {
     let Some(icon) = app.default_window_icon() else {
@@ -34,7 +38,7 @@ fn build_tray(
         .items(&[&settings, &restart, &exit])
         .build()?;
 
-    TrayIconBuilder::new()
+    TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .tooltip("Lume")
         .menu(&menu)

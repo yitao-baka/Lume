@@ -39,7 +39,7 @@ Rust Core (src-tauri/src/)
   └─ envwatch.rs — keep the process env block in sync with system env changes
         ▼
 Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
-             IShellItemImageFactory, Acrylic window effects, WM_SETTINGCHANGE,
+             IShellItemImageFactory, DWM window attributes, WM_SETTINGCHANGE,
              SendInput, Task Scheduler via schtasks)
 ```
 
@@ -58,17 +58,19 @@ Called by the frontend (Esc) and by `hotkey.rs`. The launcher also **auto-hides
 on focus loss**: `lib.rs` registers a `WindowEvent::Focused(false)` handler
 that hides the window, so clicking elsewhere dismisses it.
 
-Window frame: the launcher is the one transparent + Acrylic surface (the
-settings/preview/detached-plugin windows are opaque). DWM's visible frame
-border strip (the ~2px non-client ring around the client area) is therefore
-**painted in the theme's solid panel color** —
+Window frame: the launcher panel is opaque (src/App.css `.launcher`, solid
+`--surface`) — the window has **no Acrylic backdrop** (deliberately removed;
+see ROADMAP #30.6). DWM's visible frame border strip (the ~2px non-client ring
+around the client area) is **painted in that same panel color** —
 `set_panel_frame_border()` → `DWMWA_BORDER_COLOR` with the `--surface` value
 for the current 颜色模式 (re-painted from `apply_settings` and on
-`WindowEvent::ThemeChanged` in system mode); leaving it at `DWMWA_COLOR_NONE`
-would show the Acrylic backdrop there, which reads as a light-gray ring over a
-bright desktop. `clear_dwm_border()` (COLOR_NONE) is what the opaque windows
-use. `DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)` reports the
-strip; see ROADMAP #30.4/#30.5 for the pixel measurements.
+`WindowEvent::ThemeChanged` in system mode); left at the default or
+`DWMWA_COLOR_NONE` the strip shows the desktop through the transparent window
+as a light-gray ring. Panel, strip and the default plugin-page canvas then
+read as one uniform surface, corners included (Win11 rounding is DWM's).
+`clear_dwm_border()` (COLOR_NONE) is what the settings/preview/detached-plugin
+windows use. `DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)`
+reports the strip; see ROADMAP #30.4–#30.6 for the pixel measurements.
 
 ### `apps.rs`
 - **Index**: `AppIndex` state holds in-memory mirrors of the System32 and
@@ -338,10 +340,13 @@ before adding a field:
   routing (page `handleQuery` interception → `subInput` ownership → search)
   and placeholder resolution (`subInput` → page `placeholder()` → plugin
   `setPlaceholder` map).
-- **拼接几何 (the seam)**: the surface is one continuous panel. The search row
+- **拼接几何 (the seam)**: the surface is one continuous panel — literally
+  one color: the panel fill, the DWM frame strip and the default plugin-page
+  canvas are all `--surface` (see Surface in docs/UI_GUIDELINES.md; do not
+  give `.launcher` a border, CSS radius or translucent fill). The search row
   carries no bottom border and `.results` has no inset, so the page area
-  starts exactly at the search row's bottom edge and runs to the launcher
-  border on the left, right and bottom. Each page brings its own inner padding
+  starts exactly at the search row's bottom edge and runs to the panel edge
+  on the left, right and bottom. Each page brings its own inner padding
   (`.result-grid` 8px, bar grids 10px, `.plugin-list` 10px, `.clip-list`
   `0 6px 4px`) — a page that wants an inset owns it. `WINDOW_PAD`
   (`src/launcher/types.ts`) is the fit-height slop for this geometry: changing
@@ -353,7 +358,8 @@ before adding a field:
   background, and host-painted backgrounds are invisible under such a frame
   (`background` on the iframe element does nothing); the splice then shows a
   near-black page inside the panel. The host therefore injects the page's
-  default canvas in `injectBridge`:
+  default canvas in `injectBridge` — the same `--surface` the panel itself
+  paints, so the page is literally the panel at the splice:
   `html{background:var(--lume-page-bg,<the theme's --surface>)}`, and the
   bridge keeps `--lume-page-bg` in step with theme flips (the `theme` event).
   A plugin that paints its own `html`/`body` background still wins (its rule

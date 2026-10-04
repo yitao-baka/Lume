@@ -266,10 +266,11 @@ export const BRIDGE_SCRIPT = `
  * mirrored-palette plugin sets one — makes Chromium paint an **opaque #121212**
  * canvas for a transparent root background (#121212-vs-panel is a glaring tone
  * gap at the splice, and host element backgrounds are invisible under such a
- * frame). Giving `html` the theme's solid panel color fixes that; the bridge
- * keeps it in step with `lume.on.theme` (theme flips), and a plugin that paints
- * its own `html`/`body` background still wins (its rule comes later in the
- * document). */
+ * frame). Giving `html` the theme's solid panel color fixes that — the same
+ * `--surface` the launcher panel paints, so the page is literally the panel at
+ * the splice; the bridge keeps it in step with `lume.on.theme` (theme flips),
+ * and a plugin that paints its own `html`/`body` background still wins (its
+ * rule comes later in the document). */
 export function injectBridge(html: string): string {
   const injection =
     `<base target="_blank">` +

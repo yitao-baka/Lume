@@ -8,6 +8,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **主窗口「四角亮弧 + 1px hairline」—— 面板改不透明 `--surface`** — 用户观感
+  反馈，对实机截图做 RLE 像素制图定位出三层：① `.launcher` 的 1px `--border`
+  hairline 沿 12px CSS 圆角描出一圈亮弧（四角实测 61,61,61），直边的 1px 亮线
+  也是它；② CSS 圆角(12px) 大于 DWM 圆角（约 8 DIP），弧外一截未覆盖区域露出
+  Acrylic 新月带（36→55 渐变，随壁纸漂移）；③ 半透明面板合成色（该用户桌面处
+  38,38,40）与页面画布 / 边框条实体色（30,30,32）差 8 级。现 `.launcher` 填
+  **不透明 `var(--surface)`**（与 DWM 边框条涂色、插件页画布默认值是同一个
+  值），去掉 border / border-radius / box-shadow，主窗口 Acrylic 效果撤除
+  （对不透明面板不可见，且其半透明合成永远无法被不透明边框条复刻——环带的
+  根源）；`.detach-btn` 填充 `--surface` → `--surface-raised`（面板同色后需
+  抬升面才可见）。圆角保持由 DWM 完成（圆角变体矩阵实测：≤7px 与无圆角等同、
+  ≥8px 反而新增未覆盖像素）。验证：暗色四缘 / 四角 / 拼接缝全 30,30,32、浅色
+  251,251,253；cargo test 185、`_seam_probe` 10、`_shell_nav_check` 10、
+  `cdp_p2b_verify` 22 全过。
 - **窗口外缘「几像素灰色边框」** — 上一轮拼接缝修好后的残留环带，三层叠加
   （DwmGetWindowAttribute + 屏幕级像素采样实证）：① DWM 给 shadow(true) +
   无边框窗口画的可见帧边框条（`DWMWA_VISIBLE_FRAME_BORDER_THICKNESS` = 2px，

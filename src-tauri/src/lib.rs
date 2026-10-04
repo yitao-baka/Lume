@@ -143,10 +143,12 @@ pub fn run() {
             .build()?;
             // The launcher's DWM frame: paint the visible-frame border strip in
             // the theme's panel color. `shadow(true)` + frameless otherwise
-            // leaves DWM's border area showing the Acrylic backdrop — a light
-            // gray ring around the panel over a bright desktop. Refreshed on
-            // every settings apply (颜色模式) in window::apply_settings; the
-            // shadow and the Win11 rounded corners stay.
+            // leaves DWM's border area clear — and the webview cannot cover it
+            // (non-client), so it shows as a ring around the panel. Same opaque
+            // `--surface` as the panel → the strip disappears into it.
+            // Refreshed on every settings apply (颜色模式) in
+            // window::apply_settings; the shadow and the Win11 rounded corners
+            // stay.
             if let Some(mw) = app.get_webview_window("main") {
                 window::set_panel_frame_border(&mw, &current.appearance.color_mode);
             }
@@ -229,14 +231,12 @@ pub fn run() {
                     index.refresh_user(&settings);
                 }
             });
-            // Acrylic frosted-glass blur for the launcher surface
-            // (docs/UI_GUIDELINES.md). Requires a transparent window.
-            if let Some(win) = app.get_webview_window("main") {
-                win.set_effects(tauri::utils::config::WindowEffectsConfig {
-                    effects: vec![tauri::window::Effect::Acrylic],
-                    ..Default::default()
-                })?;
-            }
+            // No Acrylic backdrop on the launcher (intentionally removed): the
+            // panel is opaque `--surface` (src/App.css `.launcher`), so a
+            // backdrop effect would be invisible — while its translucent
+            // composite can never be reproduced by the opaque DWM frame strip,
+            // which is what produced the edge/corner ring
+            // (docs/UI_GUIDELINES.md 拼接面, ROADMAP #30.5).
             // Dismiss the launcher whenever it loses focus (click elsewhere) —
             // but not while it's being dragged, which briefly deactivates the
             // frameless window even though the cursor is still over it.

@@ -38,5 +38,7 @@ export function currentThemeMode(): "light" | "dark" {
 }
 
 /** The theme's solid panel surface per color mode (`--surface` in theme.css).
- * Plugin page canvases default to it — see `injectBridge`. */
+ * One value shared by the launcher panel, the DWM frame strip (window.rs), the
+ * default plugin-page canvas (`injectBridge`) and the settings window — the
+ * seam/corner uniformity contract. */
 export const PANEL_SURFACE_BG = { dark: "#1e1e20", light: "#fbfbfd" } as const;

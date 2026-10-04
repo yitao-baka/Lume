@@ -32,23 +32,29 @@ body,
   overflow: hidden;
 }
 
-/* No gutter: the panel reaches the window's client edge. A 1px transparent
-   padding here used to let the Acrylic "glow" around the panel, but at 125%+
-   DPI it reads as a couple of pixels of light-gray ring around the launcher
-   (the Acrylic is brighter than the panel over a bright desktop) on top of the
-   panel's own hairline. The Acrylic still shows through the rounded corners. */
+/* No gutter: the opaque panel must reach every client edge. The ~2px frame
+   strip outside the client area is painted the same color by the host
+   (window.rs `set_panel_frame_border`), so a transparent inset here would
+   open a ring around the launcher. */
 #root {
   padding: 0;
 }
 
+/* The launcher panel: opaque `--surface`, edge to edge. One uniform color is
+   the contract — the same value paints DWM's visible-frame strip (window.rs
+   `set_panel_frame_border`) and is the default plugin-page canvas
+   (iframeBridge `injectBridge`), so search row / page / corners / frame strip
+   are one surface with no seam. Do NOT reintroduce: ① a border — the 1px
+   hairline read as a bright ring (its arc was the four-corner artifact);
+   ② `border-radius` — Win11 rounding is DWM's job; a CSS radius only exposes
+   the window backdrop in the crescent outside its arc; ③ a translucent fill
+   (Acrylic) — no tint the opaque frame strip can reproduce, so the ring comes
+   back and varies with the wallpaper. DWM draws the shadow and the rounding. */
 .launcher {
   display: flex;
   flex-direction: column;
   height: 100%;
-  border-radius: 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+  background: var(--surface);
   overflow: hidden;
 }
 
@@ -95,7 +101,9 @@ body,
   position: relative;
 }
 
-/* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。 */
+/* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。
+   面板自身是 `--surface`（不透明）后，按钮填充必须用抬升面 `--surface-raised`
+   才读得出来（原先靠半透明面板与 --surface 的色差）。 */
 .detach-btn {
   position: absolute;
   top: 8px;
@@ -107,7 +115,7 @@ body,
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-raised);
   color: var(--text-dim);
   font: 12px/1.4 sans-serif;
   cursor: pointer;

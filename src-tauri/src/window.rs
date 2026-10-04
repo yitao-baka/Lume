@@ -758,19 +758,24 @@ pub fn clear_dwm_border(win: &WebviewWindow) {
 
 /// Paint DWM's visible frame border in the launcher's panel color.
 ///
-/// The launcher window is transparent + Acrylic. `DWMWA_COLOR_NONE` stops DWM
-/// painting its border color, but the ~2px visible-frame border *area* (a
-/// non-client strip the webview cannot cover) then shows the Acrylic backdrop
-/// — which is brighter than the panel over a bright desktop and reads as a
-/// light-gray ring around the whole window. Painting that strip in the theme's
-/// solid panel surface (`--surface`) makes the panel read as reaching the
-/// window edge; the Acrylic still shows through the rounded corners.
+/// The ~2px visible-frame border *area* is a non-client strip the webview
+/// cannot cover; left at the default (or `DWMWA_COLOR_NONE`) it shows as a
+/// light-gray ring around the whole window (historically the Acrylic backdrop,
+/// nowadays the desktop shining through the transparent window). The launcher
+/// panel is opaque `--surface` (src/App.css `.launcher`) and so is the default
+/// plugin-page canvas (`injectBridge`), so painting the strip in that same
+/// value makes panel, strip and page read as one uniform surface — corners
+/// included, since DWM rounds them. Do not give the strip its own color or
+/// make the panel translucent: the two can never match over an arbitrary
+/// wallpaper (ROADMAP #30.5).
 pub fn set_panel_frame_border(win: &WebviewWindow, color_mode: &str) {
     set_dwm_border(win, Some(panel_surface_rgb(win, color_mode)))
 }
 
 /// The theme's solid panel surface (`src/theme.css` `--surface`) for a color
-/// mode setting; `"system"` follows the OS app theme (the same source the
+/// mode setting — the one value shared by the launcher panel, the DWM frame
+/// strip, the default plugin-page canvas and `PANEL_SURFACE_BG`
+/// (src/theme.ts); `"system"` follows the OS app theme (the same source the
 /// frontend's `prefers-color-scheme` resolves against).
 fn panel_surface_rgb(win: &WebviewWindow, color_mode: &str) -> (u8, u8, u8) {
     let dark = match color_mode {

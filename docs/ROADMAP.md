@@ -2134,11 +2134,44 @@ Tab 循环）。**环境注意**：`cdp_p2*_verify` 依赖 `hello-mode`/`list-de
 （不可由页面覆盖）。回归：`_seam_probe` 10/10、`_shell_nav_check` 10/10、
 `cdp_p2b_verify` 22/22。
 
+### 30.6 面板不透明化（同日三次补做：四角亮弧 / 1px hairline 归零）
+
+30.5 之后用户仍看到「四个角落颜色还是不对劲，另外 1px hairline 也不需要」。
+对用户实机截图做 RLE 像素制图（暗色面板 30,30,32）定位出三层：
+
+- **1px hairline**：`.launcher` 的 `border: 1px solid var(--border)` 沿 12px
+  CSS 圆角描出一圈亮弧（四角实测 61,61,61；直边 55,55,57）——这就是「四角
+  颜色不对」的主因，直边上的 1px 亮线也是它。去掉该 border。
+- **Acrylic 新月带**：CSS 圆角（12px）大于 DWM 圆角（约 8 DIP），弧外一截
+  未覆盖区域露出 Acrylic 背景（36→55 渐变，随壁纸漂移）。圆角是 DWM 的
+  职责，CSS 不再画 radius；实测圆角变体矩阵（`test/_corner_variants.mjs`，
+  0/6/7/8/9/10/12px 各抓一张屏幕图）：≤7px 与无圆角等同（弧被 DWM 裁掉），
+  ≥8px 反而新增未覆盖像素（8px → 12 个、12px → 46 个）→ 保持不画。
+- **面板半透明合成 vs 实体色**：搜索行下的面板是 `--bg` 75% 叠 Acrylic 的
+  合成色（该用户桌面处实测 38,38,40），页面画布/边框条是实体 `--surface`
+  （30,30,32），差 8 级阶差。**面板改填不透明 `var(--surface)`** —— 与
+  DWM 边框条涂色、插件页画布默认值是同一个值，搜索行 / 页面 / 边框条 /
+  四角完全同色；主窗口 Acrylic 效果随之撤除（对不透明面板不可见，且其
+  半透明合成永远无法被不透明边框条复刻——环带的根源）。`.detach-btn`
+  填充 `--surface` → `--surface-raised`（面板同色后会隐形）。
+
+验证（debug exe 重嵌前端 + 屏幕级抓图 1182×276 / 1182×1008 像素采样）：
+- 暗色（用户实机页=文件秒搜）：四缘 = 阴影（10–19 渐变）→ 面板 30,30,32，
+  无条带 / 无亮线；四角对角线 = 阴影 → AA(23) → 30,30,32；拼接缝列 45 个
+  连续像素全为 30,30,32（搜索结果行与页面同色）；内部采样全 30,30,32。
+- 浅色（color_mode=light）：四缘 / 四角 / 内部全 251,251,253；四角仅剩
+  DWM 圆角裁剪的 1–2px 常规抗锯齿（任何圆角窗口皆有，暗色下不可见）。
+- detach 按钮实测填充 38,38,40、描边 55,55,57（面板 30,30,32 上清晰可读）。
+- DWM 读数佐证：`SYSTEMBACKDROP_TYPE` 0（Acrylic 已撤）、
+  `WINDOW_CORNER_PREFERENCE` 0（默认，实测圆角由 DWM 完成）、边框条
+  `VISIBLE_FRAME_BORDER_THICKNESS` 2 仍在（涂色 = `--surface`）。
+- 回归：cargo test 185 无回归、`_seam_probe` 10/10、`_shell_nav_check`
+  10/10、`scripts/cdp_p2b_verify` 22/22。
+
 ### 后续（不在本轮）
 
 搜索源 provider 化（原生索引 / 文件搜索抽成 first-party `SearchSource`）、
 pill 排序/隐藏设置、§10.4 剪贴板页重设计（本重构为其结构前置——只动
-`src/plugins/clipboard/` 即可）。**已知残余**：面板是 Acrylic 半透明
-（`--bg` 75%），插件页画布是主题实体色 `--surface` —— 壁纸较亮时两者仍会有
-几级色阶（宿主无法预知 Acrylic 的合成结果）；要完全归零需要面板不透明
-（放弃 Acrylic），未做。
+`src/plugins/clipboard/` 即可）。（原「面板 Acrylic 半透明 vs 页面实体色的
+已知残余」已由 #30.6 归零：面板 / 边框条 / 页面画布为同一个不透明值，不再
+随壁纸漂移。）

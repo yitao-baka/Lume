@@ -224,8 +224,8 @@ Chromium 画成不透明 #121212 画布**（宿主元素背景对 sandbox iframe
 `clear_dwm_border`）、该条清成 `NONE` 后露出的 Acrylic 背景、`#root` 的 1px 透明
 内衬。现主窗口用 `window::set_panel_frame_border` 把边框条画成主题实体面板色
 （`--surface`；`window::apply_settings` 与 `ThemeChanged` 里重画），`#root` 内衬
-去掉（面板直贴客户区），`WINDOW_PAD` 8 → 6；仅在面板保留自绘 1px hairline。
-排查工具：`test/_window_diag.ps1`（DWM 属性 + 屏幕级裁剪抓图）+
+去掉（面板直贴客户区），`WINDOW_PAD` 8 → 6（其保留的 1px hairline 与 CSS 圆角
+于 ⑦ 去净）。排查工具：`test/_window_diag.ps1`（DWM 属性 + 屏幕级裁剪抓图）+
 `test/_outer_probe.mjs`。验证：
 cargo test 185 无回归、`cdp_p2b_verify` 22 项 / `cdp_clipboard_smoke` /
 `test/_shell_nav_check` 10 项 / `test/_seam_probe` 10 项全过、`cdp_p2_verify`
@@ -236,6 +236,22 @@ cargo test 185 无回归、`cdp_p2b_verify` 22 项 / `cdp_clipboard_smoke` /
 对照旧实现（合并顺序、forceGrid、Esc 分层、Shift+Enter、搜索召回 TTL、记住页面、
 placeholder 三级解析、切模式 reset 语义）。改前端后须 `cargo build` 再实机冒烟
 （前端编译期嵌入 exe）。
+
+⑦ **面板不透明化**（同日三次补做；用户反馈「四个角落颜色还是不对劲 + 1px
+hairline 不需要」）：四角亮弧 = `.launcher` 的 1px `--border` hairline 沿 12px
+CSS 圆角描边（四角实测 61,61,61）+ CSS 圆角(12px) 大于 DWM 圆角（约 8 DIP）在弧
+外露出的 Acrylic 新月带（36→55 渐变，随壁纸漂移）；直边 1px 亮线 = 同一
+hairline；搜索行与页面的 8 级阶差 = 半透明面板合成（该用户桌面处 38,38,40）vs
+页面画布 / 边框条实体色（30,30,32）。现 `.launcher` = 不透明 `var(--surface)`、
+无 border、无 border-radius（圆角交给 DWM 裁剪）、无 shadow；主窗口 Acrylic 撤除
+（对不透明面板不可见，且其半透明合成永远无法被不透明边框条复刻——环带根源）；
+`.detach-btn` 填充改 `--surface-raised`（面板同色后会隐形）。**不要**再给
+`.launcher` 加 border / CSS 圆角 / 半透明填充 / 背景效果——任一再引入环带或角部
+色差（`test/_corner_variants.mjs` 圆角矩阵实测：≤7px 与无圆角等同、≥8px 反而新增
+未覆盖像素）。验证：暗色四缘 / 四角 / 拼接缝全 30,30,32（缝列 45 连续像素同色）、
+浅色全 251,251,253（余 1–2px DWM 圆角抗锯齿为任何圆角窗口皆有的正常现象）；
+detach 按钮实测 38,38,40 + 描边 55,55,57 可读；cargo test 185 / `_seam_probe`
+10 / `_shell_nav_check` 10 / `cdp_p2b_verify` 22 全过。
 
 **Prior: 插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
 工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，`set_plugin_dev_mode`

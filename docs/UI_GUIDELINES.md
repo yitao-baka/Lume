@@ -1,24 +1,28 @@
 # UI Guidelines
 
 The visual contract for the Lume launcher surface (`src/App.css`). The
-surface is a frameless, transparent, always-on-top window with a Windows
-**Acrylic** blur backdrop applied by Rust (`lib.rs`).
+surface is a frameless, always-on-top window; Win11 owns its rounded corners
+and drop shadow (`shadow(true)`, DWM), never CSS.
 
 ## Surface
 
-- No gutter: the panel reaches the window's client edge (`#root` padding 0). A
-  transparent gutter used to let the Acrylic glow around the panel, but on a
-  bright desktop it reads as a light-gray ring a few pixels wide at 125%+ DPI.
-  The Acrylic still shows through the rounded corners.
-- DWM's visible frame border strip (the ~2px non-client ring the webview cannot
-  cover) is painted in the theme's solid panel color
-  (`window::set_panel_frame_border` → `DWMWA_BORDER_COLOR`, `--surface` per
-  颜色模式). Leaving it at `DWMWA_COLOR_NONE` shows the Acrylic backdrop there —
-  the same light ring. The other windows are opaque and use `NONE`
-  (`clear_dwm_border`).
-- Panel: `border-radius: 12px`, semi-transparent dark fill
-  (`rgba(30, 30, 32, 0.75)`), hairline border `rgba(255,255,255,0.08)`,
-  soft shadow `0 8px 40px rgba(0,0,0,0.35)`.
+- **Opaque panel, one color**: `.launcher` fills the client area edge to edge
+  with solid `--surface` (dark `#1e1e20` / light `#fbfbfd`) — **no** border,
+  **no** `border-radius`, **no** translucent fill and no backdrop effect
+  (Acrylic was removed in `lib.rs`). The same value paints DWM's visible frame
+  border strip (`window::set_panel_frame_border` → `DWMWA_BORDER_COLOR` per
+  颜色模式) and is the default plugin-page canvas (`injectBridge`), so panel /
+  strip / page / four corners are exactly one surface: no ring, no hairline,
+  no tint step. A CSS radius only exposes the window backdrop in the crescent
+  outside its arc, and a translucent panel can never be reproduced by the
+  opaque strip over an arbitrary wallpaper. The other windows are opaque and
+  clear their DWM border (`clear_dwm_border`).
+- No gutter: the panel reaches the window's client edge (`#root` padding 0) —
+  any transparent inset would show as a ring around the launcher.
+- No hairline: the panel used to draw `border: 1px solid
+  rgba(255,255,255,0.08)` around itself; at any DPI it reads as a bright ring,
+  and at the corners its arc is an artifact against DWM's arc. Chips that must
+  read as raised on the panel use `--surface-raised` (`.detach-btn`).
 - **One continuous panel (uTools splice)**: the search row and the page below
   it are the same surface — no divider line under the search row, no inset
   around the page area. The page area starts at the search row's bottom edge

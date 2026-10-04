@@ -8,6 +8,18 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **窗口外缘「几像素灰色边框」** — 上一轮拼接缝修好后的残留环带，三层叠加
+  （DwmGetWindowAttribute + 屏幕级像素采样实证）：① DWM 给 shadow(true) +
+  无边框窗口画的可见帧边框条（`DWMWA_VISIBLE_FRAME_BORDER_THICKNESS` = 2px，
+  默认浅灰，压在被自绘的客户区之上——设置/预览/分离窗口早先已用
+  `clear_dwm_border`（COLOR_NONE）压掉，主窗口漏了）；② 该边框条被清成 NONE 后
+  露出 Acrylic 背景（亮桌面下比面板亮 ~25 级）——主窗口是唯一 透明+Acrylic 的
+  窗口，所以改为把边框条**画成主题实体面板色**
+  （`window::set_panel_frame_border`，`DWMWA_BORDER_COLOR` = `--surface`，
+  `颜色模式` 变化与系统主题翻转事件里重画）；③ `#root` 的 1px 透明内衬
+  （原设计让 Acrylic 在圆角处发光）在高 DPI 下同样读作亮环，去掉
+  （面板直贴客户区，圆角处仍透亚克力），`WINDOW_PAD` 8 → 6 同步。修复后仅剩
+  面板自身的 1px hairline（设计内描边）。
 - **主窗口「拼接缝」四缘露框 + 插件页比面板黑一截** — 用户观感反馈（页面
   边缘与搜索框连接不完美，上下左右都有边框），两处叠加：① 几何——搜索行的
   `border-bottom` + `.results` 的 6px 内衬把每个页面包成内缩的卡片，四缘露出

@@ -141,6 +141,15 @@ pub fn run() {
             // windows keep it disabled.
             .initialization_script(&init_script)
             .build()?;
+            // The launcher's DWM frame: paint the visible-frame border strip in
+            // the theme's panel color. `shadow(true)` + frameless otherwise
+            // leaves DWM's border area showing the Acrylic backdrop — a light
+            // gray ring around the panel over a bright desktop. Refreshed on
+            // every settings apply (颜色模式) in window::apply_settings; the
+            // shadow and the Win11 rounded corners stay.
+            if let Some(mw) = app.get_webview_window("main") {
+                window::set_panel_frame_border(&mw, &current.appearance.color_mode);
+            }
 
             // Settings window (replaces tauri.conf.json windows[1]). Frameless
             // like the launcher — the page draws its own titlebar
@@ -282,6 +291,23 @@ pub fn run() {
                         if preview_visible {
                             let _ = window::redock(&app_handle);
                         }
+                    }
+                });
+            }
+            // 颜色模式 = system: the OS app theme can flip at runtime (the
+            // frontend follows it via `prefers-color-scheme`). Repaint the DWM
+            // frame border strip so the ring keeps matching the panel — a
+            // settings save would do it too, but this flip never saves.
+            if let Some(win) = app.get_webview_window("main") {
+                let themed = win.clone();
+                let app_handle = app.handle().clone();
+                win.on_window_event(move |event| {
+                    if let WindowEvent::ThemeChanged(_) = event {
+                        let mode = app_handle
+                            .try_state::<settings::SettingsState>()
+                            .map(|s| s.current().appearance.color_mode.clone())
+                            .unwrap_or_else(|| "system".into());
+                        window::set_panel_frame_border(&themed, &mode);
                     }
                 });
             }

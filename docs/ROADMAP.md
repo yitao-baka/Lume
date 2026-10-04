@@ -2111,6 +2111,29 @@ Tab 循环）。**环境注意**：`cdp_p2*_verify` 依赖 `hello-mode`/`list-de
 用**用户实机插件版本**（file-search 2.4.0，透明 body）复现的对照证据：修复前
 页面 #121212；修复后与面板同色。
 
+### 30.5 窗口外缘环带（同日二次补做）
+
+30.4 之后用户仍看到「窗口周围几个像素的灰色边框」。屏幕级采样 + DWM 属性
+（`DWMWA_VISIBLE_FRAME_BORDER_THICKNESS` = 2）定位为三层叠加：
+
+- **DWM 可见帧边框条**：`shadow(true)` + 无边框窗口由 DWM 画 2px 边框（默认
+  浅灰），设置/预览/分离窗口早有 `clear_dwm_border`，**主窗口漏了**。
+- **Acrylic 兜底**：主窗口是唯一 透明 + Acrylic 的窗口——把边框条清成
+  `DWMWA_COLOR_NONE` 后该条露出 Acrylic 背景（亮桌面下比面板亮 ~25 级）。
+  改为 `window::set_panel_frame_border`：边框条画成主题实体面板色
+  （`--surface`，暗 #1e1e20 / 浅 #fbfbfd），`颜色模式` 保存时
+  （`window::apply_settings`）与系统主题翻转事件（`WindowEvent::ThemeChanged`，
+  system 模式）重画。其余三个不透明窗口继续用 `clear_dwm_border`。
+- **`#root` 1px 内衬**：原设计「让 Acrylic 在圆角处发光」，高 DPI 下同样是
+  亮环 → 去掉（面板直贴客户区；圆角处仍透亚克力），`WINDOW_PAD` 8 → 6。
+
+验证：屏幕级像素采样（`test/_window_diag.ps1` + `test/_outer_probe.mjs`）——
+修复前外缘 5–6 物理 px 亮环（DWM 边 ~117/57 + Acrylic 槽 ~63 + hairline 55），
+修复后仅剩面板自绘的 1px hairline（55,55,57），边框条 = 面板色
+（暗 30,30,32 / 浅 251,251,253）；把面板临时染红做对照证明该条在客户区之外
+（不可由页面覆盖）。回归：`_seam_probe` 10/10、`_shell_nav_check` 10/10、
+`cdp_p2b_verify` 22/22。
+
 ### 后续（不在本轮）
 
 搜索源 provider 化（原生索引 / 文件搜索抽成 first-party `SearchSource`）、

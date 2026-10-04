@@ -32,9 +32,13 @@ body,
   overflow: hidden;
 }
 
-/* 1px padding lets the Acrylic blur glow around the panel's rounded edge. */
+/* No gutter: the panel reaches the window's client edge. A 1px transparent
+   padding here used to let the Acrylic "glow" around the panel, but at 125%+
+   DPI it reads as a couple of pixels of light-gray ring around the launcher
+   (the Acrylic is brighter than the panel over a bright desktop) on top of the
+   panel's own hairline. The Acrylic still shows through the rounded corners. */
 #root {
-  padding: 1px;
+  padding: 0;
 }
 
 .launcher {

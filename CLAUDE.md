@@ -218,12 +218,21 @@ grid 的顺序；③ `.result-selected` 是跨页共用类名，页面内的滚�
 Chromium 画成不透明 #121212 画布**（宿主元素背景对 sandbox iframe 不可见，
 `.plugin-frame` 上写 background 无效）——这是拼接处「页面比面板黑一截」的根因，
 只能给插件页 html 一个背景兜底；⑤ `.results` 无内衬后，新页面/新部件的内衬必须
-自己给，且 `WINDOW_PAD` 必须与 `.results` 的垂直内衬保持同步（fit 高度）。验证：
+自己给，且 `WINDOW_PAD` 必须与 `.results` 的垂直内衬保持同步（fit 高度）；
+⑥ **窗口外缘环带**（同日二次补做）：主窗口是唯一 透明+Acrylic 的窗口，外缘有
+三层可见——DWM 可见帧边框条（`shadow(true)` 无边框窗口由 DWM 画 2px，主窗口原缺
+`clear_dwm_border`）、该条清成 `NONE` 后露出的 Acrylic 背景、`#root` 的 1px 透明
+内衬。现主窗口用 `window::set_panel_frame_border` 把边框条画成主题实体面板色
+（`--surface`；`window::apply_settings` 与 `ThemeChanged` 里重画），`#root` 内衬
+去掉（面板直贴客户区），`WINDOW_PAD` 8 → 6；仅在面板保留自绘 1px hairline。
+排查工具：`test/_window_diag.ps1`（DWM 属性 + 屏幕级裁剪抓图）+
+`test/_outer_probe.mjs`。验证：
 cargo test 185 无回归、`cdp_p2b_verify` 22 项 / `cdp_clipboard_smoke` /
 `test/_shell_nav_check` 10 项 / `test/_seam_probe` 10 项全过、`cdp_p2_verify`
 17/21（余 4 项为 P5 前的 `iframe.contentDocument` 陈旧探针，enter 载荷经插件
 日志证实已投递）；拼接处像素采样：搜索行与页面同色（暗色 29,29,32 vs
-30,30,32；浅色 248,248,250 vs 251,251,253）、四缘无亮线、插件页无溢出。行为逐项
+30,30,32；浅色 248,248,250 vs 251,251,253）、四缘无亮线、插件页无溢出；窗口
+外缘采样：边框条为面板色（暗 30,30,32 / 浅 251,251,253）、无亮环。行为逐项
 对照旧实现（合并顺序、forceGrid、Esc 分层、Shift+Enter、搜索召回 TTL、记住页面、
 placeholder 三级解析、切模式 reset 语义）。改前端后须 `cargo build` 再实机冒烟
 （前端编译期嵌入 exe）。

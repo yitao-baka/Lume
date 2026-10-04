@@ -58,6 +58,18 @@ Called by the frontend (Esc) and by `hotkey.rs`. The launcher also **auto-hides
 on focus loss**: `lib.rs` registers a `WindowEvent::Focused(false)` handler
 that hides the window, so clicking elsewhere dismisses it.
 
+Window frame: the launcher is the one transparent + Acrylic surface (the
+settings/preview/detached-plugin windows are opaque). DWM's visible frame
+border strip (the ~2px non-client ring around the client area) is therefore
+**painted in the theme's solid panel color** —
+`set_panel_frame_border()` → `DWMWA_BORDER_COLOR` with the `--surface` value
+for the current 颜色模式 (re-painted from `apply_settings` and on
+`WindowEvent::ThemeChanged` in system mode); leaving it at `DWMWA_COLOR_NONE`
+would show the Acrylic backdrop there, which reads as a light-gray ring over a
+bright desktop. `clear_dwm_border()` (COLOR_NONE) is what the opaque windows
+use. `DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)` reports the
+strip; see ROADMAP #30.4/#30.5 for the pixel measurements.
+
 ### `apps.rs`
 - **Index**: `AppIndex` state holds in-memory mirrors of the System32 and
   Desktop/user entries loaded from the `cache.rs` SQLite DBs (see Data

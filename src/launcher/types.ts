@@ -153,10 +153,10 @@ export const EDIT_KEYS = new Set(["c", "v", "x", "a", "z", "y"]);
 
 /** Auto-sizing the launcher window to its content (height only). */
 export const MIN_WINDOW_H = 90; // empty-state minimum
-// launcher border (2) + #root 1px gutters (2) + rounding buffer. The page area
-// is full-bleed (`.results` has no inset — see App.css), so the old 12px of
-// `.results` padding is gone.
-export const WINDOW_PAD = 8;
+// launcher border (2) + rounding buffer. The page area is full-bleed
+// (`.results` has no inset) and `#root` has no gutter (see App.css), so this is
+// only the panel's own 1px border plus slack for DPI rounding.
+export const WINDOW_PAD = 6;
 /** Breathing room kept around the window when an expanded bar fills the screen. */
 export const SCREEN_MARGIN = 32;
 /** Fixed row height of a clipboard row (44–52px per the redesign spec). */

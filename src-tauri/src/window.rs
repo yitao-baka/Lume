@@ -412,6 +412,10 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
     window
         .set_size(LogicalSize::new(settings.appearance.window_width as f64, cur.height))
         .map_err(|e| e.to_string())?;
+    // 颜色模式 selects the panel's solid color — the DWM frame border strip
+    // shows it, so a mode switch must repaint it (system mode also lands here:
+    // save/apply is the only path that re-reads the mode).
+    set_panel_frame_border(&window, &settings.appearance.color_mode);
     if !settings.appearance.remember_position {
         apply_initial_position(&window, &settings.appearance).map_err(|e| e.to_string())?;
     }
@@ -749,17 +753,52 @@ fn preview_page_url(app: &AppHandle) -> tauri::Url {
 /// border line goes: the DWM drop shadow and the Win11 rounded corners stay.
 /// Pre-Win11 DWM rejects the attribute — ignore the result.
 pub fn clear_dwm_border(win: &WebviewWindow) {
-    if let Ok(hwnd) = win.hwnd() {
-        // DWMWA_COLOR_NONE — "draw no border".
-        let none = COLORREF(0xFFFF_FFFE);
-        unsafe {
-            let _ = DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_BORDER_COLOR,
-                std::ptr::from_ref(&none).cast(),
-                std::mem::size_of::<COLORREF>() as u32,
-            );
-        }
+    set_dwm_border(win, None)
+}
+
+/// Paint DWM's visible frame border in the launcher's panel color.
+///
+/// The launcher window is transparent + Acrylic. `DWMWA_COLOR_NONE` stops DWM
+/// painting its border color, but the ~2px visible-frame border *area* (a
+/// non-client strip the webview cannot cover) then shows the Acrylic backdrop
+/// — which is brighter than the panel over a bright desktop and reads as a
+/// light-gray ring around the whole window. Painting that strip in the theme's
+/// solid panel surface (`--surface`) makes the panel read as reaching the
+/// window edge; the Acrylic still shows through the rounded corners.
+pub fn set_panel_frame_border(win: &WebviewWindow, color_mode: &str) {
+    set_dwm_border(win, Some(panel_surface_rgb(win, color_mode)))
+}
+
+/// The theme's solid panel surface (`src/theme.css` `--surface`) for a color
+/// mode setting; `"system"` follows the OS app theme (the same source the
+/// frontend's `prefers-color-scheme` resolves against).
+fn panel_surface_rgb(win: &WebviewWindow, color_mode: &str) -> (u8, u8, u8) {
+    let dark = match color_mode {
+        "light" => false,
+        "dark" => true,
+        _ => win.theme().map(|t| t == tauri::Theme::Dark).unwrap_or(true),
+    };
+    if dark {
+        (30, 30, 32)
+    } else {
+        (251, 251, 253)
+    }
+}
+
+fn set_dwm_border(win: &WebviewWindow, rgb: Option<(u8, u8, u8)>) {
+    let Ok(hwnd) = win.hwnd() else { return };
+    // DWMWA_COLOR_NONE ("draw no border") or a 0x00BBGGRR COLORREF.
+    let color = match rgb {
+        None => COLORREF(0xFFFF_FFFE),
+        Some((r, g, b)) => COLORREF(r as u32 | (g as u32) << 8 | (b as u32) << 16),
+    };
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            std::ptr::from_ref(&color).cast(),
+            std::mem::size_of::<COLORREF>() as u32,
+        );
     }
 }
 

@@ -1,15 +1,14 @@
-//! Navigate-mode view — the empty-query main menu (one section per bar:
+//! Navigate home-page view — the empty-query main menu (one section per bar:
 //! 最近使用 / 已固定 / plugin bars / the Explorer-folder bar) and the search
 //! results grid. Pure rendering: state comes in as accessors + the navigate
 //! store's section registry; interactions go back out through the section
 //! contract and callbacks.
 
 import { For, Show } from "solid-js";
-import { t } from "../i18n";
-import unknownIcon from "../../res/icons/unknow_universal.svg";
-import type { AppEntry, MenuState } from "./types";
-import type { NavSection } from "./navigate";
-import type { NavigateStore } from "./navigate";
+import { t } from "../../i18n";
+import unknownIcon from "../../../res/icons/unknow_universal.svg";
+import type { AppEntry, MenuState } from "../../launcher/types";
+import type { NavSection, NavigateStore } from "./store";
 
 export interface NavigateViewProps {
   apps: () => AppEntry[];
@@ -156,7 +155,16 @@ export function NavigateView(props: NavigateViewProps) {
     <Show
       when={props.appsQuery() === "" && !props.forceGrid?.()}
       fallback={
-        <Show when={props.apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
+        <Show
+          when={props.apps().length > 0}
+          fallback={
+            // `.page-hint` is the sizer's measurable row for this state: the
+            // fit window shrinks to the search row + this hint.
+            <div class="page-hint">
+              <span class="hint">{t("noResults")}</span>
+            </div>
+          }
+        >
           <div class="result-grid" role="grid">
             {props.apps().map((app, i) =>
               itemBox(props, app, {}, () => i === props.selected(), {

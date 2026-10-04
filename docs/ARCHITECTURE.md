@@ -39,7 +39,7 @@ Rust Core (src-tauri/src/)
   └─ envwatch.rs — keep the process env block in sync with system env changes
         ▼
 Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
-             IShellItemImageFactory, Acrylic window effects, WM_SETTINGCHANGE,
+             IShellItemImageFactory, DWM window attributes, WM_SETTINGCHANGE,
              SendInput, Task Scheduler via schtasks)
 ```
 
@@ -57,6 +57,20 @@ before showing, so the popup always appears on the display under the cursor.
 Called by the frontend (Esc) and by `hotkey.rs`. The launcher also **auto-hides
 on focus loss**: `lib.rs` registers a `WindowEvent::Focused(false)` handler
 that hides the window, so clicking elsewhere dismisses it.
+
+Window frame: the launcher panel is opaque (src/App.css `.launcher`, solid
+`--surface`) — the window has **no Acrylic backdrop** (deliberately removed;
+see ROADMAP #30.6). DWM's visible frame border strip (the ~2px non-client ring
+around the client area) is **painted in that same panel color** —
+`set_panel_frame_border()` → `DWMWA_BORDER_COLOR` with the `--surface` value
+for the current 颜色模式 (re-painted from `apply_settings` and on
+`WindowEvent::ThemeChanged` in system mode); left at the default or
+`DWMWA_COLOR_NONE` the strip shows the desktop through the transparent window
+as a light-gray ring. Panel, strip and the default plugin-page canvas then
+read as one uniform surface, corners included (Win11 rounding is DWM's).
+`clear_dwm_border()` (COLOR_NONE) is what the settings/preview/detached-plugin
+windows use. `DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)`
+reports the strip; see ROADMAP #30.4–#30.6 for the pixel measurements.
 
 ### `apps.rs`
 - **Index**: `AppIndex` state holds in-memory mirrors of the System32 and
@@ -213,6 +227,12 @@ already-running ones keep their original environment.
 - **Search**: `search_clipboard(query)` runs a case-insensitive substring
   `LIKE` match, pinned-first then most recent, top 20; an empty query browses
   recent history. Image rows carry a downscaled base64 thumbnail.
+  **Async on purpose**: Tauri runs *sync* commands on the main (UI) thread —
+  a full-history load blocked every other IPC for seconds in a debug build,
+  stalling the frontend's window resizes (the loading gate's collapse among
+  them). Same rationale as `get_file_thumb` / `get_file_bytes` /
+  `get_video_thumb`; anything that reads files, decodes images or queries a
+  big table belongs off the main thread (see ROADMAP #30.7).
 - **Copy back**: `copy_clipboard(id)` looks up the row — text via
   `arboard::set_text`, images via PNG-decode → `set_image`.
 - DB helpers take `&Connection`, which lets tests run against an in-memory DB.
@@ -314,11 +334,66 @@ before adding a field:
 
 ## Frontend
 
-- The launcher frontend is modular under `src/launcher/` (2026-08-30 refactor
-  out of a monolithic `App.tsx`). `src/App.tsx` is the **composition root**:
-  it owns the session lifecycle (search recall, mode switching, mount-time
-  listeners) and wires the modules together via a late-bound deps object.
-- `src/launcher/` modules:
+- The launcher frontend is modular. `src/App.tsx` is the **shell /
+  composition root** (2026-09-27 主窗口部件化, ROADMAP #30): it owns the
+  session lifecycle (search recall, mode switching, mount-time listeners),
+  wires the `PluginServices` every page receives via a late-bound deps
+  object, and composes the uTools-style surface — the `SearchBox` widget on
+  top and the active page widget (`ModeInstance.View`) spliced below it,
+  plus the shared overlays (toast, context menu).
+- `src/shell/SearchBox.tsx` — the search-row widget (magnifier + query input
+  + page pills + settings gear). Controlled/pure: the shell owns query
+  routing (page `handleQuery` interception → `subInput` ownership → search)
+  and placeholder resolution (`subInput` → page `placeholder()` → plugin
+  `setPlaceholder` map).
+- **拼接几何 (the seam)**: the surface is one continuous panel — literally
+  one color: the panel fill, the DWM frame strip and the default plugin-page
+  canvas are all `--surface` (see Surface in docs/UI_GUIDELINES.md; do not
+  give `.launcher` a border, CSS radius or translucent fill). The search row
+  carries no bottom border and `.results` has no inset, so the page area
+  starts exactly at the search row's bottom edge and runs to the panel edge
+  on the left, right and bottom. Each page brings its own inner padding
+  (`.result-grid` 8px, bar grids 10px, `.plugin-list` 10px, `.clip-list`
+  `0 6px 4px`) — a page that wants an inset owns it. `WINDOW_PAD`
+  (`src/launcher/types.ts`) is the fit-height slop for this geometry: changing
+  one without the other leaves an empty strip under the content or clips the
+  page. Two states have **no page area at all** — the window is the search row
+  alone: an empty home menu (no bar sections) and a page that is still
+  loading (`ModeInstance.ready`; the pill carries the spinner meanwhile).
+- **Page canvas (disk plugin pages)**: a mode page is an opaque-origin iframe.
+  With a dark `color-scheme` — every mirrored-palette plugin sets one —
+  Chromium paints an **opaque #121212 canvas** for a transparent root
+  background, and host-painted backgrounds are invisible under such a frame
+  (`background` on the iframe element does nothing); the splice then shows a
+  near-black page inside the panel. The host therefore injects the page's
+  default canvas in `injectBridge` — the same `--surface` the panel itself
+  paints, so the page is literally the panel at the splice:
+  `html{background:var(--lume-page-bg,<the theme's --surface>)}`, and the
+  bridge keeps `--lume-page-bg` in step with theme flips (the `theme` event).
+  A plugin that paints its own `html`/`body` background still wins (its rule
+  comes later in the document).
+- `src/plugins/` — **every page below the search box is a plugin**
+  implementing the `ModeInstance` page contract (`src/plugins/types.ts`):
+  - `navigate/` — the built-in **home page** (id `"apps"`, `home: true`, the
+    only `heightPolicy: "fit"` page): `store.ts` (the bars 栏目 registry —
+    最近使用 / 已固定 / plugin bars / Explorer — plus app actions and the
+    continuous bar-grid navigation + pinned drag reorder), `search.ts` (the
+    merged search pipeline: native index → 全局关键字 rows → declarative
+    feature rows → file-search hits → plugin providers; provider drill-down;
+    the summon-scoped file-drop / clipboard-image / foreground-window feature
+    rows), `NavigateView.tsx` (bars + results grid), `index.tsx`
+    (`createNavigatePlugin(services, host)`).
+  - `clipboard/` — the clipboard-history page (store + view + keys + search
+    + the settings slice it renders live).
+  - `preview/` — a service contribution (satellite-preview routing shared by
+    every page that exposes previewable rows).
+  - `registry.ts` + `types.ts` — the registry all plugins plug into
+    (`definePlugin` for built-ins, disk discovery + `createDiskModeInstance`
+    for on-disk plugins); the Rust side discovers manifests
+    (`<base>/plugins/<id>/plugin.toml`) in `plugins.rs` and carries the
+    enabled set in `settings.plugins.disabled`. Adding a launcher page no
+    longer touches the shell.
+- `src/launcher/` shared modules:
   - `types.ts` — shared types + pure constants (mode/entry types, key sets,
     sizing constants, category tables).
   - `clipData.ts` — pure clipboard-data helpers (text subtype detection,
@@ -326,52 +401,40 @@ before adding a field:
     preview-target decision).
   - `icons.ts` — `createIconStore()`: the in-memory icon cache mirroring the
     backend `IconCache` (batched `get_app_icons` fetches).
-  - `sizing.ts` — `createWindowSizer()`: auto-fit height, bar column
-    measurement, work-area cap, virtual-list viewport measurement.
-  - `navigate.ts` — `createNavigateStore()`: 最近使用 / 已固定 / Explorer
-    bars — signals, data refresh, app actions, continuous bar-grid
-    navigation, pinned-bar drag reorder.
-  - `clipboard.ts` — `createClipboardStore()`: history categories, copy /
-    paste / merge-paste, delete with undo, clear, pause, pin, virtual-list
-    windowing, display-only clipboard settings signals.
+  - `sizing.ts` — `createWindowSizer()`: the "拼接" height model (fit pages
+    auto-size to content; fixed pages splice in under the search box at the
+    manifest/`window_height` height), bar column measurement, work-area cap,
+    virtual-list viewport measurement. Two special cases: a **loading** page
+    (`ModeInstance.ready` false) collapses the window to the search row alone,
+    and an **empty fit page** (no bar sections at all) is that same search-row
+    state — no reserved "empty-state" strip and no `WINDOW_PAD` below a page
+    that has no content.
   - `menu.ts` — `buildMenuItems()`: right-click menu construction for
-    app / folder / clipboard targets.
+    app / folder / clipboard targets, over the narrow structural
+    `NavMenuActions` / `ClipMenuActions` interfaces each page supplies via
+    `ModeInstance.menuActions()`.
   - `keyboard.ts` — `createKeyRouter()`: the window-level keydown routing
-    (Esc layering, mode switch, per-mode navigation) and the WebView2
-    accelerator blocker.
-  - `previewSync.ts` — `createPreviewSync()`: debounced satellite-preview
-    show/close driven by the clipboard selection.
-  - `NavigateView.tsx` / `ClipboardView.tsx` — the two mode views (pure
-    rendering: state in via accessors, interactions out via callbacks).
+    (Esc layering, mode switch, shared ↑/↓/Enter fallback — per-page keys
+    delegate to the active page's `onKey`) and the WebView2 accelerator
+    blocker.
 - The settings window reuses the same build via the window label
   (`src/settings/`, grouped-card layout — see `docs/SETTINGS.md`); the
   satellite preview is its own entry (`src/preview.tsx`).
-- **Plugins** (`src/plugins/`, ROADMAP #7): a registry
-  (`registry.ts` + `types.ts`) that first-party capabilities plug into —
-  `clipboard` (mode contribution: store + view + keys + search under
-  `src/plugins/clipboard/`) and `preview` (service contribution: satellite
-  routing under `src/plugins/preview/`). The composition root provides
-  `PluginServices` (toasts, search pipeline + stale tokens, selection
-  source, context menu, mode switching); the Rust side discovers on-disk
-  manifests (`<base>/plugins/<id>/plugin.toml`) in `plugins.rs` and carries
-  the enabled set in `settings.plugins.disabled`. The App renders mode pills
-  and pages from the registry — adding a launcher mode no longer touches the
-  shell.
-- Two modes — **Navigate** and **Clipboard** — are toggled with `Tab` or the
-  pills in the search row; switching keeps the current query and re-searches.
-- Each keystroke invokes the active mode's search command and drops stale
-  responses via a monotonic request id.
-- **Navigate** — empty query shows the two bars (最近使用 above 已固定), each a
-  titled, expandable grid of app boxes sized like the results grid; typing shows
-  the search-results grid. ↑/↓ cycle the bars on the empty main menu, ←/→ move
+- Each keystroke invokes the active page's search command and drops stale
+  responses via a monotonic request id (`searchToken` / `nextSearchToken`).
+- **Navigate (home)** — empty query shows the bars (最近使用 above 已固定
+  above plugin bars above the Explorer bar), each a titled, expandable grid
+  of app boxes sized like the results grid; typing shows the merged
+  search-results grid. ↑/↓ cycle the bars on the empty main menu, ←/→ move
   within the active bar; mouse hover selects, click launches. Context menus
   offer pin / launch / open location / (recent: remove-from-recent) / admin.
 - **Clipboard** renders a virtualized list (fixed row height, ~30 DOM rows)
   with category tabs, multi-select merge paste and delete-with-undo.
-- Both modes support hover-select and click-activate; the search input is
+- All pages support hover-select and click-activate; the search input is
   re-focused every time the window is shown.
-- `Enter` launches an app or pastes a clipboard entry, then hides; `Esc`
-  layers: close menu → clear multi-select → close satellite preview → hide.
+- `Enter` launches an app or pastes a clipboard entry, then hides (Shift+
+  Enter = admin launch); `Esc` layers: close menu → page `onEscape` (pop a
+  drill level / clear multi-select) → close satellite preview → hide.
 - **i18n**: all user-facing strings go through `t()` from `src/i18n.ts`
   (en / zh-CN / zh-TW), keyed off the system language.
 

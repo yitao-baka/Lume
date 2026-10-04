@@ -55,8 +55,8 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 - **All UI strings go through `t()` in `src/i18n.ts`** (en / zh-CN / zh-TW).
   Never hardcode user-facing text.
 - WebView2 built-in shortcuts (Find, Print, Reload, DevTools, history nav) are
-  blocked in `src/App.tsx`; only Lume's own keys and text editing in the
-  search box pass through.
+  blocked in `src/launcher/keyboard.ts`; only Lume's own keys and text editing
+  in the search box pass through.
 - Windows is the target platform. Use Windows-native APIs where appropriate
   (e.g. `ShellExecuteW` for launching `.lnk`, `RegisterHotKey` for globals).
 - Network is unreliable here — **always use mirror sources** when downloading
@@ -184,7 +184,92 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
+**主窗口部件化：搜索框部件 + 页面部件插件化（ROADMAP #30, complete) — as of
+2026-09-27**: 主窗口收敛为 uTools 式拼接壳 —— `src/shell/SearchBox.tsx` 部件
+（放大镜 + 输入框 + 页面 pills + 齿轮；受控纯展示）在顶，页面插槽
+`<Dynamic component={activeMode().View}>` 在下；导航页照剪贴板形态改造为内置
+插件 `src/plugins/navigate/`（id `"apps"`、`home: true`、`heightPolicy:
+"fit"`；store = 栏目条 / search = 合并搜索管线 + feature 行 + 下钻 /
+NavigateView / index 工厂），**所有页面（导航首页、剪贴板、磁盘 mode）统一
+实现 `ModeInstance` 契约**，`APPS_MODE` 特判清零。契约只增不改义：`rows`
+泛化为 `PageRow`（`AppEntry | ClipboardItem`）、`activate(opts?: {elevated})`、
+`handleQuery?`（输入拦截——下钻过滤）、`onShow?`/`onFilesDropped?`（呼出刷新 /
+文件拖入转发）、`heightPolicy?`/`anyExpanded?`（拼接尺寸）、`home?`（主页切
+模式不复位）、`placeholder?`/`menuActions?`；`ModeKeyContext` 增
+`gridCols`/`markKeyboard`；`PluginServices` 增 `nextSearchToken()`。键盘分层：
+壳只留 Esc 链（菜单 → 页面 `onEscape`（下钻/多选）→ 卫星预览 → 隐藏）+ 切换键
++ ↑↓/Enter 通用兜底，方向键整体委托页面 `onKey`（`keyboard.ts` 不再依赖
+`NavigateStore`，`menu.ts` 改结构性 `NavMenuActions`/`ClipMenuActions`，动作经
+`ModeInstance.menuActions()` 供给）。搜索合并管线（原生索引 → 关键字行 →
+feature 行 → 文件命中 → provider）与拖入/剪贴板图片/前台窗口 feature 行状态、
+下钻、`lume-mode://`/`featureEnter`/`providerDrill` 激活分支全部归导航页；
+搜索召回 / 记住上次页面（`last_page = "apps"` 值不变）/ subInput / 防抖持久化
+留壳。导航首页**不进 设置→插件 启停列表**（默认页不可关）。**拼接缝（同日补做，
+uTools 式无缝）**：搜索行去掉下边框、`.results` 去掉 6px 内衬（页面内衬改由各页
+自给：`.result-grid` 8 / 栏网格 10 / `.plugin-list` 10 / `.clip-list` `0 6px 4px`），
+`WINDOW_PAD` 20→8 与几何同步；磁盘插件页 iframe 改 flex 填充（原 `100vh - 60px`
+在搜索行高度不吻合时会溢出错位），画布默认由 `injectBridge` 注入
+`html{background:var(--lume-page-bg,<主题 --surface>)}` 并经 `theme` 事件随主题
+翻转（`currentThemeMode`/`PANEL_SURFACE_BG` 移入 `src/theme.ts`）。**坑**：① 页面
+`activate` 与壳的 Enter 路径都要 `markEntryOpened`（点击路径不经壳）；②
+`onShow` 在召唤搜索**之后**调用——空菜单自动选中依赖 `search` 先把 zone 归
+grid 的顺序；③ `.result-selected` 是跨页共用类名，页面内的滚动跟随 effect 必须
+按 `services.mode()` 门控；④ **暗色 `color-scheme` + 透明根背景的插件页会被
+Chromium 画成不透明 #121212 画布**（宿主元素背景对 sandbox iframe 不可见，
+`.plugin-frame` 上写 background 无效）——这是拼接处「页面比面板黑一截」的根因，
+只能给插件页 html 一个背景兜底；⑤ `.results` 无内衬后，新页面/新部件的内衬必须
+自己给，且 `WINDOW_PAD` 必须与 `.results` 的垂直内衬保持同步（fit 高度）；
+⑥ **窗口外缘环带**（同日二次补做）：主窗口是唯一 透明+Acrylic 的窗口，外缘有
+三层可见——DWM 可见帧边框条（`shadow(true)` 无边框窗口由 DWM 画 2px，主窗口原缺
+`clear_dwm_border`）、该条清成 `NONE` 后露出的 Acrylic 背景、`#root` 的 1px 透明
+内衬。现主窗口用 `window::set_panel_frame_border` 把边框条画成主题实体面板色
+（`--surface`；`window::apply_settings` 与 `ThemeChanged` 里重画），`#root` 内衬
+去掉（面板直贴客户区），`WINDOW_PAD` 8 → 6（其保留的 1px hairline 与 CSS 圆角
+于 ⑦ 去净）。排查工具：`test/_window_diag.ps1`（DWM 属性 + 屏幕级裁剪抓图）+
+`test/_outer_probe.mjs`。验证：
+cargo test 185 无回归、`cdp_p2b_verify` 22 项 / `cdp_clipboard_smoke` /
+`test/_shell_nav_check` 10 项 / `test/_seam_probe` 10 项全过、`cdp_p2_verify`
+17/21（余 4 项为 P5 前的 `iframe.contentDocument` 陈旧探针，enter 载荷经插件
+日志证实已投递）；拼接处像素采样：搜索行与页面同色（暗色 29,29,32 vs
+30,30,32；浅色 248,248,250 vs 251,251,253）、四缘无亮线、插件页无溢出；窗口
+外缘采样：边框条为面板色（暗 30,30,32 / 浅 251,251,253）、无亮环。行为逐项
+对照旧实现（合并顺序、forceGrid、Esc 分层、Shift+Enter、搜索召回 TTL、记住页面、
+placeholder 三级解析、切模式 reset 语义）。改前端后须 `cargo build` 再实机冒烟
+（前端编译期嵌入 exe）。
+
+⑦ **面板不透明化**（同日三次补做；用户反馈「四个角落颜色还是不对劲 + 1px
+hairline 不需要」）：四角亮弧 = `.launcher` 的 1px `--border` hairline 沿 12px
+CSS 圆角描边（四角实测 61,61,61）+ CSS 圆角(12px) 大于 DWM 圆角（约 8 DIP）在弧
+外露出的 Acrylic 新月带（36→55 渐变，随壁纸漂移）；直边 1px 亮线 = 同一
+hairline；搜索行与页面的 8 级阶差 = 半透明面板合成（该用户桌面处 38,38,40）vs
+页面画布 / 边框条实体色（30,30,32）。现 `.launcher` = 不透明 `var(--surface)`、
+无 border、无 border-radius（圆角交给 DWM 裁剪）、无 shadow；主窗口 Acrylic 撤除
+（对不透明面板不可见，且其半透明合成永远无法被不透明边框条复刻——环带根源）；
+`.detach-btn` 填充改 `--surface-raised`（面板同色后会隐形）。**不要**再给
+`.launcher` 加 border / CSS 圆角 / 半透明填充 / 背景效果——任一再引入环带或角部
+色差（`test/_corner_variants.mjs` 圆角矩阵实测：≤7px 与无圆角等同、≥8px 反而新增
+未覆盖像素）。验证：暗色四缘 / 四角 / 拼接缝全 30,30,32（缝列 45 连续像素同色）、
+浅色全 251,251,253（余 1–2px DWM 圆角抗锯齿为任何圆角窗口皆有的正常现象）；
+detach 按钮实测 38,38,40 + 描边 55,55,57 可读；cargo test 185 / `_seam_probe`
+10 / `_shell_nav_check` 10 / `cdp_p2b_verify` 22 全过。
+
+⑧ **加载门控 + 空导航页收缩**（同日四次补做；用户三点：空导航页只留搜索框 /
+未加载完不显示 / pill 变色转圈）：空 fit 容器不再预留 56px 空态位（无内容不加
+`WINDOW_PAD`），`MIN_WINDOW_H` 90 → 60；「无结果」提示移入自带内衬的
+`.page-hint` 行（sizer 新增该测量容器）。新契约 `ModeInstance.ready()`：false
+时 `.results` 加 `.results-loading`（visibility: hidden）、窗口收拢到搜索行、
+活动 pill 加 `.loading`（`#5ac8fa` 着色 + 图标转圈环）；磁盘 view 页用
+`createIframeView` 的 `live` 信号（挂载/换文档/卸载复位 + 3s 宽限兜底），
+模板/剪贴板页用「首次取数落定（错误也放行）」的信号。**坑**：收拢一开始不生效
+的根因是 **Tauri 同步命令跑在主线程**——剪贴板首载（debug ~4s）把 `set_size`
+等所有 IPC 卡在队列里（实测琐碎 IPC 3895ms）；页面路径上的重活必须
+async/spawn_blocking（`search_clipboard` 已 async 化；`search_apps` 仍同步，
+见 ROADMAP #30.7 后续）。验证：`test/_loading_gate_check.mjs` 18 项全过（空菜单
+60px / 无结果 107px / 加载期收拢 60 且 hidden / pill rgb(90,200,250) + 转圈环
+动画中 / 就绪 520 与 610）+ cargo test 185 / `_seam_probe` 10 /
+`_shell_nav_check` 10 / `_clip_seam_check` OK / `cdp_p2b_verify` 22。
+
+**Prior: 插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
 工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，`set_plugin_dev_mode`
 轻量写即时生效）。关闭时**插件页隐藏全部开发者选项**（重载按钮 / 「开发」徽章），
 且 **trusted 门控在 `get_plugins`**——所有插件上报 `trusted=false`，权限层
@@ -236,8 +321,8 @@ ROADMAP #27、API 文档 `docs/PLUGIN_API.md` §6E.1.1 / §6E.5，示例
    `listTemplate.tsx`）：`entry` 逻辑跑在启动器窗口（provider 信任模型），
    内置列表渲染 `search(q)` 行；**声明式 feature 投递后宿主重跑一次该模式的
    搜索**（`enterPlugin` mode 分支）—— 改行源的钩子（quick-add）必须靠它
-   反映到列表。`ModeInstance.rows()` 与 `ClipboardItem` 的类型耦合依旧
-   （cast + 注释），泛化仍留待后续。
+   反映到列表。`ModeInstance.rows()` 的行形状已泛化为 `PageRow`
+   （`AppEntry | ClipboardItem`，#30）。
 
 **验证**：cargo test **169**、tsc/vite build/cargo build 干净、
 `scripts/cdp_p2b_verify.mjs` **17 项全过**（img 行出现/消失/readImage 真读、

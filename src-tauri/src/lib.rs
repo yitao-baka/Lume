@@ -141,6 +141,17 @@ pub fn run() {
             // windows keep it disabled.
             .initialization_script(&init_script)
             .build()?;
+            // The launcher's DWM frame: paint the visible-frame border strip in
+            // the theme's panel color. `shadow(true)` + frameless otherwise
+            // leaves DWM's border area clear — and the webview cannot cover it
+            // (non-client), so it shows as a ring around the panel. Same opaque
+            // `--surface` as the panel → the strip disappears into it.
+            // Refreshed on every settings apply (颜色模式) in
+            // window::apply_settings; the shadow and the Win11 rounded corners
+            // stay.
+            if let Some(mw) = app.get_webview_window("main") {
+                window::set_panel_frame_border(&mw, &current.appearance.color_mode);
+            }
 
             // Settings window (replaces tauri.conf.json windows[1]). Frameless
             // like the launcher — the page draws its own titlebar
@@ -220,14 +231,12 @@ pub fn run() {
                     index.refresh_user(&settings);
                 }
             });
-            // Acrylic frosted-glass blur for the launcher surface
-            // (docs/UI_GUIDELINES.md). Requires a transparent window.
-            if let Some(win) = app.get_webview_window("main") {
-                win.set_effects(tauri::utils::config::WindowEffectsConfig {
-                    effects: vec![tauri::window::Effect::Acrylic],
-                    ..Default::default()
-                })?;
-            }
+            // No Acrylic backdrop on the launcher (intentionally removed): the
+            // panel is opaque `--surface` (src/App.css `.launcher`), so a
+            // backdrop effect would be invisible — while its translucent
+            // composite can never be reproduced by the opaque DWM frame strip,
+            // which is what produced the edge/corner ring
+            // (docs/UI_GUIDELINES.md 拼接面, ROADMAP #30.5).
             // Dismiss the launcher whenever it loses focus (click elsewhere) —
             // but not while it's being dragged, which briefly deactivates the
             // frameless window even though the cursor is still over it.
@@ -282,6 +291,23 @@ pub fn run() {
                         if preview_visible {
                             let _ = window::redock(&app_handle);
                         }
+                    }
+                });
+            }
+            // 颜色模式 = system: the OS app theme can flip at runtime (the
+            // frontend follows it via `prefers-color-scheme`). Repaint the DWM
+            // frame border strip so the ring keeps matching the panel — a
+            // settings save would do it too, but this flip never saves.
+            if let Some(win) = app.get_webview_window("main") {
+                let themed = win.clone();
+                let app_handle = app.handle().clone();
+                win.on_window_event(move |event| {
+                    if let WindowEvent::ThemeChanged(_) = event {
+                        let mode = app_handle
+                            .try_state::<settings::SettingsState>()
+                            .map(|s| s.current().appearance.color_mode.clone())
+                            .unwrap_or_else(|| "system".into());
+                        window::set_panel_frame_border(&themed, &mode);
                     }
                 });
             }

@@ -1,41 +1,30 @@
 //! Keyboard routing — the window-level keydown handler (Esc layering, mode
-//! switch, per-mode arrow/Enter/Delete handling) and the WebView2 built-in
-//! accelerator blocker. Installed once per launcher window.
+//! switch, shared ↑/↓/Enter fallback) and the WebView2 built-in accelerator
+//! blocker. Installed once per launcher window. Per-page keys (grid arrows,
+//! bar navigation, category switching, …) are delegated to the active page's
+//! `onKey`; this router only owns the global layers.
 
 import { invoke } from "@tauri-apps/api/core";
-import { APP_KEYS, EDIT_KEYS, type AppEntry, type ClipboardItem, type MenuState, type Mode, type PreviewReq } from "./types";
-import type { ModeId } from "../plugins/types";
-import type { NavigateStore } from "./navigate";
-import type { ModeInstance } from "../plugins/types";
+import { APP_KEYS, EDIT_KEYS, type MenuState, type Mode, type PreviewReq } from "./types";
+import type { ModeId, ModeInstance, ModeKeyContext, PageRow } from "../plugins/types";
 
 export interface KeyDeps {
   mode: () => Mode;
-  appsQuery: () => string;
-  /** P2.2: true while drop/img rows replace the bars on an empty query. */
-  forceGrid?: () => boolean;
   /** Key that switches modes (settings → 快捷键). */
   switchKey: () => string;
-  /** All enabled mode ids in cycle order (apps first, then plugin modes). */
+  /** All enabled mode ids in cycle order (home page first, then plugin modes). */
   modeIds: () => ModeId[];
   shiftEnterAdmin: () => boolean;
-  selected: () => number;
   menu: () => MenuState;
-  currentResults: () => (AppEntry | ClipboardItem)[];
+  currentResults: () => PageRow[];
   currentPreview: () => PreviewReq | null;
   setCurrentPreview: (v: PreviewReq | null) => void;
   markKeyboard: () => void;
-  nav: NavigateStore;
-  /** The active plugin mode — plugin-specific keys are delegated to it. */
+  /** The active page — page-specific keys are delegated to it. */
   activeMode: () => ModeInstance | undefined;
-  /** Let the active mode consume Esc (multi-select) before hiding. */
-  onModeEscape: () => boolean;
-  /** Root-level transient layers (a provider drill-down level) pop here,
-   * ahead of the mode's own Esc handling. True = consumed. */
-  onGridEscape?: () => boolean;
   gridCols: () => number;
   moveSelection: (delta: number) => void;
-  activate: () => void;
-  activateAdmin: () => void;
+  activate: (opts?: { elevated?: boolean }) => void;
   switchMode: (m: Mode) => void;
   resetAndHide: () => void;
   closeMenu: () => void;
@@ -58,16 +47,14 @@ export function matchesSwitchKey(e: KeyboardEvent, combo: string): boolean {
 
 export function createKeyRouter(deps: KeyDeps) {
   function onKeyDown(e: KeyboardEvent) {
-    const { nav } = deps;
     const hasResults = deps.currentResults().length > 0;
     if (e.key === "Escape") {
       e.preventDefault();
       if (deps.menu()) {
         deps.closeMenu();
-      } else if (deps.onGridEscape?.()) {
-        // A root-level transient layer (drill-down) consumed Esc — stay open.
-      } else if (deps.onModeEscape()) {
-        // The active mode consumed Esc (e.g. leave multi-select) — stay open.
+      } else if (deps.activeMode()?.onEscape()) {
+        // The active page consumed Esc (a drill level popped, multi-select
+        // left) — stay open.
       } else if (deps.currentPreview()) {
         // Close the satellite preview without hiding the launcher. The preview
         // window is WS_EX_NOACTIVATE and can never receive the key itself, so
@@ -79,82 +66,22 @@ export function createKeyRouter(deps: KeyDeps) {
       }
     } else if (matchesSwitchKey(e, deps.switchKey())) {
       e.preventDefault();
-      // Cycle through every enabled mode (apps first, then plugin modes).
+      // Cycle through every enabled page (home first, then plugin modes).
       const modes = deps.modeIds();
       const idx = modes.indexOf(deps.mode());
       void deps.switchMode(modes[(Math.max(idx, 0) + 1) % modes.length]);
-    } else if (deps.mode() === "apps") {
-      // P2.2: a file drop / clipboard-image row set replaces the bars even on
-      // an empty query — the grid keys (and selection) apply.
-      const empty = deps.appsQuery() === "" && !deps.forceGrid?.();
-      // ── search results grid (non-empty query) ──
-      // Grid navigation always wins when there is a query, regardless of
-      // `zone` — the zone signal belongs to the bar view and may carry a
-      // stale value from a prior empty-query interaction.
-      if (!empty) {
-        if (!hasResults) return;
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          deps.markKeyboard();
-          deps.moveSelection(-1);
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          deps.markKeyboard();
-          deps.moveSelection(1);
-        } else if (e.key === "ArrowDown") {
-          e.preventDefault();
-          deps.markKeyboard();
-          deps.moveSelection(deps.gridCols());
-        } else if (e.key === "ArrowUp") {
-          e.preventDefault();
-          deps.markKeyboard();
-          deps.moveSelection(-deps.gridCols());
-        } else if (e.key === "Enter") {
-          e.preventDefault();
-          if (e.shiftKey && deps.shiftEnterAdmin()) deps.activateAdmin();
-          else deps.activate();
-        }
-        return;
-      }
-      // ── empty-query bar navigation (the section registry, one continuous grid) ──
-      if (nav.sections().length === 0) return;
-      if (e.key === "ArrowLeft") {
-        deps.markKeyboard();
-        e.preventDefault();
-        nav.moveBarSelection(-1, 0);
-      } else if (e.key === "ArrowRight") {
-        deps.markKeyboard();
-        e.preventDefault();
-        nav.moveBarSelection(1, 0);
-      } else if (e.key === "ArrowDown") {
-        deps.markKeyboard();
-        e.preventDefault();
-        nav.moveBarSelection(0, 1);
-      } else if (e.key === "ArrowUp") {
-        deps.markKeyboard();
-        e.preventDefault();
-        nav.moveBarSelection(0, -1);
-      } else if (e.key === "Delete") {
-        // Remove the selected entry of a section that supports it (最近使用's
-        // soft delete). In the grid zone (typing) Delete falls through to text
-        // editing in the search input.
-        const sec = nav.activeSection();
-        if (sec?.onDelete) {
-          e.preventDefault();
-          sec.onDelete(sec.selected());
-        }
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        if (e.shiftKey && deps.shiftEnterAdmin()) deps.activateAdmin();
-        else deps.activate();
-      }
     } else {
-      // Plugin mode: mode-specific keys first (category switching,
-      // multi-select, delete), then the shared grid bindings (↑/↓ move,
+      // Page-owned keys first (grid arrows + bar navigation, category
+      // switching, multi-select, delete), then the shared bindings (↑/↓ move,
       // Enter activates).
       const inst = deps.activeMode();
-      const handled = inst?.onKey(e, { hasResults, moveSelection: deps.moveSelection }) ?? false;
-      if (handled) return;
+      const ctx: ModeKeyContext = {
+        hasResults,
+        moveSelection: deps.moveSelection,
+        gridCols: deps.gridCols,
+        markKeyboard: deps.markKeyboard,
+      };
+      if (inst?.onKey(e, ctx)) return;
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         if (hasResults) {
           e.preventDefault();
@@ -162,7 +89,7 @@ export function createKeyRouter(deps: KeyDeps) {
         }
       } else if (e.key === "Enter") {
         e.preventDefault();
-        deps.activate();
+        deps.activate({ elevated: e.shiftKey && deps.shiftEnterAdmin() });
       }
     }
   }

@@ -1,16 +1,43 @@
 # UI Guidelines
 
 The visual contract for the Lume launcher surface (`src/App.css`). The
-surface is a frameless, transparent, always-on-top window with a Windows
-**Acrylic** blur backdrop applied by Rust (`lib.rs`).
+surface is a frameless, always-on-top window; Win11 owns its rounded corners
+and drop shadow (`shadow(true)`, DWM), never CSS.
 
 ## Surface
 
-- One 1px transparent gutter around the panel so the Acrylic blur glows
-  around the rounded edge.
-- Panel: `border-radius: 12px`, semi-transparent dark fill
-  (`rgba(30, 30, 32, 0.75)`), hairline border `rgba(255,255,255,0.08)`,
-  soft shadow `0 8px 40px rgba(0,0,0,0.35)`.
+- **Opaque panel, one color**: `.launcher` fills the client area edge to edge
+  with solid `--surface` (dark `#1e1e20` / light `#fbfbfd`) — **no** border,
+  **no** `border-radius`, **no** translucent fill and no backdrop effect
+  (Acrylic was removed in `lib.rs`). The same value paints DWM's visible frame
+  border strip (`window::set_panel_frame_border` → `DWMWA_BORDER_COLOR` per
+  颜色模式) and is the default plugin-page canvas (`injectBridge`), so panel /
+  strip / page / four corners are exactly one surface: no ring, no hairline,
+  no tint step. A CSS radius only exposes the window backdrop in the crescent
+  outside its arc, and a translucent panel can never be reproduced by the
+  opaque strip over an arbitrary wallpaper. The other windows are opaque and
+  clear their DWM border (`clear_dwm_border`).
+- No gutter: the panel reaches the window's client edge (`#root` padding 0) —
+  any transparent inset would show as a ring around the launcher.
+- No hairline: the panel used to draw `border: 1px solid
+  rgba(255,255,255,0.08)` around itself; at any DPI it reads as a bright ring,
+  and at the corners its arc is an artifact against DWM's arc. Chips that must
+  read as raised on the panel use `--surface-raised` (`.detach-btn`).
+- **One continuous panel (uTools splice)**: the search row and the page below
+  it are the same surface — no divider line under the search row, no inset
+  around the page area. The page area starts at the search row's bottom edge
+  and runs to the panel border on the left/right/bottom; inner padding belongs
+  to the page (see ARCHITECTURE 拼接几何). A frame or tint step at that seam
+  is a bug, not a style.
+- **Nothing to show = the search row alone**: an empty home menu (no bar
+  sections) collapses the window to the search row — no reserved empty strip.
+  A "no results" hint renders in its own `.page-hint` row (the fit window
+  shrinks to search row + hint), never centered inside a tall empty page area.
+- **Loading gate**: a page that is not loaded yet is *not shown* — the window
+  collapses to the search row, `.results` is hidden, and the mode's pill
+  carries the feedback (label tinted to the accent `#5ac8fa`, a spinner ring
+  over the icon). `ModeInstance.ready` decides; the home page is always ready.
+  See ROADMAP #30.7.
 - Font: `"Segoe UI Variable Text", "Segoe UI", system-ui`; base 16px;
   antialiased; `user-select: none`.
 

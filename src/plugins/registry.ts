@@ -19,6 +19,7 @@ import { fetchDiskFile } from "./disk";
 import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
+import { currentThemeMode } from "../theme";
 export {
   APPS_MODE,
   type LauncherPlugin,
@@ -383,7 +384,7 @@ function createDiskModeInstance(
   themePosters.set(m.id, (t) => {
     if (viewReady) postEv("theme", t);
   });
-  const { View, post } = createIframeView(
+  const { View, post, live: viewLive } = createIframeView(
     (method, args) => execHostRpc(m.id, method, args),
     () => {
       // The page's bridge is live and its handlers are assigned: push the
@@ -471,6 +472,10 @@ function createDiskModeInstance(
     previewTarget: () => null,
     previewEnabled: () => false,
     measureViewport: () => {},
+    // Loading gate: the page area stays hidden (window collapsed to the search
+    // row, pill spinner) until THIS document's bridge is live — a remount
+    // reloads the srcdoc and flips it back to false.
+    ready: viewLive,
     // Manifest `height` — the mode's preferred fixed window height.
     desiredHeight: () => (m.height != null && m.height > 0 ? m.height : null),
     pageKind: () => "main",
@@ -885,11 +890,6 @@ const detachedSuppliers = new Map<
 /** Per disk mode page: the closure that posts a theme value into its iframe
  * (no-op until the page's view is ready). */
 const themePosters = new Map<string, (t: string) => void>();
-
-/** The launcher's current color mode (`data-theme` on this document). */
-export function currentThemeMode(): "light" | "dark" {
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
-}
 
 function postThemeEverywhere() {
   const t = currentThemeMode();

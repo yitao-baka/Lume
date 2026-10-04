@@ -32,28 +32,39 @@ body,
   overflow: hidden;
 }
 
-/* 1px padding lets the Acrylic blur glow around the panel's rounded edge. */
+/* No gutter: the opaque panel must reach every client edge. The ~2px frame
+   strip outside the client area is painted the same color by the host
+   (window.rs `set_panel_frame_border`), so a transparent inset here would
+   open a ring around the launcher. */
 #root {
-  padding: 1px;
+  padding: 0;
 }
 
+/* The launcher panel: opaque `--surface`, edge to edge. One uniform color is
+   the contract — the same value paints DWM's visible-frame strip (window.rs
+   `set_panel_frame_border`) and is the default plugin-page canvas
+   (iframeBridge `injectBridge`), so search row / page / corners / frame strip
+   are one surface with no seam. Do NOT reintroduce: ① a border — the 1px
+   hairline read as a bright ring (its arc was the four-corner artifact);
+   ② `border-radius` — Win11 rounding is DWM's job; a CSS radius only exposes
+   the window backdrop in the crescent outside its arc; ③ a translucent fill
+   (Acrylic) — no tint the opaque frame strip can reproduce, so the ring comes
+   back and varies with the wallpaper. DWM draws the shadow and the rounding. */
 .launcher {
   display: flex;
   flex-direction: column;
   height: 100%;
-  border-radius: 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+  background: var(--surface);
   overflow: hidden;
 }
 
+/* 搜索行：uTools 式拼接的上半部。无下边框 —— 与下方页面共用同一块面板底色，
+   拼接处不再出现横线；14px 的底部内边距就是页面内容与输入框之间的呼吸空隙。 */
 .search {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 18px 20px 14px;
-  border-bottom: 1px solid var(--border);
 }
 
 .search-icon {
@@ -78,16 +89,28 @@ body,
   color: var(--text-faint);
 }
 
+/* 拼接下半部：页面直贴搜索行与窗口三边（无外框内衬）。内衬由各页面自己给
+   （.result-grid 8px、条栏 10px、.plugin-list 10px、插件自己），否则页面会被
+   一圈窗口底色包住，看起来像「页面带边框」。 */
 .results {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 6px;
+  padding: 0;
   position: relative;
 }
 
-/* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。 */
+/* Loading gate: the active page isn't ready yet — keep everything below the
+   search row invisible (the sizer collapses the window to the search row on
+   the same signal; this covers the frames before that resize lands). */
+.results-loading {
+  visibility: hidden;
+}
+
+/* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。
+   面板自身是 `--surface`（不透明）后，按钮填充必须用抬升面 `--surface-raised`
+   才读得出来（原先靠半透明面板与 --surface 的色差）。 */
 .detach-btn {
   position: absolute;
   top: 8px;
@@ -99,7 +122,7 @@ body,
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--surface);
+  background: var(--surface-raised);
   color: var(--text-dim);
   font: 12px/1.4 sans-serif;
   cursor: pointer;
@@ -120,6 +143,14 @@ body,
   margin: auto;
   color: var(--text-faint);
   font-size: 14px;
+}
+
+/* Fit-page "no results" row: a measurable, self-padded container so the sizer
+   can hug it (the window shrinks to the search row + this row — the hint is no
+   longer centered inside a tall empty page area). */
+.page-hint {
+  flex: none;
+  padding: 10px 12px;
 }
 
 .result-list {
@@ -329,12 +360,15 @@ body,
   font-weight: 600;
 }
 
-/* Virtual list viewport (scrolls internally; fixed window height). */
+/* Virtual list viewport (scrolls internally; fixed window height). The side
+   padding keeps row highlights off the window edge now that the page area is
+   full-bleed (it used to come from the .results inset). */
 .clip-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
+  padding: 0 6px 4px;
 }
 
 .clip-list::-webkit-scrollbar {
@@ -826,7 +860,8 @@ body,
 }
 
 /* 鼠标悬停在空白处（无条目）时隐藏导航高亮：选择索引保留，回到条目或按方向
-   键即从隐藏时的相对位置恢复（`.nav-hidden` 由 App.tsx 的 mousemove 切换）。 */
+   键即从隐藏时的相对位置恢复（`.nav-hidden` 由 navigate 页 store 的 mousemove
+   切换；当前行为是高亮常驻，该类已不再被置位）。 */
 .launcher.nav-hidden .result-selected {
   background: transparent;
   box-shadow: none;
@@ -1036,19 +1071,55 @@ body.reorder-dragging {
   color: var(--text);
 }
 
+/* Loading gate feedback (the page below is hidden until `ModeInstance.ready`):
+   the mode being loaded tints to the accent and its icon carries a spinner. */
+.mode-switch-item.loading {
+  color: #5ac8fa;
+}
+
+.mode-switch-item.loading .mode-switch-icon {
+  opacity: 0.3;
+}
+
+.mode-switch-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.mode-switch-spinner {
+  position: absolute;
+  inset: -3px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: mode-switch-spin 0.7s linear infinite;
+}
+
+@keyframes mode-switch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ---------------------------------------------------------------------------
    Settings window (docs/SETTINGS.md) — frameless with a solid background;
    the topbar doubles as the draggable chrome (src/components/TitleBar.tsx).
 --------------------------------------------------------------------------- */
 
 /* Disk mode plugin page — the bridged iframe fills the launcher below the
-   search row (the page scrolls internally). */
+   search row. Flex-fill (not a `100vh - N` guess): the frame's height follows
+   the actual results box, so no strip or clipped row at the bottom. The frame
+   element paints nothing — the page's canvas comes from the host-injected
+   default (iframeBridge `injectBridge`), which is the only thing that can
+   reach a sandboxed page's root. */
 .plugin-frame {
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
-  height: calc(100vh - 60px);
   border: none;
   display: block;
-  background: var(--surface);
+  background: transparent;
 }
 
 /* The launcher leaves the body transparent (Acrylic); the settings window

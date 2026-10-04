@@ -6,8 +6,65 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+
+- **页面加载门控 + 加载反馈** — 切到剪贴板/插件页时「未加载完不显示」：窗口
+  收拢成搜索行、`.results` 隐藏，该页 pill 变强调色（`#5ac8fa`）且图标上转圈
+  （`ModeInstance.ready` 新契约成员：磁盘 view 页以页面桥接 `__lumeReady` 为准
+  ——挂载/换文档即复位，另有 3s 宽限兜底；模板页与剪贴板页以首次取数落定为准；
+  导航首页永远就绪）。同一信号也驱动高度模型：就绪后窗口才展开到页面高度。
+
 ### Fixed
 
+- **导航页空态 = 搜索行** — 无栏目时不再预留 56px 的「空态提示位」，
+  `MIN_WINDOW_H` 90 → 60（搜索行高度）；「无结果」提示改为自带内衬的
+  `.page-hint` 行，fit 窗口收缩到 搜索行 + 该行（实测 107px），不再在大片
+  空页面里居中显示。
+- **剪贴板首载期间整个启动器 IPC 卡死** — Tauri 的**同步命令跑在主线程**：
+  debug 下 172 行首载（~4s）期间所有其它 IPC（窗口 resize、按键取数……）都在
+  排队——探针实测一个琐碎 IPC 耗时 **3895ms**，加载门控的窗口收拢因此从不
+  落地。`search_clipboard` 改 `async`，`get_file_thumb` / `get_file_bytes`
+  改 async + `spawn_blocking`（与既有 `get_video_thumb`/`get_app_icons` 同法）；
+  同一测量降到 **3ms**。
+- **主窗口「四角亮弧 + 1px hairline」—— 面板改不透明 `--surface`** — 用户观感
+  反馈，对实机截图做 RLE 像素制图定位出三层：① `.launcher` 的 1px `--border`
+  hairline 沿 12px CSS 圆角描出一圈亮弧（四角实测 61,61,61），直边的 1px 亮线
+  也是它；② CSS 圆角(12px) 大于 DWM 圆角（约 8 DIP），弧外一截未覆盖区域露出
+  Acrylic 新月带（36→55 渐变，随壁纸漂移）；③ 半透明面板合成色（该用户桌面处
+  38,38,40）与页面画布 / 边框条实体色（30,30,32）差 8 级。现 `.launcher` 填
+  **不透明 `var(--surface)`**（与 DWM 边框条涂色、插件页画布默认值是同一个
+  值），去掉 border / border-radius / box-shadow，主窗口 Acrylic 效果撤除
+  （对不透明面板不可见，且其半透明合成永远无法被不透明边框条复刻——环带的
+  根源）；`.detach-btn` 填充 `--surface` → `--surface-raised`（面板同色后需
+  抬升面才可见）。圆角保持由 DWM 完成（圆角变体矩阵实测：≤7px 与无圆角等同、
+  ≥8px 反而新增未覆盖像素）。验证：暗色四缘 / 四角 / 拼接缝全 30,30,32、浅色
+  251,251,253；cargo test 185、`_seam_probe` 10、`_shell_nav_check` 10、
+  `cdp_p2b_verify` 22 全过。
+- **窗口外缘「几像素灰色边框」** — 上一轮拼接缝修好后的残留环带，三层叠加
+  （DwmGetWindowAttribute + 屏幕级像素采样实证）：① DWM 给 shadow(true) +
+  无边框窗口画的可见帧边框条（`DWMWA_VISIBLE_FRAME_BORDER_THICKNESS` = 2px，
+  默认浅灰，压在被自绘的客户区之上——设置/预览/分离窗口早先已用
+  `clear_dwm_border`（COLOR_NONE）压掉，主窗口漏了）；② 该边框条被清成 NONE 后
+  露出 Acrylic 背景（亮桌面下比面板亮 ~25 级）——主窗口是唯一 透明+Acrylic 的
+  窗口，所以改为把边框条**画成主题实体面板色**
+  （`window::set_panel_frame_border`，`DWMWA_BORDER_COLOR` = `--surface`，
+  `颜色模式` 变化与系统主题翻转事件里重画）；③ `#root` 的 1px 透明内衬
+  （原设计让 Acrylic 在圆角处发光）在高 DPI 下同样读作亮环，去掉
+  （面板直贴客户区，圆角处仍透亚克力），`WINDOW_PAD` 8 → 6 同步。修复后仅剩
+  面板自身的 1px hairline（设计内描边）。
+- **主窗口「拼接缝」四缘露框 + 插件页比面板黑一截** — 用户观感反馈（页面
+  边缘与搜索框连接不完美，上下左右都有边框），两处叠加：① 几何——搜索行的
+  `border-bottom` + `.results` 的 6px 内衬把每个页面包成内缩的卡片，四缘露出
+  面板底色；现搜索行无下边框、`.results` 无内衬，页面直贴搜索行底边与窗口
+  左/右/下边，内衬改由各页自给（`.result-grid` 8 / 栏网格 10 / `.plugin-list`
+  10 / `.clip-list` `0 6px 4px`），`WINDOW_PAD` 20 → 8 同步；磁盘插件页
+  iframe 由 `100vh - 60px` 改 flex 填充（搜索行高度与常数不吻合时溢出错位）。
+  ② 画布——`color-scheme: dark` + 透明根背景的插件页被 Chromium 画成**不透明
+  #121212 画布**（与面板差 ≈20 级色阶），且宿主元素背景对 sandbox iframe 不可
+  见（`.plugin-frame` 上写 background 无效）；现由 `injectBridge` 给每个插件页
+  注入 `html{background:var(--lume-page-bg,<主题 --surface>)}` 并由桥接随
+  `theme` 事件切换，插件自绘 html/body 背景仍覆盖默认（`iframeBridge.tsx`、
+  `theme.ts`、`App.css`、`launcher/types.ts`）。
 - **分离窗口「白描边」与「纯黑」背景** — 两个渲染层问题叠加（用户观感反馈，
   CDP 像素级实证）：① Chromium 给无 `border:none` 的 iframe 画 UA 默认
   `border: 2px inset`（左深右浅的凹陷框，DPI 缩放下呈 2–3px 亮线）——

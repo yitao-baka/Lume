@@ -96,6 +96,7 @@ function App() {
     },
     scheduleResize: () => {},
     searchToken: () => 0,
+    nextSearchToken: () => 0,
     selectionSource: () => "other",
     markMouse: () => {},
     openMenu: () => {},

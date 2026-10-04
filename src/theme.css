@@ -11,8 +11,9 @@
 
 /* Dark palette (default). */
 :root {
-  --bg: rgba(30, 30, 32, 0.75);            /* launcher panel over the Acrylic */
-  --surface: #1e1e20;                      /* settings window / solid panels */
+  --bg: rgba(30, 30, 32, 0.75);            /* modal picker card (.picker 的浮层卡) */
+  --surface: #1e1e20;                      /* 唯一的实体面板色：启动器面板 + DWM 边框条
+                                             + 插件页画布默认 + 设置窗口 */
   --surface-raised: rgba(38, 38, 40, 0.97);/* context menu */
   --text: #f2f2f2;
   --text-secondary: rgba(242, 242, 242, 0.6);

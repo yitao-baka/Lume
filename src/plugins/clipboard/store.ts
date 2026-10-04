@@ -22,6 +22,12 @@ import type { PluginServices } from "../../plugins/types";
 export function createClipboardStore(services: PluginServices) {
   // ── Initial config (synchronous, injected by Rust before page load) ──
   const clipCfg = (window as any).__LUME_CONFIG__?.clipboard;
+  const appearanceCfg = (window as any).__LUME_CONFIG__?.appearance;
+
+  /** Settings-driven: custom search placeholder ("" = default text). */
+  const [placeholderClipboard, setPlaceholderClipboard] = createSignal(
+    appearanceCfg?.search_placeholder_clipboard || ""
+  );
 
   // ── This mode's own query (independent, like the apps query) ──
   const [clipQuery, setClipQuery] = createSignal("");
@@ -60,6 +66,12 @@ export function createClipboardStore(services: PluginServices) {
    * across sessions (toggled in the file-list preview area). */
   const [rememberChecks, setRememberChecks] = createSignal(clipCfg?.remember_checks ?? true);
 
+  // ── Loading gate (`ModeInstance.ready`) ──
+  // The page stays hidden (window collapsed to the search row, pill spinner)
+  // until the **first** load lands — later activations reuse the rows already
+  // in memory while the refresh runs, so no spinner flash on a warm page.
+  const [loaded, setLoaded] = createSignal(false);
+
   // ── Virtual list state ──
   let clipScrollEl: HTMLDivElement | undefined;
   const [clipScrollTop, setClipScrollTop] = createSignal(0);
@@ -96,14 +108,20 @@ export function createClipboardStore(services: PluginServices) {
    * which ends up here after its own selection/zone resets. */
   async function search(q: string) {
     const token = services.searchToken();
-    const res = (await invoke("search_clipboard", {
-      query: q,
-      kind: clipKind(),
-    })) as ClipboardItem[];
-    if (token !== services.searchToken()) return;
-    setClips(res);
-    setSelected(0);
-    setClipScrollTop(0);
+    try {
+      const res = (await invoke("search_clipboard", {
+        query: q,
+        kind: clipKind(),
+      })) as ClipboardItem[];
+      if (token !== services.searchToken()) return;
+      setClips(res);
+      setSelected(0);
+      setClipScrollTop(0);
+    } finally {
+      // The loading gate opens on the first answer (success or failure) — a
+      // backend error must not leave the page hidden behind its spinner.
+      setLoaded(true);
+    }
     services.scheduleResize();
   }
 
@@ -339,12 +357,15 @@ export function createClipboardStore(services: PluginServices) {
     setHoverSelect(s.clipboard?.hover_select ?? false);
     setPreviewEnabled(s.clipboard?.preview ?? true);
     setRememberChecks(s.clipboard?.remember_checks ?? true);
+    setPlaceholderClipboard(s.appearance?.search_placeholder_clipboard || "");
   }
 
   return {
     // query
     clipQuery,
     setClipQuery,
+    /** Search-box placeholder while this page is active. */
+    placeholder: () => placeholderClipboard() || t("searchClipboard"),
     // rows + selection
     clips,
     setClips,
@@ -368,6 +389,7 @@ export function createClipboardStore(services: PluginServices) {
     clipPaused,
     previewEnabled,
     rememberChecks,
+    loaded,
     clipScrollTop,
     setClipScrollTop,
     clipStart,

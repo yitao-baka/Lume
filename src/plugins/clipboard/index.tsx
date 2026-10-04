@@ -59,17 +59,16 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
     previewTarget: () => previewTarget(clip.clips()[clip.selected()], clip.rememberChecks()),
     previewEnabled: clip.previewEnabled,
     measureViewport: clip.measureViewport,
+    ready: clip.loaded,
+    placeholder: clip.placeholder,
     pageKind: clip.pageKind,
     restorePage: clip.restorePage,
     applySettings: clip.applySettings,
+    // The shared context menu's clipboard actions (the store satisfies the
+    // narrow `ClipMenuActions` interface menu.ts declares).
+    menuActions: () => clip as unknown,
     View: () => <ClipboardView clip={clip} services={services} />,
   };
-
-  /** The shared context menu's clipboard actions (the store satisfies the
-   * narrow `ClipMenuActions` interface menu.ts declares). */
-  function clipMenuActions() {
-    return clip;
-  }
 
   return {
     id: "clipboard",
@@ -79,6 +78,5 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
       icon: clipboardIconUrl,
     },
     mode: instance,
-    clipMenuActions,
   };
 }

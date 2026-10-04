@@ -1,3 +1,11 @@
+//! Composition root / shell — owns the session lifecycle (search recall, mode
+//! switching, summon resets) and wires the `PluginServices` every page gets.
+//! The surface is the uTools-style splice: the `SearchBox` widget on top, the
+//! active page widget (`ModeInstance.View`) below it, and the shared overlays
+//! (toast, context menu). Every page below the search box is a plugin — the
+//! navigate home page, the clipboard page and disk mode pages all register
+//! through the same registry path.
+
 import { createEffect, createSignal, onCleanup, onMount, Show, For } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -6,69 +14,43 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { Dynamic } from "solid-js/web";
 import { resolveLocale, setLocale, t, type Messages } from "./i18n";
-import { plog } from "./plugins/log";
 import { applyColorMode } from "./theme";
 import type { SettingsData } from "./settings/types";
-import settingsIcon from "../res/icons/settings.svg";
-import navigateIcon from "../res/icons/navigate.svg";
 import "./App.css";
-import type {
-  AppEntry,
-  ClipboardItem,
-  ClipKind,
-  FileSearchOut,
-  MenuState,
-} from "./launcher/types";
-import {
-  MIN_WINDOW_H,
-  TOAST_MS,
-  TOAST_UNDO_MS,
-} from "./launcher/types";
-import type { ForegroundInfo, ProviderInstance, ProviderResult } from "./plugins/types";
-import type { FeatureMatch } from "./plugins/registry";
+import type { ClipKind, MenuState } from "./launcher/types";
+import { MIN_WINDOW_H, TOAST_MS, TOAST_UNDO_MS } from "./launcher/types";
+import type { ModeId, PageRow, PluginServices } from "./plugins/types";
 import { createIconStore } from "./launcher/icons";
 import { createWindowSizer } from "./launcher/sizing";
-import { createNavigateStore, type ContributedBar } from "./launcher/navigate";
-import { buildMenuItems } from "./launcher/menu";
+import { buildMenuItems, type ClipMenuActions, type NavMenuActions } from "./launcher/menu";
 import { createKeyRouter } from "./launcher/keyboard";
-import { NavigateView } from "./launcher/NavigateView";
+import { SearchBox, type SearchBoxPage } from "./shell/SearchBox";
 import {
-  APPS_MODE,
   allPlugins,
+  applyPluginSettings,
   definePlugin,
   deliverFeature,
   deliverSubInput,
   detachedPluginIds,
-  featureMatches,
-  fileFeatureMatches,
-  hasWindowFeatures,
-  imgFeatureMatches,
   isPluginDetached,
   isPluginDetachable,
   modeById,
-  modeKeywordMatches,
   modePlugins,
-  navBarPlugins,
   onPluginWindowClosed,
   onPluginWindowReady,
   onPluginWindowShown,
   pluginKind,
-  providerPlugins,
   refreshPlugins,
   reloadDiskPlugin,
-  applyPluginSettings,
   setPluginDetached,
   setPluginServices,
-  windowFeatureMatches,
-  type ModeId,
-  type PluginServices,
 } from "./plugins/registry";
+import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
 import { createClipboardPlugin } from "./plugins/clipboard";
 import { createPreviewPlugin } from "./plugins/preview";
 
 function App() {
-  const [appsQuery, setAppsQuery] = createSignal("");
-  const [mode, setMode] = createSignal<ModeId>(APPS_MODE);
+  const [mode, setMode] = createSignal<ModeId>(NAVIGATE_MODE_ID);
   // ── Synchronous initial config from Rust initialization_script ──
   // Window starts hidden; the Rust setup() reads settings.toml and injects
   // it as window.__LUME_CONFIG__ before the webview loads. If missing (very
@@ -91,22 +73,13 @@ function App() {
     w: _a?.window_width ?? 720,
     h: _a?.window_height ?? 520,
   });
-  /** Key that switches Navigate/Clipboard modes (settings → 系统 → 快捷键). */
+  /** Key that switches pages (settings → 系统 → 快捷键). */
   const [switchKey, setSwitchKey] = createSignal(_cfg?.hotkeys?.switch_mode || "Tab");
-  /** Settings-driven: show the 「最近使用」 bar (display-only toggle). */
-  const [showRecent, setShowRecent] = createSignal(_a?.show_recent ?? true);
-  /** Settings-driven: start the 「已固定」 bar expanded. */
-  const [expandPinned, setExpandPinned] = createSignal(_a?.expand_pinned ?? false);
-  /** Settings-driven: show the 「Windows 资源管理器」 bar (Explorer folder context). */
-  const [showExplorerBar, setShowExplorerBar] = createSignal(_a?.show_explorer_bar ?? true);
   /** Settings-driven: Shift+Enter launches with administrator privileges. */
   const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(_a?.shift_enter_admin !== false);
   /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
    * so bar column measurement re-runs when it changes). */
   const [entrySize, setEntrySize] = createSignal(_a?.entry_size ?? 110);
-  /** Settings-driven: custom search placeholder per mode ("" = default text). */
-  const [placeholderApps, setPlaceholderApps] = createSignal(_a?.search_placeholder_apps || "");
-  const [placeholderClipboard, setPlaceholderClipboard] = createSignal(_a?.search_placeholder_clipboard || "");
   /** Plugin-driven placeholders keyed by plugin id (app.setPlaceholder) —
    * shown while that plugin's mode page is active, "" = default text. */
   const [modePlaceholders, setModePlaceholders] = createSignal<Record<string, string>>({});
@@ -114,22 +87,13 @@ function App() {
    * instead of a normal search. Cleared on every summon, mode switch and
    * plugin reload — ownership is session state, never persisted. */
   const [subInput, setSubInput] = createSignal<{ pluginId: string; placeholder: string } | null>(null);
-  /** Provider drill-down level (P2.4): the row we descended into plus the
-   * rows of the level above, so Esc can pop back. */
-  const [drill, setDrill] = createSignal<{
-    pluginId: string;
-    item: unknown;
-    parent: AppEntry[];
-    filterable: boolean;
-  } | null>(null);
-  /** Settings-driven: 记住上次所在页面 — restore the last page (mode + clipboard
-   * category) on the next summon instead of always starting on Navigate. */
+  /** Settings-driven: 记住上次所在页面 — restore the last page on the next
+   * summon instead of always starting on the home page. */
   const [rememberLastPage, setRememberLastPage] = createSignal(_a?.remember_last_page ?? false);
-  /** Last shown mode ("apps" | "clipboard"), restored when 记住上次所在页面 is on. */
-  const [lastPageMode, setLastPageMode] = createSignal<ModeId>(
-    _a?.last_page === "clipboard" ? "clipboard" : APPS_MODE
-  );
-  /** Last clipboard category when the last page was Clipboard. */
+  /** Last shown page id, restored when 记住上次所在页面 is on. */
+  const [lastPageMode, setLastPageMode] = createSignal<ModeId>(_a?.last_page || NAVIGATE_MODE_ID);
+  /** Last page kind when the remembered page has one (e.g. the clipboard
+   * category). */
   const [lastPageKind, setLastPageKind] = createSignal<ClipKind>(
     (_a?.last_page_kind as ClipKind) ?? "all"
   );
@@ -141,34 +105,17 @@ function App() {
    * and the 展开 button's visibility. */
   const [barCols, setBarCols] = createSignal(6);
 
-
-  // Each mode keeps its own query, so clearing one never resets the other.
-  // Plugin modes live in the registry; the root reads through accessors.
+  // Each page keeps its own query, so clearing one never resets the other.
+  // Pages live in the registry; the shell reads through the accessors.
   const activeMode = () => modeById(mode());
-  const query = (): string =>
-    mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? "");
+  const query = (): string => activeMode()?.query() ?? "";
   const setQuery = (q: string) => {
-    if (mode() === APPS_MODE) setAppsQuery(q);
-    else activeMode()?.setQuery(q);
+    activeMode()?.setQuery(q);
   };
-  const [apps, setApps] = createSignal<AppEntry[]>([]);
-  const [selected, setSelected] = createSignal(0);
-  // P2.2 — plugin entry rows for OS file drops (paths arrive via the Tauri
-  // drag-drop handler) and for the clipboard image. Cleared on hide/summon.
-  // `droppedFileKinds` runs parallel to `droppedFiles` (P4, ROADMAP #28):
-  // "file" | "folder" | "missing" per path, so `fileType` rules can tell a
-  // directory from a file with one attributes query per drop.
-  const [droppedFiles, setDroppedFiles] = createSignal<string[]>([]);
-  const [droppedFileKinds, setDroppedFileKinds] = createSignal<string[]>([]);
-  /** The window that had focus before this summon (P4, ROADMAP #29) — feeds
-   * the `type = "window"` feature rows on the empty-query menu. `null` when
-   * no window was captured or no window features exist. */
-  const [fgContext, setFgContext] = createSignal<ForegroundInfo | null>(null);
-  const [clipboardImgOk, setClipboardImgOk] = createSignal(false);
-  const [menu, setMenu] = createSignal<MenuState>(null);
 
+  const [menu, setMenu] = createSignal<MenuState>(null);
   // ── Shared launcher state ──
-  // The toast is shared with every plugin action; plugin modes own their
+  // The toast is shared with every plugin action; pages own their
   // rows/selection/viewport internally (see src/plugins/*/).
   const [toast, setToast] = createSignal<{ text: string; undo?: () => void } | null>(null);
   let toastTimer: number | undefined;
@@ -179,16 +126,29 @@ function App() {
   // auto-scrolls (mouse hover on a clipped row must not force a scroll).
   let selectionSource: "keyboard" | "mouse" | "other" = "other";
 
-  /** Results for the current mode (reactive). */
-  const currentResults = (): (AppEntry | ClipboardItem)[] =>
-    mode() === APPS_MODE ? apps() : (activeMode()?.rows() ?? []);
+  /** Results for the active page (reactive). */
+  const currentResults = (): PageRow[] => activeMode()?.rows() ?? [];
+
+  /** Loading gate: the active page hasn't finished loading yet (its `ready()`
+   * reports false). While true, `.results` is hidden, the sizer collapses the
+   * window to the search row and the mode's pill shows the loading state —
+   * a half-loaded page is never shown. Pages without a `ready` accessor (the
+   * home page) are always ready. */
+  const pageLoading = (): boolean => !(activeMode()?.ready?.() ?? true);
 
   // 搜索状态记忆: 一次「未打开条目」的搜索会保留到下次呼出 (热键重呼出恢复);
-  // 但 5 分钟未再次呼出, 或打开过条目, 则清空查询。记住上次所在页面 (mode/category)
+  // 但 5 分钟未再次呼出, 或打开过条目, 则清空查询。记住上次所在页面 (page/kind)
   // 不受 TTL 限制, 只在「打开条目」时被强制覆盖为导航页。查询仅内存, 重启即空。
   const SEARCH_RECALL_MS = 5 * 60 * 1000; // 5 分钟
   let searchRecallAt = 0; // 上次「决定搜索状态」的时间戳 (锚点, 供下呼出算 TTL)
   let entryOpened = false; // 本所示期内是否打开过条目 (打开即清空搜索记忆)
+
+  /** Every page except the home page starts from its default page ("all"). */
+  function resetNonHomePages() {
+    for (const p of modePlugins()) {
+      if (!p.instance.home) p.instance.restorePage("all");
+    }
+  }
 
   function clearSearch() {
     const now = Date.now();
@@ -196,54 +156,47 @@ function App() {
     const fresh = now - searchRecallAt <= SEARCH_RECALL_MS;
     entryOpened = false;
     searchRecallAt = now; // 锚定 TTL, 供下次呼出计算 5 分钟间隔
-    // 用恢复前的 mode 判定本模式是否有活跃搜索 (决定是否保留查询)。
+    // 用恢复前的 mode 判定本页面是否有活跃搜索 (决定是否保留查询)。
     const recall = !opened && fresh && query().trim() !== "";
 
     if (!recall) {
       // 未保留搜索 (打开过条目 / 超过 5 分钟 / 无活跃搜索) → 重置页面与查询。
       if (opened) {
-        // 打开条目 → 回到导航页 (apps 空查询)。记住上次所在页面在此被覆盖。
-        setMode(APPS_MODE);
-        modeById("clipboard")?.restorePage("all");
+        // 打开条目 → 回到导航页 (空查询)。记住上次所在页面在此被覆盖。
+        setMode(NAVIGATE_MODE_ID);
+        resetNonHomePages();
       } else if (rememberLastPage()) {
-        // 记住上次所在页面 → 恢复它记住的 mode/category (页面偏好, 不受 TTL 限制)。
-        const next: ModeId = lastPageMode();
+        // 记住上次所在页面 → 恢复它记住的 page/kind (页面偏好, 不受 TTL 限制)。
+        let next: ModeId = lastPageMode();
+        if (next !== NAVIGATE_MODE_ID && !modeById(next)) next = NAVIGATE_MODE_ID;
         setMode(next);
-        if (next !== APPS_MODE) modeById(next)?.restorePage(lastPageKind());
+        if (next !== NAVIGATE_MODE_ID) modeById(next)?.restorePage(lastPageKind());
       } else {
         // 未记住页面 → 导航页。
-        setMode(APPS_MODE);
-        modeById("clipboard")?.restorePage("all");
+        setMode(NAVIGATE_MODE_ID);
+        resetNonHomePages();
       }
       // 查询一律清空, 落在该页面的默认空态。
-      setAppsQuery("");
       for (const p of allPlugins()) p.mode?.setQuery("");
     }
     // recall: 保留当前 mode/kind/query 不动, 热键重呼出即恢复这次搜索结果。
 
-    setApps([]);
-    setActiveSelected(0);
-    nav.setZone("grid");
-    nav.resetSelections();
-    nav.setRecentExpanded(false); // don't persist the expanded state across shows
-    nav.setPinnedExpanded(expandPinned());
-    setMenu(null);
-    // 子输入框与下钻层都是「本次呼出」级状态：新的一次召唤由宿主拥有搜索框。
-    setSubInput(null);
-    setDrill(null);
+    activeMode()?.setSelected(0);
     for (const p of allPlugins()) p.mode?.reset();
-    nav.setNavHidden(false); // fresh show always starts with the nav box visible
+    setMenu(null);
+    // 子输入框是「本次呼出」级状态：新的一次召唤由宿主拥有搜索框。
+    setSubInput(null);
     sizer.invalidate(); // force a re-measure on the next show (mode may have changed)
   }
 
-  /** 记住上次所在页面: debounce-persist the current page (mode + clipboard
-   * category). Only fires when the toggle is on; a light settings write that
-   * never touches backup.toml. */
+  /** 记住上次所在页面: debounce-persist the current page (page id + kind).
+   * Only fires when the toggle is on; a light settings write that never
+   * touches backup.toml. */
   let lastPageTimer: number | undefined;
   function persistLastPage() {
     if (!rememberLastPage()) return;
     const m = mode();
-    const kind = m === APPS_MODE ? "all" : (activeMode()?.pageKind() ?? "all");
+    const kind = activeMode()?.pageKind() ?? "all";
     // Update frontend signals so clearSearch() reads the correct values on the
     // next launcher show (the Rust backend writes to file + in-memory, but
     // does not emit settings-applied — so the signals would stay stale).
@@ -256,44 +209,69 @@ function App() {
   }
 
   // Icon cache + window sizing live in their own modules; the deps object is
-  // read at call time, so later-created state (clipScrollEl) is safe to close
-  // over here.
+  // read at call time, so later-created state is safe to close over here.
   const icons = createIconStore();
   const sizer = createWindowSizer({
-    // Plugin modes use the fixed-height model; Navigate auto-fits.
-    fixedHeight: () => mode() !== APPS_MODE,
+    // Fit pages (the navigate home) auto-size to content; every other page
+    // splices in under the search box at a fixed height.
+    fixedHeight: () => (activeMode()?.heightPolicy?.() ?? "fixed") !== "fit",
+    // Loading gate: a page that isn't ready collapses the window to the
+    // search row (see pageLoading) — checked before the height models below.
+    loading: pageLoading,
     windowHeight,
     windowWidth,
-    // A mode's manifest `height` (desiredHeight) overrides the global setting.
+    // A page's manifest `height` (desiredHeight) overrides the global setting.
     modeHeight: () => activeMode()?.desiredHeight?.() ?? null,
     setRuntimeSize: (w, h) => setRuntimeSize({ w, h }),
-    // The expand flags live in the navigate store (created below) — read
-    // through a wrapper; the sizer only calls it at resize time.
-    anyExpanded: () => nav.anyExpanded(),
+    // The expand flags live in the home page's bar store — read through the
+    // page contract; the sizer only calls it at resize time.
+    anyExpanded: () => activeMode()?.anyExpanded?.() ?? false,
     workAreaH,
     setWorkAreaH,
     barCols,
     setBarCols,
     measureModeViewport: () => activeMode()?.measureViewport(),
   });
-  // Navigate-mode store: deps methods are hoisted function declarations in
-  // this scope, so referencing them here is safe even though they run later.
-  const nav = createNavigateStore({
-    showRecent,
-    showExplorerBar,
-    barCols,
-    icons,
-    scheduleResize: () => sizer.scheduleResize(),
-    invalidateWorkArea,
-    openMenu: (m) => setMenu(m),
-    showToast,
-    markEntryOpened: () => {
-      entryOpened = true;
-    },
-    resetAndHide: () => void resetAndHide(),
-  });
 
-  // The services every plugin receives — late-bound like the nav deps.
+  function markKeyboard() {
+    selectionSource = "keyboard";
+  }
+  function markMouse() {
+    selectionSource = "mouse";
+  }
+
+  /** Search the active page's index, dropping stale responses (the token
+   * bumps on every dispatch; pages compare against `services.searchToken()`). */
+  async function runSearch(q: string) {
+    activeMode()?.setSelected(0);
+    requestSeq++;
+    await activeMode()?.search(q);
+  }
+
+  /** Show a transient toast at the bottom of the launcher (auto-dismisses). */
+  function showToast(text: string, opts?: { undo?: () => void; duration?: number }) {
+    window.clearTimeout(toastTimer);
+    setToast({ text, undo: opts?.undo });
+    toastTimer = window.setTimeout(
+      () => setToast(null),
+      opts?.duration ?? (opts?.undo ? TOAST_UNDO_MS : TOAST_MS)
+    );
+  }
+
+  /** Close the custom context menu. */
+  function closeMenu() {
+    setMenu(null);
+  }
+
+  async function resetAndHide() {
+    // Lifecycle: the active mode + disk services learn about the hide first.
+    activeMode()?.onHide?.();
+    for (const p of allPlugins()) p.lifecycle?.onHide?.();
+    clearSearch();
+    await invoke("hide_launcher");
+  }
+
+  // The services every plugin receives — late-bound like the sizer deps.
   const services: PluginServices = {
     showToast,
     markEntryOpened: () => {
@@ -303,6 +281,7 @@ function App() {
     persistLastPage,
     scheduleResize: () => sizer.scheduleResize(),
     searchToken: () => requestSeq,
+    nextSearchToken: () => ++requestSeq,
     selectionSource: () => selectionSource,
     markMouse,
     openMenu: setMenu,
@@ -379,43 +358,32 @@ function App() {
     },
   };
   setPluginServices(services);
-  // Plugin registration — first-party plugins exercise every v1 contract.
-  const preview = createPreviewPlugin({
-    previewTarget: () =>
-      mode() === APPS_MODE ? null : (activeMode()?.previewTarget() ?? null),
-    enabled: () =>
-      mode() === APPS_MODE ? false : (activeMode()?.previewEnabled() ?? true),
+
+  // Plugin registration — first-party plugins exercise every v1 contract. The
+  // navigate home page registers first so it leads the pill/Tab order.
+  const navigatePlugin = createNavigatePlugin(services, {
+    icons,
+    barCols,
+    invalidateWorkArea: () => {
+      setWorkAreaH(null);
+      sizer.scheduleResize();
+    },
   });
   const clipboardPlugin = createClipboardPlugin(services);
+  const preview = createPreviewPlugin({
+    previewTarget: () => activeMode()?.previewTarget() ?? null,
+    enabled: () => activeMode()?.previewEnabled() ?? true,
+  });
+  definePlugin(navigatePlugin);
   definePlugin(clipboardPlugin);
   definePlugin(preview);
-  void refreshPlugins().then(() => void refreshPluginBars());
-  function markKeyboard() {
-    selectionSource = "keyboard";
-  }
-  function markMouse() {
-    selectionSource = "mouse";
-  }
-  /** Expanded-bar toggles invalidate the cached work area, then re-measure. */
-  function invalidateWorkArea() {
-    setWorkAreaH(null);
-    sizer.scheduleResize();
-  }
-  /** P4: the empty-query menu switches to the grid when any plugin rows are
-   * on offer — dropped files, a **matched** window rule, or the clipboard
-   * image (a captured foreground context alone doesn't force the grid). */
-  const emptyMenuForceGrid = () =>
-    droppedFiles().length > 0 ||
-    windowFeatureMatches(fgContext()).length > 0 ||
-    (clipboardImgOk() && imgFeatureMatches().length > 0);
+  void refreshPlugins().then(() => void navigatePlugin.refreshBars());
+
   const router = createKeyRouter({
     mode,
-    appsQuery,
-    forceGrid: emptyMenuForceGrid,
-    modeIds: () => [APPS_MODE, ...modePlugins().map((m) => m.id)],
     switchKey,
+    modeIds: () => modePlugins().map((m) => m.id),
     shiftEnterAdmin,
-    selected,
     menu,
     currentResults,
     currentPreview: preview.preview!.currentPreview,
@@ -423,14 +391,10 @@ function App() {
       if (!v) preview.preview!.clear();
     },
     markKeyboard,
-    nav,
     activeMode,
-    onModeEscape: () => activeMode()?.onEscape() ?? false,
-    onGridEscape: () => popDrill(),
     gridCols: () => sizer.gridCols(),
     moveSelection,
     activate,
-    activateAdmin,
     switchMode,
     resetAndHide: () => void resetAndHide(),
     closeMenu,
@@ -441,281 +405,40 @@ function App() {
     onCleanup(router.install());
   });
 
-  /** Show a transient toast at the bottom of the launcher (auto-dismisses). */
-  function showToast(text: string, opts?: { undo?: () => void; duration?: number }) {
-    window.clearTimeout(toastTimer);
-    setToast({ text, undo: opts?.undo });
-    toastTimer = window.setTimeout(
-      () => setToast(null),
-      opts?.duration ?? (opts?.undo ? TOAST_UNDO_MS : TOAST_MS)
-    );
-  }
+  /** Search-box placeholder for the active page (P1): subInput ownership wins,
+   * then the page's own placeholder, then the plugin `setPlaceholder` map. */
+  const placeholder = () => {
+    const si = subInput();
+    if (si && si.pluginId === mode() && si.placeholder) return si.placeholder;
+    return activeMode()?.placeholder?.() ?? (modePlaceholders()[mode()] || t("searchGeneric"));
+  };
 
-  /** Close the custom context menu. */
-  function closeMenu() {
-    setMenu(null);
-  }
+  /** Page pills, in registry order (the home page registers first). Only the
+   * active pill can be loading — the spinner belongs to the page being
+   * switched to, not to a page that merely hasn't been opened yet. */
+  const pages = (): SearchBoxPage[] =>
+    modePlugins().map((m) => ({
+      id: m.id,
+      label: m.modeMeta?.label ?? t((m.modeMeta?.labelKey ?? m.id) as keyof Messages),
+      icon: m.modeMeta?.icon,
+      active: mode() === m.id,
+      loading: mode() === m.id && pageLoading(),
+    }));
 
-
-  async function resetAndHide() {
-    // Lifecycle: the active mode + disk services learn about the hide first.
-    activeMode()?.onHide?.();
-    for (const p of allPlugins()) p.lifecycle?.onHide?.();
-    setDroppedFiles([]); // P2.2 rows are one-shot: gone after the hide
-    setDroppedFileKinds([]);
-    setFgContext(null); // window rows are summon-scoped the same way (P4)
-    setClipboardImgOk(false);
-    clearSearch();
-    await invoke("hide_launcher");
-  }
-
-  /** Convert one provider result into a grid entry — shared by the search
-   * merge and by drilled levels (P2.4). `seq` only feeds the synthetic dedup
-   * key used for rows that open nothing. */
-  function providerRowToEntry(
-    pluginId: string,
-    instance: ProviderInstance,
-    it: ProviderResult,
-    seq: number
-  ): AppEntry | null {
-    if (!it?.name) return null;
-    const key = it.path || `lume-plugin://${pluginId}/${seq}`;
-    return {
-      id: 0,
-      name: it.name,
-      path: key,
-      ...(it.description ? { description: it.description } : {}),
-      ...(it.icon ? { icon: it.icon } : {}),
-      ...(it.enter ? { providerEnter: { pluginId, item: it } } : {}),
-      ...(it.drill && instance.select
-        ? {
-            providerDrill: {
-              pluginId,
-              item: it,
-              filterable: typeof instance.filter === "function",
-            },
-          }
-        : {}),
-    };
-  }
-
-  /** P2.2 files/img feature rows → grid entries. The name composes the
-   * manifest label with the file count (files only); the payload keeps the
-   * matched paths for the plugin. */
-  function featureRowToEntry(f: FeatureMatch): AppEntry {
-    const name =
-      f.type === "files"
-        ? t("pluginFeatureFiles", { label: f.label, count: String(f.paths?.length ?? 0) })
-        : f.label;
-    return {
-      id: -1,
-      name,
-      path: `lume-feature://${f.pluginId}/${f.code}`,
-      ...(f.icon ? { icon: f.icon } : {}),
-      featureEnter: {
-        pluginId: f.pluginId,
-        code: f.code,
-        type: f.type,
-        payload: f.payload,
-        ...(f.paths ? { paths: f.paths } : {}),
-        ...(f.window ? { window: f.window } : {}),
-      },
-    };
-  }
-
-  /** Provider rows → grid entries (drop malformed ones). */
-  function rowsToEntries(
-    pluginId: string,
-    instance: ProviderInstance,
-    rows: ProviderResult[]
-  ): AppEntry[] {
-    const out: AppEntry[] = [];
-    rows.forEach((r, i) => {
-      const e = providerRowToEntry(pluginId, instance, r, i);
-      if (e) out.push(e);
-    });
-    return out;
-  }
-
-  /** Leave a drilled level (P2.4): restore the parent rows, release the
-   * search box if this provider claimed it. Returns false when not drilled. */
-  function popDrill(): boolean {
-    const d = drill();
-    if (!d) return false;
-    setDrill(null);
-    setApps(d.parent);
-    if (subInput()?.pluginId === d.pluginId) services.setSubInput(d.pluginId, null);
-    setActiveSelected(0);
-    sizer.scheduleResize();
-    return true;
-  }
-
-  /** Search the active mode's index, dropping stale responses. */
-  async function runSearch(q: string) {
-    setActiveSelected(0);
-    nav.setNavHidden(false); // typing reveals the first entry's highlight
-    nav.setZone("grid");
-    if (drill()) setDrill(null); // a fresh search leaves the drilled level
-    const id = ++requestSeq;
-    if (mode() === "apps") {
-      if (q.trim() === "") {
-        // Empty query shows the two bars (最近使用 / 已固定), not a browse grid —
-        // unless P2.2 plugin rows are on offer: a fresh file drop and/or the
-        // clipboard holding an image with an img feature declared. Then the
-        // grid shows exactly those rows (uTools-style drop menu; NavigateView
-        // and the key router both leave the bar zone while forceGrid is true).
-        const rebuildEmpty = (feats: FeatureMatch[]) => {
-          setApps(feats.map(featureRowToEntry));
-          sizer.scheduleResize();
-        };
-        const feats = [
-          ...windowFeatureMatches(fgContext()),
-          ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
-          ...(clipboardImgOk() ? imgFeatureMatches() : []),
-        ];
-        rebuildEmpty(feats);
-        if (imgFeatureMatches().length > 0) {
-          // One cheap probe per empty render (OpenClipboard + format check) —
-          // a screenshot taken while the menu is up makes the row appear, and
-          // the clipboard changing back to text drops it. Stale-guarded by
-          // the request token.
-          void invoke<boolean>("plugin_clipboard_has_image")
-            .then((ok) => {
-              if (id !== requestSeq) return;
-              setClipboardImgOk(!!ok);
-              // Rebuild either way: the probe may have ADDED the row (image
-              // appeared) or must DROP a stale one (clipboard changed back).
-              rebuildEmpty([
-                ...windowFeatureMatches(fgContext()),
-                ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
-                ...(ok ? imgFeatureMatches() : []),
-              ]);
-            })
-            .catch(() => {});
-        }
-        return;
-      }
-      // Native index and the unified file-search backend race in parallel;
-      // both are stale-guarded by the same request token below.
-      const [res, files] = (await Promise.all([
-        invoke("search_apps", { query: q }),
-        invoke<FileSearchOut>("file_search", { query: q }).catch((err) => {
-          console.error("file_search failed:", err);
-          return null;
-        }),
-      ])) as [AppEntry[], FileSearchOut | null];
-      if (id === requestSeq) {
-        // Merge order: native index → 全局关键字 rows (never crowded out) →
-        // file-search hits (Everything or the LumeSVC engine) → plugin
-        // providers — deduped by path, capped to keep the grid sane.
-        const extra: AppEntry[] = [];
-        const seen = new Set(res.map((r) => r.path));
-        for (const kw of modeKeywordMatches(q)) {
-          extra.push({ id: -1, name: `进入 ${kw.name}`, path: `lume-mode://${kw.id}` });
-        }
-        // 声明式进入（features，P2.1）：正则/任意文本命中 → 「<label>」行，
-        // 激活把当前查询作为 payload 投递给插件（mode 先切页再 onEnter）。
-        // 与关键字行同级：都在文件命中与 provider 之前，不被挤掉。
-        for (const f of featureMatches(q)) {
-          extra.push({
-            id: -1,
-            name: f.label,
-            path: `lume-feature://${f.pluginId}/${f.code}`,
-            ...(f.icon ? { icon: f.icon } : {}),
-            featureEnter: { pluginId: f.pluginId, code: f.code, type: f.type, payload: f.payload },
-          });
-        }
-        // P2.2: a file dropped while a query is up also offers its rows.
-        for (const f of fileFeatureMatches(droppedFiles(), droppedFileKinds())) {
-          extra.push(featureRowToEntry(f));
-        }
-        for (const f of files?.entries ?? []) {
-          if (res.length + extra.length >= 20) break;
-          if (!f?.name || !f?.path || seen.has(f.path)) continue;
-          seen.add(f.path);
-          extra.push(f);
-        }
-        for (const p of providerPlugins()) {
-          try {
-            const items = await p.instance.search(q);
-            if (id !== requestSeq) return;
-            for (const it of items ?? []) {
-              if (res.length + extra.length >= 20) break;
-              const key = it.path || `lume-plugin://${p.id}/${extra.length}`;
-              if (seen.has(key)) continue;
-              const entry = providerRowToEntry(p.id, p.instance, it, extra.length);
-              if (!entry) continue;
-              seen.add(key);
-              extra.push(entry);
-            }
-          } catch (err) {
-            console.error("provider search failed:", p.id, err);
-          }
-        }
-        const merged = [...res, ...extra];
-        setApps(merged);
-        // Rows with an explicit icon or a plugin-enter action don't go through
-        // the icon pipeline (icon is already resolved / path is synthetic).
-        void icons.loadIcons(
-          merged.filter((a) => !a.icon && !a.providerEnter && !a.featureEnter)
-        );
-        sizer.scheduleResize();
-      }
-    } else {
-      // Plugin modes run their own search (stale-guarded by searchToken).
-      void id;
-      void activeMode()?.search(q);
-    }
-  }
-
-  /** Pull plugin-contributed Navigate bars (the `navBars` hook) into the
-   * section registry. Runs on composition, on mount, at every summon (bars
-   * may recompute between shows), and whenever the plugin set refreshes. */
-  async function refreshPluginBars() {
-    const contribs: ContributedBar[] = [];
-    for (const p of navBarPlugins()) {
-      try {
-        const bars = await p.navBars();
-        if (Array.isArray(bars)) contribs.push(...bars);
-      } catch (err) {
-        console.error("navBars failed:", p.id, err);
-      }
-    }
-    nav.setPluginBars(contribs);
-  }
-
-  async function onInput(e: Event) {
-    const q = (e.currentTarget as HTMLInputElement).value;
-    setQuery(q);
-    // 子输入框（P2.3）：拥有者接管搜索框——输入走它的 onSubInput，不再
-    // 触发常规搜索（模式页自行过滤）。只有「拥有者 = 当前模式」时生效，
-    // 切模式/重载会释放所有权。
+  async function handleInput(text: string) {
+    setQuery(text);
+    // Page-specific interception first (the home page's provider drill-down
+    // filter, P2.4), then search-box ownership (P2.3): the owner receives
+    // keystrokes through its own onSubInput instead of a normal search.
+    if (activeMode()?.handleQuery?.(text)) return;
     const owner = subInput()?.pluginId ?? null;
-    if (owner && owner === mode() && mode() !== APPS_MODE) {
-      deliverSubInput(owner, q);
-      return;
-    }
-    // 下钻过滤（P2.4）：provider 声明了 filter 时，输入喂给当前层。
-    const d = drill();
-    if (d?.filterable && d.pluginId === owner) {
-      const p = providerPlugins().find((x) => x.id === d.pluginId);
-      const token = ++requestSeq;
-      void (async () => {
-        try {
-          const rows = await p?.instance.filter?.(d.item as never, q);
-          if (token !== requestSeq) return;
-          setApps(rowsToEntries(d.pluginId, p!.instance, rows ?? []));
-          setActiveSelected(0);
-          sizer.scheduleResize();
-        } catch (err) {
-          console.error("provider filter failed:", d.pluginId, err);
-        }
-      })();
+    if (owner && owner === mode()) {
+      deliverSubInput(owner, text);
       return;
     }
     // Disk service plugins see every Navigate keystroke (non-empty).
-    if (q.trim()) for (const p of allPlugins()) p.lifecycle?.onQuery?.(q);
-    await runSearch(q);
+    if (text.trim()) for (const p of allPlugins()) p.lifecycle?.onQuery?.(text);
+    await runSearch(text);
   }
 
   /** Open the settings window (gear button). */
@@ -740,22 +463,18 @@ function App() {
         s.appearance.entry_size + "px"
       );
       setEntrySize(s.appearance.entry_size);
-      setShowRecent(s.appearance.show_recent);
-      setShowExplorerBar(s.appearance.show_explorer_bar ?? true);
-      setExpandPinned(s.appearance.expand_pinned || false);
       setShiftEnterAdmin(s.appearance.shift_enter_admin !== false);
-      setPlaceholderApps(s.appearance.search_placeholder_apps || "");
-      setPlaceholderClipboard(s.appearance.search_placeholder_clipboard || "");
       setWindowHeight(s.appearance.window_height);
       setWindowWidth(s.appearance.window_width);
       setSwitchKey(s.hotkeys.switch_mode || "Tab");
-      // Each plugin applies its own settings slice (clipboard display flags…);
-      // the plugin list itself refreshes too (启停 changes land here). If the
-      // ACTIVE mode was just disabled, fall back to Navigate.
+      // Each page applies its own settings slice (bar visibility, clipboard
+      // display flags, placeholders…); the plugin list itself refreshes too
+      // (启停 changes land here). If the ACTIVE page was just disabled or
+      // removed, fall back to the home page.
       for (const p of allPlugins()) p.mode?.applySettings(s);
       void refreshPlugins().then(() => {
         // Plugin bars ride the same refresh (启停 toggles add/remove bars).
-        void refreshPluginBars();
+        void navigatePlugin.refreshBars();
         // Detached windows of disabled/removed/reloaded plugins must not
         // linger — close them (P6 consistency).
         for (const id of detachedPluginIds()) {
@@ -764,14 +483,14 @@ function App() {
             void invoke("plugin_window_close", { id }).catch(() => {});
           }
         }
-        if (mode() !== APPS_MODE && !modeById(mode())) {
-          setMode(APPS_MODE);
-          setAppsQuery("");
+        if (!modeById(mode())) {
+          setMode(NAVIGATE_MODE_ID);
+          activeMode()?.setQuery("");
           void runSearch("");
         }
       });
       setRememberLastPage(s.appearance.remember_last_page ?? false);
-      setLastPageMode(s.appearance.last_page === "clipboard" ? "clipboard" : "apps");
+      setLastPageMode(s.appearance.last_page || NAVIGATE_MODE_ID);
       setLastPageKind((s.appearance.last_page_kind as ClipKind) ?? "all");
     } catch {
       // Keep defaults if settings can't be read.
@@ -796,149 +515,57 @@ function App() {
     if (m === mode()) return;
     // A detached mode has no page here anymore — activating it raises its
     // window and puts the launcher away, like any app launch.
-    if (m !== APPS_MODE && isPluginDetached(m)) {
+    if (isPluginDetached(m)) {
       await detachMode(m);
       return;
     }
     setMode(m);
-    // 搜索框所有权与下钻层属于上一个页面：切模式即交还宿主（P2.3/P2.4）。
+    // 搜索框所有权属于上一个页面：切模式即交还宿主（P2.3）。
     setSubInput(null);
-    setDrill(null);
-    // A plugin mode always starts from a clean page (All category, no
-    // multi-select) with its own (independent) query.
+    // Non-home pages always start from a clean page (All category, no
+    // multi-select) with their own (independent) query. The home page keeps
+    // its session state — search recall depends on it (`home: true`).
     const inst = modeById(m);
-    if (m !== APPS_MODE && inst) {
+    if (inst && !inst.home) {
       inst.restorePage("all");
       inst.reset();
     }
-    sizer.invalidate(); // the fixed-height model differs per mode — force a resize
+    sizer.invalidate(); // the height model differs per page — force a resize
     persistLastPage();
-    // Re-search the target mode with its own (independent) query.
-    await runSearch(m === APPS_MODE ? appsQuery() : (inst?.query() ?? ""));
+    // Re-search the target page with its own (independent) query.
+    await runSearch(query());
   }
 
-  /** Activate the selected entry: launch an app or paste a clipboard entry. */
-  function activate() {
-    activateApp(false);
-  }
-
-  /** Like activate(), but forces administrator elevation on app launch. */
-  function activateAdmin() {
-    activateApp(true);
-  }
-
-  function activateApp(elevated: boolean) {
+  /** Activate the selected entry via the active page (Shift+Enter = admin). */
+  function activate(opts?: { elevated?: boolean }) {
     entryOpened = true; // Enter/点击打开条目 (启动或粘贴) → 清空搜索记忆
-    if (mode() === "apps") {
-      // Bar zone: the owning section activates its selected item — a plain
-      // app launch (recent/pinned/plugin bars), an explorer action tile, or
-      // anything else a section contract defines.
-      const sec = nav.activeSection();
-      if (sec) {
-        sec.activate(sec.selected(), elevated);
-        return;
-      }
-      const item = apps()[selected()];
-      if (!item) return;
-      // 声明式进入行（features/P2.1）：把查询作为 payload 投递给插件。
-      // mode 目标先切页再 onEnter；provider/service 直接 onFeature。
-      if (item.featureEnter) {
-        const fe = item.featureEnter;
-        const ok = services.enterPlugin(fe.pluginId, {
-          code: fe.code,
-          type: fe.type,
-          payload: fe.payload,
-          ...(fe.paths ? { paths: fe.paths } : {}),
-          ...(fe.window ? { window: fe.window } : {}),
-        });
-        if (!ok) showToast(t("pluginActionUnavailable", { id: item.featureEnter.pluginId }));
-        return;
-      }
-      // 二级下钻行（P2.4）：provider.select 的返回行替换网格，Esc 回上一级。
-      if (item.providerDrill) {
-        const d = item.providerDrill;
-        const p = providerPlugins().find((x) => x.id === d.pluginId);
-        if (!p?.instance.select) return;
-        const parent = apps();
-        void (async () => {
-          try {
-            const rows = await p.instance.select!(d.item as never);
-            setApps(rowsToEntries(d.pluginId, p.instance, rows ?? []));
-            setDrill({ pluginId: d.pluginId, item: d.item, parent, filterable: d.filterable });
-            if (d.filterable) services.setSubInput(d.pluginId, { placeholder: t("searchGeneric") });
-            setActiveSelected(0);
-            sizer.scheduleResize();
-          } catch (err) {
-            console.error("provider select failed:", d.pluginId, err);
-            showToast(t("pluginActionUnavailable", { id: d.pluginId }));
-          }
-        })();
-        return;
-      }
-      // Provider action row (manifest of `enter`): hand the original result
-      // object back to the plugin's onEnter instead of launching anything.
-      // The launcher stays open — the plugin hides itself when done.
-      if (item.providerEnter) {
-        const p = providerPlugins().find(
-          (x) => x.id === item.providerEnter!.pluginId
-        );
-        try {
-          p?.instance.onEnter?.(item.providerEnter.item as never);
-        } catch (err) {
-          console.error("provider onEnter failed:", p?.id ?? item.providerEnter.pluginId, err);
-        }
-        return;
-      }
-      // 全局关键字行：进入对应插件模式（不隐藏，不记为已使用条目）。
-      if (item.path.startsWith("lume-mode://")) {
-        void switchMode(item.path.slice("lume-mode://".length));
-        return;
-      }
-      void invoke("launch_app", { path: item.path, name: item.name, elevated });
-      void resetAndHide();
-    } else {
-      // Plugin mode: the mode's own activation (merge-paste the selection,
-      // else paste the single entry).
-      activeMode()?.activate();
-    }
+    activeMode()?.activate(opts);
   }
 
-  /** Move the selection by `delta` steps, clamped to the result bounds.
-   * Plugin modes own their selection signal (e.g. the clipboard store's) —
-   * reads AND writes must go through the mode's accessors, or the root
-   * signal drifts apart from what the mode's view highlights/activates
-   * (this exact drift is what killed clipboard ↑/↓ navigation once). */
-  function activeSelected(): number {
-    return mode() === APPS_MODE ? selected() : (activeMode()?.selected() ?? 0);
-  }
-  function setActiveSelected(i: number) {
-    if (mode() === APPS_MODE) setSelected(i);
-    else activeMode()?.setSelected(i);
-  }
+  /** Move the selection by `delta` steps, clamped to the result bounds. Pages
+   * own their selection signal — reads AND writes must go through the page's
+   * accessors, or the root signal drifts apart from what the page's view
+   * highlights/activates (this exact drift is what killed clipboard ↑/↓
+   * navigation once). */
   function moveSelection(delta: number) {
-    const len = currentResults().length;
-    if (len === 0) return;
+    const inst = activeMode();
+    const len = inst?.rows().length ?? 0;
+    if (!inst || len === 0) return;
     selectionSource = "keyboard";
-    nav.setNavHidden(false); // arrow nav reveals the highlight from its hidden position
-    setActiveSelected(Math.min(Math.max(activeSelected() + delta, 0), len - 1));
+    inst.setSelected(Math.min(Math.max(inst.selected() + delta, 0), len - 1));
   }
 
-  // Keep the selected result visible while navigating with the keyboard.
-  // Mouse hover selects too, but must not scroll the list (a clipped row
-  // hovering would otherwise yank the scroll position).
+  // The loading gate changes the height model (search row alone vs the page's
+  // own height): re-measure whenever it flips — into the loading state AND
+  // back out of it, so the page appears at its proper size (disk pages push
+  // their manifest height, the clipboard the settings height).
   createEffect(() => {
-    selected();
-    // The apps grid keeps the selected box in view natively; plugin modes
-    // scroll their own lists (scrollIntoView would override their buffered
-    // positions).
-    if (mode() === APPS_MODE && selectionSource === "keyboard") {
-      document
-        .querySelector(".result-selected")
-        ?.scrollIntoView({ block: "nearest" });
-    }
+    void pageLoading();
+    sizer.scheduleResize();
   });
 
-  // Re-measure the active mode's internal viewport whenever the mode or
+
+  // Re-measure the active page's internal viewport whenever the page or
   // window height changes (the launcher isn't user-resizable, so the only
   // size changes are ours). Idempotent — settles once the measurement matches.
   createEffect(() => {
@@ -953,27 +580,6 @@ function App() {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
     document.addEventListener("contextmenu", (e) => e.preventDefault());
 
-    // cmd.exe / powershell.exe icons for the Explorer bar tiles (once).
-    void nav.refreshTermIcons();
-
-    // Hide the selection highlight while the cursor rests on empty space (a
-    // place with no entry) — mouse navigation is "suspended" until the cursor
-    // touches an entry again or an arrow key resumes keyboard navigation. The
-    // selection index is retained, so arrow nav reappears from the position it
-    // was hidden at (see moveSelection / moveBarSelection). Navigate mode only:
-    // the clipboard page keeps its row highlight + satellite preview in sync
-    // with the actual selection instead.
-    document.addEventListener("mousemove", () => {
-      // The last-selected entry stays highlighted even when the cursor rests on
-      // empty space inside the window — selection only moves on hover over an
-      // entry or an arrow key, and never "disappears" mid-interaction.
-      nav.setNavHidden(false);
-    });
-
-    // Native drag-and-drop for pinned-bar reordering (raw document listeners
-    // live inside the navigate store).
-    nav.installDragReorder();
-
     // Apply persisted settings FIRST — CSS variables and signals must be
     // ready before the bars render, otherwise the initial paint shows wrong
     // sizes / collapsed state / missing icons.
@@ -981,12 +587,10 @@ function App() {
     // Runtime settings changes (from the settings window) arrive via the
     // "settings-applied" event and `applyRuntimeSettings`.
     clearSearch();
-    void nav.refreshRecent();
-    void nav.refreshPins();
-    void refreshPluginBars();
-    // 记住上次所在页面: a remembered Clipboard page must load history on mount
-    // too (the window starts hidden and the first show may restore Clipboard).
-    void runSearch(mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? ""));
+    void runSearch(query());
+    // Warm summon-scoped data at mount too (the window starts hidden and the
+    // first show may restore a remembered page).
+    for (const p of modePlugins()) void p.instance.onShow?.();
     sizer.scheduleResize();
     document.getElementById("search-input")?.focus();
 
@@ -1004,7 +608,7 @@ function App() {
         setPluginDetached(e.payload, false);
         void invoke("plugin_window_close", { id: e.payload }).catch(() => {});
       }
-      void reloadDiskPlugin(e.payload).then(() => refreshPluginBars());
+      void reloadDiskPlugin(e.payload).then(() => navigatePlugin.refreshBars());
     });
     onCleanup(() => unlistenPluginReload());
 
@@ -1049,96 +653,31 @@ function App() {
 
     // OS file drop (P2.2): the Tauri drag-drop handler (enabled on this
     // window only) delivers real paths — WebView2's HTML5 drop never exposes
-    // them. A drop while Navigate is open offers matching plugin rows (files
-    // features); the list clears on the next hide/summon. Mode pages are not
-    // drop targets (their iframes see no DOM drop either — the handler owns
-    // the OLE drop target).
+    // them. Pages own their drop rows (the home page offers matching plugin
+    // features); the state clears on the next hide/summon.
     const unlistenDrag = await getCurrentWebview().onDragDropEvent((ev) => {
       if (ev.payload.type !== "drop") return;
       const paths = ev.payload.paths ?? [];
       if (paths.length === 0) return;
-      setDroppedFiles(paths);
-      setClipboardImgOk(false);
-      if (mode() !== APPS_MODE) return;
-      // Kinds before the search: the drop is async to begin with, so one
-      // attributes query keeps `fileType` rules from racing the first render.
-      void invoke<string[]>("file_kinds", { paths })
-        .then((kinds) => {
-          if (paths !== droppedFiles()) return; // a newer drop replaced this one
-          setDroppedFileKinds(kinds);
-        })
-        .catch(() => setDroppedFileKinds(paths.map(() => "file")))
-        .finally(() => {
-          if (mode() === APPS_MODE) void runSearch(appsQuery());
-        });
+      for (const p of modePlugins()) p.instance.onFilesDropped?.(paths);
     });
     onCleanup(() => unlistenDrag());
 
     // The launcher stays hidden between toggles. On every fresh show (hotkey /
-    // tray toggle) reset to the Navigate main menu, re-focus the input, and
-    // repopulate the grid. This listens to the Rust `launcher-shown` event, not
+    // tray toggle) reset to the home page, re-focus the input, and repopulate
+    // the grid. This listens to the Rust `launcher-shown` event, not
     // `onFocusChanged`: dragging the frameless window briefly deactivates and
-    // refocuses it (Rust `is_mid_drag` suppresses the hide on that side), and a
-    // reset there would wipe the current mode/search mid-drag.
+    // refocuses it (Rust `is_mid_drag` suppresses the hide on that side), and
+    // a reset there would wipe the current mode/search mid-drag.
     const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
       for (const p of allPlugins()) p.lifecycle?.onShow?.();
-      setDroppedFiles([]); // a fresh summon starts a clean main menu (P2.2)
-      setDroppedFileKinds([]);
-      setClipboardImgOk(false);
       clearSearch();
-      await Promise.all([nav.refreshRecent(), nav.refreshPins()]);
-      await refreshPluginBars();
-      // The window that had focus before this summon (P4, ROADMAP #29) —
-      // fetched only when some plugin declares a `type = "window"` rule
-      // (zero IPC otherwise), before the first search so the rows are on
-      // the empty-query menu right away.
-      if (hasWindowFeatures()) {
-        // Non-blocking on purpose: the COM hop behind this command can stall
-        // for longer than a summon may wait, so the fetch lands whenever it
-        // lands and re-renders the empty menu then (the img-probe pattern).
-        void invoke<{
-          process: string;
-          className: string;
-          title: string;
-          path: string | null;
-        }>("get_foreground_context")
-          .then((ctx) => {
-            const mapped =
-              ctx && (ctx.process || ctx.className || ctx.title || ctx.path)
-                ? {
-                    process: ctx.process,
-                    className: ctx.className,
-                    title: ctx.title,
-                    ...(ctx.path ? { path: ctx.path } : {}),
-                  }
-                : null;
-            plog.debug(null, "foreground context:", JSON.stringify(mapped));
-            setFgContext(mapped);
-            if (mode() === APPS_MODE) void runSearch(appsQuery());
-          })
-          .catch(() => {
-            plog.warn(null, "foreground context fetch failed");
-            setFgContext(null);
-          });
-      } else {
-        setFgContext(null);
-      }
       // 记住上次所在页面: a restored Clipboard page must load its history; an
       // apps page re-runs its (session) query or shows the bars.
-      await runSearch(mode() === APPS_MODE ? appsQuery() : (activeMode()?.query() ?? ""));
-      // Resolve the Explorer folder context (foreground window at summon) so the
-      // 「Windows 资源管理器」 bar can appear on the empty-query menu. Fetched
-      // before the auto-select below so a folder-only menu still gets a zone.
-      await nav.refreshFolderCtx();
-      // Auto-select the first entry of the empty-query main menu: the first
-      // section in the registry (最近使用 when visible, else 已固定, else a
-      // plugin bar, else the explorer bar). (The bars' highlight requires
-      // `zoneActive`, so a resting zone of "grid" would leave nothing
-      // selected on summon.)
-      if (mode() === "apps" && appsQuery() === "" && nav.zone() === "grid") {
-        const first = nav.sections()[0];
-        if (first) nav.setZone(first.id);
-      }
+      await runSearch(query());
+      // Summon-scoped page refresh (bars, folder context, feature rows) and
+      // the empty-menu auto-select land after the summon search.
+      for (const p of modePlugins()) await p.instance.onShow?.();
       queueMicrotask(() => document.getElementById("search-input")?.focus());
     });
     onCleanup(() => unlisten());
@@ -1169,101 +708,19 @@ function App() {
   });
 
   return (
-    <div class="launcher" classList={{ "nav-hidden": nav.navHidden() }}>
-      {/* The frameless window is draggable from the search row's empty space
-          (direct clicks only — the input/pills/gear are clickable and block
-          it, per Tauri's data-tauri-drag-region semantics). */}
-      <div class="search" data-tauri-drag-region>
-        <svg
-          class="search-icon"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          aria-hidden="true"
-        >
-          <circle cx="11" cy="11" r="7" />
-          <line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-        <input
-          id="search-input"
-          class="search-input"
-          type="text"
-          value={query()}
-          onInput={onInput}
-          placeholder={
-            subInput()?.pluginId === mode() && subInput()?.placeholder
-              ? subInput()!.placeholder
-              : mode() === APPS_MODE
-                ? placeholderApps() || t("searchApps")
-                : mode() === "clipboard"
-                  ? placeholderClipboard() || t("searchClipboard")
-                  : modePlaceholders()[mode()] || t("searchGeneric")
-          }
-          spellcheck={false}
-          autocomplete="off"
-        />
-        <div class="mode-switch" role="tablist" aria-label="Search mode">
-          <button
-            class="mode-switch-item"
-            classList={{ active: mode() === APPS_MODE }}
-            role="tab"
-            aria-selected={mode() === APPS_MODE}
-            onClick={() => void switchMode(APPS_MODE)}
-          >
-            <img class="mode-switch-icon" src={navigateIcon} alt="" draggable={false} />
-            {t("navigate")}
-          </button>
-          <For each={modePlugins()}>
-            {(m) => (
-              <button
-                class="mode-switch-item"
-                classList={{ active: mode() === m.id }}
-                role="tab"
-                aria-selected={mode() === m.id}
-                onClick={() => void switchMode(m.id)}
-              >
-                <img
-                  class="mode-switch-icon"
-                  src={m.modeMeta?.icon}
-                  alt=""
-                  draggable={false}
-                />
-                {m.modeMeta?.label ?? t((m.modeMeta?.labelKey ?? m.id) as keyof Messages)}
-              </button>
-            )}
-          </For>
-        </div>
-        <button
-          class="icon-btn"
-          title={t("settings")}
-          aria-label={t("settings")}
-          onClick={() => void openSettings()}
-        >
-          <img class="icon-btn-icon" src={settingsIcon} alt="" draggable={false} />
-        </button>
-      </div>
-      <div class="results">
-        {mode() === APPS_MODE ? (
-          <NavigateView
-            apps={apps}
-            appsQuery={appsQuery}
-            selected={selected}
-            nav={nav}
-            barCols={barCols}
-            iconFor={icons.iconFor}
-            activate={activate}
-            markMouse={markMouse}
-            openMenu={setMenu}
-            setSelected={setSelected}
-            forceGrid={emptyMenuForceGrid}
-          />
-        ) : (
-          <Dynamic component={activeMode()?.View} />
-        )}
+    <div class="launcher">
+      <SearchBox
+        query={query}
+        placeholder={placeholder}
+        pages={pages}
+        onInput={(text) => void handleInput(text)}
+        onSwitchPage={(id) => void switchMode(id)}
+        onOpenSettings={() => void openSettings()}
+      />
+      <div class="results" classList={{ "results-loading": pageLoading() }}>
+        <Dynamic component={activeMode()?.View} />
         {/* 分离为独立窗口（P6）— detachable 磁盘 mode 的悬停显现按钮。 */}
-        <Show when={mode() !== APPS_MODE && isPluginDetachable(mode())}>
+        <Show when={isPluginDetachable(mode())}>
           <button
             class="detach-btn"
             title={t("pluginDetach")}
@@ -1319,7 +776,10 @@ function App() {
           >
             <For
               each={buildMenuItems(
-                { nav, clip: clipboardPlugin.clipMenuActions!() as Parameters<typeof buildMenuItems>[0]["clip"] },
+                {
+                  nav: navigatePlugin.mode!.menuActions!() as NavMenuActions,
+                  clip: clipboardPlugin.mode!.menuActions!() as ClipMenuActions,
+                },
                 menu()!
               )}
             >

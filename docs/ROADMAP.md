@@ -2004,3 +2004,208 @@ fail-closed）、`scripts/cdp_lupx_verify.mjs` 23 项与
 签名校验、`.lupx` 文件关联/拖包安装、浏览器 URL / 划词捕获（UIA）、
 超级面板（光标小窗 + 模拟 Ctrl+C 选区捕获）、AI 宿主 API、宿主窗口内插件
 逻辑的进程级隔离。
+
+## 30. 主窗口部件化：搜索框部件 + 页面部件插件化（已实现）
+
+**状态：已实现（2026-09-27）。** uTools 式主窗口重构：搜索框分离为独立
+部件，其下的导航页 / 剪贴板页 / mode 插件页统一为可拼接的页面部件；
+目的是**启动器固有组件的插件化改造**——固有页面与第三方插件走同一注册表
+与契约路径。
+
+### 30.1 目标形态
+
+```
+App.tsx（壳 = 组合根：会话生命周期 + PluginServices 装配 + 覆盖层）
+├── <SearchBox />                      ← 独立部件（受控纯展示）
+├── <Dynamic component={activePage.View} />   ← 页面插槽（拼接点）
+│     统一契约 ModeInstance（页面部件）
+│     ├── navigate（内置插件化，id "apps"，home: true）
+│     ├── clipboard（已内置插件）
+│     └── 磁盘 mode 页（registry 适配器，零改动）
+└── Toast / 右键菜单 / 分离按钮
+```
+
+「拼接」三义：布局拼接（页面永远在搜索框下方）、尺寸拼接（窗口高 =
+搜索行高 + 页面高度；`heightPolicy: "fit"` 内容自适应 / `"fixed"` 定高，
+manifest `height` 覆盖全局设置）、交互拼接（`setSubInput` 接管输入、
+查询经壳路由到活动页）。
+
+### 30.2 交付内容
+
+- **P0 契约泛化**（`src/plugins/types.ts`，只增不改义）：`rows` →
+  `PageRow`（`AppEntry | ClipboardItem`）；`activate(opts?: {elevated})`；
+  新增可选 `handleQuery?`（输入拦截）、`onShow?`/`onFilesDropped?`（呼出/
+  拖入转发）、`heightPolicy?`/`anyExpanded?`（拼接尺寸）、`home?`（主页
+  切模式不复位）、`placeholder?`/`menuActions?`；`ModeKeyContext` 增
+  `gridCols`/`markKeyboard`；`PluginServices` 增 `nextSearchToken()`。
+- **P1 搜索框部件**（`src/shell/SearchBox.tsx`）：搜索行 JSX 迁出组合根，
+  pills 完全数据化（统一 `pages()`，导航 pill 不再硬编码）；占位符三级
+  统一解析（subInput 接管 → 页面 `placeholder()` → `app.setPlaceholder`
+  映射），`search_placeholder_apps`/`_clipboard` 设置项分别下放给导航页 /
+  剪贴板页的 `applySettings`。
+- **P2 导航页插件化**（`src/plugins/navigate/`）：`store.ts`（栏目条注册
+  表 + 动作 + 拖拽重排，自 `src/launcher/navigate.ts` 迁入）、`search.ts`
+  （合并搜索管线：原生索引 → 关键字行 → feature 行 → 文件命中 → provider；
+  下钻 + 过滤；拖入/剪贴板图片/前台窗口 feature 行状态；`lume-mode://`/
+  `featureEnter`/`providerDrill`/`providerEnter`/launch 激活分支）、
+  `NavigateView.tsx`、`index.tsx`（`createNavigatePlugin(services, host)`）。
+  `APPS_MODE` 特判清零：键盘 apps 分支整体委托 `onKey`，`keyboard.ts` 不再
+  依赖 `NavigateStore`（只留 Esc 链 + 切换键 + ↑↓/Enter 兜底），
+  `menu.ts` 改结构性 `NavMenuActions`，sizer 改读 `heightPolicy`。
+- **P3 壳收敛**：`App.tsx` 收敛为纯壳；`remember_last_page` 泛化为任意
+  页面 id（存量 `"apps"`/`"clipboard"` 值原样兼容，导航页 id 永不改名）；
+  召唤序列 = clearSearch → 召唤搜索 → 各页 `onShow`（首页在此刷新栏数据 /
+  资源管理器栏 / 前台窗口行并做空菜单自动选中）。导航首页**不进
+  设置→插件 启停列表**（默认页不可关）。
+
+### 30.3 行为不变式（逐项对照旧实现）
+
+- 搜索合并顺序与去重封顶（原生 → 关键字行 → feature 行 → 文件命中 →
+  provider，path 去重、总 20 封顶）、stale-token 守卫（`requestSeq`）。
+- Esc 分层顺序：菜单 → 页面 `onEscape`（下钻弹出 / 退出多选）→ 卫星预览 →
+  隐藏；切换键循环顺序（导航在首位）；Shift+Enter 提权。
+- 搜索召回（5 分钟 TTL、打开条目即清）、记住上次页面（page + kind）、
+  subInput 所有权语义、下钻 Esc 回退、P2.2/P4 feature 行的一次性生命周期。
+- 切模式：非 home 页 `restorePage("all")` + `reset()`；home 页保留会话态
+  （搜索召回依赖）。占位符三级解析与旧行为逐分支等价。
+
+### 验证
+
+`tsc --noEmit` + `vite build` 干净；cargo test **185** 无回归；`cargo build
+--bin lume` 重嵌前端后实机 CDP：`cdp_p2b_verify.mjs` **22 项全过**（feature
+行 / 拖入 / img 行 / list 模板 / **磁贴指针重排**——迁移后的固定栏代码）、
+`cdp_clipboard_smoke.mjs` 全过（pills 统一渲染、Tab 切页、剪贴板虚拟列表/
+分类/多选）、`cdp_p2_verify.mjs` **17/21**（余 4 项为 P5 之前遗留的
+`iframe.contentDocument` 陈旧探针——沙箱后该值恒为 null
+（`cdp_sandbox_verify.mjs` ② 隔离断言），enter 载荷经插件日志证实已投递
+（`storage set (hello-mode) lastEnter`）；另附 `test/_shell_nav_check.mjs`
+**10/10**（空菜单自动选中、栏 ←→/↑↓ 连续导航、网格按列 ↑↓、Esc 隐藏、
+Tab 循环）。**环境注意**：`cdp_p2*_verify` 依赖 `hello-mode`/`list-demo` 处于
+启用态（禁用时 redirect/列表段与其后的重排段会连锁失败——重排段的召唤依赖
+前置点击置位 entryOpened 以越过搜索召回）。
+
+### 30.4 拼接缝修复（同日补做，uTools 式无缝）
+
+首版拼接遗留一圈「边框」：搜索行 `border-bottom` + `.results` 6px 内衬把页面
+包成一块内缩的卡片，插件页还不透明 —— 四缘都露出面板底色。修复：
+
+- **几何**：搜索行去掉下边框；`.results` 内衬 6px → 0（页面直贴搜索行底边与
+  窗口左/右/下边），内衬改由各页自给（`.result-grid` 8 / 栏网格 10 /
+  `.plugin-list` 10 / `.clip-list` `0 6px 4px`）；`WINDOW_PAD` 20 → 8 同步。
+- **插件页 iframe**：`height: calc(100vh - 60px)` → flex 填充（搜索行实际高度
+  与常数不吻合时会溢出错位/裁掉底行）。
+- **页面画布**（像素级实证的渲染层根因）：`color-scheme: dark` + 透明根背景的
+  插件页被 Chromium 画成**不透明 #121212 画布**（#121212 vs 面板 #1e1e20 ≈
+  20 级色阶），且宿主元素背景对 sandbox iframe 不可见（`.plugin-frame` 上写
+  background 无效）。宿主统一注入默认画布
+  `html{background:var(--lume-page-bg,<主题 --surface>)}`（`injectBridge`），
+  桥接在 `theme` 事件里切换该变量随主题翻转；插件自绘 html/body 背景仍覆盖
+  默认。`currentThemeMode`/`PANEL_SURFACE_BG` 移入 `src/theme.ts`（宿主与
+  插件窗口共用）。
+
+验证（debug exe 重嵌前端 + CDP 像素采样）：搜索行与页面同色（暗色
+29,29,32 vs 30,30,32；浅色 248,248,250 vs 251,251,253）、四缘无亮线、
+`_seam_probe` **10/10**（几何 flush / 无内衬 / iframe 无溢出 / 画布注入）、
+剪贴板行内衬 6.67px 且状态栏贴底、主题翻转即时跟随；回归：`_shell_nav_check`
+10/10、`cdp_p2b_verify` 22/22、`cdp_p2_verify` 17/21（同旧基线 4 项陈旧探针）。
+用**用户实机插件版本**（file-search 2.4.0，透明 body）复现的对照证据：修复前
+页面 #121212；修复后与面板同色。
+
+### 30.5 窗口外缘环带（同日二次补做）
+
+30.4 之后用户仍看到「窗口周围几个像素的灰色边框」。屏幕级采样 + DWM 属性
+（`DWMWA_VISIBLE_FRAME_BORDER_THICKNESS` = 2）定位为三层叠加：
+
+- **DWM 可见帧边框条**：`shadow(true)` + 无边框窗口由 DWM 画 2px 边框（默认
+  浅灰），设置/预览/分离窗口早有 `clear_dwm_border`，**主窗口漏了**。
+- **Acrylic 兜底**：主窗口是唯一 透明 + Acrylic 的窗口——把边框条清成
+  `DWMWA_COLOR_NONE` 后该条露出 Acrylic 背景（亮桌面下比面板亮 ~25 级）。
+  改为 `window::set_panel_frame_border`：边框条画成主题实体面板色
+  （`--surface`，暗 #1e1e20 / 浅 #fbfbfd），`颜色模式` 保存时
+  （`window::apply_settings`）与系统主题翻转事件（`WindowEvent::ThemeChanged`，
+  system 模式）重画。其余三个不透明窗口继续用 `clear_dwm_border`。
+- **`#root` 1px 内衬**：原设计「让 Acrylic 在圆角处发光」，高 DPI 下同样是
+  亮环 → 去掉（面板直贴客户区；圆角处仍透亚克力），`WINDOW_PAD` 8 → 6。
+
+验证：屏幕级像素采样（`test/_window_diag.ps1` + `test/_outer_probe.mjs`）——
+修复前外缘 5–6 物理 px 亮环（DWM 边 ~117/57 + Acrylic 槽 ~63 + hairline 55），
+修复后仅剩面板自绘的 1px hairline（55,55,57），边框条 = 面板色
+（暗 30,30,32 / 浅 251,251,253）；把面板临时染红做对照证明该条在客户区之外
+（不可由页面覆盖）。回归：`_seam_probe` 10/10、`_shell_nav_check` 10/10、
+`cdp_p2b_verify` 22/22。
+
+### 30.6 面板不透明化（同日三次补做：四角亮弧 / 1px hairline 归零）
+
+30.5 之后用户仍看到「四个角落颜色还是不对劲，另外 1px hairline 也不需要」。
+对用户实机截图做 RLE 像素制图（暗色面板 30,30,32）定位出三层：
+
+- **1px hairline**：`.launcher` 的 `border: 1px solid var(--border)` 沿 12px
+  CSS 圆角描出一圈亮弧（四角实测 61,61,61；直边 55,55,57）——这就是「四角
+  颜色不对」的主因，直边上的 1px 亮线也是它。去掉该 border。
+- **Acrylic 新月带**：CSS 圆角（12px）大于 DWM 圆角（约 8 DIP），弧外一截
+  未覆盖区域露出 Acrylic 背景（36→55 渐变，随壁纸漂移）。圆角是 DWM 的
+  职责，CSS 不再画 radius；实测圆角变体矩阵（`test/_corner_variants.mjs`，
+  0/6/7/8/9/10/12px 各抓一张屏幕图）：≤7px 与无圆角等同（弧被 DWM 裁掉），
+  ≥8px 反而新增未覆盖像素（8px → 12 个、12px → 46 个）→ 保持不画。
+- **面板半透明合成 vs 实体色**：搜索行下的面板是 `--bg` 75% 叠 Acrylic 的
+  合成色（该用户桌面处实测 38,38,40），页面画布/边框条是实体 `--surface`
+  （30,30,32），差 8 级阶差。**面板改填不透明 `var(--surface)`** —— 与
+  DWM 边框条涂色、插件页画布默认值是同一个值，搜索行 / 页面 / 边框条 /
+  四角完全同色；主窗口 Acrylic 效果随之撤除（对不透明面板不可见，且其
+  半透明合成永远无法被不透明边框条复刻——环带的根源）。`.detach-btn`
+  填充 `--surface` → `--surface-raised`（面板同色后会隐形）。
+
+验证（debug exe 重嵌前端 + 屏幕级抓图 1182×276 / 1182×1008 像素采样）：
+- 暗色（用户实机页=文件秒搜）：四缘 = 阴影（10–19 渐变）→ 面板 30,30,32，
+  无条带 / 无亮线；四角对角线 = 阴影 → AA(23) → 30,30,32；拼接缝列 45 个
+  连续像素全为 30,30,32（搜索结果行与页面同色）；内部采样全 30,30,32。
+- 浅色（color_mode=light）：四缘 / 四角 / 内部全 251,251,253；四角仅剩
+  DWM 圆角裁剪的 1–2px 常规抗锯齿（任何圆角窗口皆有，暗色下不可见）。
+- detach 按钮实测填充 38,38,40、描边 55,55,57（面板 30,30,32 上清晰可读）。
+- DWM 读数佐证：`SYSTEMBACKDROP_TYPE` 0（Acrylic 已撤）、
+  `WINDOW_CORNER_PREFERENCE` 0（默认，实测圆角由 DWM 完成）、边框条
+  `VISIBLE_FRAME_BORDER_THICKNESS` 2 仍在（涂色 = `--surface`）。
+- 回归：cargo test 185 无回归、`_seam_probe` 10/10、`_shell_nav_check`
+  10/10、`scripts/cdp_p2b_verify` 22/22。
+
+### 30.7 加载门控 + 空导航页收缩（同日四次补做）
+
+用户三点：① 导航页没有内容时只显示搜索框；② 切到剪贴板/插件页时，未加载完
+不显示、加载完再显示；③ 加载反馈：对应 pill 变色 + 图标转圈。
+
+- **空导航页 = 搜索行**：fit 分支不再给「空容器」预留 56px 的 empty-state
+  提示位（改 contentH=0，且无内容时不加 `WINDOW_PAD`），`MIN_WINDOW_H`
+  90 → 60（= 搜索行高度；旧值正是用户截图里那条死区）。「无结果」提示改渲染
+  在自带内衬的 `.page-hint` 行内（sizer 新增该测量容器），fit 窗口收缩到
+  搜索行 + 提示行（实测 107px）。
+- **加载门控（`ModeInstance.ready` 新契约成员，反应式，可省 = 永远就绪）**：
+  返回 false 时壳给 `.results` 加 `.results-loading`（visibility: hidden）、
+  sizer 走 loading 分支把窗口收拢成搜索行、该页 pill 进加载态；就绪后按页面
+  高度展开。实现：磁盘 view 页 = 页面桥接 `__lumeReady`（`createIframeView`
+  新增 `live` 信号：挂载/换文档/卸载即复位 + **3s 宽限兜底**，坏页面或远端
+  子资源卡住时不会永远转圈）；模板页与剪贴板页 = 首次取数落定（错误也放行）。
+- **pill 反馈**：活动页加载中时 pill 加 `.loading`（强调色 `#5ac8fa` 着色 +
+  图标 30% 透明度 + 图标上转圈环 `mode-switch-spin`），`aria-busy`。
+
+**关键坑（性能）**：收拢一开始完全不生效。实测定位到 Tauri 的**同步命令跑在
+主线程**上——剪贴板首载（debug 下 172 行 ~4s）期间所有其它 IPC（含
+`set_size`）都在排队：探针测到琐碎 IPC 耗时 **3895ms**。修复：
+`search_clipboard` 改 `async`（跑 runtime 上），`get_file_thumb` /
+`get_file_bytes` 改 async + `spawn_blocking`（与既有
+`get_video_thumb`/`get_app_icons` 同法）。修复后同一测量 **3ms**，收拢即时落地。
+
+验证（`test/_loading_gate_check.mjs` **18 项全过**）：空菜单 → innerH=60 且
+`.results` 高度 0；无结果 → 107px；剪贴板/文件秒搜切换瞬间 loading=true、
+`.results` hidden、窗口 60（前值 520/610）、pill 着色 `rgb(90,200,250)`、转圈
+环处于动画；就绪后页面可见并到页面高度（520 / 610）。回归：cargo test 185、
+`_seam_probe` 10、`_shell_nav_check` 10、`_clip_seam_check` OK、
+`cdp_p2b_verify` 22。
+
+### 后续（不在本轮）
+
+搜索源 provider 化（原生索引 / 文件搜索抽成 first-party `SearchSource`）、
+pill 排序/隐藏设置、§10.4 剪贴板页重设计（本重构为其结构前置——只动
+`src/plugins/clipboard/` 即可）。（原「面板 Acrylic 半透明 vs 页面实体色的
+已知残余」已由 #30.6 归零：面板 / 边框条 / 页面画布为同一个不透明值，不再
+随壁纸漂移。）另：#30.7 只把「页面首载」路径上的重命令 async 化了，
+`search_apps`（每次击键）等仍在主线程——若后续感到输入卡顿，同一手法处理。

@@ -13,6 +13,10 @@ import { MIN_WINDOW_H, SCREEN_MARGIN, WINDOW_PAD } from "./types";
 export interface SizerDeps {
   /** Fixed-height model (plugin modes) vs auto-fit (Navigate). */
   fixedHeight: () => boolean;
+  /** The active page hasn't finished loading (`ModeInstance.ready` is false):
+   * the window is the search row alone — nothing of the page may be seen
+   * before it is loaded (the shell hides `.results` on the same signal). */
+  loading: () => boolean;
   windowHeight: () => number;
   windowWidth: () => number;
   /** The active mode's preferred fixed height (manifest `height`) — wins over
@@ -76,6 +80,19 @@ export function createWindowSizer(deps: SizerDeps) {
 
   /** Fit the launcher window height to the current content, then re-center. */
   async function resizeToContent() {
+    // Loading gate: a page that isn't ready yet shows nothing — the window IS
+    // the search row (the page area is hidden by the shell). Collapse before
+    // the height model below could expose an empty page area.
+    if (deps.loading()) {
+      const searchH =
+        (document.querySelector(".search") as HTMLElement | null)?.offsetHeight ?? 0;
+      if (!searchH || searchH === lastWindowH) return;
+      lastWindowH = searchH;
+      deps.setRuntimeSize(deps.windowWidth(), searchH);
+      await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), searchH));
+      await invoke("apply_position");
+      return;
+    }
     // Plugin modes use a fixed height: the mode's manifest `height` when it
     // declares one (clamped to the work area so a bad manifest can't overflow
     // the screen), else the global 设置 → 窗口大小 → 高度. The list/page
@@ -103,7 +120,8 @@ export function createWindowSizer(deps: SizerDeps) {
     const container =
       (document.querySelector(".result-grid") as HTMLElement | null) ??
       (document.querySelector(".result-list") as HTMLElement | null) ??
-      (document.querySelector(".bar-list") as HTMLElement | null);
+      (document.querySelector(".bar-list") as HTMLElement | null) ??
+      (document.querySelector(".page-hint") as HTMLElement | null);
     if (!container) return;
 
     measureBarCols();
@@ -114,6 +132,9 @@ export function createWindowSizer(deps: SizerDeps) {
     // would clamp to the current viewport for short lists). Correct for any
     // existing scroll so the measurement is scroll-independent. The bars live
     // inside the container (bar-sections), so no separate bar height is added.
+    // No children = the home menu has nothing at all (no bars configured):
+    // contentH stays 0 and the window is the search row alone — no reserved
+    // "empty-state" strip below it.
     const last = container.lastElementChild as HTMLElement | null;
     let contentH = 0;
     if (last) {
@@ -121,8 +142,6 @@ export function createWindowSizer(deps: SizerDeps) {
       const lr = last.getBoundingClientRect();
       const padBottom = parseFloat(getComputedStyle(container).paddingBottom) || 0;
       contentH = lr.bottom - cr.top + container.scrollTop + padBottom;
-    } else {
-      contentH = 56; // empty-state hint
     }
 
     // Height cap: an expanded bar fills the screen (up to the work area, minus
@@ -135,9 +154,11 @@ export function createWindowSizer(deps: SizerDeps) {
       const screen = deps.workAreaH();
       if (screen) cap = Math.max(deps.windowHeight(), screen - SCREEN_MARGIN);
     }
+    // WINDOW_PAD (the page's bottom-inset slop) only applies when there IS
+    // content — an empty home page ends exactly with the search row.
     const targetH = Math.max(
       MIN_WINDOW_H,
-      Math.min(searchH + contentH + WINDOW_PAD, cap),
+      Math.min(searchH + (contentH > 0 ? contentH + WINDOW_PAD : 0), cap),
     );
     if (targetH === lastWindowH) return;
     lastWindowH = targetH;

@@ -10,6 +10,7 @@
 //! travels over the same postMessage channel as the RPC traffic.
 
 import { createSignal, onMount, onCleanup, type Component } from "solid-js";
+import { currentThemeMode, PANEL_SURFACE_BG } from "../theme";
 
 /** The bridge client injected into every plugin view page. Kept as a string
  * so it can be textually injected — it runs inside the plugin iframe. */
@@ -171,6 +172,15 @@ export const BRIDGE_SCRIPT = `
     }
     if (d.__lumeEvent) {
       var ev = d.__lumeEvent;
+      // 宿主拼接面：插件页画布默认取主题的实体面板色（--surface），随主题事件
+      // 实时跟随。插件自己的 html/body 背景规则文档更靠后，写了自己的底色就
+      // 覆盖本默认（契约见 PLUGIN_API.md §6B.2）。
+      if (ev.type === "theme") {
+        document.documentElement.style.setProperty(
+          "--lume-page-bg",
+          ev.payload === "light" ? "${PANEL_SURFACE_BG.light}" : "${PANEL_SURFACE_BG.dark}"
+        );
+      }
       var h = window.lume.on[ev.type];
       if (typeof h === "function") h(ev.payload);
     }
@@ -247,9 +257,25 @@ export const BRIDGE_SCRIPT = `
 })();
 `;
 
-/** Inject the bridge + a blank-target base into a plugin view page. */
+/** Inject the bridge + a blank-target base + the page-canvas default into a
+ * plugin view page.
+ *
+ * The canvas style is the host's splice surface: a plugin page sits directly
+ * under the launcher's search row / the detached window's titlebar, so it must
+ * not fall back to the browser's own canvas. A dark `color-scheme` — every
+ * mirrored-palette plugin sets one — makes Chromium paint an **opaque #121212**
+ * canvas for a transparent root background (#121212-vs-panel is a glaring tone
+ * gap at the splice, and host element backgrounds are invisible under such a
+ * frame). Giving `html` the theme's solid panel color fixes that — the same
+ * `--surface` the launcher panel paints, so the page is literally the panel at
+ * the splice; the bridge keeps it in step with `lume.on.theme` (theme flips),
+ * and a plugin that paints its own `html`/`body` background still wins (its
+ * rule comes later in the document). */
 export function injectBridge(html: string): string {
-  const injection = `<base target="_blank"><script>${BRIDGE_SCRIPT}</script>`;
+  const injection =
+    `<base target="_blank">` +
+    `<style>html{background:var(--lume-page-bg,${PANEL_SURFACE_BG[currentThemeMode()]})}</style>` +
+    `<script>${BRIDGE_SCRIPT}</script>`;
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + injection);
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + injection);
   return injection + html;
@@ -282,18 +308,36 @@ export const PLUGIN_FRAME_SANDBOX = "allow-scripts allow-forms allow-popups allo
  * see each other's traffic. `opts` renames the iframe class and sets the
  * frame's `window.name` (arrives in `__lumeReady.frame`) so the host can
  * tell the ready announcements apart. */
+/** How long a plugin page may stay "loading" before it is shown anyway. The
+ * bridge announces ready on the document's `load`, so a stalled subresource
+ * (broken page, unreachable remote asset) must not hide the launcher behind a
+ * spinner forever — past this grace period the page is shown as-is. */
+const READY_GRACE_MS = 3000;
+
 export function createIframeView(
   onRpc: (method: string, args: Record<string, unknown>) => Promise<unknown>,
   onReady?: () => void,
   opts?: { class?: string; name?: string }
-): { View: Component & { setHtml(html: string): void }; post: (type: string, payload?: unknown) => void } {
+): {
+  View: Component & { setHtml(html: string): void };
+  post: (type: string, payload?: unknown) => void;
+  /** Whether the *current* document's bridge is live (it announced
+   * `__lumeReady`). False while a fresh document is still loading — reset on
+   * mount, on unmount (a remount is a new document) and when `setHtml` swaps
+   * the page. The mode instance exposes it as `ModeInstance.ready` (the
+   * shell's loading gate). */
+  live: () => boolean;
+} {
   let frame: HTMLIFrameElement | undefined;
   const [srcdoc, setSrcdoc] = createSignal("");
+  const [live, setLive] = createSignal(false);
   const post = (type: string, payload?: unknown) => {
     frame?.contentWindow?.postMessage({ __lumeEvent: { type, payload } }, "*");
   };
   const View: Component & { setHtml(html: string): void } = () => {
     onMount(() => {
+      setLive(false); // a fresh document starts loading
+      const grace = window.setTimeout(() => setLive(true), READY_GRACE_MS);
       const handler = (e: MessageEvent) => {
         if (e.source !== frame?.contentWindow) return;
         const d = (e.data || {}) as {
@@ -312,6 +356,8 @@ export function createIframeView(
         };
         if (d.__lumeReady) {
           // The page's bridge is live — safe to (re)send state now.
+          window.clearTimeout(grace);
+          setLive(true);
           try {
             onReady?.();
           } catch (err) {
@@ -362,7 +408,11 @@ export function createIframeView(
         }
       };
       window.addEventListener("message", handler);
-      onCleanup(() => window.removeEventListener("message", handler));
+      onCleanup(() => {
+        window.removeEventListener("message", handler);
+        window.clearTimeout(grace);
+        setLive(false); // unmount = the document is gone
+      });
     });
     return (
       <iframe
@@ -375,6 +425,9 @@ export function createIframeView(
       />
     );
   };
-  View.setHtml = (html: string) => setSrcdoc(html);
-  return { View, post };
+  View.setHtml = (html: string) => {
+    setLive(false); // the swapped-in document must announce itself again
+    setSrcdoc(html);
+  };
+  return { View, post, live };
 }

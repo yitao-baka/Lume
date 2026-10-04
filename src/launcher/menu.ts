@@ -11,8 +11,18 @@ import pinIcon from "../../res/icons/pin.svg";
 import pinnedIcon from "../../res/icons/pinned.svg";
 import runIcon from "../../res/icons/normal_run.svg";
 import { isUrl } from "./clipData";
-import type { MenuState } from "./types";
-import type { NavigateStore } from "./navigate";
+import type { AppEntry, MenuState } from "./types";
+
+/** The navigate-side actions the shared context menu needs — provided by the
+ * navigate home page's store (structurally satisfied). */
+export interface NavMenuActions {
+  pinnedApps(): { path: string }[];
+  toggleAppPin(app: AppEntry): void;
+  launchApp(app: AppEntry, elevated?: boolean): void;
+  revealInFolder(app: AppEntry): void;
+  deleteRecent(app: AppEntry): void;
+  activateFolder(idx: number, elevated: boolean): void;
+}
 
 /** The clipboard-side actions the shared context menu needs — provided by
  * the clipboard plugin's store (structurally satisfied). */
@@ -27,7 +37,7 @@ export interface ClipMenuActions {
 }
 
 export interface MenuDeps {
-  nav: NavigateStore;
+  nav: NavMenuActions;
   clip: ClipMenuActions;
 }
 

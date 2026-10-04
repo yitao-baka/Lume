@@ -14,9 +14,14 @@
 //! the manifest/permission surfaces exist so the loader can slot in).
 
 import type { Component } from "solid-js";
-import type { ClipboardItem, FileSearchOut, PreviewReq } from "../launcher/types";
+import type { AppEntry, ClipboardItem, FileSearchOut, PreviewReq } from "../launcher/types";
 
 export type { FileSearchOut };
+
+/** One row of a page's current results — a navigate-grid entry or a clipboard
+ * history row. Pages own their rows; the shell only counts and activates
+ * them. */
+export type PageRow = AppEntry | ClipboardItem;
 
 /** Manifest as reported by the Rust `get_plugins` command. */
 export interface PluginManifest {
@@ -494,6 +499,10 @@ export interface PluginServices {
   scheduleResize(): void;
   /** Monotonic token — bump on every root-level search; drop stale results. */
   searchToken(): number;
+  /** Bump the search generation and return it — pages use it to drop their
+   * own stale async work (drill filters, probes) on the same timeline as the
+   * root searches. */
+  nextSearchToken(): number;
   /** Where the last selection change came from. */
   selectionSource(): "keyboard" | "mouse" | "other";
   /** selectionSource = "mouse" (hover/click takes over from keyboard nav). */
@@ -538,9 +547,16 @@ export interface MenuStateLike {
 export interface ModeKeyContext {
   hasResults: boolean;
   moveSelection(delta: number): void;
+  /** Column count of the results grid (grid pages use it for ↑/↓). */
+  gridCols: () => number;
+  /** selectionSource = "keyboard" (pages call it before their own nav). */
+  markKeyboard: () => void;
 }
 
-/** A full launcher page contributed by a plugin (the clipboard is v1's). */
+/** A full launcher page (the uTools-style "below the search box" widget) —
+ * contributed by a plugin. The built-in navigate home page and the clipboard
+ * page implement the same contract as disk mode pages; the shell renders
+ * `View` under the search box and delegates keys/activation to it. */
 export interface ModeInstance {
   /** This mode's own query — independent per mode, like apps. */
   query: () => string;
@@ -553,11 +569,17 @@ export interface ModeInstance {
   selected: () => number;
   setSelected(i: number): void;
   /** Current rows (Enter/activate operates on these). */
-  rows: () => ClipboardItem[];
-  /** Activate the selected row (paste / merge-paste). */
-  activate(): void;
-  /** Handle a key while this mode is active; true = consumed. */
+  rows: () => PageRow[];
+  /** Activate the selected row (launch / paste / merge-paste). `elevated` is
+   * the Shift+Enter admin request (app launches honor it). */
+  activate(opts?: { elevated?: boolean }): void;
+  /** Handle a key while this mode is active; true = consumed. The shell keeps
+   * Esc layering / mode switch / Enter and falls back to ↑↓/Enter when no
+   * page consumes them. */
   onKey(e: KeyboardEvent, ctx: ModeKeyContext): boolean;
+  /** Intercept a query keystroke ahead of the regular search pipeline (true =
+   * consumed). Navigate's provider drill-down filter uses this. */
+  handleQuery?(q: string): boolean;
   /** A declarative entry rule targeted this mode (P2.1) — the payload is the
    * matched query text. Called after the mode is switched to. */
   onEnter?(info: FeatureEnterInfo): void;
@@ -575,17 +597,40 @@ export interface ModeInstance {
   previewEnabled(): boolean;
   /** Re-measure this mode's internal viewport (window sizer hook). */
   measureViewport(): void;
+  /** Height model for the "拼接" sizer: `"fit"` = the window auto-sizes to the
+   * page content (the navigate home page); `"fixed"` (default) = the
+   * fixed-height model below the search box. */
+  heightPolicy?: () => "fit" | "fixed";
+  /** Whether an expandable bar is currently expanded (fit pages only — raises
+   * the sizer's work-area cap). */
+  anyExpanded?: () => boolean;
   /** This mode's preferred fixed window height (manifest `height`), or null
    * to use the global 设置 → 窗口大小 → 高度. Read by the sizer's
    * fixed-height branch (plugin modes). */
   desiredHeight?: () => number | null;
+  /** The home page keeps its session state (query, rows, feature rows) across
+   * mode switches — search recall depends on it. Every other page starts from
+   * a clean page (`restorePage("all")` + `reset()`) when switched to. */
+  home?: boolean;
+  /** Search-box placeholder while this page is active ("" is never returned —
+   * pages fall back to their own default text). */
+  placeholder?: () => string;
+  /** Actions for the shared context menu (structural — menu.ts declares the
+   * narrow interface it needs). */
+  menuActions?: () => unknown;
   /** 记住上次所在页面: the mode's current page kind + restore. */
   pageKind(): string;
   restorePage(kind: string): void;
   /** Apply the settings slice this mode renders live. */
   applySettings(s: unknown): void;
+  /** The launcher was (re)summoned with this page mounted — refresh summon-
+   * scoped data (called for every page after the summon search). */
+  onShow?(): void | Promise<void>;
   /** Launcher hidden with this mode active (lifecycle hook, optional). */
   onHide?(): void;
+  /** OS files were dropped on the launcher window (P2.2) — one-shot rows
+   * until the next hide/summon. */
+  onFilesDropped?(paths: string[]): void;
   /** The full-page view. */
   View: Component;
 }
@@ -708,9 +753,6 @@ export interface LauncherPlugin {
   pluginName?: string;
   /** Headless lifecycle hooks (disk service plugins). */
   lifecycle?: ServiceHooks;
-  /** Actions for the shared context menu (structural — menu.ts declares the
-   * narrow interface it needs). */
-  clipMenuActions?: () => unknown;
 }
 
 /** Mode ids are strings; "apps" is the built-in Navigate mode (not a plugin)

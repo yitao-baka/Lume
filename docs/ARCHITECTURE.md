@@ -314,11 +314,40 @@ before adding a field:
 
 ## Frontend
 
-- The launcher frontend is modular under `src/launcher/` (2026-08-30 refactor
-  out of a monolithic `App.tsx`). `src/App.tsx` is the **composition root**:
-  it owns the session lifecycle (search recall, mode switching, mount-time
-  listeners) and wires the modules together via a late-bound deps object.
-- `src/launcher/` modules:
+- The launcher frontend is modular. `src/App.tsx` is the **shell /
+  composition root** (2026-09-27 主窗口部件化, ROADMAP #30): it owns the
+  session lifecycle (search recall, mode switching, mount-time listeners),
+  wires the `PluginServices` every page receives via a late-bound deps
+  object, and composes the uTools-style surface — the `SearchBox` widget on
+  top and the active page widget (`ModeInstance.View`) spliced below it,
+  plus the shared overlays (toast, context menu).
+- `src/shell/SearchBox.tsx` — the search-row widget (magnifier + query input
+  + page pills + settings gear). Controlled/pure: the shell owns query
+  routing (page `handleQuery` interception → `subInput` ownership → search)
+  and placeholder resolution (`subInput` → page `placeholder()` → plugin
+  `setPlaceholder` map).
+- `src/plugins/` — **every page below the search box is a plugin**
+  implementing the `ModeInstance` page contract (`src/plugins/types.ts`):
+  - `navigate/` — the built-in **home page** (id `"apps"`, `home: true`, the
+    only `heightPolicy: "fit"` page): `store.ts` (the bars 栏目 registry —
+    最近使用 / 已固定 / plugin bars / Explorer — plus app actions and the
+    continuous bar-grid navigation + pinned drag reorder), `search.ts` (the
+    merged search pipeline: native index → 全局关键字 rows → declarative
+    feature rows → file-search hits → plugin providers; provider drill-down;
+    the summon-scoped file-drop / clipboard-image / foreground-window feature
+    rows), `NavigateView.tsx` (bars + results grid), `index.tsx`
+    (`createNavigatePlugin(services, host)`).
+  - `clipboard/` — the clipboard-history page (store + view + keys + search
+    + the settings slice it renders live).
+  - `preview/` — a service contribution (satellite-preview routing shared by
+    every page that exposes previewable rows).
+  - `registry.ts` + `types.ts` — the registry all plugins plug into
+    (`definePlugin` for built-ins, disk discovery + `createDiskModeInstance`
+    for on-disk plugins); the Rust side discovers manifests
+    (`<base>/plugins/<id>/plugin.toml`) in `plugins.rs` and carries the
+    enabled set in `settings.plugins.disabled`. Adding a launcher page no
+    longer touches the shell.
+- `src/launcher/` shared modules:
   - `types.ts` — shared types + pure constants (mode/entry types, key sets,
     sizing constants, category tables).
   - `clipData.ts` — pure clipboard-data helpers (text subtype detection,
@@ -326,52 +355,36 @@ before adding a field:
     preview-target decision).
   - `icons.ts` — `createIconStore()`: the in-memory icon cache mirroring the
     backend `IconCache` (batched `get_app_icons` fetches).
-  - `sizing.ts` — `createWindowSizer()`: auto-fit height, bar column
-    measurement, work-area cap, virtual-list viewport measurement.
-  - `navigate.ts` — `createNavigateStore()`: 最近使用 / 已固定 / Explorer
-    bars — signals, data refresh, app actions, continuous bar-grid
-    navigation, pinned-bar drag reorder.
-  - `clipboard.ts` — `createClipboardStore()`: history categories, copy /
-    paste / merge-paste, delete with undo, clear, pause, pin, virtual-list
-    windowing, display-only clipboard settings signals.
+  - `sizing.ts` — `createWindowSizer()`: the "拼接" height model (fit pages
+    auto-size to content; fixed pages splice in under the search box at the
+    manifest/`window_height` height), bar column measurement, work-area cap,
+    virtual-list viewport measurement.
   - `menu.ts` — `buildMenuItems()`: right-click menu construction for
-    app / folder / clipboard targets.
+    app / folder / clipboard targets, over the narrow structural
+    `NavMenuActions` / `ClipMenuActions` interfaces each page supplies via
+    `ModeInstance.menuActions()`.
   - `keyboard.ts` — `createKeyRouter()`: the window-level keydown routing
-    (Esc layering, mode switch, per-mode navigation) and the WebView2
-    accelerator blocker.
-  - `previewSync.ts` — `createPreviewSync()`: debounced satellite-preview
-    show/close driven by the clipboard selection.
-  - `NavigateView.tsx` / `ClipboardView.tsx` — the two mode views (pure
-    rendering: state in via accessors, interactions out via callbacks).
+    (Esc layering, mode switch, shared ↑/↓/Enter fallback — per-page keys
+    delegate to the active page's `onKey`) and the WebView2 accelerator
+    blocker.
 - The settings window reuses the same build via the window label
   (`src/settings/`, grouped-card layout — see `docs/SETTINGS.md`); the
   satellite preview is its own entry (`src/preview.tsx`).
-- **Plugins** (`src/plugins/`, ROADMAP #7): a registry
-  (`registry.ts` + `types.ts`) that first-party capabilities plug into —
-  `clipboard` (mode contribution: store + view + keys + search under
-  `src/plugins/clipboard/`) and `preview` (service contribution: satellite
-  routing under `src/plugins/preview/`). The composition root provides
-  `PluginServices` (toasts, search pipeline + stale tokens, selection
-  source, context menu, mode switching); the Rust side discovers on-disk
-  manifests (`<base>/plugins/<id>/plugin.toml`) in `plugins.rs` and carries
-  the enabled set in `settings.plugins.disabled`. The App renders mode pills
-  and pages from the registry — adding a launcher mode no longer touches the
-  shell.
-- Two modes — **Navigate** and **Clipboard** — are toggled with `Tab` or the
-  pills in the search row; switching keeps the current query and re-searches.
-- Each keystroke invokes the active mode's search command and drops stale
-  responses via a monotonic request id.
-- **Navigate** — empty query shows the two bars (最近使用 above 已固定), each a
-  titled, expandable grid of app boxes sized like the results grid; typing shows
-  the search-results grid. ↑/↓ cycle the bars on the empty main menu, ←/→ move
+- Each keystroke invokes the active page's search command and drops stale
+  responses via a monotonic request id (`searchToken` / `nextSearchToken`).
+- **Navigate (home)** — empty query shows the bars (最近使用 above 已固定
+  above plugin bars above the Explorer bar), each a titled, expandable grid
+  of app boxes sized like the results grid; typing shows the merged
+  search-results grid. ↑/↓ cycle the bars on the empty main menu, ←/→ move
   within the active bar; mouse hover selects, click launches. Context menus
   offer pin / launch / open location / (recent: remove-from-recent) / admin.
 - **Clipboard** renders a virtualized list (fixed row height, ~30 DOM rows)
   with category tabs, multi-select merge paste and delete-with-undo.
-- Both modes support hover-select and click-activate; the search input is
+- All pages support hover-select and click-activate; the search input is
   re-focused every time the window is shown.
-- `Enter` launches an app or pastes a clipboard entry, then hides; `Esc`
-  layers: close menu → clear multi-select → close satellite preview → hide.
+- `Enter` launches an app or pastes a clipboard entry, then hides (Shift+
+  Enter = admin launch); `Esc` layers: close menu → page `onEscape` (pop a
+  drill level / clear multi-select) → close satellite preview → hide.
 - **i18n**: all user-facing strings go through `t()` from `src/i18n.ts`
   (en / zh-CN / zh-TW), keyed off the system language.
 

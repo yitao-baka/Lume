@@ -1,18 +1,18 @@
-//! Navigate-mode store — the empty-query main menu's bars (栏目). The three
-//! native bars (最近使用 / 已固定 / Windows 资源管理器) and plugin-contributed
-//! bars share one section contract: `sections()` is the single ordered
-//! registry (recent → pinned → plugin bars → explorer, which is pinned last),
-//! NavigateView renders every section uniformly, and the continuous
-//! section-grid keyboard navigation walks them top to bottom. Also owns data
-//! refresh, app actions (launch / reveal / pin / remove-from-recent) and the
-//! pinned-bar drag-reorder listeners.
+//! Navigate home-page store — the empty-query main menu's bars (栏目). The
+//! three native bars (最近使用 / 已固定 / Windows 资源管理器) and
+//! plugin-contributed bars share one section contract: `sections()` is the
+//! single ordered registry (recent → pinned → plugin bars → explorer, which
+//! is pinned last), NavigateView renders every section uniformly, and the
+//! continuous section-grid keyboard navigation walks them top to bottom. Also
+//! owns data refresh, app actions (launch / reveal / pin / remove-from-recent)
+//! and the pinned-bar drag-reorder listeners.
 
 import { createMemo, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
-import { t } from "../i18n";
-import copyIcon from "../../res/icons/copy.svg";
-import runIcon from "../../res/icons/normal_run.svg";
-import type { AppEntry, MenuState } from "./types";
+import { t } from "../../i18n";
+import copyIcon from "../../../res/icons/copy.svg";
+import runIcon from "../../../res/icons/normal_run.svg";
+import type { AppEntry, MenuState } from "../../launcher/types";
 
 export interface NavigateDeps {
   /** Settings: show the 「最近使用」 bar (display-only toggle). */
@@ -654,6 +654,13 @@ export function createNavigateStore(deps: NavigateDeps) {
    * Raw DOM listeners (not Solid events) so the logic always sees the event.
    * Listeners live for the window's lifetime. */
   function installDragReorder() {
+    // Selection highlight while the cursor rests on empty space: the last-
+    // selected entry stays highlighted — selection only moves on hover over an
+    // entry or an arrow key, and never "disappears" mid-interaction.
+    document.addEventListener("mousemove", () => {
+      setNavHidden(false);
+    });
+
     document.addEventListener("pointermove", (e) => {
       const dr = dragRef;
       if (!dr) return;

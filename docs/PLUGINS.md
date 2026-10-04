@@ -259,8 +259,13 @@ permissions = ["network", "clipboard", "fs.write"]
 
 | id | kind | 说明 |
 |---|---|---|
+| apps | mode | **导航首页**——启动器固有页面的插件化形态（`src/plugins/navigate/`）：栏目条 + 合并搜索网格，`home: true` 且不可禁用（id 持久化在 `last_page = "apps"`，永不改名） |
 | clipboard | mode | 剪贴板历史整页（`src/plugins/clipboard/`） |
 | preview | service | 卫星预览窗路由（`src/plugins/preview/`） |
+
+主窗口是 uTools 式拼接：`SearchBox` 部件在顶，任意 mode 页（内置或磁盘）
+经同一 `ModeInstance` 契约拼接在其下（`docs/PLUGIN_API.md` §6B）。导航首页
+不进 设置 → 插件 的启停列表（默认页不可关闭）。
 
 在 设置 → 插件 关闭一个 mode 插件后，模式 pill 隐藏、Tab 不再切入；
 若关闭时正停在该模式，启动器自动回到导航页。

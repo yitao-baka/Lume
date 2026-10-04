@@ -2004,3 +2004,88 @@ fail-closed）、`scripts/cdp_lupx_verify.mjs` 23 项与
 签名校验、`.lupx` 文件关联/拖包安装、浏览器 URL / 划词捕获（UIA）、
 超级面板（光标小窗 + 模拟 Ctrl+C 选区捕获）、AI 宿主 API、宿主窗口内插件
 逻辑的进程级隔离。
+
+## 30. 主窗口部件化：搜索框部件 + 页面部件插件化（已实现）
+
+**状态：已实现（2026-09-27）。** uTools 式主窗口重构：搜索框分离为独立
+部件，其下的导航页 / 剪贴板页 / mode 插件页统一为可拼接的页面部件；
+目的是**启动器固有组件的插件化改造**——固有页面与第三方插件走同一注册表
+与契约路径。
+
+### 30.1 目标形态
+
+```
+App.tsx（壳 = 组合根：会话生命周期 + PluginServices 装配 + 覆盖层）
+├── <SearchBox />                      ← 独立部件（受控纯展示）
+├── <Dynamic component={activePage.View} />   ← 页面插槽（拼接点）
+│     统一契约 ModeInstance（页面部件）
+│     ├── navigate（内置插件化，id "apps"，home: true）
+│     ├── clipboard（已内置插件）
+│     └── 磁盘 mode 页（registry 适配器，零改动）
+└── Toast / 右键菜单 / 分离按钮
+```
+
+「拼接」三义：布局拼接（页面永远在搜索框下方）、尺寸拼接（窗口高 =
+搜索行高 + 页面高度；`heightPolicy: "fit"` 内容自适应 / `"fixed"` 定高，
+manifest `height` 覆盖全局设置）、交互拼接（`setSubInput` 接管输入、
+查询经壳路由到活动页）。
+
+### 30.2 交付内容
+
+- **P0 契约泛化**（`src/plugins/types.ts`，只增不改义）：`rows` →
+  `PageRow`（`AppEntry | ClipboardItem`）；`activate(opts?: {elevated})`；
+  新增可选 `handleQuery?`（输入拦截）、`onShow?`/`onFilesDropped?`（呼出/
+  拖入转发）、`heightPolicy?`/`anyExpanded?`（拼接尺寸）、`home?`（主页
+  切模式不复位）、`placeholder?`/`menuActions?`；`ModeKeyContext` 增
+  `gridCols`/`markKeyboard`；`PluginServices` 增 `nextSearchToken()`。
+- **P1 搜索框部件**（`src/shell/SearchBox.tsx`）：搜索行 JSX 迁出组合根，
+  pills 完全数据化（统一 `pages()`，导航 pill 不再硬编码）；占位符三级
+  统一解析（subInput 接管 → 页面 `placeholder()` → `app.setPlaceholder`
+  映射），`search_placeholder_apps`/`_clipboard` 设置项分别下放给导航页 /
+  剪贴板页的 `applySettings`。
+- **P2 导航页插件化**（`src/plugins/navigate/`）：`store.ts`（栏目条注册
+  表 + 动作 + 拖拽重排，自 `src/launcher/navigate.ts` 迁入）、`search.ts`
+  （合并搜索管线：原生索引 → 关键字行 → feature 行 → 文件命中 → provider；
+  下钻 + 过滤；拖入/剪贴板图片/前台窗口 feature 行状态；`lume-mode://`/
+  `featureEnter`/`providerDrill`/`providerEnter`/launch 激活分支）、
+  `NavigateView.tsx`、`index.tsx`（`createNavigatePlugin(services, host)`）。
+  `APPS_MODE` 特判清零：键盘 apps 分支整体委托 `onKey`，`keyboard.ts` 不再
+  依赖 `NavigateStore`（只留 Esc 链 + 切换键 + ↑↓/Enter 兜底），
+  `menu.ts` 改结构性 `NavMenuActions`，sizer 改读 `heightPolicy`。
+- **P3 壳收敛**：`App.tsx` 收敛为纯壳；`remember_last_page` 泛化为任意
+  页面 id（存量 `"apps"`/`"clipboard"` 值原样兼容，导航页 id 永不改名）；
+  召唤序列 = clearSearch → 召唤搜索 → 各页 `onShow`（首页在此刷新栏数据 /
+  资源管理器栏 / 前台窗口行并做空菜单自动选中）。导航首页**不进
+  设置→插件 启停列表**（默认页不可关）。
+
+### 30.3 行为不变式（逐项对照旧实现）
+
+- 搜索合并顺序与去重封顶（原生 → 关键字行 → feature 行 → 文件命中 →
+  provider，path 去重、总 20 封顶）、stale-token 守卫（`requestSeq`）。
+- Esc 分层顺序：菜单 → 页面 `onEscape`（下钻弹出 / 退出多选）→ 卫星预览 →
+  隐藏；切换键循环顺序（导航在首位）；Shift+Enter 提权。
+- 搜索召回（5 分钟 TTL、打开条目即清）、记住上次页面（page + kind）、
+  subInput 所有权语义、下钻 Esc 回退、P2.2/P4 feature 行的一次性生命周期。
+- 切模式：非 home 页 `restorePage("all")` + `reset()`；home 页保留会话态
+  （搜索召回依赖）。占位符三级解析与旧行为逐分支等价。
+
+### 验证
+
+`tsc --noEmit` + `vite build` 干净；cargo test **185** 无回归；`cargo build
+--bin lume` 重嵌前端后实机 CDP：`cdp_p2b_verify.mjs` **22 项全过**（feature
+行 / 拖入 / img 行 / list 模板 / **磁贴指针重排**——迁移后的固定栏代码）、
+`cdp_clipboard_smoke.mjs` 全过（pills 统一渲染、Tab 切页、剪贴板虚拟列表/
+分类/多选）、`cdp_p2_verify.mjs` **17/21**（余 4 项为 P5 之前遗留的
+`iframe.contentDocument` 陈旧探针——沙箱后该值恒为 null
+（`cdp_sandbox_verify.mjs` ② 隔离断言），enter 载荷经插件日志证实已投递
+（`storage set (hello-mode) lastEnter`）；另附 `test/_shell_nav_check.mjs`
+**10/10**（空菜单自动选中、栏 ←→/↑↓ 连续导航、网格按列 ↑↓、Esc 隐藏、
+Tab 循环）。**环境注意**：`cdp_p2*_verify` 依赖 `hello-mode`/`list-demo` 处于
+启用态（禁用时 redirect/列表段与其后的重排段会连锁失败——重排段的召唤依赖
+前置点击置位 entryOpened 以越过搜索召回）。
+
+### 后续（不在本轮）
+
+搜索源 provider 化（原生索引 / 文件搜索抽成 first-party `SearchSource`）、
+pill 排序/隐藏设置、§10.4 剪贴板页重设计（本重构为其结构前置——只动
+`src/plugins/clipboard/` 即可）。

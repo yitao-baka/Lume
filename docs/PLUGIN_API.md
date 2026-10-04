@@ -525,10 +525,10 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 | `markEntryOpened()` | 标记「本此呼出已使用条目」→ 清空搜索召回（下次呼出回导航页）。launch/paste/开链接类动作都应调用。 |
 | `resetAndHide()` | 清空会话状态（走 clearSearch）并隐藏启动器。 |
 | `persistLastPage()` | 防抖 400ms 持久化「记住上次所在页面」（读活动模式的 `pageKind`）。模式内切换分类/页面时调用。 |
-| `runSearch(q)` | **根搜索管线**：重置选中/隐藏导航高亮/zone 归 grid → 按 mode 分发（apps 原生搜索；插件模式 → `instance.search(q)`）。模式内部刷新数据应调它而不是自己的 `search`，以保证选中态/zone/令牌一致。 |
+| `runSearch(q)` | **根搜索管线**：重置选中 + 令牌 +1 → 活动页 `instance.search(q)`。页面内部刷新数据应调它而不是自己的 `search`，以保证选中态/令牌一致。 |
 | `scheduleResize()` | 下一帧重测窗口高度（内容变化后调用）。 |
-
 | `searchToken()` | 单调递增令牌——根每次搜索 +1。异步结果落地前比对，令牌变了就丢弃（防乱序）。 |
+| `nextSearchToken()` | 令牌 +1 并返回——页面自己的异步链（如下钻过滤）按同一时间线丢弃陈旧结果。 |
 | `selectionSource()` | `"keyboard" \| "mouse" \| "other"`——最后一次选中变更的来源。hover 门控（键盘导航中悬停不接管）读它。 |
 | `markMouse()` | `selectionSource = "mouse"`。视图的 onMouseMove/onClick 调用。 |
 | `openMenu(m)` | 打开共享右键菜单（根渲染；`m` 为 `MenuState` 结构：`{kind, x, y, app?/item?/idx?}`）。 |
@@ -542,33 +542,43 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 
 | 成员 | 调用方 / 时机 |
 |---|---|
-| `query()` / `setQuery(q)` | 组合根读取/清空当前模式查询（呼出恢复、clearSearch 全清、搜索框输入回写）。query 与 apps 模式独立。 |
-| `search(q)` | 根 `runSearch` 对非 apps 模式的分发。实现须：取 `services.searchToken()` 快照 → 异步取数 → 令牌不一致则丢弃 → 写自己的 rows → `setSelected(0)` + 复位滚动 → `services.scheduleResize()`。 |
+| `query()` / `setQuery(q)` | 组合根读取/清空当前页面查询（呼出恢复、clearSearch 全清、搜索框输入回写）。每个页面一份独立 query。 |
+| `search(q)` | 根 `runSearch` 对**活动页**的统一分发（导航首页同样走此路径）。实现须：取 `services.searchToken()` 快照 → 异步取数 → 令牌不一致则丢弃 → 写自己的 rows → `setSelected(0)` + 复位滚动 → `services.scheduleResize()`。 |
 | `reset()` | 每次呼出（`clearSearch`）与切模式（`switchMode`）调用：清多选/对话框/动画态等**每呼出状态**，并清空自己的 rows（原生语义：呼出即全新搜索）。 |
 | `selected()` / `setSelected(i)` | 根 `moveSelection`（↑↓/网格移动）、`runSearch` 复位、Enter 激活前的对齐。 |
-| `rows()` | `currentResults()`（键盘移动的边界）与 Enter 激活。返回 `ClipboardItem[]` 形状（v1 契约即剪贴板行；泛化是后续工作）。 |
-| `activate()` | Enter / 第二次点击选中行的激活：多选 → 合并粘贴；单选 → 粘贴。 |
-| `onKey(e, ctx)` | 键盘路由在**非 apps 模式**下先交给模式处理；返回 `true` = 已消费。收到的键：←/→（空查询切分类）、Space（多选）、Del（删除）——↑/↓/Enter 由根统一处理（`ctx.moveSelection`、根 `activate`）。`ctx = { hasResults, moveSelection }`。 |
-| `onEscape()` | Esc 分层：菜单 → **模式**（如退出多选，返回 true）→ 卫星预览 → 隐藏。 |
+| `rows()` | `currentResults()`（键盘移动的边界）与 Enter 激活。返回 `PageRow[]`（`AppEntry \| ClipboardItem`，#30 起泛化；任意模式自定义行模型仍留待后续）。 |
+| `activate(opts?)` | Enter / 点击选中行的激活（`opts.elevated` = Shift+Enter 提权请求，应用启动类页面消费它）：多选 → 合并粘贴；单选 → 粘贴。 |
+| `onKey(e, ctx)` | 键盘路由先交给**活动页**处理；返回 `true` = 已消费。首页自管网格四向键与栏分区导航，剪贴板消费 ←/→（切分类）、Space（多选）、Del（删除）——未消费的 ↑/↓/Enter 落到根的通用绑定（`ctx.moveSelection`、根 `activate`）。`ctx = { hasResults, moveSelection, gridCols, markKeyboard }`。 |
+| `handleQuery?(q)` | 可选 — 输入拦截（先于 subInput 路由与常规搜索管线）：返回 `true` = 本页消费了这次击键（首页的 provider 下钻过滤用它）。 |
+| `onEscape()` | Esc 分层：菜单 → **页面**（如退下钻层/退出多选，返回 true）→ 卫星预览 → 隐藏。 |
 | `previewTarget()` | 卫星预览插件每次选中变化时轮询：当前选中行的预览请求（`PreviewReq`）或 `null`（隐藏）。行失效 → `null`。 |
-| `previewEnabled()` | 该模式当前是否想要卫星预览（对应 设置 → 开启预览）。 |
-| `measureViewport()` | 窗口尺寸变化（sizer 定高分支 + 根视口 effect）时触发；重测模式内部虚拟列表视口。 |
-| `desiredHeight?()` | 可选 — sizer 定高分支读取：本模式的固定窗口高度（清单 `height`），`null` = 用全局设置高度（§5B）。 |
-| `pageKind()` / `restorePage(kind)` | 记住上次所在页面：持久化当前页（如剪贴板分类）/ 恢复；切到该模式时根先 `restorePage("all")` 复位。 |
-| `applySettings(s)` | 每次 `settings-applied`（对**所有**模式实例，含未激活的）：应用自己的设置切片（如剪贴板的显示类开关）。 |
-| `View` | 无 props 的 Solid 组件——活动时经 `<Dynamic>` 渲染为整页内容。内部通过闭包持有自己的 store 与 `services`。 |
+| `previewEnabled()` | 该页面当前是否想要卫星预览（对应 设置 → 开启预览）。 |
+| `measureViewport()` | 窗口尺寸变化（sizer 定高分支 + 根视口 effect）时触发；重测页面内部虚拟列表视口。 |
+| `heightPolicy?()` | 可选 — `"fit"` = 窗口随内容自适应（导航首页）；`"fixed"`（默认）= 搜索框下方定高拼接。sizer 的分支选择依据。 |
+| `anyExpanded?()` | 可选 — 是否有展开态栏目（fit 页专用，sizer 工作区封顶）。 |
+| `desiredHeight?()` | 可选 — sizer 定高分支读取：本页面的固定窗口高度（清单 `height`），`null` = 用全局设置高度（§5B）。 |
+| `home?` | 可选 — 主页标记（导航页）：切模式**不**复位（搜索召回依赖）；其余页面切入时先 `restorePage("all")` + `reset()`。 |
+| `placeholder?()` | 可选 — 本页激活时搜索框占位符（subInput 接管优先，然后本值，最后 `app.setPlaceholder` 映射）。 |
+| `menuActions?()` | 可选 — 共享右键菜单动作来源（窄结构接口，见 §6B.4）。 |
+| `pageKind()` / `restorePage(kind)` | 记住上次所在页面：持久化当前页（如剪贴板分类）/ 恢复；切到该页面时根先 `restorePage("all")` 复位。 |
+| `applySettings(s)` | 每次 `settings-applied`（对**所有**页面实例，含未激活的）：应用自己的设置切片（栏目显示、剪贴板显示类开关、占位符…）。 |
+| `onShow?()` | 可选 — 呼出（召唤搜索之后）时对**所有**页面调用：刷新呼出级数据（首页的栏数据 / 资源管理器栏 / 前台窗口行 / 空菜单自动选中）。 |
+| `onFilesDropped?(paths)` | 可选 — 系统文件拖入（P2.2）：主页据此生成 feature 行（行状态随呼出一次性）。 |
+| `View` | 无 props 的 Solid 组件——活动时经 `<Dynamic>` 渲染为整页内容（拼接在搜索框部件下方）。内部通过闭包持有自己的 store 与 `services`。 |
 
 **模式 pill**：`modeMeta.labelKey` 提供文案（i18n），`icon` 提供图标；
-关闭插件的 pill 自动消失，Tab 循环也随之跳过。
+关闭插件的 pill 自动消失，Tab 循环也随之跳过。导航首页是注册表中的第一个
+mode（id `"apps"`，`home: true`），它的 pill 即最左侧「导航」。
 
 ### 6B.2 `ModeKeyContext`
 
 ```ts
-{ hasResults: boolean; moveSelection(delta: number): void }
+{ hasResults: boolean; moveSelection(delta: number): void; gridCols(): number; markKeyboard(): void }
 ```
 
 `hasResults` = 当前 rows 非空；`moveSelection` = 根的选中移动（含
-selectionSource 标记、导航高亮恢复、自动滚动）。
+selectionSource 标记、自动滚动）；`gridCols` = 结果网格列数（网格页 ↑↓
+按列移动）；`markKeyboard` = 标记 selectionSource 为键盘（栏分区导航用）。
 
 ### 6B.3 `PreviewService` — 卫星预览服务
 
@@ -583,13 +593,12 @@ selectionSource 标记、导航高亮恢复、自动滚动）。
 - `clear()` = 立即清空（卫星窗 × 按钮 / Rust 侧 teardown 的
   `preview-closed` 事件回调）。
 
-### 6B.4 共享右键菜单集成（`clipMenuActions`）
+### 6B.4 共享右键菜单集成（`menuActions`）
 
-右键菜单由根渲染（`buildMenuItems`），剪贴板目标的动作由剪贴板插件以
-**窄接口**供给（`menu.ts::ClipMenuActions`：`copyOnly / pasteClip /
-toggleClipPin / copyPlain / openClipLink / revealClipFile / requestDelete`）。
-组合根取 `clipboardPlugin.clipMenuActions()` 传入——菜单不依赖插件的完整
-类型，只依赖这份结构；插件端直接返回自己的 store（结构天然满足）。
+右键菜单由根渲染（`buildMenuItems`），目标条目的动作由所属页面以**窄
+接口**供给（`menu.ts::NavMenuActions` / `ClipMenuActions`）。组合根取各页
+`mode.menuActions()` 传入——菜单不依赖插件的完整类型，只依赖这份结构；
+插件端直接返回自己的 store（结构天然满足）。
 
 ### 6B.5 完整内置示例：剪贴板插件
 
@@ -1398,8 +1407,8 @@ pluginBuiltin`。
 
 - v1 没有 manifest 版本字段与协商机制——契约变更以「字段只增不改义」的
   方式演进；`kind` 是分发键，新增贡献类型会引入新的 kind 值。
-- `ModeInstance.rows` 目前与剪贴板行形状（`ClipboardItem`）耦合，泛化为
-  任意模式自定义行模型留待后续。
+- `ModeInstance.rows` 已泛化为 `PageRow`（`AppEntry | ClipboardItem`，#30
+  主窗口部件化改造）；任意模式自定义行模型仍留待后续。
 - 磁盘插件的 JS 在 blob URL 中执行：可用标准 Web API 与标准 ESM 语法
   （`export`），但**不能 `import` 项目内部模块或第三方包**（无解析根）。
 - **插件数据的落点变了（P3.1）**：`storage.json` 已迁到 `<base>/data/plugin_store.db`

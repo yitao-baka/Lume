@@ -826,7 +826,8 @@ body,
 }
 
 /* 鼠标悬停在空白处（无条目）时隐藏导航高亮：选择索引保留，回到条目或按方向
-   键即从隐藏时的相对位置恢复（`.nav-hidden` 由 App.tsx 的 mousemove 切换）。 */
+   键即从隐藏时的相对位置恢复（`.nav-hidden` 由 navigate 页 store 的 mousemove
+   切换；当前行为是高亮常驻，该类已不再被置位）。 */
 .launcher.nav-hidden .result-selected {
   background: transparent;
   box-shadow: none;

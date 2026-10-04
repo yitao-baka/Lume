@@ -55,8 +55,8 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 - **All UI strings go through `t()` in `src/i18n.ts`** (en / zh-CN / zh-TW).
   Never hardcode user-facing text.
 - WebView2 built-in shortcuts (Find, Print, Reload, DevTools, history nav) are
-  blocked in `src/App.tsx`; only Lume's own keys and text editing in the
-  search box pass through.
+  blocked in `src/launcher/keyboard.ts`; only Lume's own keys and text editing
+  in the search box pass through.
 - Windows is the target platform. Use Windows-native APIs where appropriate
   (e.g. `ShellExecuteW` for launching `.lnk`, `RegisterHotKey` for globals).
 - Network is unreliable here — **always use mirror sources** when downloading
@@ -184,7 +184,38 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
-**插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
+**主窗口部件化：搜索框部件 + 页面部件插件化（ROADMAP #30, complete) — as of
+2026-09-27**: 主窗口收敛为 uTools 式拼接壳 —— `src/shell/SearchBox.tsx` 部件
+（放大镜 + 输入框 + 页面 pills + 齿轮；受控纯展示）在顶，页面插槽
+`<Dynamic component={activeMode().View}>` 在下；导航页照剪贴板形态改造为内置
+插件 `src/plugins/navigate/`（id `"apps"`、`home: true`、`heightPolicy:
+"fit"`；store = 栏目条 / search = 合并搜索管线 + feature 行 + 下钻 /
+NavigateView / index 工厂），**所有页面（导航首页、剪贴板、磁盘 mode）统一
+实现 `ModeInstance` 契约**，`APPS_MODE` 特判清零。契约只增不改义：`rows`
+泛化为 `PageRow`（`AppEntry | ClipboardItem`）、`activate(opts?: {elevated})`、
+`handleQuery?`（输入拦截——下钻过滤）、`onShow?`/`onFilesDropped?`（呼出刷新 /
+文件拖入转发）、`heightPolicy?`/`anyExpanded?`（拼接尺寸）、`home?`（主页切
+模式不复位）、`placeholder?`/`menuActions?`；`ModeKeyContext` 增
+`gridCols`/`markKeyboard`；`PluginServices` 增 `nextSearchToken()`。键盘分层：
+壳只留 Esc 链（菜单 → 页面 `onEscape`（下钻/多选）→ 卫星预览 → 隐藏）+ 切换键
++ ↑↓/Enter 通用兜底，方向键整体委托页面 `onKey`（`keyboard.ts` 不再依赖
+`NavigateStore`，`menu.ts` 改结构性 `NavMenuActions`/`ClipMenuActions`，动作经
+`ModeInstance.menuActions()` 供给）。搜索合并管线（原生索引 → 关键字行 →
+feature 行 → 文件命中 → provider）与拖入/剪贴板图片/前台窗口 feature 行状态、
+下钻、`lume-mode://`/`featureEnter`/`providerDrill` 激活分支全部归导航页；
+搜索召回 / 记住上次页面（`last_page = "apps"` 值不变）/ subInput / 防抖持久化
+留壳。导航首页**不进 设置→插件 启停列表**（默认页不可关）。**坑**：① 页面
+`activate` 与壳的 Enter 路径都要 `markEntryOpened`（点击路径不经壳）；②
+`onShow` 在召唤搜索**之后**调用——空菜单自动选中依赖 `search` 先把 zone 归
+grid 的顺序；③ `.result-selected` 是跨页共用类名，页面内的滚动跟随 effect 必须
+按 `services.mode()` 门控。验证：cargo test 185 无回归、`cdp_p2b_verify` 22 项
+/ `cdp_clipboard_smoke` / `test/_shell_nav_check` 10 项全过、`cdp_p2_verify`
+17/21（余 4 项为 P5 前的 `iframe.contentDocument` 陈旧探针，enter 载荷经插件
+日志证实已投递）；行为逐项对照旧实现（合并顺序、forceGrid、Esc 分层、
+Shift+Enter、搜索召回 TTL、记住页面、placeholder 三级解析、切模式 reset
+语义）。改前端后须 `cargo build` 再实机冒烟（前端编译期嵌入 exe）。
+
+**Prior: 插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
 工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，`set_plugin_dev_mode`
 轻量写即时生效）。关闭时**插件页隐藏全部开发者选项**（重载按钮 / 「开发」徽章），
 且 **trusted 门控在 `get_plugins`**——所有插件上报 `trusted=false`，权限层
@@ -236,8 +267,8 @@ ROADMAP #27、API 文档 `docs/PLUGIN_API.md` §6E.1.1 / §6E.5，示例
    `listTemplate.tsx`）：`entry` 逻辑跑在启动器窗口（provider 信任模型），
    内置列表渲染 `search(q)` 行；**声明式 feature 投递后宿主重跑一次该模式的
    搜索**（`enterPlugin` mode 分支）—— 改行源的钩子（quick-add）必须靠它
-   反映到列表。`ModeInstance.rows()` 与 `ClipboardItem` 的类型耦合依旧
-   （cast + 注释），泛化仍留待后续。
+   反映到列表。`ModeInstance.rows()` 的行形状已泛化为 `PageRow`
+   （`AppEntry | ClipboardItem`，#30）。
 
 **验证**：cargo test **169**、tsc/vite build/cargo build 干净、
 `scripts/cdp_p2b_verify.mjs` **17 项全过**（img 行出现/消失/readImage 真读、

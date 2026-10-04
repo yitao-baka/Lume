@@ -22,6 +22,12 @@ import type { PluginServices } from "../../plugins/types";
 export function createClipboardStore(services: PluginServices) {
   // ── Initial config (synchronous, injected by Rust before page load) ──
   const clipCfg = (window as any).__LUME_CONFIG__?.clipboard;
+  const appearanceCfg = (window as any).__LUME_CONFIG__?.appearance;
+
+  /** Settings-driven: custom search placeholder ("" = default text). */
+  const [placeholderClipboard, setPlaceholderClipboard] = createSignal(
+    appearanceCfg?.search_placeholder_clipboard || ""
+  );
 
   // ── This mode's own query (independent, like the apps query) ──
   const [clipQuery, setClipQuery] = createSignal("");
@@ -339,12 +345,15 @@ export function createClipboardStore(services: PluginServices) {
     setHoverSelect(s.clipboard?.hover_select ?? false);
     setPreviewEnabled(s.clipboard?.preview ?? true);
     setRememberChecks(s.clipboard?.remember_checks ?? true);
+    setPlaceholderClipboard(s.appearance?.search_placeholder_clipboard || "");
   }
 
   return {
     // query
     clipQuery,
     setClipQuery,
+    /** Search-box placeholder while this page is active. */
+    placeholder: () => placeholderClipboard() || t("searchClipboard"),
     // rows + selection
     clips,
     setClips,

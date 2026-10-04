@@ -6,8 +6,26 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+
+- **页面加载门控 + 加载反馈** — 切到剪贴板/插件页时「未加载完不显示」：窗口
+  收拢成搜索行、`.results` 隐藏，该页 pill 变强调色（`#5ac8fa`）且图标上转圈
+  （`ModeInstance.ready` 新契约成员：磁盘 view 页以页面桥接 `__lumeReady` 为准
+  ——挂载/换文档即复位，另有 3s 宽限兜底；模板页与剪贴板页以首次取数落定为准；
+  导航首页永远就绪）。同一信号也驱动高度模型：就绪后窗口才展开到页面高度。
+
 ### Fixed
 
+- **导航页空态 = 搜索行** — 无栏目时不再预留 56px 的「空态提示位」，
+  `MIN_WINDOW_H` 90 → 60（搜索行高度）；「无结果」提示改为自带内衬的
+  `.page-hint` 行，fit 窗口收缩到 搜索行 + 该行（实测 107px），不再在大片
+  空页面里居中显示。
+- **剪贴板首载期间整个启动器 IPC 卡死** — Tauri 的**同步命令跑在主线程**：
+  debug 下 172 行首载（~4s）期间所有其它 IPC（窗口 resize、按键取数……）都在
+  排队——探针实测一个琐碎 IPC 耗时 **3895ms**，加载门控的窗口收拢因此从不
+  落地。`search_clipboard` 改 `async`，`get_file_thumb` / `get_file_bytes`
+  改 async + `spawn_blocking`（与既有 `get_video_thumb`/`get_app_icons` 同法）；
+  同一测量降到 **3ms**。
 - **主窗口「四角亮弧 + 1px hairline」—— 面板改不透明 `--surface`** — 用户观感
   反馈，对实机截图做 RLE 像素制图定位出三层：① `.launcher` 的 1px `--border`
   hairline 沿 12px CSS 圆角描出一圈亮弧（四角实测 61,61,61），直边的 1px 亮线

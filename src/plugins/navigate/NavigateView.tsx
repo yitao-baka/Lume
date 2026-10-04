@@ -155,7 +155,16 @@ export function NavigateView(props: NavigateViewProps) {
     <Show
       when={props.appsQuery() === "" && !props.forceGrid?.()}
       fallback={
-        <Show when={props.apps().length > 0} fallback={<span class="hint">{t("noResults")}</span>}>
+        <Show
+          when={props.apps().length > 0}
+          fallback={
+            // `.page-hint` is the sizer's measurable row for this state: the
+            // fit window shrinks to the search row + this hint.
+            <div class="page-hint">
+              <span class="hint">{t("noResults")}</span>
+            </div>
+          }
+        >
           <div class="result-grid" role="grid">
             {props.apps().map((app, i) =>
               itemBox(props, app, {}, () => i === props.selected(), {

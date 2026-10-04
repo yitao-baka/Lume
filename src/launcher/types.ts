@@ -151,11 +151,15 @@ export const APP_KEYS = new Set([
 /** Text-editing accelerators allowed inside the search input. */
 export const EDIT_KEYS = new Set(["c", "v", "x", "a", "z", "y"]);
 
-/** Auto-sizing the launcher window to its content (height only). */
-export const MIN_WINDOW_H = 90; // empty-state minimum
-// launcher border (2) + rounding buffer. The page area is full-bleed
-// (`.results` has no inset) and `#root` has no gutter (see App.css), so this is
-// only the panel's own 1px border plus slack for DPI rounding.
+/** Auto-sizing the launcher window to its content (height only). The smallest
+ * launcher state is the search row alone: the empty home page (no bars) and a
+ * page that is still loading both collapse to it — see the sizer's loading
+ * gate. The floor is the search row's own height, not the old 90px
+ * "empty-state minimum" that left a strip of dead panel below the row. */
+export const MIN_WINDOW_H = 60;
+// Bottom-inset slop added only when the fit page HAS content (the page owns
+// its bottom padding; `.results` is full-bleed and `#root` has no gutter, so
+// this is slack for DPI rounding).
 export const WINDOW_PAD = 6;
 /** Breathing room kept around the window when an expanded bar fills the screen. */
 export const SCREEN_MARGIN = 32;

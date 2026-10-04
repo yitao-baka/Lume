@@ -59,6 +59,7 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
     previewTarget: () => previewTarget(clip.clips()[clip.selected()], clip.rememberChecks()),
     previewEnabled: clip.previewEnabled,
     measureViewport: clip.measureViewport,
+    ready: clip.loaded,
     placeholder: clip.placeholder,
     pageKind: clip.pageKind,
     restorePage: clip.restorePage,

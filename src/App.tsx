@@ -129,6 +129,13 @@ function App() {
   /** Results for the active page (reactive). */
   const currentResults = (): PageRow[] => activeMode()?.rows() ?? [];
 
+  /** Loading gate: the active page hasn't finished loading yet (its `ready()`
+   * reports false). While true, `.results` is hidden, the sizer collapses the
+   * window to the search row and the mode's pill shows the loading state —
+   * a half-loaded page is never shown. Pages without a `ready` accessor (the
+   * home page) are always ready. */
+  const pageLoading = (): boolean => !(activeMode()?.ready?.() ?? true);
+
   // 搜索状态记忆: 一次「未打开条目」的搜索会保留到下次呼出 (热键重呼出恢复);
   // 但 5 分钟未再次呼出, 或打开过条目, 则清空查询。记住上次所在页面 (page/kind)
   // 不受 TTL 限制, 只在「打开条目」时被强制覆盖为导航页。查询仅内存, 重启即空。
@@ -208,6 +215,9 @@ function App() {
     // Fit pages (the navigate home) auto-size to content; every other page
     // splices in under the search box at a fixed height.
     fixedHeight: () => (activeMode()?.heightPolicy?.() ?? "fixed") !== "fit",
+    // Loading gate: a page that isn't ready collapses the window to the
+    // search row (see pageLoading) — checked before the height models below.
+    loading: pageLoading,
     windowHeight,
     windowWidth,
     // A page's manifest `height` (desiredHeight) overrides the global setting.
@@ -403,13 +413,16 @@ function App() {
     return activeMode()?.placeholder?.() ?? (modePlaceholders()[mode()] || t("searchGeneric"));
   };
 
-  /** Page pills, in registry order (the home page registers first). */
+  /** Page pills, in registry order (the home page registers first). Only the
+   * active pill can be loading — the spinner belongs to the page being
+   * switched to, not to a page that merely hasn't been opened yet. */
   const pages = (): SearchBoxPage[] =>
     modePlugins().map((m) => ({
       id: m.id,
       label: m.modeMeta?.label ?? t((m.modeMeta?.labelKey ?? m.id) as keyof Messages),
       icon: m.modeMeta?.icon,
       active: mode() === m.id,
+      loading: mode() === m.id && pageLoading(),
     }));
 
   async function handleInput(text: string) {
@@ -541,6 +554,16 @@ function App() {
     selectionSource = "keyboard";
     inst.setSelected(Math.min(Math.max(inst.selected() + delta, 0), len - 1));
   }
+
+  // The loading gate changes the height model (search row alone vs the page's
+  // own height): re-measure whenever it flips — into the loading state AND
+  // back out of it, so the page appears at its proper size (disk pages push
+  // their manifest height, the clipboard the settings height).
+  createEffect(() => {
+    void pageLoading();
+    sizer.scheduleResize();
+  });
+
 
   // Re-measure the active page's internal viewport whenever the page or
   // window height changes (the launcher isn't user-resizable, so the only
@@ -694,7 +717,7 @@ function App() {
         onSwitchPage={(id) => void switchMode(id)}
         onOpenSettings={() => void openSettings()}
       />
-      <div class="results">
+      <div class="results" classList={{ "results-loading": pageLoading() }}>
         <Dynamic component={activeMode()?.View} />
         {/* 分离为独立窗口（P6）— detachable 磁盘 mode 的悬停显现按钮。 */}
         <Show when={isPluginDetachable(mode())}>

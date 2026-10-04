@@ -101,6 +101,13 @@ body,
   position: relative;
 }
 
+/* Loading gate: the active page isn't ready yet — keep everything below the
+   search row invisible (the sizer collapses the window to the search row on
+   the same signal; this covers the frames before that resize lands). */
+.results-loading {
+  visibility: hidden;
+}
+
 /* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。
    面板自身是 `--surface`（不透明）后，按钮填充必须用抬升面 `--surface-raised`
    才读得出来（原先靠半透明面板与 --surface 的色差）。 */
@@ -136,6 +143,14 @@ body,
   margin: auto;
   color: var(--text-faint);
   font-size: 14px;
+}
+
+/* Fit-page "no results" row: a measurable, self-padded container so the sizer
+   can hug it (the window shrinks to the search row + this row — the hint is no
+   longer centered inside a tall empty page area). */
+.page-hint {
+  flex: none;
+  padding: 10px 12px;
 }
 
 .result-list {
@@ -1054,6 +1069,37 @@ body.reorder-dragging {
 
 .mode-switch-item:hover:not(.active) {
   color: var(--text);
+}
+
+/* Loading gate feedback (the page below is hidden until `ModeInstance.ready`):
+   the mode being loaded tints to the accent and its icon carries a spinner. */
+.mode-switch-item.loading {
+  color: #5ac8fa;
+}
+
+.mode-switch-item.loading .mode-switch-icon {
+  opacity: 0.3;
+}
+
+.mode-switch-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.mode-switch-spinner {
+  position: absolute;
+  inset: -3px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: mode-switch-spin 0.7s linear infinite;
+}
+
+@keyframes mode-switch-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ---------------------------------------------------------------------------

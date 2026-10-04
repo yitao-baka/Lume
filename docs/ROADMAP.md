@@ -2168,10 +2168,44 @@ Tab 循环）。**环境注意**：`cdp_p2*_verify` 依赖 `hello-mode`/`list-de
 - 回归：cargo test 185 无回归、`_seam_probe` 10/10、`_shell_nav_check`
   10/10、`scripts/cdp_p2b_verify` 22/22。
 
+### 30.7 加载门控 + 空导航页收缩（同日四次补做）
+
+用户三点：① 导航页没有内容时只显示搜索框；② 切到剪贴板/插件页时，未加载完
+不显示、加载完再显示；③ 加载反馈：对应 pill 变色 + 图标转圈。
+
+- **空导航页 = 搜索行**：fit 分支不再给「空容器」预留 56px 的 empty-state
+  提示位（改 contentH=0，且无内容时不加 `WINDOW_PAD`），`MIN_WINDOW_H`
+  90 → 60（= 搜索行高度；旧值正是用户截图里那条死区）。「无结果」提示改渲染
+  在自带内衬的 `.page-hint` 行内（sizer 新增该测量容器），fit 窗口收缩到
+  搜索行 + 提示行（实测 107px）。
+- **加载门控（`ModeInstance.ready` 新契约成员，反应式，可省 = 永远就绪）**：
+  返回 false 时壳给 `.results` 加 `.results-loading`（visibility: hidden）、
+  sizer 走 loading 分支把窗口收拢成搜索行、该页 pill 进加载态；就绪后按页面
+  高度展开。实现：磁盘 view 页 = 页面桥接 `__lumeReady`（`createIframeView`
+  新增 `live` 信号：挂载/换文档/卸载即复位 + **3s 宽限兜底**，坏页面或远端
+  子资源卡住时不会永远转圈）；模板页与剪贴板页 = 首次取数落定（错误也放行）。
+- **pill 反馈**：活动页加载中时 pill 加 `.loading`（强调色 `#5ac8fa` 着色 +
+  图标 30% 透明度 + 图标上转圈环 `mode-switch-spin`），`aria-busy`。
+
+**关键坑（性能）**：收拢一开始完全不生效。实测定位到 Tauri 的**同步命令跑在
+主线程**上——剪贴板首载（debug 下 172 行 ~4s）期间所有其它 IPC（含
+`set_size`）都在排队：探针测到琐碎 IPC 耗时 **3895ms**。修复：
+`search_clipboard` 改 `async`（跑 runtime 上），`get_file_thumb` /
+`get_file_bytes` 改 async + `spawn_blocking`（与既有
+`get_video_thumb`/`get_app_icons` 同法）。修复后同一测量 **3ms**，收拢即时落地。
+
+验证（`test/_loading_gate_check.mjs` **18 项全过**）：空菜单 → innerH=60 且
+`.results` 高度 0；无结果 → 107px；剪贴板/文件秒搜切换瞬间 loading=true、
+`.results` hidden、窗口 60（前值 520/610）、pill 着色 `rgb(90,200,250)`、转圈
+环处于动画；就绪后页面可见并到页面高度（520 / 610）。回归：cargo test 185、
+`_seam_probe` 10、`_shell_nav_check` 10、`_clip_seam_check` OK、
+`cdp_p2b_verify` 22。
+
 ### 后续（不在本轮）
 
 搜索源 provider 化（原生索引 / 文件搜索抽成 first-party `SearchSource`）、
 pill 排序/隐藏设置、§10.4 剪贴板页重设计（本重构为其结构前置——只动
 `src/plugins/clipboard/` 即可）。（原「面板 Acrylic 半透明 vs 页面实体色的
 已知残余」已由 #30.6 归零：面板 / 边框条 / 页面画布为同一个不透明值，不再
-随壁纸漂移。）
+随壁纸漂移。）另：#30.7 只把「页面首载」路径上的重命令 async 化了，
+`search_apps`（每次击键）等仍在主线程——若后续感到输入卡顿，同一手法处理。

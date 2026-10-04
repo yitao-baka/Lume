@@ -253,6 +253,22 @@ hairline；搜索行与页面的 8 级阶差 = 半透明面板合成（该用户
 detach 按钮实测 38,38,40 + 描边 55,55,57 可读；cargo test 185 / `_seam_probe`
 10 / `_shell_nav_check` 10 / `cdp_p2b_verify` 22 全过。
 
+⑧ **加载门控 + 空导航页收缩**（同日四次补做；用户三点：空导航页只留搜索框 /
+未加载完不显示 / pill 变色转圈）：空 fit 容器不再预留 56px 空态位（无内容不加
+`WINDOW_PAD`），`MIN_WINDOW_H` 90 → 60；「无结果」提示移入自带内衬的
+`.page-hint` 行（sizer 新增该测量容器）。新契约 `ModeInstance.ready()`：false
+时 `.results` 加 `.results-loading`（visibility: hidden）、窗口收拢到搜索行、
+活动 pill 加 `.loading`（`#5ac8fa` 着色 + 图标转圈环）；磁盘 view 页用
+`createIframeView` 的 `live` 信号（挂载/换文档/卸载复位 + 3s 宽限兜底），
+模板/剪贴板页用「首次取数落定（错误也放行）」的信号。**坑**：收拢一开始不生效
+的根因是 **Tauri 同步命令跑在主线程**——剪贴板首载（debug ~4s）把 `set_size`
+等所有 IPC 卡在队列里（实测琐碎 IPC 3895ms）；页面路径上的重活必须
+async/spawn_blocking（`search_clipboard` 已 async 化；`search_apps` 仍同步，
+见 ROADMAP #30.7 后续）。验证：`test/_loading_gate_check.mjs` 18 项全过（空菜单
+60px / 无结果 107px / 加载期收拢 60 且 hidden / pill rgb(90,200,250) + 转圈环
+动画中 / 就绪 520 与 610）+ cargo test 185 / `_seam_probe` 10 /
+`_shell_nav_check` 10 / `_clip_seam_check` OK / `cdp_p2b_verify` 22。
+
 **Prior: 插件全局开发者模式 + 全部授权并入全局（complete) — as of 2026-09-22**: 设置 → 插件
 工具栏新增「开发者模式」总开关（`plugins.dev_mode`，默认关，`set_plugin_dev_mode`
 轻量写即时生效）。关闭时**插件页隐藏全部开发者选项**（重载按钮 / 「开发」徽章），

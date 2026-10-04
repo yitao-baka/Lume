@@ -597,6 +597,14 @@ export interface ModeInstance {
   previewEnabled(): boolean;
   /** Re-measure this mode's internal viewport (window sizer hook). */
   measureViewport(): void;
+  /** Loading gate (reactive): whether this page has content to show *now*.
+   * While it reports false the shell hides `.results` and the sizer collapses
+   * the window to the search row (the page area must not be seen half-loaded),
+   * and the mode's pill shows the loading state (accent + spinner on the
+   * icon). Disk pages report false until their page bridge is live; the
+   * clipboard until its first load lands. Omitted = always ready (the home
+   * page) — such pages own their empty states. */
+  ready?: () => boolean;
   /** Height model for the "拼接" sizer: `"fit"` = the window auto-sizes to the
    * page content (the navigate home page); `"fixed"` (default) = the
    * fixed-height model below the search box. */

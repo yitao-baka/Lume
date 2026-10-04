@@ -1542,12 +1542,18 @@ pub fn plugin_clipboard_paste(
     })
 }
 
+/// Async on purpose: **sync commands run on the main (UI) thread**, and a full
+/// history is not a quick query (a debug build measured ~4s for the first
+/// 172-row load). While it ran there, every other IPC — including the
+/// frontend's loading-gate `set_size` — queued behind it, so a page that was
+/// still loading could not collapse the window behind its spinner. Async runs
+/// the query on the runtime; the DB mutex is only held here, off-thread.
 #[tauri::command]
-pub fn search_clipboard(
+pub async fn search_clipboard(
     query: String,
     kind: Option<String>,
-    state: State<ClipboardState>,
-    settings: State<crate::settings::SettingsState>,
+    state: State<'_, ClipboardState>,
+    settings: State<'_, crate::settings::SettingsState>,
 ) -> Result<Vec<ClipboardItem>, String> {
     let kind = kind.unwrap_or_else(|| "all".into());
     let clip = settings.current().clipboard;
@@ -1611,12 +1617,18 @@ pub fn get_file_text(path: String) -> Result<String, String> {
 /// call restores the byte channel the asset protocol used to provide
 /// (fs.read permission, frontend ledger). Cap mirrors the thumbnail path.
 #[tauri::command]
-pub fn get_file_bytes(path: String) -> Result<String, String> {
-    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-    if bytes.len() > 32 * 1024 * 1024 {
-        return Err("file too large to preview (cap 32 MB)".into());
-    }
-    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+pub async fn get_file_bytes(path: String) -> Result<String, String> {
+    // Off the main thread: a 32 MB read + ~43 MB base64 string is hundreds of
+    // milliseconds of blocking work that would otherwise freeze every IPC.
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+        if bytes.len() > 32 * 1024 * 1024 {
+            return Err("file too large to preview (cap 32 MB)".into());
+        }
+        Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Downscale an image file to a small base64 thumbnail for the preview pane.
@@ -1625,12 +1637,19 @@ pub fn get_file_bytes(path: String) -> Result<String, String> {
 /// in the renderer's image cache after the preview closes (same pipeline the
 /// clipboard image rows use for their `thumb`).
 #[tauri::command]
-pub fn get_file_thumb(path: String) -> Result<String, String> {
-    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-    if bytes.len() > 50 * 1024 * 1024 {
-        return Err("file too large to thumbnail".into());
-    }
-    make_thumb(&bytes).ok_or_else(|| "not a readable image".into())
+pub async fn get_file_thumb(path: String) -> Result<String, String> {
+    // Off the main thread (`get_video_thumb` has the same rationale): sync
+    // commands run on the main (UI) thread, and decoding a multi-megabyte image
+    // there would stall every other IPC for the duration.
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+        if bytes.len() > 50 * 1024 * 1024 {
+            return Err("file too large to thumbnail".into());
+        }
+        make_thumb(&bytes).ok_or_else(|| "not a readable image".into())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Extract a video thumbnail (a frame) via the Windows shell, for the preview

@@ -384,7 +384,7 @@ function createDiskModeInstance(
   themePosters.set(m.id, (t) => {
     if (viewReady) postEv("theme", t);
   });
-  const { View, post } = createIframeView(
+  const { View, post, live: viewLive } = createIframeView(
     (method, args) => execHostRpc(m.id, method, args),
     () => {
       // The page's bridge is live and its handlers are assigned: push the
@@ -472,6 +472,10 @@ function createDiskModeInstance(
     previewTarget: () => null,
     previewEnabled: () => false,
     measureViewport: () => {},
+    // Loading gate: the page area stays hidden (window collapsed to the search
+    // row, pill spinner) until THIS document's bridge is live — a remount
+    // reloads the srcdoc and flips it back to false.
+    ready: viewLive,
     // Manifest `height` — the mode's preferred fixed window height.
     desiredHeight: () => (m.height != null && m.height > 0 ? m.height : null),
     pageKind: () => "main",

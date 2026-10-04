@@ -29,6 +29,15 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   and runs to the panel border on the left/right/bottom; inner padding belongs
   to the page (see ARCHITECTURE 拼接几何). A frame or tint step at that seam
   is a bug, not a style.
+- **Nothing to show = the search row alone**: an empty home menu (no bar
+  sections) collapses the window to the search row — no reserved empty strip.
+  A "no results" hint renders in its own `.page-hint` row (the fit window
+  shrinks to search row + hint), never centered inside a tall empty page area.
+- **Loading gate**: a page that is not loaded yet is *not shown* — the window
+  collapses to the search row, `.results` is hidden, and the mode's pill
+  carries the feedback (label tinted to the accent `#5ac8fa`, a spinner ring
+  over the icon). `ModeInstance.ready` decides; the home page is always ready.
+  See ROADMAP #30.7.
 - Font: `"Segoe UI Variable Text", "Segoe UI", system-ui`; base 16px;
   antialiased; `user-select: none`.
 

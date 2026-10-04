@@ -77,6 +77,10 @@ export function createListTemplateMode(
   const [query, setQuerySig] = createSignal("");
   const [rows, setRows] = createSignal<ProviderResult[]>([]);
   const [selected, setSelected] = createSignal(0);
+  // Loading gate (`ModeInstance.ready`): the page stays hidden until the first
+  // search settles — later switches reuse the rows already in memory (no
+  // spinner flash on an already-warm page).
+  const [loaded, setLoaded] = createSignal(false);
   const hook = (name: string, ...args: unknown[]) => callHook(m.id, logic, name, ...args);
 
   const activateRow = (i: number) => {
@@ -113,6 +117,7 @@ export function createListTemplateMode(
         plog.error(m.id, "list search failed:", err);
         setRows([]);
       }
+      setLoaded(true); // the loading gate opens even on an error — never stuck
       // ModeInstance contract: every search ends with a resize request.
       services.scheduleResize();
     },
@@ -133,6 +138,7 @@ export function createListTemplateMode(
     previewTarget: () => null,
     previewEnabled: () => false,
     measureViewport: () => {},
+    ready: loaded,
     desiredHeight: () => (m.height != null && m.height > 0 ? m.height : null),
     pageKind: () => "main",
     restorePage: () => {},

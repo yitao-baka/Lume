@@ -227,6 +227,12 @@ already-running ones keep their original environment.
 - **Search**: `search_clipboard(query)` runs a case-insensitive substring
   `LIKE` match, pinned-first then most recent, top 20; an empty query browses
   recent history. Image rows carry a downscaled base64 thumbnail.
+  **Async on purpose**: Tauri runs *sync* commands on the main (UI) thread —
+  a full-history load blocked every other IPC for seconds in a debug build,
+  stalling the frontend's window resizes (the loading gate's collapse among
+  them). Same rationale as `get_file_thumb` / `get_file_bytes` /
+  `get_video_thumb`; anything that reads files, decodes images or queries a
+  big table belongs off the main thread (see ROADMAP #30.7).
 - **Copy back**: `copy_clipboard(id)` looks up the row — text via
   `arboard::set_text`, images via PNG-decode → `set_image`.
 - DB helpers take `&Connection`, which lets tests run against an in-memory DB.
@@ -351,7 +357,9 @@ before adding a field:
   `0 6px 4px`) — a page that wants an inset owns it. `WINDOW_PAD`
   (`src/launcher/types.ts`) is the fit-height slop for this geometry: changing
   one without the other leaves an empty strip under the content or clips the
-  page.
+  page. Two states have **no page area at all** — the window is the search row
+  alone: an empty home menu (no bar sections) and a page that is still
+  loading (`ModeInstance.ready`; the pill carries the spinner meanwhile).
 - **Page canvas (disk plugin pages)**: a mode page is an opaque-origin iframe.
   With a dark `color-scheme` — every mirrored-palette plugin sets one —
   Chromium paints an **opaque #121212 canvas** for a transparent root
@@ -396,7 +404,11 @@ before adding a field:
   - `sizing.ts` — `createWindowSizer()`: the "拼接" height model (fit pages
     auto-size to content; fixed pages splice in under the search box at the
     manifest/`window_height` height), bar column measurement, work-area cap,
-    virtual-list viewport measurement.
+    virtual-list viewport measurement. Two special cases: a **loading** page
+    (`ModeInstance.ready` false) collapses the window to the search row alone,
+    and an **empty fit page** (no bar sections at all) is that same search-row
+    state — no reserved "empty-state" strip and no `WINDOW_PAD` below a page
+    that has no content.
   - `menu.ts` — `buildMenuItems()`: right-click menu construction for
     app / folder / clipboard targets, over the narrow structural
     `NavMenuActions` / `ClipMenuActions` interfaces each page supplies via

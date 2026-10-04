@@ -4,7 +4,7 @@
 //! routing, page switching and placeholder resolution; this component only
 //! renders them and reports input/clicks back.
 
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import { t } from "../i18n";
 import settingsIcon from "../../res/icons/settings.svg";
 
@@ -14,6 +14,9 @@ export interface SearchBoxPage {
   label: string;
   icon?: string;
   active: boolean;
+  /** The page is still loading: the pill carries the feedback (accent label +
+   * a spinner on the icon) while the window is collapsed to the search row. */
+  loading?: boolean;
 }
 
 export interface SearchBoxProps {
@@ -59,12 +62,18 @@ export function SearchBox(props: SearchBoxProps) {
           {(p) => (
             <button
               class="mode-switch-item"
-              classList={{ active: p.active }}
+              classList={{ active: p.active, loading: p.loading }}
               role="tab"
               aria-selected={p.active}
+              aria-busy={p.loading}
               onClick={() => props.onSwitchPage(p.id)}
             >
-              <img class="mode-switch-icon" src={p.icon} alt="" draggable={false} />
+              <span class="mode-switch-icon-wrap">
+                <img class="mode-switch-icon" src={p.icon} alt="" draggable={false} />
+                <Show when={p.loading}>
+                  <span class="mode-switch-spinner" aria-hidden="true" />
+                </Show>
+              </span>
               {p.label}
             </button>
           )}

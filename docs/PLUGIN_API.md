@@ -554,6 +554,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 | `previewTarget()` | 卫星预览插件每次选中变化时轮询：当前选中行的预览请求（`PreviewReq`）或 `null`（隐藏）。行失效 → `null`。 |
 | `previewEnabled()` | 该页面当前是否想要卫星预览（对应 设置 → 开启预览）。 |
 | `measureViewport()` | 窗口尺寸变化（sizer 定高分支 + 根视口 effect）时触发；重测页面内部虚拟列表视口。 |
+| `ready?()` | 可选 — **加载门控**（反应式）：本页当前是否有内容可显示。返回 false 时壳隐藏 `.results`、sizer 把窗口收拢到搜索行、该页 pill 显示加载态（强调色 + 图标转圈）——**页面不完整就不显示**。磁盘页在页面桥接 `__lumeReady` 前为 false（每次重挂载都重新加载；3s 宽限兜底，异常页不会永远转圈），模板/剪贴板页在首次取数落定前为 false（之后不再回退）。省略 = 永远就绪（导航首页——空态由它自己负责）。 |
 | `heightPolicy?()` | 可选 — `"fit"` = 窗口随内容自适应（导航首页）；`"fixed"`（默认）= 搜索框下方定高拼接。sizer 的分支选择依据。 |
 | `anyExpanded?()` | 可选 — 是否有展开态栏目（fit 页专用，sizer 工作区封顶）。 |
 | `desiredHeight?()` | 可选 — sizer 定高分支读取：本页面的固定窗口高度（清单 `height`），`null` = 用全局设置高度（§5B）。 |
@@ -570,7 +571,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 关闭插件的 pill 自动消失，Tab 循环也随之跳过。导航首页是注册表中的第一个
 mode（id `"apps"`，`home: true`），它的 pill 即最左侧「导航」。
 
-**拼接面（页面画布）**——宿主对页面的两条保证：
+**拼接面（页面画布）**——宿主对页面的三条保证：
 
 1. **几何**：搜索行与页面共用一块连续面板。面板是不透明 `--surface`（同一
    值也刷在窗口外缘的 DWM 边框条上），搜索行 / 页面 / 四角像素级同色；搜索行
@@ -587,6 +588,12 @@ mode（id `"apps"`，`home: true`），它的 pill 即最左侧「导航」。
    自己写 `html`/`body` 背景即覆盖该默认**（文档更靠后，优先级更高）；自绘
    背景时请与 `lume.on.theme` 给出的明暗保持一致，否则拼接处会出现色阶
    （此时页面已不等于面板色）。
+3. **加载门控**：页面**未就绪就不显示**。`ModeInstance.ready()` 返回 false 期间，
+   壳隐藏 `.results`、sizer 把窗口收拢到搜索行、该页 pill 显示加载态（强调色 +
+   图标转圈）；就绪后才按页面高度展开。磁盘插件无需做任何事（宿主以页面的
+   `__lumeReady` 桥接握手为准，3s 宽限兜底），但**别在页面里做长时间同步 IPC**：
+   Tauri 的同步命令跑在主线程上，会把宿主的 resize（乃至加载门控的收拢）一起
+   卡住——重活放 `async`/`spawn_blocking`（见 ARCHITECTURE `clipboard.rs`）。
 
 ### 6B.2 `ModeKeyContext`
 

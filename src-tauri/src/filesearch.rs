@@ -107,6 +107,7 @@ pub async fn file_search(
     exts: Option<Vec<String>>,
     folder: Option<bool>,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
@@ -119,6 +120,7 @@ pub async fn file_search(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "search.files",
     ) {
         eprintln!("[filesearch] denied: {err}");

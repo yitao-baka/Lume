@@ -1323,6 +1323,7 @@ fn decode_image_payload(data: &str) -> Result<Vec<u8>, String> {
 pub fn plugin_clipboard_write_image(
     data: String,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
@@ -1332,6 +1333,7 @@ pub fn plugin_clipboard_write_image(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "clipboard",
     )?;
     let png = decode_image_payload(&data)?;
@@ -1356,6 +1358,7 @@ pub fn plugin_clipboard_write_image(
 pub fn plugin_clipboard_write_files(
     paths: Vec<String>,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
@@ -1365,6 +1368,7 @@ pub fn plugin_clipboard_write_files(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "clipboard",
     )?;
     if paths.is_empty() {
@@ -1379,6 +1383,7 @@ pub fn plugin_clipboard_write_files(
 #[tauri::command]
 pub fn plugin_clipboard_read_files(
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
@@ -1388,6 +1393,7 @@ pub fn plugin_clipboard_read_files(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "clipboard",
     )?;
     Ok(read_file_list().unwrap_or_default())
@@ -1449,6 +1455,7 @@ pub fn plugin_clipboard_has_image() -> Result<bool, String> {
 #[tauri::command]
 pub fn plugin_clipboard_read_image(
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
@@ -1458,6 +1465,7 @@ pub fn plugin_clipboard_read_image(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "clipboard",
     )?;
     let png = if let Ok(mut cb) = arboard::Clipboard::new() {
@@ -1483,6 +1491,7 @@ pub fn plugin_clipboard_paste(
     image: Option<String>,
     files: Option<Vec<String>>,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
@@ -1494,6 +1503,7 @@ pub fn plugin_clipboard_paste(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "clipboard",
     )?;
     let given = [text.is_some(), image.is_some(), files.is_some()]

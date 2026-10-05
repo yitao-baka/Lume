@@ -86,7 +86,7 @@ pub fn is_hide_suppressed(focus: &FocusState) -> bool {
 /// the callback on the main thread via the dispatcher — safe from any caller
 /// (background trim threads included). The callback is queued, not synchronous;
 /// fine for memory trimming, which is never latency-critical.
-fn set_memory_target(app: &AppHandle, label: &str, low: bool) {
+pub fn set_memory_target(app: &AppHandle, label: &str, low: bool) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
         COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL, ICoreWebView2_19,
@@ -117,6 +117,8 @@ fn set_memory_target(app: &AppHandle, label: &str, low: bool) {
 /// launcher is handled separately (`restore_main` / `trim_main_when_idle`) so
 /// the hotkey show path never pays a swap-back.
 pub fn sync_aux_memory_targets(app: &AppHandle) {
+    // plugin-logic-host（P6.5）永远隐藏 —— 恒定低水位。
+    set_memory_target(app, "plugin-logic-host", true);
     for label in [SETTINGS_WINDOW, PREVIEW_WINDOW] {
         let visible = app
             .get_webview_window(label)

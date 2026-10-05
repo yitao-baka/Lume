@@ -7,13 +7,22 @@
 //! the IPC — a page that escaped the sandboxed iframe into raw `invoke`
 //! still has to name a plugin id that declared the capability.
 //!
-//! Scope, stated honestly: code running inside the launcher window (a
-//! provider/service entry's logic) can invoke any command and name any id —
-//! that residual risk is the standing "explicit placement = trust" decision
-//! (docs/PLUGIN_API.md §9); closing it needs process isolation, not more
-//! checks. What this layer buys: plugin-private data is scoped by id, and a
+//! Caller attribution (P6.5 进程隔离): plugin logic no longer runs in the
+//! launcher window but in a shared hidden host window (`plugin-logic-host`),
+//! each plugin in its own opaque-origin sandboxed iframe. Attribution is
+//! **label + token based** (`resolve_plugin_caller`):
+//! - `plugin-logic-host` → the call must carry a `host_token` issued to that
+//!   iframe; the effective plugin id is the token's mapping (a claimed
+//!   `plugin_id` is ignored — one iframe can never act as another);
+//! - `plugin-<id>` (detached view window) → id forced from the label;
+//! - anything else (main/settings/preview) → first-party windows, the
+//!   claimed id passes through (`None` = native pipeline, main only).
+//! A raw `invoke` from inside a logic iframe without its token fails closed.
+//!
+//! What this layer buys: plugin-private data is scoped by id, and a
 //! sandboxed/compromised page cannot exercise a capability no plugin
-//! declared.
+//! declared. Residual (stated honestly): view pages inside the MAIN window
+//! still pass through under the `main` label — same as before P6.5.
 //!
 //! Manifests are cached per id and refreshed by `get_plugins` (startup +
 //! every settings-applied) and `reload_plugin`; a check for an unseen id
@@ -33,12 +42,13 @@ struct CapsEntry {
     permissions: HashSet<String>,
 }
 
-/// Managed permission cache: plugin id → declared capabilities. Populated
-/// lazily, invalidated by `refresh` (get_plugins) and `invalidate`
-/// (reload_plugin).
+/// Managed permission cache: plugin id → declared capabilities, plus the
+/// P6.5 logic-host token map (token → plugin id; issued per iframe load by
+/// the supervisor, registered via `plugin_logic_register_tokens`).
 #[derive(Default)]
 pub struct PluginPermState {
     caps: Mutex<HashMap<String, CapsEntry>>,
+    host_tokens: Mutex<HashMap<String, String>>,
 }
 
 /// Drop the whole cache (get_plugins re-scans disk anyway — piggyback on it).
@@ -49,6 +59,64 @@ pub fn refresh(state: &PluginPermState) {
 /// Drop one id (settings-pane reload: the manifest may have changed).
 pub fn invalidate(state: &PluginPermState, id: &str) {
     state.caps.lock().unwrap().remove(id);
+    state
+        .host_tokens
+        .lock()
+        .unwrap()
+        .retain(|_, owner| owner != id);
+}
+
+/// Register (or replace) the token → id entries for one plugin's logic
+/// iframe. Called by the shared host window's supervisor on every (re)load;
+/// a plugin's stale tokens from a previous iframe are dropped first.
+pub fn register_host_token(state: &PluginPermState, token: &str, id: &str) {
+    let mut map = state.host_tokens.lock().unwrap();
+    map.retain(|_, owner| owner != id);
+    map.insert(token.to_string(), id.to_string());
+}
+
+/// Drop every token of one plugin (iframe unload / plugin invalidate).
+pub fn drop_host_tokens(state: &PluginPermState, id: &str) {
+    state.host_tokens.lock().unwrap().retain(|_, owner| owner != id);
+}
+
+/// The shared logic host window's label.
+pub const LOGIC_HOST_LABEL: &str = "plugin-logic-host";
+
+/// Resolve the effective plugin id of one call (P6.5 attribution). See the
+/// module docs for the label rules. `Ok(None)` = first-party/native path.
+pub fn resolve_plugin_caller(
+    state: &PluginPermState,
+    window: &tauri::WebviewWindow,
+    plugin_id: Option<&str>,
+    host_token: Option<&str>,
+) -> Result<Option<String>, String> {
+    let label = window.label();
+    if label == LOGIC_HOST_LABEL {
+        let token = host_token.ok_or_else(|| {
+            "permission denied: plugin-logic-host calls require a host token".to_string()
+        })?;
+        let map = state.host_tokens.lock().unwrap();
+        let id = map.get(token).ok_or_else(|| {
+            "permission denied: unknown host token (stale logic iframe?)".to_string()
+        })?;
+        return Ok(Some(id.clone()));
+    }
+    if let Some(owner) = label.strip_prefix("plugin-") {
+        // Detached view window `plugin-<id>`: the label is the ground truth.
+        if valid_plugin_id(owner) {
+            return Ok(Some(owner.to_string()));
+        }
+        return Err(format!("permission denied: bad plugin window label \"{label}\""));
+    }
+    // First-party windows: the claimed id passes through (None = native).
+    let _ = plugin_id;
+    if plugin_id.is_none() && label != "main" {
+        return Err(format!(
+            "permission denied: native path (no plugin id) is main-window only — caller is \"{label}\""
+        ));
+    }
+    Ok(plugin_id.map(|s| s.to_string()))
 }
 
 /// The cached capability set for `id`, reading the manifest from disk on a
@@ -120,27 +188,35 @@ fn find_manifest(base: &Path, id: &str) -> Option<crate::plugins::PluginManifest
 /// The native-path rule for commands that also serve the launcher itself
 /// (`file_search`, `trash_to_recycle`): a call **without** a plugin id is the
 /// native pipeline and is only accepted from the main window; a call **with**
-/// an id goes through the manifest check.
+/// an id goes through the manifest check. The id is resolved by
+/// `resolve_plugin_caller` first (P6.5 attribution: token/label force).
 pub fn assert_native_or_capability(
     perms: &PluginPermState,
     settings: &SettingsState,
     window: &tauri::WebviewWindow,
     plugin_id: Option<&str>,
+    host_token: Option<&str>,
     cap: &str,
 ) -> Result<(), String> {
-    match plugin_id {
-        Some(id) => assert_capability(perms, &settings.current().plugins, &base_dir(), id, cap),
-        None => {
-            if window.label() == "main" {
-                Ok(())
-            } else {
-                Err(format!(
-                    "permission denied: \"{}\" requires a plugin id (the native path is main-window only)",
-                    cap
-                ))
-            }
-        }
+    let resolved = resolve_plugin_caller(perms, window, plugin_id, host_token)?;
+    match resolved {
+        Some(id) => assert_capability(perms, &settings.current().plugins, &base_dir(), &id, cap),
+        None => Ok(()),
     }
+}
+
+/// 策略类命令的窗口守卫：`set_plugin_*` / `plugin_lupx_install` /
+/// `plugin_uninstall` 只接受第一方窗口（main/settings）——任何 `plugin-*`
+/// 窗口（逻辑宿主 / 分离视图）里逃逸出沙箱的代码都不得改启停、信任清单或
+/// 安装包。
+pub fn deny_from_plugin_windows(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let label = window.label();
+    if label.starts_with("plugin-") {
+        return Err(format!(
+            "permission denied: \"{label}\" may not call policy commands"
+        ));
+    }
+    Ok(())
 }
 
 /// Fail-closed capability check: `id` must name a plugin whose manifest

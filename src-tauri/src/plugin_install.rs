@@ -382,9 +382,11 @@ fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64), 
 #[tauri::command]
 pub fn plugin_lupx_install(
     source_path: String,
+    window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
 ) -> Result<LupxInfo, String> {
+    crate::plugin_perm::deny_from_plugin_windows(&window)?;
     use tauri::Emitter;
     let base = base_dir();
     let (id, file_count, total_bytes) = install_into(&base, &source_path)?;
@@ -427,9 +429,11 @@ fn uninstall_dir(base: &Path, id: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn plugin_uninstall(
     id: String,
+    window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
 ) -> Result<(), String> {
+    crate::plugin_perm::deny_from_plugin_windows(&window)?;
     use tauri::Emitter;
     uninstall_dir(&base_dir(), &id)?;
     crate::plugin_perm::invalidate(&perms, &id);

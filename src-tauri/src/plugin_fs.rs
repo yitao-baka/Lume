@@ -128,7 +128,17 @@ fn list_private(base: &Path, id: &str) -> Result<Vec<PrivateFile>, String> {
 /// Write text into `plugins/<id>/files/<name>`; returns its absolute path.
 /// No permission needed — the directory belongs to the plugin.
 #[tauri::command]
-pub fn plugin_fs_private_write(id: String, name: String, text: String) -> Result<String, String> {
+pub fn plugin_fs_private_write(
+    id: String,
+    name: String,
+    text: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<String, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: fs calls need a plugin id".to_string())?;
+
     if text.len() > MAX_PRIVATE_BYTES {
         return Err(format!(
             "file too large: {} bytes (cap {MAX_PRIVATE_BYTES})",
@@ -140,7 +150,17 @@ pub fn plugin_fs_private_write(id: String, name: String, text: String) -> Result
 
 /// Write base64 bytes into the private directory (attachments, exports).
 #[tauri::command]
-pub fn plugin_fs_private_write_b64(id: String, name: String, data: String) -> Result<String, String> {
+pub fn plugin_fs_private_write_b64(
+    id: String,
+    name: String,
+    data: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<String, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: fs calls need a plugin id".to_string())?;
+
     // Strip an optional data URI prefix so an image read from the clipboard or
     // a canvas can be handed over unchanged.
     let payload = data.split_once(',').map_or(data.as_str(), |(head, rest)| {
@@ -159,7 +179,16 @@ pub fn plugin_fs_private_write_b64(id: String, name: String, data: String) -> Re
 /// Read one private file as text (lossy UTF-8; binary content is for
 /// `privatePath`, not for this).
 #[tauri::command]
-pub fn plugin_fs_private_read(id: String, name: String) -> Result<String, String> {
+pub fn plugin_fs_private_read(
+    id: String,
+    name: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<String, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: fs calls need a plugin id".to_string())?;
+
     let path = private_file(&base_dir(), &id, &name)?;
     let meta = std::fs::metadata(&path).map_err(|e| format!("private read: {e}"))?;
     if meta.len() as usize > MAX_PRIVATE_BYTES {
@@ -178,14 +207,31 @@ pub fn plugin_fs_private_read(id: String, name: String) -> Result<String, String
 
 /// The plugin's private files (empty when it never wrote one).
 #[tauri::command]
-pub fn plugin_fs_private_list(id: String) -> Result<Vec<PrivateFile>, String> {
+pub fn plugin_fs_private_list(
+    id: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<Vec<PrivateFile>, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: fs calls need a plugin id".to_string())?;
+
     list_private(&base_dir(), &id)
 }
 
 /// The absolute path of a private file without reading it — for
 /// `app.openPath`, `clipboard.paste`, `search.files` or an `<img src>`.
 #[tauri::command]
-pub fn plugin_fs_private_path(id: String, name: String) -> Result<String, String> {
+pub fn plugin_fs_private_path(
+    id: String,
+    name: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<String, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: fs calls need a plugin id".to_string())?;
+
     Ok(private_file(&base_dir(), &id, &name)?
         .to_string_lossy()
         .into_owned())
@@ -207,7 +253,16 @@ fn remove_private(base: &Path, id: &str, name: &str) -> Result<(), String> {
 
 /// Delete one private file (no error when it never existed).
 #[tauri::command]
-pub fn plugin_fs_private_remove(id: String, name: String) -> Result<(), String> {
+pub fn plugin_fs_private_remove(
+    id: String,
+    name: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<(), String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: fs calls need a plugin id".to_string())?;
+
     remove_private(&base_dir(), &id, &name)
 }
 
@@ -219,9 +274,13 @@ pub fn plugin_fs_write_any(
     id: String,
     path: String,
     text: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
 ) -> Result<(), String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: fs calls need a plugin id".to_string())?;
     crate::plugin_perm::assert_capability(
         &perms,
         &settings.current().plugins,

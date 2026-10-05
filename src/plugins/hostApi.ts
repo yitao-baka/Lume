@@ -72,7 +72,17 @@ export function decorateHttpResponse(raw: HttpResponse): HttpResult {
  * permission ledger lists is refused unless the manifest declares it — for
  * the launcher-window logic path and the iframe bridge alike, since both go
  * through here. */
-export function createHostApi(id: string, services: PluginServices): PluginHostApi {
+export function createHostApi(
+  id: string,
+  services: PluginServices,
+  /** P6.5 逻辑宿主令牌：存在时注入每次 invoke（Rust 按令牌强制归属 plugin id）。
+   * 视图桥与启动器内路径不携带——按窗口 label 既有规则归属。 */
+  hostToken?: string
+): PluginHostApi {
+  const inv = ((cmd: string, args?: Record<string, unknown> | undefined) =>
+    hostToken
+      ? invoke(cmd, { ...(args ?? {}), hostToken })
+      : invoke(cmd, args)) as typeof invoke;
   return guardHostApi(id, {    app: {
       hide: () => {
         plog.debug(id, "app.hide");
@@ -93,7 +103,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       openPath: (path) => {
         plog.debug(id, "app.openPath:", path);
         services.markEntryOpened(); // opening a target = using an entry
-        void invoke("launch_app", { path, name: path, elevated: false }).catch((err) =>
+        void inv("launch_app", { path, name: path, elevated: false }).catch((err) =>
           plog.error(id, "app.openPath failed:", err)
         );
       },
@@ -101,7 +111,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         plog.debug(id, "app.revealPath:", path);
         // No markEntryOpened, no hide: after "open location" the user usually
         // keeps searching — the plugin decides when to hide itself.
-        void invoke("reveal_in_folder", { path }).catch((err) =>
+        void inv("reveal_in_folder", { path }).catch((err) =>
           plog.error(id, "app.revealPath failed:", err)
         );
       },
@@ -110,7 +120,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         // The plugin owns the confirmation (toast / UI double-confirm); the
         // host shows none. Recycle-bin only — no permanent-delete fallback.
         // pluginId rides along for the Rust-side `trash` permission check.
-        void invoke("trash_to_recycle", { paths, pluginId: id }).catch((err) =>
+        void inv("trash_to_recycle", { paths, pluginId: id }).catch((err) =>
           plog.error(id, "app.trash failed:", err)
         );
       },
@@ -124,7 +134,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       },
       notify: async (title, body) => {
         plog.debug(id, "app.notify:", title);
-        await invoke("plugin_notify", { title, body, pluginId: id });
+        await inv("plugin_notify", { title, body, pluginId: id });
       },setSubInput: (opts) => {
         plog.debug(id, "app.setSubInput:", opts?.placeholder ?? "");
         services.setSubInput(id, opts ?? {});
@@ -156,15 +166,15 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
     clipboard: {
       readText: () => invoke<string | null>("get_clipboard_text"),
       writeText: async (text) => {
-        await invoke("set_clipboard_text", { text });
+        await inv("set_clipboard_text", { text });
       },
       writeImage: async (data) => {
         plog.debug(id, "clipboard.writeImage:", data.length, "bytes");
-        await invoke("plugin_clipboard_write_image", { data, pluginId: id });
+        await inv("plugin_clipboard_write_image", { data, pluginId: id });
       },
       writeFiles: async (paths) => {
         plog.debug(id, "clipboard.writeFiles:", paths.length, "path(s)");
-        await invoke("plugin_clipboard_write_files", { paths, pluginId: id });
+        await inv("plugin_clipboard_write_files", { paths, pluginId: id });
       },
       readFiles: () => invoke<string[]>("plugin_clipboard_read_files", { pluginId: id }),
       readImage: () => {
@@ -173,7 +183,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       },
       paste: async (payload) => {
         plog.debug(id, "clipboard.paste:", Object.keys(payload ?? {}).join("/"));
-        await invoke("plugin_clipboard_paste", {
+        await inv("plugin_clipboard_paste", {
           text: payload?.text,
           image: payload?.image,
           files: payload?.files,
@@ -245,10 +255,10 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
         return raw == null ? null : (JSON.parse(raw) as T);
       },
       set: async (key, value) => {
-        await invoke("plugin_storage_set", { id, key, value: JSON.stringify(value ?? null) });
+        await inv("plugin_storage_set", { id, key, value: JSON.stringify(value ?? null) });
       },
       remove: async (key) => {
-        await invoke("plugin_storage_set", { id, key, value: null });
+        await inv("plugin_storage_set", { id, key, value: null });
       },
     },
     db: {
@@ -278,7 +288,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
           // this is not a delete of what the plugin read.
           throw new Error(`db.remove(${docId}) needs the doc's _rev — pass the document you read`);
         }
-        await invoke("plugin_db_remove", { id, docId, rev: r });
+        await inv("plugin_db_remove", { id, docId, rev: r });
         plog.debug(id, `db.remove ${docId} (rev ${r})`);
       },
       allDocs: async (opts) => {
@@ -358,7 +368,7 @@ export function createHostApi(id: string, services: PluginServices): PluginHostA
       privatePath: (name) => invoke<string>("plugin_fs_private_path", { id, name }),
       removePrivate: async (name) => {
         plog.debug(id, "fs.removePrivate:", name);
-        await invoke("plugin_fs_private_remove", { id, name });
+        await inv("plugin_fs_private_remove", { id, name });
       },
       writeFile: (path, text) => {
         plog.debug(id, "fs.writeFile:", path, text.length, "chars");

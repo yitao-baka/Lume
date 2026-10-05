@@ -19,6 +19,7 @@ mod notify;
 mod plugin_fs;
 mod plugin_host;
 mod plugin_install;
+mod plugin_logic;
 mod plugin_net;
 mod plugin_perm;
 mod plugin_store;
@@ -434,6 +435,14 @@ pub fn run() {
             plugin_window::plugin_window_push_state,
             plugin_window::plugin_window_close,
             plugin_window::plugin_window_close_report,
+            plugin_logic::plugin_logic_host_ensure,
+            plugin_logic::plugin_logic_host_close,
+            plugin_logic::plugin_logic_meta,
+            plugin_logic::plugin_logic_register_tokens,
+            plugin_logic::plugin_logic_push,
+            plugin_logic::plugin_logic_action,
+            plugin_logic::plugin_logic_result,
+            plugin_logic::plugin_logic_supervisor_ready,
             plugin_store::plugin_db_get,
             plugin_store::plugin_db_put,
             plugin_store::plugin_db_remove,

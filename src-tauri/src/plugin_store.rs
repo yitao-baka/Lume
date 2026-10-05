@@ -524,7 +524,15 @@ pub fn migrate_legacy_storage_with(conn: &Connection, base: &Path) -> usize {
 
 /// `db.get(id)` — the document, or None when it doesn't exist.
 #[tauri::command]
-pub fn plugin_db_get(id: String, doc_id: String) -> Result<Option<DbDoc>, String> {
+pub fn plugin_db_get(
+    id: String,
+    doc_id: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<Option<DbDoc>, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     let conn = open_migrated(&base_dir())?;
     assert_public_doc_id(&id, &doc_id)?;
     read_doc(&conn, &id, &doc_id).map_err(|e| e.to_string())
@@ -538,7 +546,12 @@ pub fn plugin_db_put(
     doc_id: String,
     json: String,
     rev: Option<i64>,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
 ) -> Result<i64, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     let conn = open_migrated(&base_dir())?;
     let new_rev = put_doc(&conn, &id, &doc_id, &json, rev)?;
     eprintln!(
@@ -550,7 +563,16 @@ pub fn plugin_db_put(
 
 /// `db.remove(doc)` — delete with the rev the caller read.
 #[tauri::command]
-pub fn plugin_db_remove(id: String, doc_id: String, rev: i64) -> Result<(), String> {
+pub fn plugin_db_remove(
+    id: String,
+    doc_id: String,
+    rev: i64,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<(), String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     let conn = open_migrated(&base_dir())?;
     remove_doc(&conn, &id, &doc_id, rev)?;
     eprintln!("[plugins] db remove ({id}) {doc_id} (rev {rev})");
@@ -563,7 +585,12 @@ pub fn plugin_db_all_docs(
     id: String,
     prefix: Option<String>,
     limit: Option<i64>,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
 ) -> Result<Vec<DbDoc>, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     let conn = open_migrated(&base_dir())?;
     let docs = list_docs(
         &conn,
@@ -578,7 +605,15 @@ pub fn plugin_db_all_docs(
 /// `db.bulkDocs(docs)` — one transaction, per-document outcomes (a conflict
 /// is reported for that entry, the rest still land).
 #[tauri::command]
-pub fn plugin_db_bulk_docs(id: String, docs: Vec<BulkDocIn>) -> Result<Vec<BulkResult>, String> {
+pub fn plugin_db_bulk_docs(
+    id: String,
+    docs: Vec<BulkDocIn>,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<Vec<BulkResult>, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     if docs.len() > MAX_BULK {
         return Err(format!("too many docs: {} (cap {MAX_BULK})", docs.len()));
     }
@@ -610,13 +645,30 @@ pub fn plugin_db_bulk_docs(id: String, docs: Vec<BulkDocIn>) -> Result<Vec<BulkR
 
 /// Legacy KV read (v1 `storage.*`) — kept as a shim over the `__storage` doc.
 #[tauri::command]
-pub fn plugin_storage_get(id: String, key: String) -> Result<Option<String>, String> {
+pub fn plugin_storage_get(
+    id: String,
+    key: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<Option<String>, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     storage_get(&base_dir(), &id, &key)
 }
 
 /// Legacy KV write (value = JSON text; null deletes).
 #[tauri::command]
-pub fn plugin_storage_set(id: String, key: String, value: Option<String>) -> Result<(), String> {
+pub fn plugin_storage_set(
+    id: String,
+    key: String,
+    value: Option<String>,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<(), String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     storage_set(&base_dir(), &id, &key, value)
 }
 
@@ -624,7 +676,12 @@ pub fn plugin_storage_set(id: String, key: String, value: Option<String>) -> Res
 #[tauri::command]
 pub fn plugin_settings_get(
     id: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     settings_values(&base_dir(), &id)
 }
 
@@ -635,8 +692,13 @@ pub fn plugin_settings_put(
     id: String,
     key: String,
     value: serde_json::Value,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
     settings_put(&base_dir(), &id, &key, value)?;
     app.emit("plugin-settings", id).map_err(|e| e.to_string())
 }

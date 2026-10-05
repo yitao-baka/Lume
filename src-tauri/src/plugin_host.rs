@@ -93,6 +93,7 @@ pub async fn plugin_dialog_open(
     app: AppHandle,
     params: OpenDialogParams,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
@@ -102,6 +103,7 @@ pub async fn plugin_dialog_open(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "dialog",
     )?;
     let started = std::time::Instant::now();
@@ -141,6 +143,7 @@ pub async fn plugin_dialog_save(
     app: AppHandle,
     params: SaveDialogParams,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
@@ -150,6 +153,7 @@ pub async fn plugin_dialog_save(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "dialog",
     )?;
     let started = std::time::Instant::now();
@@ -225,6 +229,7 @@ pub fn file_kinds(paths: Vec<String>) -> Vec<String> {
 #[tauri::command]
 pub fn plugin_cursor_pos(
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
@@ -234,6 +239,7 @@ pub fn plugin_cursor_pos(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "screen",
     )?;
     cursor_impl()
@@ -252,6 +258,7 @@ fn cursor_impl() -> Result<CursorPos, String> {
 #[tauri::command]
 pub fn plugin_displays(
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
@@ -261,6 +268,7 @@ pub fn plugin_displays(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "screen",
     )?;
     displays_impl()

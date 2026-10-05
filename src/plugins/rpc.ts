@@ -15,10 +15,13 @@ export async function execHostRpc(
   id: string,
   method: string,
   args: Record<string, unknown>,
-  services: PluginServices
+  services: PluginServices,
+  /** P6.5：逻辑宿主 iframe 的令牌——携带时 createHostApi 把它注入每次
+   * invoke，Rust 按令牌强制归属 plugin id。视图宿主不携带。 */
+  hostToken?: string
 ): Promise<unknown> {
   plog.debug(id, "rpc →", method, args);
-  const api = createHostApi(id, services);
+  const api = createHostApi(id, services, hostToken);
   const a = args as Record<string, string>;
   switch (method) {
     case "app.hide":

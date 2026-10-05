@@ -805,9 +805,11 @@ pub fn snapshot(state: &State<SettingsState>) -> Settings {
 pub fn set_plugin_enabled(
     id: String,
     enabled: bool,
+    window: tauri::WebviewWindow,
     app: AppHandle,
     state: State<SettingsState>,
 ) -> Result<(), String> {
+        crate::plugin_perm::deny_from_plugin_windows(&window)?;
     let mut guard = state.0.lock().unwrap();
     let mut next = guard.clone();
     if enabled {
@@ -829,9 +831,11 @@ pub fn set_plugin_enabled(
 pub fn set_plugin_trusted(
     id: String,
     trusted: bool,
+    window: tauri::WebviewWindow,
     app: AppHandle,
     state: State<SettingsState>,
 ) -> Result<(), String> {
+        crate::plugin_perm::deny_from_plugin_windows(&window)?;
     let mut guard = state.0.lock().unwrap();
     let mut next = guard.clone();
     if trusted {
@@ -855,9 +859,11 @@ pub fn set_plugin_trusted(
 #[tauri::command]
 pub fn set_plugin_dev_mode(
     enabled: bool,
+    window: tauri::WebviewWindow,
     app: AppHandle,
     state: State<SettingsState>,
 ) -> Result<(), String> {
+        crate::plugin_perm::deny_from_plugin_windows(&window)?;
     let mut guard = state.0.lock().unwrap();
     let mut next = guard.clone();
     next.plugins.dev_mode = enabled;
@@ -875,9 +881,11 @@ pub fn set_plugin_dev_mode(
 #[tauri::command]
 pub fn set_plugin_trust_all(
     enabled: bool,
+    window: tauri::WebviewWindow,
     app: AppHandle,
     state: State<SettingsState>,
 ) -> Result<(), String> {
+        crate::plugin_perm::deny_from_plugin_windows(&window)?;
     let mut guard = state.0.lock().unwrap();
     let mut next = guard.clone();
     next.plugins.trust_all = enabled;

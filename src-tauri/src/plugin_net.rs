@@ -286,6 +286,7 @@ fn fetch_blocking(req: HttpRequest) -> Result<HttpResponse, String> {
 pub async fn plugin_http_fetch(
     req: HttpRequest,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
@@ -295,6 +296,7 @@ pub async fn plugin_http_fetch(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "network",
     )?;
     let url = req.url.clone();

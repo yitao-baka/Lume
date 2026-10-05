@@ -11,8 +11,8 @@
 
 import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
-import { createHostApi } from "./hostApi";
 import { capSnapshot, createIframeView, injectBridge } from "./iframeBridge";
 import { createListTemplateMode } from "./listTemplate";
 import { fetchDiskFile } from "./disk";
@@ -116,128 +116,159 @@ export function setPluginServices(services: PluginServices) {
   pluginServices = services;
 }
 
-// ── Multi-file ESM module loader (P0.4) ──
+// ── 逻辑宿主中继（P6.5 进程隔离）──
 //
-// A disk entry may be a single ES Module file or a bundled multi-file build
-// (e.g. an esbuild/vite product — the Rust side resolves an `entry` directory
-// to `index.js` inside it). Relative imports (`./x.js`, `../y.js`) are
-// rewritten to blob URLs: every referenced file is fetched via the asset
-// protocol, compiled the same way (recursively, cached by path), and the
-// specifier is replaced with its blob URL before `import()`. Bare package
-// names are NOT resolved — bundle the dependencies in (standard practice for
-// launcher plugins; no node_modules on disk).
+// entry 插件的逻辑不再 import() 进本窗口：registry 只注册**代理贡献**，hook
+// 调用经 `plugin_logic_push`（Rust emit 到共享逻辑宿主窗口）→ supervisor →
+// 沙箱 iframe 内的真实模块；回执经 `plugin-logic-result` 事件按 callId 收口。
+// ctx 的启动器侧动作（toast/setQuery/hide/redirect…）经
+// `plugin-logic-action` 事件回来（Rust 已按令牌强制归属 plugin id）。
+// 宿主窗口就绪/崩溃通告驱动 load 的（重）发——覆盖建窗竞态与崩溃恢复。
 
-/** Static `from "..."` / bare `import "..."` / dynamic `import("...")` with a
- * relative specifier. */
-const RELATIVE_IMPORT_RE =
-  /(from\s*|import\s*\(\s*|import\s*)(["'])(\.{1,2}\/[^"']+)\2/g;
+const logicPending = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+let logicCallSeq = 0;
+/** 已向宿主发过 load 的插件（宿主 ready 时重发；unload 时移除）。 */
+const logicLoadedIds = new Set<string>();
 
-/** One blob-imported module: its URL (for parent rewrites) + namespace. */
-interface CompiledModule {
-  url: string;
-  mod: unknown;
+/** 一次 hook 调用：跨窗口 RPC，8s 超时（与桥接 10s 语义对齐、略短）。 */
+function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000): Promise<unknown> {
+  const callId = ++logicCallSeq;
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      logicPending.delete(callId);
+      reject(new Error(`logic call timeout: ${id}.${name}`));
+    }, timeoutMs);
+    logicPending.set(callId, {
+      resolve: (v) => {
+        window.clearTimeout(timer);
+        resolve(v);
+      },
+      reject: (e) => {
+        window.clearTimeout(timer);
+        reject(e);
+      },
+    });
+    void invoke("plugin_logic_push", { id, kind: "hook", payload: { callId, name, args } }).catch(
+      (err) => {
+        window.clearTimeout(timer);
+        logicPending.delete(callId);
+        reject(err);
+      }
+    );
+  });
 }
 
-/** Path → compiled module promise. Cache across loads within a session;
- * cleared on plugin reload so re-imported code is re-read from disk. */
-const moduleCache = new Map<string, Promise<CompiledModule>>();
-
-/** Normalized cache key for a module path. */
-function moduleKey(p: string): string {
-  return p.replace(/\//g, "\\").toLowerCase();
+/** 建窗（幂等）+ 发一次 load 指令。supervisor 未就绪时 load 会丢失——由
+ * `plugin-logic-host-ready` 通告驱动重发兜底。 */
+function pushLogicLoad(id: string): void {
+  logicLoadedIds.add(id);
+  void invoke("plugin_logic_host_ensure")
+    .then(() => invoke("plugin_logic_push", { id, kind: "load", payload: {} }))
+    .catch((err) => plog.error(id, "logic load push failed:", err));
 }
 
-/** The directory part of a Windows path (any separator mix). */
-function parentDir(p: string): string {
-  const norm = p.replace(/\//g, "\\");
-  const i = norm.lastIndexOf("\\");
-  return i > 0 ? norm.slice(0, i) : norm;
-}
-
-/** Resolve `dir` + relative `spec` (`./x.js`, `../../y/z.js`) to a plain
- * Windows path without drive-dependent logic. */
-function resolveRelative(dir: string, spec: string): string {
-  const parts = (dir + "\\" + spec.replace(/\//g, "\\")).split("\\");
-  const out: string[] = [];
-  for (const part of parts) {
-    if (!part || part === ".") continue;
-    if (part === "..") out.pop();
-    else out.push(part);
+/** ctx 动作分发（Rust 中继已按令牌归属 id）。 */
+function handleLogicAction(id: string, action: string, args: Record<string, unknown>): void {
+  const services = pluginServices;
+  if (!services) return;
+  switch (action) {
+    case "toast":
+      services.showToast(String(args.text ?? ""));
+      break;
+    case "setQuery":
+      services.setQuery(String(args.q ?? ""));
+      break;
+    case "hide":
+      services.resetAndHide();
+      break;
+    case "markEntryOpened":
+      services.markEntryOpened();
+      break;
+    case "redirect":
+      services.enterPlugin(String(args.pluginId ?? ""), {
+        code: String(args.code ?? ""),
+        type: "redirect",
+        payload: String(args.payload ?? ""),
+      });
+      break;
+    case "logic-loaded":
+      // 逻辑帧就绪：补投 load 前积压的声明式设置（applyPluginSettings 的
+      // 首投可能早于逻辑就绪而落空）。
+      {
+        const values = pendingLogicSettings.get(id);
+        if (values) {
+          pendingLogicSettings.delete(id);
+          const p = plugins.find((x) => x.id === id);
+          try {
+            p?.mode?.onSettings?.(values);
+            p?.provider?.onSettings?.(values);
+            p?.lifecycle?.onSettings?.(values);
+          } catch (err) {
+            plog.error(id, "deferred onSettings failed:", err);
+          }
+        }
+      }
+      break;
+    default:
+      plog.debug(id, "logic action ignored:", action);
   }
-  return out.join("\\");
 }
 
-/** Fetch a module file's text. Without an extension, `.js` then
- * `<dir>/index.js` are tried (extensionless relative imports). */
-async function fetchModuleText(path: string): Promise<string> {
-  const candidates = /\.[a-zA-Z0-9]+$/.test(path)
-    ? [path]
-    : [path + ".js", path + "\\index.js"];
-  let lastErr: unknown;
-  for (const c of candidates) {
-    try {
-      return await fetchDiskFile(c);
-    } catch (err) {
-      lastErr = err;
-    }
+/** load 前积压的声明式设置（applyPluginSettings 首投落空时暂存）。 */
+const pendingLogicSettings = new Map<string, Record<string, unknown>>();
+
+/** 宿主窗口崩溃恢复：整窗重建后重发全部 load；10s 内二次崩溃 → 停止。 */
+let logicHostCrashAt = 0;
+function onLogicHostCrashed(): void {
+  const now = Date.now();
+  plog.error(null, "logic host window destroyed — rebuilding");
+  if (now - logicHostCrashAt < 10000) {
+    for (const id of logicLoadedIds) plog.error(id, "logic host keeps crashing — giving up this round");
+    return;
   }
-  throw lastErr ?? new Error(`module not found: ${path}`);
+  logicHostCrashAt = now;
+  for (const id of logicLoadedIds) pushLogicLoad(id);
 }
 
-/** Compile one module (and, recursively, its relative imports) from disk. */
-function compileDiskModule(absPath: string): Promise<CompiledModule> {
-  const key = moduleKey(absPath);
-  const cached = moduleCache.get(key);
-  if (cached) return cached;
-  const compiled = (async (): Promise<CompiledModule> => {
-    const text = await fetchModuleText(absPath);
-    const dir = parentDir(absPath);
-    const deps = new Map<string, Promise<string>>(); // specifier → blob URL
-    for (const m of text.matchAll(RELATIVE_IMPORT_RE)) {
-      const spec = m[3];
-      if (!deps.has(spec)) {
-        deps.set(
-          spec,
-          compileDiskModule(resolveRelative(dir, spec)).then((c) => c.url)
-        );
+let logicRelayWired = false;
+/** 事件接线（main 窗口单例；模块导入即生效，双注册有旗标防呆）。 */
+function initLogicRelay(): void {
+  if (logicRelayWired) return;
+  logicRelayWired = true;
+  void listen<{ id: string; callId: number; ok: boolean; result?: unknown; error?: string }>(
+    "plugin-logic-result",
+    (e) => {
+      const { callId, ok, result, error } = e.payload;
+      const p = logicPending.get(callId);
+      if (p) {
+        logicPending.delete(callId);
+        ok ? p.resolve(result) : p.reject(new Error(error ?? "logic call failed"));
       }
     }
-    const urls = new Map<string, string>(
-      await Promise.all(
-        [...deps.entries()].map(
-          async ([s, pr]) => [s, await pr] as [string, string]
-        )
-      )
-    );
-    const rewritten = text.replace(RELATIVE_IMPORT_RE, (m, pre, q, spec) => {
-      const url = urls.get(spec);
-      return url ? pre + q + url + q : m;
-    });
-    const url = URL.createObjectURL(new Blob([rewritten], { type: "text/javascript" }));
-    return { url, mod: await import(url) };
-  })();
-  moduleCache.set(key, compiled);
-  return compiled;
+  );
+  void listen<{ id: string; action: string; args: Record<string, unknown> }>(
+    "plugin-logic-action",
+    (e) => handleLogicAction(e.payload.id, e.payload.action, e.payload.args)
+  );
+  void listen("plugin-logic-host-ready", () => {
+    // supervisor 就绪（建窗竞态 / 崩溃恢复）→ 重发全部 load
+    for (const id of logicLoadedIds) pushLogicLoad(id);
+  });
+  void listen("plugin-logic-host-closed", () => onLogicHostCrashed());
+}
+initLogicRelay();
+
+/** 代理逻辑对象：任意 hook 名都是跨窗口调用（帧内缺名时安全返回
+ * undefined，调用点按可选项语义处理）。 */
+function logicProxy(id: string): Record<string, unknown> {
+  return new Proxy({} as Record<string, unknown>, {
+    get: (_t, prop) => {
+      if (typeof prop !== "string") return undefined;
+      return (...args: unknown[]) => logicCall(id, prop, args);
+    },
+  });
 }
 
-async function importDiskModule(dir: string, entry: string): Promise<any> {
-  const joined = dir + "\\" + entry.replace(/\//g, "\\");
-  return (await compileDiskModule(joined)).mod;
-}
-
-/** Accepts both the legacy plain-object form and the v2 factory form.
- * `def` may also be a module namespace — the default export is used. */
-function resolveLogic(def: unknown, api: ReturnType<typeof createHostApi>): Record<string, unknown> {
-  const ns = def as { default?: unknown } | null;
-  if (ns && typeof ns === "object" && "default" in ns && !("search" in ns)) {
-    def = ns.default;
-  }
-  if (typeof def === "function") {
-    const produced = (def as (ctx: unknown) => unknown)(api);
-    return (produced && typeof produced === "object" ? produced : {}) as Record<string, unknown>;
-  }
-  return (def && typeof def === "object" ? def : {}) as Record<string, unknown>;
-}
 
 export function callHook(id: string, logic: Record<string, unknown>, name: string, ...args: unknown[]) {
   const fn = logic[name];
@@ -561,7 +592,9 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   for (let i = plugins.length - 1; i >= 0; i--) {
     if (plugins[i].id === id) plugins.splice(i, 1);
   }
-  moduleCache.clear();
+  logicLoadedIds.delete(id);
+  void invoke("plugin_logic_push", { id, kind: "unload", payload: {} }).catch(() => {});
+  pendingLogicSettings.delete(id);
   detachedSuppliers.delete(id);
   themePosters.delete(id);
   pendingSnapshots.delete(id);
@@ -609,111 +642,56 @@ export async function loadDiskPlugins() {
     loadedDiskIds.add(m.id); // mark regardless of outcome — never retry-spam
     try {
       if (m.kind === "provider" && m.entry) {
-        const def = await importDiskModule(m.dir, m.entry);
-        const logic = resolveLogic(def, createHostApi(m.id, services!));
-        const search = logic.search;
-        if (typeof search !== "function") {
-          plog.error(m.id, "provider needs search() — got", typeof search);
-          continue;
-        }
-        const navBars = navBarsContribution(m.id, logic);
-        const rawOnEnter = logic.onEnter;
-        const rawOnFeature = logic.onFeature;
-        const rawSelect = logic.select;
-        const rawFilter = logic.filter;
-        const rawOnSettings = logic.onSettings;
+        // P6.5：逻辑在共享宿主窗口的沙箱 iframe 里 —— 这里只注册代理贡献。
+        // 帧内未实现/未就绪的 hook 安全返回 undefined（search → 空结果）。
+        const proxy = logicProxy(m.id);
+        const navBars = navBarsContribution(m.id, proxy);
         definePlugin({
           id: m.id,
           features: m.features ?? [],
           dir: m.dir,
           provider: {
-            search: (q) => {
-              try {
-                return Promise.resolve(
-                  (search as (q: string) => Promise<{ name: string; path: string }[]>)(q)
-                );
-              } catch (err) {
-                return Promise.reject(err);
-              }
+            search: async (q) => {
+              const rows = await logicCall(m.id, "search", [q]).catch((err) => {
+                plog.error(m.id, "provider search failed:", err);
+                return undefined;
+              });
+              return Array.isArray(rows) ? rows : [];
             },
-            ...(typeof rawOnEnter === "function"
-              ? {
-                  onEnter: (item: ProviderResult) => {
-                    try {
-                      (rawOnEnter as (it: ProviderResult) => void)(item);
-                    } catch (err) {
-                      plog.error(m.id, "provider onEnter failed:", err);
-                    }
-                  },
-                }
-              : {}),
-            ...(typeof rawOnFeature === "function"
-              ? {
-                  onFeature: (info: FeatureEnterInfo) => {
-                    try {
-                      (rawOnFeature as (i: FeatureEnterInfo) => void)(info);
-                    } catch (err) {
-                      plog.error(m.id, "provider onFeature failed:", err);
-                    }
-                  },
-                }
-              : {}),
-            ...(typeof rawSelect === "function"
-              ? {
-                  select: async (item: ProviderResult) => {
-                    const rows = await (
-                      rawSelect as (it: ProviderResult) => Promise<ProviderResult[]> | ProviderResult[]
-                    )(item);
-                    return Array.isArray(rows) ? rows : [];
-                  },
-                }
-              : {}),
-            ...(typeof rawFilter === "function"
-              ? {
-                  filter: async (item: ProviderResult, q: string) => {
-                    const rows = await (
-                      rawFilter as (
-                        it: ProviderResult,
-                        q: string
-                      ) => Promise<ProviderResult[]> | ProviderResult[]
-                    )(item, q);
-                    return Array.isArray(rows) ? rows : [];
-                  },
-                }
-              : {}),
-            ...(typeof rawOnSettings === "function"
-              ? {
-                  onSettings: (values: Record<string, unknown>) => {
-                    try {
-                      (rawOnSettings as (v: Record<string, unknown>) => void)(values);
-                    } catch (err) {
-                      plog.error(m.id, "provider onSettings failed:", err);
-                    }
-                  },
-                }
-              : {}),
+            onEnter: (item: ProviderResult) =>
+              void logicCall(m.id, "onEnter", [item]).catch((err) =>
+                plog.error(m.id, "provider onEnter failed:", err)
+              ),
+            onFeature: (info: FeatureEnterInfo) =>
+              void logicCall(m.id, "onFeature", [info]).catch((err) =>
+                plog.error(m.id, "provider onFeature failed:", err)
+              ),
+            select: async (item: ProviderResult) => {
+              const rows = await logicCall(m.id, "select", [item]).catch(() => undefined);
+              return Array.isArray(rows) ? rows : [];
+            },
+            filter: async (item: ProviderResult, q: string) => {
+              const rows = await logicCall(m.id, "filter", [item, q]).catch(() => undefined);
+              return Array.isArray(rows) ? rows : [];
+            },
+            onSettings: (values: Record<string, unknown>) =>
+              void logicCall(m.id, "onSettings", [values]).catch((err) =>
+                plog.error(m.id, "provider onSettings failed:", err)
+              ),
           },
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
-        // Declarative settings (P3.4): hand the plugin its effective values
-        // now, so a logic hook can act on them without waiting for a change.
+        pushLogicLoad(m.id);
         void applyPluginSettings(m.id);
         loadedAny = true;
-        plog.info(
-          m.id,
-          `loaded provider (entry=${m.entry}${navBars ? ", navBars" : ""}` +
-            `${typeof rawOnEnter === "function" ? ", onEnter" : ""}` +
-            `${typeof rawOnFeature === "function" ? ", onFeature" : ""}` +
-            `${typeof rawSelect === "function" ? ", select" : ""}` +
-            `${typeof rawFilter === "function" ? ", filter" : ""}` +
-            `${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
-        );
+        plog.info(m.id, `registered provider proxy (entry=${m.entry})`);
       } else if (m.kind === "mode" && m.template === "list" && m.entry) {
         // Built-in list template (P2.5b): no view HTML — the entry logic runs
         // host-side (provider trust model) and the built-in list component
         // renders its rows.
-        const logic = resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!));
+        // P6.5：逻辑在共享宿主的沙箱 iframe（list 模板消费的是代理 hook）。
+        const logic = logicProxy(m.id);
         const instance = createListTemplateMode(m, logic, services!);
         definePlugin({
           id: m.id,
@@ -731,19 +709,16 @@ export async function loadDiskPlugins() {
           mode: instance,
         });
         registeredDiskIds.add(m.id);
-        // Declarative settings (P3.4): hand the plugin its effective values
-        // now, so a logic hook can act on them without waiting for a change.
+        pushLogicLoad(m.id);
         void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(
           m.id,
-          `loaded mode (template=list, entry=${m.entry}` +
+          `registered mode proxy (template=list, entry=${m.entry}` +
             `${m.height != null ? `, height=${m.height}` : ""}${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
         );
       } else if (m.kind === "mode" && m.view) {
-        const logic = m.entry
-          ? resolveLogic(await importDiskModule(m.dir, m.entry), createHostApi(m.id, services!))
-          : {};
+        const logic = m.entry ? logicProxy(m.id) : {};
         const instance = createDiskModeInstance(m, logic, services!);
         const navBars = navBarsContribution(m.id, logic);
         definePlugin({
@@ -763,39 +738,35 @@ export async function loadDiskPlugins() {
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
-        // Declarative settings (P3.4): hand the plugin its effective values
-        // now, so a logic hook can act on them without waiting for a change.
+        if (m.entry) pushLogicLoad(m.id);
         void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(
           m.id,
-          `loaded mode (view=${m.view}${m.entry ? `, entry=${m.entry}` : ""}` +
+          `registered mode (view=${m.view}${m.entry ? `, entry=${m.entry}` : ""}` +
             `${m.height != null ? `, height=${m.height}` : ""}${navBars ? ", navBars" : ""})`
         );
       } else if (m.kind === "service" && m.entry) {
-        const def = await importDiskModule(m.dir, m.entry);
-        const logic = resolveLogic(def, createHostApi(m.id, services!));
-        const navBars = navBarsContribution(m.id, logic);
+        const navBars = navBarsContribution(m.id, logicProxy(m.id));
         definePlugin({
           id: m.id,
           lifecycle: {
-            onShow: () => void callHook(m.id, logic, "onShow"),
-            onHide: () => void callHook(m.id, logic, "onHide"),
-            onQuery: (q) => void callHook(m.id, logic, "onQuery", q),
-            onFeature: (info) => void callHook(m.id, logic, "onFeature", info),
-            onSubInput: (text) => void callHook(m.id, logic, "onSubInput", text),
-            onSettings: (values) => void callHook(m.id, logic, "onSettings", values),
+            onShow: () => void logicCall(m.id, "onShow", []).catch(() => {}),
+            onHide: () => void logicCall(m.id, "onHide", []).catch(() => {}),
+            onQuery: (q) => void logicCall(m.id, "onQuery", [q]).catch(() => {}),
+            onFeature: (info) => void logicCall(m.id, "onFeature", [info]).catch(() => {}),
+            onSubInput: (text) => void logicCall(m.id, "onSubInput", [text]).catch(() => {}),
+            onSettings: (values) => void logicCall(m.id, "onSettings", [values]).catch(() => {}),
           },
           features: m.features ?? [],
           dir: m.dir,
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
-        // Declarative settings (P3.4): hand the plugin its effective values
-        // now, so a logic hook can act on them without waiting for a change.
+        pushLogicLoad(m.id);
         void applyPluginSettings(m.id);
         loadedAny = true;
-        plog.info(m.id, `loaded service (entry=${m.entry}${navBars ? ", navBars" : ""})`);
+        plog.info(m.id, `registered service proxy (entry=${m.entry})`);
       } else {
         plog.error(
           m.id,
@@ -832,6 +803,7 @@ export async function applyPluginSettings(id: string): Promise<void> {
     return;
   }
   plog.debug(id, "settings →", values);
+  pendingLogicSettings.set(id, values); // logic-loaded 时补投（首投可能早于逻辑就绪）
   try {
     p.mode?.onSettings?.(values);
     p.provider?.onSettings?.(values);

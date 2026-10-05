@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>plugin logic frame</title>
+    <!-- classic script：opaque origin 下 module 脚本按 CORS 取数会被 Tauri
+         自定义协议拒绝（无 ACAO），classic 走 no-cors 正常加载 -->
+    <script src="/pluginLogicFrame.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

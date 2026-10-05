@@ -193,6 +193,41 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
+**插件逻辑进程级隔离 + 独立窗口双向状态快照（P6.5, complete） — as of
+2026-10-05**: 两条主线。① **逻辑隔离**（ROADMAP #28/#29 遗留项清账）：
+entry 插件逻辑不再 blob-`import()` 进启动器窗口——共享隐藏窗口
+`plugin-logic-host`（`pluginLogic.html` → `src/pluginLogic.tsx` supervisor）
+每插件一个 opaque-origin 沙箱 iframe（`public/pluginLogicFrame.js`，
+**必须 classic script**——opaque origin 下 module 脚本按 CORS 取数被自定义
+协议拒，实测 "Origin header is not a valid URL"；ESM 加载器在帧内自含，
+文件文本经 `__readPluginFile` RPC 由 supervisor 代理、限本插件目录）。
+registry 注册**代理贡献**（`logicProxy`：任意 hook 名 = 跨窗口 RPC，8s
+超时，帧内未实现安全 undefined；`loadDiskPlugins` 四分支全部代理化），
+通信经 `plugin_logic_push`/`plugin_logic_result`/`plugin_logic_action`
+三命令 + `plugin-logic-event/-result/-action` 三事件，全部由 Rust
+`plugin_perm::resolve_plugin_caller` 做 **label+令牌归属强制**（逻辑宿主
+必须带 `host_token`，令牌不进帧——帧内裸 invoke 双重死亡：WebView2 对
+opaque origin 直接拒 + Rust 缺令牌 fail-closed；`plugin-<id>` 视图窗强制
+label 后缀；策略命令 `deny_from_plugin_windows`）。**15 处门控调用点 +
+plugin_store 9 命令 + plugin_fs 7 命令全部过 resolve**（数据落点一律用
+解析后 id）。supervisor 就绪通告 `plugin-logic-host-ready` 驱动 load 重发
+（建窗竞态 + 崩溃恢复），`Destroyed` → `plugin-logic-host-closed` → 重建
+重载（10s 冷却）；声明式设置首投早于逻辑就绪 → `pendingLogicSettings`
+暂存、`logic-loaded` 动作补投。② **双向状态快照**（本迭代第一条提交）：
+detach 时启动器先快照（`ModeInstance.snapshot?()`），关闭独立窗口时 Rust
+拦截 `CloseRequested`（3s 看门狗）→ `plugin_window_close_report` 上报 →
+快照+最终 query 回启动器（活 iframe 直投 / `attachSnapshots` ready 握手
+消费；判定用 `viewLive()` **不是** `viewReady`——后者是取回即置的一次性
+标志）。**坑**：① `plugin_window_open` 建窗瞬间即 emit `plugin-window-shown`
+→ shown 推送绝不能消费 `pendingSnapshots`（只在 ready 握手带）；② 隐藏
+窗口里 CDP `Runtime.enable` 只重放一次 contexts——probe 侧要累积监听；
+③ WebView2 站点隔离把沙箱 iframe 变成宿主 target 的独立 execution
+context（不出现在 /json/list）。**验证**：cargo test **185**、
+`test/_snapshot_probe.mjs` **12 项**、`test/_logic_host_probe.mjs` **12 项**
+（含四类裸 invoke 拒绝、provider 搜索往返、ctx.db 令牌链路）全过。
+性能实测：逻辑宿主窗 ~110ms 建窗、空闲 CPU ≈0、每插件约一个独立 renderer
+进程（OOPIF，空闲可修剪）；详见 CHANGELOG P6.5。
+
 **主窗口部件化：搜索框部件 + 页面部件插件化（ROADMAP #30, complete) — as of
 2026-09-27**: 主窗口收敛为 uTools 式拼接壳 —— `src/shell/SearchBox.tsx` 部件
 （放大镜 + 输入框 + 页面 pills + 齿轮；受控纯展示）在顶，页面插槽

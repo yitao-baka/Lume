@@ -1133,8 +1133,9 @@ detachable = true     # 允许分离为独立窗口
 
 ### 6G.3 实现与边界
 
-- 插件的**逻辑钩子**（`entry` 的 `onShow`/`onQuery`/…）始终跑在启动器窗口
-  （注册表），独立窗口只是视图；`onQuery` 在窗口内不会到来（没有共享搜索框）。
+- 插件的**逻辑钩子**（`entry` 的 `onShow`/`onQuery`/…）跑在共享逻辑宿主窗口
+  的沙箱 iframe 里（P6.5，见 §6I），与视图解耦——独立窗口只是视图；
+  `onQuery` 在窗口内不会到来（没有共享搜索框）。
 - **状态快照/恢复**（P6.5）只作用在视图侧（沙箱 iframe 的 DOM/页内状态）；
   逻辑侧的注册表信号（query/enter/settings）本就跨窗口存活。快照链路的
   端到端脚本见 `test/_snapshot_probe.mjs`（12 项断言，两条恢复路径全覆盖）。
@@ -1199,6 +1200,57 @@ getter（如 `slot={cond ? <View /> : undefined}`）会在依赖变化时重新�
 
 示例：`examples/plugins/titlebar-demo/`（标题栏搜索框 + 拖动区，输入驱动
 视图列表过滤）。
+
+---
+
+## 6I. 逻辑运行时（P6.5：共享逻辑宿主窗口）
+
+声明 `entry` 的磁盘插件的**逻辑**跑在一个共享的隐藏窗口
+（label `plugin-logic-host`，页面 `pluginLogic.html`）里：每插件一个
+opaque-origin 沙箱 iframe（`pluginLogicFrame.html?plugin=<id>`，classic
+script——opaque origin 下 module 脚本按 CORS 取数会被自定义协议拒绝）。
+WebView2 站点隔离给每帧独立 renderer 进程：插件死循环只拖死自己的进程。
+
+registry 不再 `import()` 任何第三方代码：`loadDiskPlugins` 注册**代理贡献**
+（provider/mode/service 的 hook 全部变为跨窗口 RPC `logicCall`，8s 超时；
+帧内未实现的 hook 安全返回 `undefined`），并发 `plugin_logic_push{kind:"load"}`
+让 supervisor 建帧。视图、快照（§6G）、权限台账全部不变。
+
+**通信拓扑**（全部经 Rust 中继，没有跨窗口 postMessage）：
+
+| 方向 | 通道 | 门控 |
+|---|---|---|
+| 启动器 → 宿主 | `plugin_logic_push`（kind = load / unload / event / hook） | label 必须是 main |
+| 宿主 → 启动器 | `plugin_logic_result`（hook 回执，按 callId 收口）/ `plugin_logic_action`（ctx 的 toast/setQuery/hide/redirect/logic-loaded 等） | 调用必须带 `host_token`，Rust 按令牌→id 强制归属 |
+| iframe ↔ supervisor | 窗口内 postMessage（`__lumeRpc` / `__lumeCall` / `__lumeEvent`，与视图桥同族） | `e.source` 过滤 |
+
+**令牌**：supervisor 每建一帧生成随机令牌，经 `plugin_logic_register_tokens`
+登记到 Rust（token → plugin id）；令牌**不进帧**（URL/全局都没有）——帧内
+代码纵然逃逸出桥做裸 invoke，也因缺令牌被拒。`invalidate`（reload）与卸载
+会清除对应令牌。
+
+**模块加载**：帧内的加载器（`public/pluginLogicFrame.js`，classic script）
+经 RPC `__readPluginFile` 由 supervisor 代理读文件（路径**必须**留在本插件
+目录内，越界即拒），相对导入改写为**帧内** blob URL 后 `import()`；模块缓存
+随帧生命周期（reload = 换帧 = 全新缓存）。逻辑工厂 `create(ctx)` 的
+`ctx` 就是帧内的 `window.lume`（与视图页同面，`db`/`http`/`fs`/… 每次
+调用带令牌走 supervisor → invoke → Rust 门控）。
+
+**生命周期**：`plugin_logic_host_ensure` 幂等建窗（隐藏 1×1、skip-taskbar、
+恒定低水位内存修剪）；supervisor 就绪后通告 `plugin-logic-host-ready`，
+registry（重）发全部 load（覆盖建窗竞态）；宿主窗口 `Destroyed` →
+`plugin-logic-host-closed` → registry 重建并重载（10s 内二次崩溃放弃）；
+禁用/重载/卸载 → `plugin_logic_push{kind:"unload"}` 拆帧 + 清令牌。
+
+**声明式设置的时序**：`applyPluginSettings` 首投可能早于逻辑就绪——registry
+暂存（`pendingLogicSettings`），帧加载完成（supervisor 发 `logic-loaded`
+动作）后补投。
+
+**性能取舍（实测，见 CHANGELOG P6.5）**：每插件约一个独立 renderer 进程
+（空闲可修剪）；每次 ctx 调用多 2-3 跳 IPC（实测可感知阈值以下）；启动
+只多一个隐藏窗口（~110ms）。实机脚本 `test/_logic_host_probe.mjs`（12 项
+断言：窗口/帧存在、四类裸 invoke 拒绝、provider 搜索往返、ctx.db 往返、
+设置恢复）。
 
 ---
 
@@ -1384,10 +1436,20 @@ pluginBuiltin`。
      `permissions` 校验调用方 plugin_id（fail-closed；原生路径 = main 窗口且
      无 plugin_id）；清单缓存随 `get_plugins`/`reload_plugin` 刷新；
   3. **前端守卫**（`permissions.ts`）：不变，负责知情同意与本地化文案。
-- **残余边界（如实说）**：宿主窗口里的插件**逻辑**（provider/service entry）仍
-  是同源代码，可直接 `invoke` 并冒用 id——「显式放置即信任」的既有决定；进程级
-  隔离（每插件一个 webview/进程）留待生态阶段。签名校验、`.lupx` 安装确认同样
-  在生态阶段（P4）；届时台账与设置页的权限 UI 已就位。
+- **P6.5 进程隔离（2026-10-05）**：插件**逻辑**（provider/service entry）不再
+  跑在启动器窗口——移入共享隐藏窗口 `plugin-logic-host` 的 opaque-origin
+  沙箱 iframe（每插件一帧，WebView2 站点隔离给每帧独立 renderer 进程），
+  见 §6I。归属用 **label + 令牌**强制（`plugin_perm::resolve_plugin_caller`）：
+  逻辑宿主的调用必须带 supervisor 签发的 `host_token`，有效 id 一律以令牌
+  映射为准（声称值被忽略，冒用失效）；分离视图窗口 `plugin-<id>` 的调用
+  强制以 label 后缀为 id；策略类命令（启停/信任/安装）拒绝一切 `plugin-*`
+  窗口。逻辑帧内的裸 `invoke` 实测连 WebView2 IPC 层都过不去（opaque
+  origin，无 ACAO——"Origin header is not a valid URL"），fail-closed。
+  - **残余边界（如实说）**：启动器主窗口内的视图 iframe（label 仍是 main）
+    逃逸沙箱后的裸 `invoke` 沿用既有白名单规则（main 直通）；-db/storage/
+    settings 类无权限命令对 main 窗口内的帧仍按声称 id 计——彻底关闭它需要
+    给视图帧也发令牌，留待生态阶段。签名校验、`.lupx` 安装确认同样在
+    生态阶段（P4）。
 - `fs.readText`/`thumb`/`icon`（及 `app.trash`）暴露任意路径的读取与删除能力，
   现已被 `fs.read` / `trash` 声明覆盖。
 - 内置插件与磁盘插件在注册表/启停上无差别，但内置代码经编译审计随包发布且不

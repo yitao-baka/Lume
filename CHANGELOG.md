@@ -8,6 +8,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件逻辑进程级隔离（P6.5 第二阶段）** — entry 插件的逻辑移出启动器
+  主窗口：共享隐藏窗口 `plugin-logic-host` 每插件一个 opaque-origin 沙箱
+  iframe（WebView2 站点隔离 → 独立 renderer 进程，插件死循环不再波及他人），
+  registry 贡献全部代理化（hook = 跨窗口 RPC）。归属强制：supervisor 签发
+  一次性令牌（不进帧），Rust `resolve_plugin_caller` 按 label+令牌解析有效
+  plugin id——逻辑宿主无令牌/假令牌一律拒绝，`plugin-<id>` 视图窗强制
+  label 归属，策略命令（启停/信任/安装）拒绝一切 plugin-* 窗口；db/storage/
+  fs 等数据落点全部改用解析后 id。生命周期：supervisor 就绪通告重发 load
+  （建窗竞态）、崩溃自动重建（10s 冷却）、声明式设置就绪后补投。
+  性能实测（调试机）：宿主窗口创建 ~110ms、空闲 CPU ≈0、每插件约一个独立
+  renderer 进程（空闲 `MemoryUsageTargetLevel=Low` 修剪）。端到端
+  `test/_logic_host_probe.mjs` 12 项全过（四类裸 invoke 拒绝 / provider
+  搜索往返 / ctx.db 令牌链路 / 设置恢复）；cargo test 185 全过。
+
 - **插件独立窗口双向状态快照/恢复（P6.5）** — 分离为独立窗口不再是「全新文档」：
   detach 时启动器先经桥接新通道 `__lumeCall{type:"snapshot"}`（1.5s 超时兜底）
   向页面要状态快照，随 ready 握手推送带进独立窗口，标准回放之后以 `restore`

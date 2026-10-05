@@ -70,6 +70,7 @@ pub async fn get_foreground_context(app: AppHandle) -> Result<ForegroundContext,
 #[tauri::command]
 pub async fn plugin_foreground_context(
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
@@ -81,6 +82,7 @@ pub async fn plugin_foreground_context(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "window",
     )?;
     let hwnd = app
@@ -170,6 +172,7 @@ pub fn copy_path(path: String) -> Result<(), String> {
 pub async fn trash_to_recycle(
     paths: Vec<String>,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
@@ -179,6 +182,7 @@ pub async fn trash_to_recycle(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "trash",
     ) {
         eprintln!("[explorer] trash denied: {err}");

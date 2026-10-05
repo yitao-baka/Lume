@@ -204,6 +204,7 @@ pub fn plugin_notify(
     title: String,
     body: String,
     plugin_id: Option<String>,
+    host_token: Option<String>,
     window: tauri::WebviewWindow,
     perms: tauri::State<crate::plugin_perm::PluginPermState>,
     settings: tauri::State<crate::settings::SettingsState>,
@@ -213,6 +214,7 @@ pub fn plugin_notify(
         &settings,
         &window,
         plugin_id.as_deref(),
+        host_token.as_deref(),
         "notify",
     )?;
     eprintln!(

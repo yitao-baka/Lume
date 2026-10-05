@@ -110,7 +110,7 @@ fn fetch_blocking(req: HttpRequest) -> Result<HttpResponse, String> {
         .unwrap_or(DEFAULT_TIMEOUT_MS)
         .clamp(1_000, MAX_TIMEOUT_MS) as i32;
 
-    let agent = HSTRING::from("Lume/2.0 (plugin host)");
+    let agent = HSTRING::from(concat!("Lume/", env!("CARGO_PKG_VERSION"), " (plugin host)"));
     let session = unsafe {
         WinHttpOpen(
             PCWSTR(agent.as_ptr()),

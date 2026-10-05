@@ -71,8 +71,9 @@ export function createDiskLoader(fetchText: (path: string) => Promise<string>) {
     throw lastErr ?? new Error(`module not found: ${path}`);
   }
 
-  /** Compile one module (and, recursively, its relative imports). */
-  function compileDiskModule(absPath: string): Promise<CompiledModule> {
+  /** Compile one module (and, recursively, its relative imports). `root` is
+   * the plugin dir — `//# sourceURL` names are displayed relative to it. */
+  function compileDiskModule(absPath: string, root: string): Promise<CompiledModule> {
     const key = moduleKey(absPath);
     const cached = moduleCache.get(key);
     if (cached) return cached;
@@ -85,7 +86,7 @@ export function createDiskLoader(fetchText: (path: string) => Promise<string>) {
         if (!deps.has(spec)) {
           deps.set(
             spec,
-            compileDiskModule(resolveRelative(dir, spec)).then((c) => c.url)
+            compileDiskModule(resolveRelative(dir, spec), root).then((c) => c.url)
           );
         }
       }
@@ -100,7 +101,14 @@ export function createDiskLoader(fetchText: (path: string) => Promise<string>) {
         const url = urls.get(spec);
         return url ? pre + q + url + q : m;
       });
-      const url = URL.createObjectURL(new Blob([rewritten], { type: "text/javascript" }));
+      // DevTools 里按真实文件名显示（否则是匿名 blob hash）。
+      const rel =
+        root && absPath.toLowerCase().startsWith(root.toLowerCase())
+          ? absPath.slice(root.length + 1)
+          : absPath;
+      const labeled =
+        rewritten + `\n//# sourceURL=lume-plugin/${rel.replace(/\\/g, "/")}\n`;
+      const url = URL.createObjectURL(new Blob([labeled], { type: "text/javascript" }));
       return { url, mod: await import(url) };
     })();
     moduleCache.set(key, compiled);
@@ -110,7 +118,7 @@ export function createDiskLoader(fetchText: (path: string) => Promise<string>) {
   return {
     /** Import a plugin entry (`dir` + entry path, either separator). */
     async importEntry(dir: string, entry: string): Promise<unknown> {
-      return (await compileDiskModule(dir + "\\" + entry.replace(/\//g, "\\"))).mod;
+      return (await compileDiskModule(dir + "\\" + entry.replace(/\//g, "\\"), dir)).mod;
     },
     clearCache() {
       moduleCache.clear();

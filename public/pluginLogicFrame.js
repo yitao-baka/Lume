@@ -182,7 +182,7 @@
       throw new Error("module not found: " + path);
     });
   }
-  function compileDiskModule(absPath) {
+  function compileDiskModule(absPath, rootDir) {
     var key = moduleKey(absPath);
     var cached = moduleCache.get(key);
     if (cached) return cached;
@@ -195,7 +195,7 @@
           for (var m of matches) {
             var spec = m[3];
             if (!deps.has(spec)) {
-              deps.set(spec, compileDiskModule(resolveRelative(dir, spec)).then(function (c) { return c.url; }));
+              deps.set(spec, compileDiskModule(resolveRelative(dir, spec), rootDir).then(function (c) { return c.url; }));
             }
           }
           return Promise.all(
@@ -208,6 +208,11 @@
               var url = urls.get(spec);
               return url ? pre + q + url + q : mm;
             });
+            // DevTools 里按真实文件名显示（否则是匿名 blob hash）。
+            var rel = rootDir && absPath.toLowerCase().startsWith(rootDir.toLowerCase())
+              ? absPath.slice(rootDir.length + 1)
+              : absPath;
+            rewritten += "\n//# sourceURL=lume-plugin/" + pluginId + "/" + rel.replace(/\\/g, "/") + "\n";
             var url = URL.createObjectURL(new Blob([rewritten], { type: "text/javascript" }));
             return import(url);
           });
@@ -235,7 +240,7 @@
     var dir = String((payload && payload.dir) || "");
     var entry = String((payload && payload.entry) || "");
     if (!dir || !entry) return Promise.reject(new Error("logic load: missing dir/entry"));
-    return compileDiskModule(dir + "\\" + entry.replace(/\//g, "\\")).then(function (mod) {
+    return compileDiskModule(dir + "\\" + entry.replace(/\//g, "\\"), dir).then(function (mod) {
       logic = resolveLogic(mod, window.lume);
       return { hooks: Object.keys(logic).filter(function (k) { return typeof logic[k] === "function"; }) };
     });

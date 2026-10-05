@@ -905,7 +905,7 @@ const detachedSuppliers = new Map<
 const pendingSnapshots = new Map<string, { view?: unknown }>();
 /** App.tsx 的 detachMode 在开窗前调用：页面无响应/未就绪传 null，不暂存。 */
 export function storePendingSnapshot(id: string, snapshot: unknown | null): void {
-  const capped = capSnapshot(snapshot);
+  const capped = capSnapshot(snapshot, id);
   // CDP verify tap（同 pluginWindow 的 __pluginStates 模式）
   ((window as unknown as { __snapPending?: unknown[] }).__snapPending ??= []).push({
     id,
@@ -1004,7 +1004,7 @@ export function onPluginWindowClosed(
   const id = typeof payload === "string" ? payload : payload.id;
   detachedIds.delete(id);
   if (typeof payload === "string") return; // pre-P6.5 emitter (no snapshot)
-  const view = capSnapshot(payload.snapshot);
+  const view = capSnapshot(payload.snapshot, id);
   // The final query becomes the mode's query: the in-launcher replay (and
   // the search box) pick it up on the next activation. **"" is a real
   // value** — the user may have cleared the text inside the detached window;

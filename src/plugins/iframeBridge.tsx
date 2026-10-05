@@ -11,6 +11,7 @@
 
 import { createSignal, onMount, onCleanup, type Component } from "solid-js";
 import { currentThemeMode, PANEL_SURFACE_BG } from "../theme";
+import { plog } from "./log";
 
 /** The bridge client injected into every plugin view page. Kept as a string
  * so it can be textually injected — it runs inside the plugin iframe. */
@@ -396,15 +397,25 @@ const READY_GRACE_MS = 3000;
  * custom layer first, then give up entirely. */
 const SNAPSHOT_MAX_CHARS = 1_000_000;
 
-export function capSnapshot(snap: unknown): unknown {
+export function capSnapshot(snap: unknown, owner?: string): unknown {
+  // 降级必须可感知（否则表现为"状态继承时灵时不灵"）——devtools 里能查到原因。
+  const warn = (msg: string) => plog.warn(owner ?? null, msg);
   try {
     if (snap == null) return null;
     if (JSON.stringify(snap).length <= SNAPSHOT_MAX_CHARS) return snap;
-    if (typeof snap !== "object") return null;
+    if (typeof snap !== "object") {
+      warn("snapshot >1MB — dropped entirely");
+      return null;
+    }
     const { custom: _drop, ...rest } = snap as { custom?: unknown };
-    if (JSON.stringify(rest).length <= SNAPSHOT_MAX_CHARS) return rest;
+    if (JSON.stringify(rest).length <= SNAPSHOT_MAX_CHARS) {
+      warn("snapshot >1MB — custom layer dropped, auto fields kept");
+      return rest;
+    }
+    warn("snapshot >1MB — dropped entirely");
     return null;
-  } catch {
+  } catch (err) {
+    warn(`snapshot serialization failed: ${err}`);
     return null;
   }
 }

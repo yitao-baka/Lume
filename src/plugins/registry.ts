@@ -586,7 +586,8 @@ function createDiskModeInstance(
         });
         if (att.view) postEv("restore", att.view);
       }
-    }
+    },
+    { id: m.id }
   );
   // Events (query/show/hide) mirror into the plugin log so a silent page is
   // distinguishable from one that never received anything.

@@ -2322,3 +2322,48 @@ pluginLogicFrame 两处编译点）。
 - manifest `kind` 字段强制校验（声明与实际贡献不符时安装期报错）。
 - 视图帧的令牌化（关闭 §9 残余边界：main 窗口内视图 iframe 的声称 id）。
 
+
+## 33. 独立窗口视图帧「导航丢失」修复（P6.7，已实现）
+
+**状态：已实现（2026-10-05，提交见 CHANGELOG `[Unreleased] → Fixed` 首条）。**
+背景：release 构建下打开插件独立窗口（`plugin-<id>`）有 1/3–5/6 概率整页空白
+——只剩宿主 chrome（标题栏 + 窗口按钮），视图与 titlebar 槽两个 iframe 全空。
+file-search（自带 titlebar + 2.2MB 视图页）复现率最高，实测 10/12。
+
+### 33.1 根因（CDP 实测）
+
+`createIframeView` 挂载 `srcdoc={srcdoc()}` 时信号初值是 `""`，Solid 会把
+**空串写进 srcdoc 属性**——帧先按空 srcdoc 导航一次（opaque origin → 一次
+renderer 进程交换），真实 HTML 几百毫秒后到达再导航第二次。独立窗口有两个
+这样的沙箱帧（视图 + titlebar 槽），两个帧的第二次导航挤在几十毫秒内时
+WebView2 会**丢掉后一个导航**：
+
+- 失败帧的 CDP target 存在，但其 `document` 是 **39 字节的空 srcdoc 文档**
+  （`body.Length=0, scripts=0`）——导航从未提交，页面脚本从未执行；
+- 浏览器侧只看到 `Page.frameRequestedNavigation`（reason=scriptInitiated）
+  与 `Page.frameDetached reason=swap`，**没有** `frameNavigated`；
+- 事后重设 `srcdoc`（remove + set）**每次都能救回**（所以修复的兜底路径可靠）；
+- 反证：逻辑宿主帧用 `src` 在插入 DOM 前赋值（单次导航）从不失败。
+
+### 33.2 修复（两半，都在 `src/plugins/iframeBridge.tsx`）
+
+1. **预防**：帧在拿到真实 HTML 前不导航——信号初值改 `string | undefined`，
+   `undefined` 走 Solid 的 `removeAttribute` 分支（帧停在 about:blank），
+   每次载入只触发一次导航（`setHtml` 写属性）。`--mode=empty` 专项断言
+   「零次空 srcdoc 写入」。
+2. **兜底**：桥的最开头（`<head>` 注入的首个语句）上报 `__lumeFrameBoot`；
+   宿主侧 boot 看门狗在 700/1500/2800ms 检查，帧没起来就 remove+set 重新触发
+   导航（每次重试重启 ready 宽限），三次仍失败 `plog.error` 放弃并留痕。只盯
+   没有桥的宿主自建错误页会被跳过；未挂载的帧（启动器里非活动模式页的预取）
+   不做无意义重试，改由挂载时 ref 重新武装看门狗。
+
+### 验证
+
+`scripts/cdp_plugin_blank_verify.mjs` 修复前 **10/12 空白** → 修复后连跑
+**0/58**（file-search）+ **0/10**（hello-mode）；
+`scripts/cdp_plugin_frame_load_verify.mjs --mode=empty` **4/4**、
+`--mode=dropfirst` **4/4**（吞掉首次大 srcdoc 写入 → 看门狗按预期救回）；
+`cdp_plugin_window_verify` **12/12**（分离/握手/路由/关闭/重开全链）、
+`cdp_sandbox_verify` **14/14**；`cdp_p3_verify` **36/9** 与修复前基线逐项一致
+（9 项为既有失败，与本轮无关）。启动器内 mode 页（同一装载路径）实机截图
+复验正常（file-search 2.2MB 页在启动器内渲染 + 搜索 + 预览全通）。

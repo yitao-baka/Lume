@@ -35,6 +35,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **独立窗口偶发全白（P6.7，ROADMAP #33）** — release 构建下打开插件独立窗口
+  会有约 1/3–5/6 的概率整页空白（只剩宿主 chrome，视图帧什么都没有）。根因
+  不在插件侧：`createIframeView` 挂载 iframe 时把信号初值 `""` 写进了
+  `srcdoc` → 帧先按**空 srcdoc** 导航一次（含一次 renderer 进程交换），真实
+  页面几百毫秒后到达又要再导航一次；独立窗口有**两个**这样的沙箱帧（视图 +
+  titlebar 槽位），两次进程交换挤在几十毫秒内时 WebView2 会**丢掉后一个导航**
+  ——帧永久停在空文档上（CDP 实测：失败帧的 `document` 是 39 字节的空
+  srcdoc 文档，浏览器侧只有 `frameRequestedNavigation` 没有 `frameNavigated`）。
+  逻辑宿主帧用 `src` 在插入前赋值（单次导航）从不失败，反证了这一点。修复
+  两半：①**预防**——HTML 未就绪前不导航帧（`srcdoc={undefined}` 走 Solid 的
+  `removeAttribute` 分支，帧停在 about:blank），每个帧只做一次导航；②**兜底**
+  ——桥在最开头上报 `__lumeFrameBoot`，宿主侧 boot 看门狗（700/1500/2800ms）
+  发现帧没起来就重新触发导航（remove+set，实测可靠的恢复手段），三次仍失败
+  才 plog.error 放弃。两条路径都有专项实机验证。
 - **P6.5 逻辑隔离回归修复（CDP probe 挖出）** — 逻辑宿主下 `hostApi` 有 28 处
   裸 `invoke` 漏注入 host token，clipboard/http/dialog/screen/fs 等能力调用被
   Rust fail-closed 拒绝；`plugin_net` 的内网防护按**原始参数**判插件身份，而
@@ -57,6 +71,17 @@ All notable changes to Lume are documented here. Format based on
   `logic-loaded`（P6.5 的接线缺口：registry 有 case、从未有人发）。
 
 ### 验证
+
+独立窗口空白页回归（P6.7）：`scripts/cdp_plugin_blank_verify.mjs`（新建/销毁
+独立窗口 N 次，逐次断言视图帧桥接就绪）修复前 file-search **10/12 空白**、
+修复后连跑 **0/58**（14+20+12+12）且 hello-mode **0/10**；
+`scripts/cdp_plugin_frame_load_verify.mjs --mode=empty` **4/4**（记录到的
+srcdoc 写入恰好两条非空——每帧一次导航，零次空写入）、`--mode=dropfirst`
+**4/4**（人为吞掉首次大写入后，看门狗按预期重导航把页面救回来：写入序列
+`[25638, 2269338, 2269338]`）；`cdp_plugin_window_verify` **12/12**、
+`cdp_sandbox_verify` **14/14**；`cdp_p3_verify` **36/9** 与修复前基线逐项
+一致（这 9 项在本机为既有失败：设置窗插件面板渲染 + notes 导出动作 + 日志
+tap，与本次改动无关）。
 
 cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私网拒绝 /
 白名单放行 / 熔断开+快速失败）、`test/_logic_host_probe.mjs` **12/12**、

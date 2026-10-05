@@ -17,6 +17,12 @@ import { plog } from "./log";
  * so it can be textually injected — it runs inside the plugin iframe. */
 export const BRIDGE_SCRIPT = `
 (function () {
+  // Boot signal — the very FIRST statement, before anything can stall: the
+  // document committed and its bridge is executing. The host's load watchdog
+  // keys on this (not on the later __lumeReady, which waits for the page's own
+  // load event) to tell "the frame is alive and merely slow" apart from "the
+  // navigation was dropped", so it only ever re-navigates the latter.
+  try { parent.postMessage({ __lumeFrameBoot: { frame: window.name } }, "*"); } catch (err) {}
   var pending = new Map();
   var rpcId = 0;
   function rpc(method, args) {
@@ -430,6 +436,17 @@ export const PLUGIN_FRAME_SANDBOX = "allow-scripts allow-forms allow-popups allo
  * spinner forever — past this grace period the page is shown as-is. */
 const READY_GRACE_MS = 3000;
 
+/** Boot watchdog delays (P6.6 blank-window fix). A fresh frame is expected to
+ * report `__lumeFrameBoot` a few ms after its navigation commits; a frame that
+ * stays silent this long never got a document and is re-navigated (see
+ * `createIframeView`). Runs only while the current document is unbooted, so a
+ * healthy frame clears the timers on its first message. */
+const BOOT_RETRY_DELAYS_MS = [700, 1500, 2800];
+/** After the last re-navigation: how long to wait before reporting the frame
+ * as dead (loudly — the window is blank and the user deserves a console
+ * record of why). */
+const BOOT_FINAL_CHECK_MS = 1600;
+
 /** Snapshot size cap (P6.5): the snapshot travels as JSON through Tauri
  * events and lives in session memory only — past this cap drop the plugin's
  * custom layer first, then give up entirely. */
@@ -461,7 +478,7 @@ export function capSnapshot(snap: unknown, owner?: string): unknown {
 export function createIframeView(
   onRpc: (method: string, args: Record<string, unknown>) => Promise<unknown>,
   onReady?: () => void,
-  opts?: { class?: string; name?: string }
+  opts?: { class?: string; name?: string; id?: string }
 ): {
   View: Component & { setHtml(html: string): void };
   post: (type: string, payload?: unknown) => void;
@@ -477,8 +494,76 @@ export function createIframeView(
   live: () => boolean;
 } {
   let frame: HTMLIFrameElement | undefined;
-  const [srcdoc, setSrcdoc] = createSignal("");
+  /** The page HTML; `undefined` until `setHtml`. The frame must NOT be
+   * navigated before real HTML exists: writing an EMPTY srcdoc (the old
+   * `srcdoc=""` initial value) sends the frame through a navigation +
+   * renderer-process swap of its own, and the real navigation that follows a
+   * few ms later can be dropped outright — the frame then sits on the empty
+   * document forever (the "completely blank detached plugin window", seen
+   * with 2 sandboxed frames per window; the logic host's frames, which set
+   * `src` before insertion — one navigation — never hit it). Binding `null`
+   * to the attribute removes it instead of writing, so a frame with no HTML
+   * yet simply stays on about:blank. */
+  const [srcdoc, setSrcdoc] = createSignal<string | undefined>(undefined);
   const [live, setLive] = createSignal(false);
+  // ── load/bookkeeping state for the current document ──
+  /** Last HTML handed to `setHtml` (the re-navigation payload). */
+  let currentHtml: string | undefined;
+  /** The document reported `__lumeFrameBoot` — its bridge is executing. */
+  let booted = false;
+  let bootTimers: ReturnType<typeof setTimeout>[] = [];
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  const frameLabel = opts?.name ? `frame "${opts.name}"` : "frame";
+  const clearBootTimers = () => {
+    for (const t of bootTimers) window.clearTimeout(t);
+    bootTimers = [];
+  };
+  /** Re-trigger the current document's navigation. remove-then-set, not a
+   * plain value write: the attribute has to be seen as *changed* for the
+   * frame to process it again (verified recovery for a dropped navigation). */
+  const reNavigate = (attempt: number) => {
+    if (!frame || !currentHtml) return;
+    plog.warn(
+      opts?.id ?? null,
+      `${frameLabel} never booted — re-navigating (attempt ${attempt}/${BOOT_RETRY_DELAYS_MS.length})`
+    );
+    frame.removeAttribute("srcdoc");
+    frame.setAttribute("srcdoc", currentHtml);
+    armGrace(); // a fresh load restarts the ready grace
+  };
+  /** Start (or restart) the boot watchdog for the current document. Only
+   * bridge-instrumented pages are watched — a host-authored error page (a
+   * failed view fetch renders a bare notice) has no bridge and would just be
+   * reloaded in a loop. A frame that is not mounted yet has nothing to retry
+   * either: the launcher fetches a mode page's HTML while the mode may not be
+   * on screen, and the mount-time `ref` re-arms the watchdog for it. */
+  const armBootWatchdog = () => {
+    clearBootTimers();
+    booted = false;
+    if (!currentHtml?.includes("__lumeFrameBoot")) return;
+    const liveFrame = () => !!frame && frame.isConnected;
+    BOOT_RETRY_DELAYS_MS.forEach((delay, i) => {
+      bootTimers.push(
+        window.setTimeout(() => {
+          if (!booted && liveFrame()) reNavigate(i + 1);
+        }, delay)
+      );
+    });
+    bootTimers.push(
+      window.setTimeout(() => {
+        if (!booted && liveFrame()) {
+          plog.error(
+            opts?.id ?? null,
+            `${frameLabel} still blank after ${BOOT_RETRY_DELAYS_MS.length} re-navigations — giving up`
+          );
+        }
+      }, BOOT_RETRY_DELAYS_MS[BOOT_RETRY_DELAYS_MS.length - 1] + BOOT_FINAL_CHECK_MS)
+    );
+  };
+  const armGrace = () => {
+    window.clearTimeout(graceTimer);
+    graceTimer = window.setTimeout(() => setLive(true), READY_GRACE_MS);
+  };
   const post = (type: string, payload?: unknown) => {
     frame?.contentWindow?.postMessage({ __lumeEvent: { type, payload } }, "*");
   };
@@ -509,12 +594,13 @@ export function createIframeView(
   const View: Component & { setHtml(html: string): void } = () => {
     onMount(() => {
       setLive(false); // a fresh document starts loading
-      const grace = window.setTimeout(() => setLive(true), READY_GRACE_MS);
+      armGrace();
       const handler = (e: MessageEvent) => {
         if (e.source !== frame?.contentWindow) return;
         const d = (e.data || {}) as {
           __lumeRpc?: { id: number; method: string; args: Record<string, unknown> };
           __lumeReady?: unknown;
+          __lumeFrameBoot?: { frame?: string };
           __lumeCallResult?: { callId: number; ok: boolean; result?: unknown; error?: string };
           __lumeFrameState?: unknown;
           __lumeKey?: {
@@ -528,9 +614,16 @@ export function createIframeView(
           };
           __lumeFocusRequest?: unknown;
         };
+        if (d.__lumeFrameBoot) {
+          // The document committed and its bridge script is running: the
+          // navigation was not dropped, so the load watchdog stands down
+          // (the page itself may take a while longer — that is fine).
+          booted = true;
+          clearBootTimers();
+        }
         if (d.__lumeReady) {
           // The page's bridge is live — safe to (re)send state now.
-          window.clearTimeout(grace);
+          window.clearTimeout(graceTimer);
           setLive(true);
           try {
             onReady?.();
@@ -601,7 +694,8 @@ export function createIframeView(
       window.addEventListener("message", handler);
       onCleanup(() => {
         window.removeEventListener("message", handler);
-        window.clearTimeout(grace);
+        window.clearTimeout(graceTimer);
+        clearBootTimers();
         setLive(false); // unmount = the document is gone
       });
     });
@@ -612,12 +706,24 @@ export function createIframeView(
         srcdoc={srcdoc()}
         title="plugin"
         sandbox={PLUGIN_FRAME_SANDBOX}
-        ref={(el) => (frame = el)}
+        ref={(el) => {
+          frame = el;
+          // The launcher's mode page can mount *after* setHtml was called
+          // (the page HTML is fetched while the mode is not on screen): the
+          // frame's first navigation starts here, so the watchdog for the
+          // pending HTML starts here too.
+          if (el && currentHtml) armBootWatchdog();
+        }}
       />
     );
   };
   View.setHtml = (html: string) => {
+    // Same HTML into a live document: the old code's signal write was a no-op
+    // (equal value), and re-navigating here would needlessly reload the page.
+    if (html === currentHtml && booted) return;
     setLive(false); // the swapped-in document must announce itself again
+    currentHtml = html;
+    armBootWatchdog();
     setSrcdoc(html);
   };
   return { View, post, snapshot, live };

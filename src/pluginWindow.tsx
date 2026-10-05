@@ -153,7 +153,8 @@ function App() {
       // (query / enter / settings / show). This is the cross-window version
       // of the in-launcher ready handshake.
       void invoke("plugin_window_ready", { id }).catch((err) => plog.error(id, "ready failed:", err));
-    }
+    },
+    { id }
   );
 
   // Titlebar slot viewer (optional manifest `titlebar`): the same bridge and
@@ -169,7 +170,7 @@ function App() {
       if (lastState.settings) slotPost?.("settings", lastState.settings);
       if (lastState.theme) slotPost?.("theme", lastState.theme);
     },
-    { class: "titlebar-frame", name: "titlebar" }
+    { class: "titlebar-frame", name: "titlebar", id }
   );
   slotPost = slotView.post;
 

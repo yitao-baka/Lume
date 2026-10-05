@@ -193,6 +193,27 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
+**独立窗口视图帧导航丢失修复（ROADMAP #33，P6.7, complete） — as of
+2026-10-05**: release 构建下打开插件独立窗口 1/3–5/6 概率整页空白（只剩宿主
+chrome，视图 + titlebar 槽两个 iframe 全空）。根因：`createIframeView` 挂载时
+把信号初值 `""` 写进 `srcdoc`——帧先按空 srcdoc 导航一次（含一次 renderer
+进程交换），真实页面到达后再导航一次；独立窗口有两个这样的沙箱帧，两次进程
+交换挤在几十毫秒内时 WebView2 **丢掉后一个导航**，帧永久停在 39 字节的空
+srcdoc 文档上（CDP 实证：只有 `frameRequestedNavigation` +
+`frameDetached(swap)`、没有 `frameNavigated`；事后 remove+set 重设 srcdoc
+每次都能救回；逻辑宿主帧因 `src` 在插入前赋值 = 单次导航，从不失败）。
+修复两半：①**预防**——HTML 未就绪前不导航帧（`srcdoc={undefined}` → Solid 走
+`removeAttribute`，帧停在 about:blank），每帧恰好一次导航；②**兜底**——桥首个
+语句上报 `__lumeFrameBoot`，宿主 boot 看门狗（700/1500/2800ms）没等到就
+remove+set 重放导航（每次重试重启 ready 宽限），三次失败 `plog.error` 放弃；
+只盯含桥的页面（自建错误页跳过）、未挂载帧（启动器非活动模式页的预取）不
+重试而是由挂载时 ref 重新武装。**验证**：`scripts/cdp_plugin_blank_verify.mjs`
+修复前 **10/12 空白** → 修复后 **0/58**（file-search）+ **0/10**（hello-mode）；
+`scripts/cdp_plugin_frame_load_verify.mjs --mode=empty` 4/4（零次空 srcdoc
+写入）、`--mode=dropfirst` 4/4（吞掉首次大写入后看门狗救回）；
+`cdp_plugin_window_verify` 12/12、`cdp_sandbox_verify` 14/14；
+`cdp_p3_verify` 36/9 与修复前基线逐项一致（9 项既有失败，与本轮无关）。
+
 **插件系统加固（ROADMAP #32，P6.6, complete） — as of 2026-10-05**: 契约/安全/
 健壮性/DX 四组。① **契约**：清单 `api` 版本（`HOST_PLUGIN_API = 1`，超版
 拒绝加载 + 逻辑宿主二次校验）；`.lupx` ed25519 签名（`plugin_sign.rs`：包内

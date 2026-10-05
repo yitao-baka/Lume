@@ -193,6 +193,34 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
+**插件系统加固（ROADMAP #32，P6.6, complete） — as of 2026-10-05**: 契约/安全/
+健壮性/DX 四组。① **契约**：清单 `api` 版本（`HOST_PLUGIN_API = 1`，超版
+拒绝加载 + 逻辑宿主二次校验）；`.lupx` ed25519 签名（`plugin_sign.rs`：包内
+`LUME.SIGN` 覆盖清单+全部文件哈希，信任根 = 内置发行公钥 +
+`<base>/settings/trust-keys/*.pub`，无效硬拒，未签名展示 SHA-256；CLI 与宿主
+同源 `lume --gen-key`/`--sign-lupx`）。② **安全**：`plugin_net.rs` 内网防护
+（回环/私网/链路本地/CGNAT 默认拒绝，实测防 SSRF；`network_allow` 白名单
+放行；重定向手动逐跳 ≤5 重新校验）。③ **健壮性**：插件熔断（registry
+`logicFailCounts`/`logicOffline`，连续 3 次失败离线 + toast + 快速失败；
+`logicPendingReady` 让首载/重载窗口的调用按"未就绪"快速失败不计熔断；
+supervisor hook 6s / load 15s 兜底回执）；onQuery/onSubInput 120ms trailing
+节流。④ **DX**：`plugin_devwatch.rs`（dev_mode 下 plugins 目录内核事件监听
+→ 800ms 静默 → `plugin-dev-changed` → 自动热重载）；`examples/plugins/
+plugin-api.d.ts` + list-demo `@ts-check` + `examples/tsconfig.json`；blob
+模块 `//# sourceURL`。**同轮修复 P6.5 回归**：hostApi 28 处裸 invoke 漏
+token（逻辑宿主下 clipboard/http/dialog/screen/fs 被 fail-closed 拒）；
+内网防护按原始参数判身份（对逻辑宿主完全失效）；帧侧与视图桥的 rpc 吞错成
+`resolve(undefined)`（权限拒绝不可感知）；http 成功结果带函数跨 postMessage
+DataCloneError 被降级成假失败。**另修构建语义**（#16 遗留）：`custom-protocol`
+移入 `[features]`（模板惯例）——`tauri build` 自动 embedded、`tauri dev`/
+`cargo run` 走 devUrl（此前 dev 也强制 embedded，改前端必须手工重嵌）。
+**验证**：cargo test **198**；`test/_harden_probe.mjs` 8/8、
+`test/_logic_host_probe.mjs` 12/12、`test/_snapshot_probe.mjs` 16/16、
+`test/_sign_probe.mjs` 5/5；dev 监听实测 V1→V2 自动生效。**CDP 观测变化**：
+新 WebView2 不再向宿主 target 暴露 srcdoc 帧的 execution context——probe 改用
+宿主侧 tap（`__frameStates`/`__logicCircuit`/`__snapPending`/`__rpcLog`，
+见 PLUGIN_API §10）。
+
 **插件逻辑进程级隔离 + 独立窗口双向状态快照（P6.5, complete） — as of
 2026-10-05**: 两条主线。① **逻辑隔离**（ROADMAP #28/#29 遗留项清账）：
 entry 插件逻辑不再 blob-`import()` 进启动器窗口——共享隐藏窗口

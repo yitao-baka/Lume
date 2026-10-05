@@ -2240,83 +2240,85 @@ pill 排序/隐藏设置、§10.4 剪贴板页重设计（本重构为其结构�
   三窗口全 255.0（白鸽）、浅色全 0.0（黑鸽）、无 `[appicon]` 错误日志）+
   用户手动目检任务栏/托盘随主题翻转通过。
 
-## 32. 插件系统加固（规划）
+## 32. 插件系统加固（已实现）
 
-**状态：规划完成（2026-10-05），待批准实施。** 背景：P6.5 逻辑隔离落地后的
-整体评估结论——信任边界骨架正确（opaque 沙箱 + Rust 侧 token 门控 +
-fail-closed），短板集中在**生态契约缺失**（无签名、无 API 版本）、**共享
+**状态：已实现（2026-10-05，P6.6，提交 b48ab03…fb9142f）。** 背景：P6.5 逻辑
+隔离落地后的整体评估结论——信任边界骨架正确（opaque 沙箱 + Rust 侧 token
+门控 + fail-closed），短板集中在**生态契约缺失**（无签名、无 API 版本）、**共享
 故障域**（一个插件拖累全窗）与**高频链路无节流**。趁第三方生态未起，契约类
-问题现在补最便宜。优先级排序：契约（32.1-32.3）→ 健壮性（32.4-32.6）→
-开发体验（32.7-32.10）。
+问题现在补最便宜。实现过程中 CDP probe 挖出并修复了 5 个 P6.5 回归 bug
+（hostApi 漏 token / 内网防护判身份用错字段 / rpc 吞错 / 克隆失败降级 /
+重载竞态误熔断），并修正了 dev/embedded 构建语义（#16 遗留）。
 
-### 32.1 宿主 API 版本契约（P0）
+### 32.1 宿主 API 版本契约（P0）✓
 
-manifest 无 `api` 版本字段（`plugins.rs` PluginManifest 只有插件自身
-version），桥协议（`__lumeReady/__lumeRpc/__lumeCall`）无版本协商——宿主
-升级可能让旧插件静默半坏。方案：manifest 增 `api` 字段（缺省 = 1，向后
-兼容）；逻辑帧/视图桥握手带版本，不匹配时明确报错而非怪异行为；
-`PLUGIN_API.md` 建弃用流程（先加后删、留一个版本周期）。
+manifest `api` 字段（缺省 = 宿主版本 `HOST_PLUGIN_API = 1`，镜像于
+`plugins.rs` 与 `types.ts`）；超版在加载期明确拒绝（前端加载门 + 逻辑宿主
+二次校验）+ toast `pluginApiMismatch`；PLUGIN_API.md §11 建立弃用流程。
 
-### 32.2 `.lupx` 签名与完整性（P0）
+### 32.2 `.lupx` 签名与完整性（P0）✓
 
-`plugin_install.rs` 只做路径规范化/大小上限/内容清点，zip 即装，无签名无
-哈希——分发链路被篡改无从发现。方案：`.lupx` 增签名条目（ed25519 对
-manifest + 文件清单签名），Rust 端内置公钥验签、允许用户导入自签公钥；
-未签名包降级为现有确认流 + 展示 sha256。签名工具用 Node 脚本（node:crypto
-原生 ed25519，零新依赖），商店端同一工具。
+`plugin_sign.rs`：包内 `LUME.SIGN`（ed25519，覆盖 manifest 字节 + 全部文件
+逐一 SHA-256，按名排序）；信任根 = `RELEASE_PUBKEY_B64`（发行时填）+
+`<base>/settings/trust-keys/*.pub`（用户放文件即导入）。三态：valid / unsigned
+（确认卡展示 SHA-256）/ **invalid 硬拒**。签名 CLI 与宿主同源：
+`lume --gen-key`、`lume --sign-lupx <pkg> --key <file>`（`main.rs` 分发，
+不建窗）。依赖 `ed25519-dalek`/`sha2`/`getrandom`（纯 Rust，crates 镜像）。
 
-### 32.3 网络能力内网防护（P0）
+### 32.3 网络能力内网防护（P0）✓
 
-`plugin_net.rs` 仅限 http/https scheme，`network` 权限 = 任意 URL，可探测/
-访问内网服务（SSRF）。方案：默认拒绝回环/私网目标（127/8、10/8、172.16/12、
-192.168/16、169.254/16、::1），manifest 可选 `network_allow = ["host"]`
-白名单放行（面向自建服务场景）；既有插件默认行为不变（只是内网默认关闭）。
+`plugin_net.rs`：插件请求默认拒绝回环（127/8、::1）、私网（10/8、172.16/12、
+192.168/16）、链路本地（169.254/16、fe80::/10）、CGNAT（100.64/10）、未指定
+地址与 IPv4-mapped IPv6；manifest `network_allow`（精确 / `*.` 通配 / 裸 `*`）
+放行自建服务。**重定向改手动逐跳**（≤5，301/302/303 → GET 清体，307/308
+保 method）——堵住"外网 302 跳内网"绕过。已知边界：域名按本次 DNS 解析判定，
+rebinding 的 TOCTOU 缺口在文档注明。
 
-### 32.4 插件熔断（P1）
+### 32.4 插件熔断（P1）✓
 
-共享逻辑宿主 = 共享故障域：单插件死循环/连续超时拖慢同窗其它插件。方案：
-supervisor 侧统计每插件 hook 结果，连续 N 次超时/异常自动标记离线 + toast
-（其余插件不受影响），手动重载/设置刷新恢复；声明高消耗的插件可后续提供
-独立进程选项（基建已在）。
+registry：连续 3 次 hook 失败（超时 / push 失败 / ok:false；"未就绪"除外）
+→ 离线 + toast（三语 `pluginCircuitOpen`）+ 调用快速失败 + load 不重发；
+重载/保存设置复位。`logicPendingReady`：首载/重载窗口的调用按"未就绪"快速
+失败（不计熔断）——修复重载竞态误判（navBars/onSettings 拉取撞上帧重建，
+被投给已销毁的旧帧 → 8s 超时 → 3 次就熔断）。supervisor 补 hook 6s / load
+15s 兜底回执（帧卡死不再泄漏 `entry.calls`）并补发 `logic-loaded`（P6.5 的
+接线缺口）。
 
-### 32.5 onQuery 跨进程节流（P1）
+### 32.5 onQuery 跨进程节流（P1）✓
 
-`registry.ts` 每个 input 事件都 `logicCall("onQuery")` 跨 3 进程（主窗 →
-Rust 中继 → 逻辑窗 → iframe，3-10ms/次），打字快时是事件风暴。方案：宿主
-侧 ~120ms trailing 合并再 push，API 语义不变（收到的仍是最新输入），所有
-插件免费受益。
+registry `throttledLogicCall`：120ms trailing 合并（窗口内只留最新值），
+替换 4 个 onQuery + 2 个 onSubInput 调用点；unload 清理未发送的定时器。
 
-### 32.6 UA 版本修正（P1）
+### 32.6 UA 版本修正（P1）✓
 
-`plugin_net.rs` 硬编码 `Lume/2.0 (plugin host)`，应用已 3.0.0。改
-`env!("CARGO_PKG_VERSION")`。
+`concat!("Lume/", env!("CARGO_PKG_VERSION"), " (plugin host)")`。
 
-### 32.7 dev 目录监听热重载（P2）
+### 32.7 dev 目录监听热重载（P2）✓
 
-热重载目前是设置面板手动按钮（仅 `development` 清单生效）。方案：dev_mode
-下用 `ReadDirectoryChangesW` 监听插件目录（沿用 repo 零依赖手写 Win32 惯例，
-参考 dirwatch/usnidx），变更去抖后走现有 `reloadDiskPlugin` 推送。
+`plugin_devwatch.rs`：dev_mode 下递归监听 `<base>/plugins`
+（FindFirstChangeNotificationW，零轮询），800ms 静默 → `plugin-dev-changed`
+→ 前端 `refreshPlugins`（只重载 development 插件）。`set_plugin_dev_mode`
+的轻量写盘路径也接 rebuild。
 
-### 32.8 快照降级可感知（P2）
+### 32.8 快照降级可感知（P2）✓
 
-`iframeBridge.tsx capSnapshot` 超 1MB 静默丢 custom、再静默整体置 null——
-表现为"状态继承时灵时不灵"最难查。方案：降级发生时 `plog.warn` + dev_mode
-下 toast 提示。
+`capSnapshot(snap, owner)`：丢 custom / 整体置 null 时 `plog.warn` 记明原因。
 
-### 32.9 逻辑帧调试名（P2）
+### 32.9 逻辑帧调试名（P2）✓
 
-blob URL 模块在 DevTools 显示匿名 hash，断点/定位困难。方案：blob 尾部追加
-`//# sourceURL=<plugin-id>/<entry>.js`（diskLoader 与 pluginLogicFrame 两处
-编译点都要加）。
+blob 模块尾部 `//# sourceURL=lume-plugin/<id>/<相对路径>`（diskLoader 与
+pluginLogicFrame 两处编译点）。
 
-### 32.10 `plugin-api.d.ts` 类型定义（P2）
+### 32.10 `plugin-api.d.ts` 类型定义（P2）✓
 
-examples 增类型定义 + JSDoc（与 PLUGIN_API.md 同源），至少一个示例插件用
-`@ts-check` 证明可校验；文档说明引用方式；长期可发 npm 包。
+`examples/plugins/plugin-api.d.ts` 全局类型（ctx 六组 + LumeProviderLogic +
+事件钩子）；list-demo `@ts-check` + JSDoc 示范；`examples/tsconfig.json`
+（`pnpm exec tsc -p examples/tsconfig.json` 校验，已通过）。
 
 ### 32.11 暂缓（记录在案，等真实需求）
 
 - 逻辑宿主空闲自动关闭（省 ~20MB+，冷启 ~107ms；可做设置项）。
 - service 心跳改 Rust 侧计时 push 唤醒（规避隐藏窗 timer 节流）。
 - manifest `kind` 字段强制校验（声明与实际贡献不符时安装期报错）。
+- 视图帧的令牌化（关闭 §9 残余边界：main 窗口内视图 iframe 的声称 id）。
 

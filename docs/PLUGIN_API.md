@@ -322,10 +322,14 @@ Navigate 输入按以下优先级匹配关键字（多插件命中时按级排�
 - **手动**：设置 → 插件 每个磁盘插件行的「↻ 重载」按钮 → Rust `reload_plugin`
   命令 → `plugin-reload` 事件 → 前端注册表卸载并重新从磁盘 import 该插件
   （含清单重读：改 `keywords`/`height`/`icon` 同样生效）。内置插件无此按钮。
-- **自动**：清单 `development = true` → 每次 settings-applied（任一设置保存、
-  任一插件启停）都先卸载再重载。
+- **自动（settings-applied）**：清单 `development = true` → 每次 settings-applied
+  （任一设置保存、任一插件启停）都先卸载再重载。
+- **自动（目录监听，#32.7）**：开发者模式开启时（设置 → 插件 → 开发者模式），
+  Rust `plugin_devwatch.rs` 递归监听 `<base>/plugins`（内核事件、零轮询），
+  文件变动静默 800ms 后发 `plugin-dev-changed` → 前端走与 settings-applied
+  相同的重载路径。**改代码保存即生效，无需任何点击**。
 - 重载会清空模块缓存（§5.6）；若重载的是当前激活的 mode，模式实例被整体
-  替换（查询清空，页面重建）。
+  替换（查询清空，页面重建）。重载窗口期内的 hook 调用快速失败（不计熔断）。
 
 ---
 
@@ -1479,8 +1483,21 @@ pluginBuiltin`。
   - **残余边界（如实说）**：启动器主窗口内的视图 iframe（label 仍是 main）
     逃逸沙箱后的裸 `invoke` 沿用既有白名单规则（main 直通）；-db/storage/
     settings 类无权限命令对 main 窗口内的帧仍按声称 id 计——彻底关闭它需要
-    给视图帧也发令牌，留待生态阶段。签名校验、`.lupx` 安装确认同样在
-    生态阶段（P4）。
+    给视图帧也发令牌，留待生态阶段。
+- **#32 加固层（2026-10-05）**：
+  - **API 版本契约**（§11）：清单 `api` 超过宿主 `HOST_PLUGIN_API` → 加载期
+    拒绝（前端加载门 + 逻辑宿主二次校验）。
+  - **`.lupx` 签名**（§6H.1）：ed25519 验签，无效签名 inspect/install 硬拒；
+    未签名包维持确认流 + 展示 SHA-256。
+  - **网络内网防护**（§6D.1）：插件请求默认拒绝回环/私网/链路本地目标，
+    `network_allow` 白名单放行；重定向逐跳重检（302 跳内网同样被拒）。
+  - **插件熔断**：同一插件连续 3 次 hook 失败（超时/推送失败/ok:false）→
+    标记离线 + toast，其调用快速失败、load 不重发（其余插件不受影响）；
+    重载/保存设置复位。帧卡死由 supervisor 6s 兜底回执（先于 registry 8s
+    超时），未就绪/重载窗口的调用按"未就绪"快速失败、不计熔断。
+  - **失败不再静默**：帧侧与视图桥的 rpc 不吞错（此前把权限拒绝/网络拒绝
+    伪装成 resolve(undefined)）；宿主 reply 遇不可克隆值（http 的
+    `text()`/`json()`）剥离函数重发而非降级为假失败。
 - `fs.readText`/`thumb`/`icon`（及 `app.trash`）暴露任意路径的读取与删除能力，
   现已被 `fs.read` / `trash` 声明覆盖。
 - 内置插件与磁盘插件在注册表/启停上无差别，但内置代码经编译审计随包发布且不
@@ -1538,9 +1555,22 @@ pluginBuiltin`。
   设置项渲染与改动后插件 toast、以及未声明能力的拒绝文案；detachable 模式
   可验「在独立窗口打开」→ 窗口内 toast/resize → Esc 关闭 → 再分离原位恢复
   （§6G）。
-- **改前端后必须重新 `cargo build` 再跑 CDP 冒烟**：debug/release exe 的
-  `frontendDist` 资源是**编译期嵌进二进制**的，只跑 `vite build` 时 exe 仍在
-  服务上一版 bundle（本轮排查「权限层不生效」的真凶）。
+- **改前端后的重建要求**：`tauri build`（自动 `--features custom-protocol`）
+  产出的 exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 build 才
+  生效。`tauri dev` / 裸 `cargo build` 不带该 feature，加载 devUrl
+  （localhost:1420，vite 需在跑）——调试前端不必每次重嵌。
+- **CDP 观测 tap（#32）**：`srcdoc` 视图帧的 CDP execution context 在较新的
+  WebView2 里不再暴露给宿主 target，探针改用宿主侧的环形缓冲：
+  - `window.__frameStates`（宿主，含分离窗口/逻辑宿主的页面）：视图帧经
+    `__lumeFrameState` 上报的控件值（桥的 `reportState`：就绪/恢复即时报 +
+    1s 心跳），`values[{id,name,value}]`。
+  - `window.__logicCircuit`（main）：熔断状态（`failCounts`/`offline`）与
+    失败原因环形缓冲 `log`。
+  - `window.__snapPending`（main）：快照暂存记录（`stored` + 捕获到的
+    `fields`）；`window.__pwClosed`（main）：关闭回传的 `{hasSnapshot,
+    query, delivered}`。
+  - `window.__rpcLog` / `__logicEntries`（逻辑宿主）：帧 rpc 结局摘要与
+    每插件帧状态（`loaded`/`calls`）。
 
 ---
 

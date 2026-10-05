@@ -8,6 +8,62 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件系统加固（ROADMAP #32，P6.6）** — 契约/安全/健壮性/DX 四组十项：
+  - **宿主 API 版本契约**：清单新增 `api`（缺省 = 宿主版本）；声明高于
+    `HOST_PLUGIN_API`（=1）→ 加载期明确拒绝 + toast，逻辑宿主二次校验
+    （PLUGIN_API §11）。
+  - **`.lupx` ed25519 签名**：包内 `LUME.SIGN` 覆盖清单 + 全部文件哈希；
+    验签信任根 = 内置发行公钥 + `<base>/settings/trust-keys/*.pub`；无效签名
+    inspect/install 硬拒，未签名包维持确认流 + 展示 SHA-256；签名 CLI 与宿主
+    同源（`lume --gen-key` / `lume --sign-lupx <pkg> --key <file>`）。
+  - **网络内网防护**：`network` 能力的插件请求默认拒绝回环/私网/链路本地/
+    CGNAT 目标（防 SSRF，云元数据在内），清单 `network_allow`（精确或
+    `*.` 通配）放行自建服务；重定向改手动逐跳（≤5），302 跳内网同样被拒。
+  - **插件熔断**：连续 3 次 hook 失败（超时 / 推送失败 / ok:false）→ 标记
+    离线 + toast，此后调用快速失败、load 不重发（共享逻辑宿主下单插件不再
+    拖累同窗他人）；重载 / 保存设置复位；supervisor 侧 hook 6s 兜底回执 +
+    load 15s 兜底，帧卡死不再泄漏 `entry.calls`。
+  - **onQuery/onSubInput 跨进程节流**：宿主侧 120ms trailing 合并（打得再快
+    也只在窗口边界发一次，插件收到的最新输入语义不变）。
+  - **plugins 目录 dev 监听**：开发者模式下编辑插件代码保存即自动热重载
+    （`plugin_devwatch.rs`，内核事件零轮询 + 800ms 静默窗）。
+  - **`plugin-api.d.ts` 类型面**：examples 全局类型（ctx/app/http/clipboard/
+    db/settings/fs/on + LumeProviderLogic），list-demo 示范 `@ts-check`，
+    `pnpm exec tsc -p examples/tsconfig.json` 校验。
+  - **blob 模块 sourceURL**：DevTools 按真实文件名显示插件模块（此前是匿名
+    hash）；UA 字符串跟随包版本；快照超限降级写入 plog.warn（不再静默）。
+
+### Fixed
+
+- **P6.5 逻辑隔离回归修复（CDP probe 挖出）** — 逻辑宿主下 `hostApi` 有 28 处
+  裸 `invoke` 漏注入 host token，clipboard/http/dialog/screen/fs 等能力调用被
+  Rust fail-closed 拒绝；`plugin_net` 的内网防护按**原始参数**判插件身份，而
+  逻辑宿主调用只带令牌 → 防护对 entry 插件完全失效；帧侧与视图桥的 rpc 把
+  失败吞成 `resolve(undefined)`（权限/网络拒绝不可感知、`res.status` 抛
+  TypeError），http 成功结果因携带 `text()`/`json()` 函数跨 postMessage 触发
+  DataCloneError 被降级成假失败——均已修复（内网防护对逻辑宿主插件实测生效、
+  白名单放行往返 status-200）。
+- **dev/embedded 构建语义**（#16 遗留）— `custom-protocol` 从 tauri 依赖移入
+  `[features]`（模板惯例）：`tauri build` 自动启用（内嵌前端），`tauri dev` /
+  `cargo run` 走 devUrl——此前任何构建都强制 embedded，改前端必须手工
+  `pnpm build` + `cargo build` 才生效。
+- **快照可观测性** — 独立窗口**无快照**关闭（query 清空路径）原先在 tap 前
+  提前 return，回归验证看不到该事件；桥新增 `__lumeFrameState` 上报
+  （`__frameStates`），srcdoc 帧 DOM 在 CDP 不可见的 runtime 下仍可观测。
+- **重载竞态误熔断** — 重载窗口内 navBars/onSettings 拉取可能被投给正在
+  销毁的旧帧（无回执 → 8s 超时）而把正常注册流程误判为插件故障：registry
+  新增 `logicPendingReady`（未就绪/重载期的 hook 快速失败、不计熔断），
+  `pushLogicLoad` 提前到注册前，`unload` push 改 await，supervisor 补发
+  `logic-loaded`（P6.5 的接线缺口：registry 有 case、从未有人发）。
+
+### 验证
+
+cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私网拒绝 /
+白名单放行 / 熔断开+快速失败）、`test/_logic_host_probe.mjs` **12/12**、
+`test/_snapshot_probe.mjs` **16/16**（含清空 query 关闭的回归路径）；dev 监听
+实测 V1→V2 自动生效；`.lupx` 签名链 `test/_sign_probe.mjs` 5/5（未信任拒绝 /
+信任验签 / 篡改拒绝 / 未签名展示哈希）。
+
 - **插件逻辑进程级隔离（P6.5 第二阶段）** — entry 插件的逻辑移出启动器
   主窗口：共享隐藏窗口 `plugin-logic-host` 每插件一个 opaque-origin 沙箱
   iframe（WebView2 站点隔离 → 独立 renderer 进程，插件死循环不再波及他人），

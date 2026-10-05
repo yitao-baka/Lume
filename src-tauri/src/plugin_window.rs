@@ -20,10 +20,15 @@
 //! - The page calls `plugin_window_ready` once its listeners are up; the
 //!   main window's registry answers by pushing the current state (the
 //!   cross-window equivalent of the bridge's `__lumeReady` handshake).
-//! - Close (× button, `plugin_window_close`, Esc) destroys the window; the
-//!   `CloseRequested` handler remembers the geometry in
-//!   `settings.plugins.window_bounds` and tells the main window
-//!   (`plugin-window-closed`) so the registry can clear its detached set.
+//! - Close paths (P6.5 snapshot hand-off): a USER-initiated close
+//!   (× / Esc / Alt+F4) is intercepted once — the page is asked to snapshot
+//!   its state first and reports back via `plugin_window_close_report`,
+//!   which remembers the geometry, delivers the closed event WITH the
+//!   snapshot payload and destroys the window. A 3s watchdog force-destroys
+//!   when the page never answers (hung plugin must not wedge the close).
+//!   The programmatic path (`plugin_window_close`, disable/reload cleanup)
+//!   skips the snapshot: the code is about to be replaced, restoring old
+//!   state into new code is meaningless.
 //!
 //! This is the first runtime-created window in the codebase — the
 //! startup-created windows avoid it deliberately (a GPU-hang risk noted in
@@ -31,10 +36,29 @@
 //! window is small; creation is hidden-then-shown and per-plugin windows are
 //! reused, never duplicated.
 
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use crate::paths::base_dir;
 use crate::settings::{self, SettingsState};
+
+/// Per-detached-window close bookkeeping: ids whose close is already in
+/// flight (reported, forced, or programmatic). The `CloseRequested`
+/// interceptor lets those through unchanged and asks the page for a
+/// snapshot otherwise.
+#[derive(Clone, Default)]
+pub struct ClosingSet(pub Arc<Mutex<HashSet<String>>>);
+
+impl ClosingSet {
+    fn contains(&self, id: &str) -> bool {
+        self.0.lock().unwrap().contains(id)
+    }
+    fn insert(&self, id: &str) {
+        self.0.lock().unwrap().insert(id.to_string());
+    }
+}
 
 /// The window label for a detached plugin window.
 pub fn window_label(id: &str) -> String {
@@ -55,9 +79,13 @@ pub async fn plugin_window_open(
     id: String,
     app: AppHandle,
     state: State<'_, SettingsState>,
+    closing: State<'_, ClosingSet>,
 ) -> Result<String, String> {
     let label = window_label(&id);
     if let Some(win) = app.get_webview_window(&label) {
+        // 重新聚焦取消一次在途的关闭簿记（防御：closing 已置位但窗口仍在的
+        // 窗口期内用户再次打开 —— 此时destroy尚未完成，重开视为取消）。
+        closing.0.lock().unwrap().remove(&id);
         let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
@@ -121,11 +149,39 @@ pub async fn plugin_window_open(
     let app2 = app.clone();
     let id2 = id.clone();
     let win2 = win.clone();
+    let closing2 = closing.inner().clone();
     win.on_window_event(move |event| {
-        if let WindowEvent::CloseRequested { .. } = event {
-            remember_bounds(&app2, &id2, &win2);
-            // One emit point for both close paths (× button and the command).
-            let _ = app2.emit_to("main", "plugin-window-closed", id2.clone());
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            if closing2.contains(&id2) {
+                // 已在关闭流程中（close_report / 程序化关闭 / 看门狗）——
+                // 记账后放行（P6.5 之前的行为）。
+                remember_bounds(&app2, &id2, &win2);
+                let _ = app2
+                    .emit_to("main", "plugin-window-closed", serde_json::json!({ "id": id2 }));
+            } else {
+                // 用户发起的关闭：拦截一次，让页面先快照（P6.5）。页面应答
+                // plugin_window_close_report 完成销毁；3s 内无应答（插件卡死）
+                // 由看门狗强制销毁 —— 关闭必须总能完成。
+                api.prevent_close();
+                let _ = win2.emit("plugin-window-close-requested", id2.clone());
+                let app3 = app2.clone();
+                let id3 = id2.clone();
+                let win3 = win2.clone();
+                let closing3 = closing2.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if !closing3.contains(&id3) {
+                        remember_bounds(&app3, &id3, &win3);
+                        let _ = app3.emit_to(
+                            "main",
+                            "plugin-window-closed",
+                            serde_json::json!({ "id": id3 }),
+                        );
+                        closing3.insert(&id3);
+                        let _ = win3.destroy();
+                    }
+                });
+            }
         }
     });
     let _ = win.show();
@@ -210,12 +266,50 @@ pub fn plugin_window_push_state(
         .map_err(|e| e.to_string())
 }
 
-/// Close (destroy) a detached plugin window. Fires `CloseRequested`, whose
-/// handler persists the geometry and notifies the main window.
+/// Close (destroy) a detached plugin window WITHOUT a snapshot — the
+/// programmatic path (disable / reload / uninstall cleanup): the plugin's
+/// code is about to be replaced, so restoring its old page state into the
+/// new code is meaningless. Marks the closing set first so the
+/// `CloseRequested` interceptor lets the close straight through.
 #[tauri::command]
-pub fn plugin_window_close(id: String, app: AppHandle) -> Result<(), String> {
+pub fn plugin_window_close(
+    id: String,
+    app: AppHandle,
+    closing: State<'_, ClosingSet>,
+) -> Result<(), String> {
     if let Some(win) = app.get_webview_window(&window_label(&id)) {
+        closing.insert(&id);
         let _ = win.close();
+    }
+    Ok(())
+}
+
+/// The page-reported close (P6.5): the frontend snapshotted the view on a
+/// user-initiated close (× / Esc / close-requested answer) and hands the
+/// state back here. Remember the geometry, deliver the closed event WITH
+/// the snapshot payload, then destroy. `win.destroy()` skips
+/// `CloseRequested`, so the bookkeeping happens here.
+#[tauri::command]
+pub fn plugin_window_close_report(
+    id: String,
+    snapshot: Option<serde_json::Value>,
+    query: Option<String>,
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    closing: State<'_, ClosingSet>,
+) -> Result<(), String> {
+    if window.label() != window_label(&id) {
+        return Err("plugin_window_close_report: wrong window".into());
+    }
+    closing.insert(&id);
+    if let Some(win) = app.get_webview_window(&window_label(&id)) {
+        remember_bounds(&app, &id, &win);
+        let _ = app.emit_to(
+            "main",
+            "plugin-window-closed",
+            serde_json::json!({ "id": id, "snapshot": snapshot, "query": query }),
+        );
+        let _ = win.destroy();
     }
     Ok(())
 }

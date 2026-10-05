@@ -639,6 +639,10 @@ export interface ModeInstance {
   /** OS files were dropped on the launcher window (P2.2) — one-shot rows
    * until the next hide/summon. */
   onFilesDropped?(paths: string[]): void;
+  /** Ask the page for its state snapshot (P6.5 detach/attach hand-off).
+   * Resolves null when the page isn't live or didn't answer in time — a
+   * dead page must never block a detach/close. */
+  snapshot?(): Promise<unknown | null>;
   /** The full-page view. */
   View: Component;
 }

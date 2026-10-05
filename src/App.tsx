@@ -44,6 +44,7 @@ import {
   reloadDiskPlugin,
   setPluginDetached,
   setPluginServices,
+  storePendingSnapshot,
 } from "./plugins/registry";
 import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
 import { createClipboardPlugin } from "./plugins/clipboard";
@@ -499,10 +500,21 @@ function App() {
 
   /** Detach the current mode page into its own window (P6): open (or focus)
    * the `plugin-<id>` window, mark the registry, and hide the launcher —
-   * the detached window becomes the mode's home until it is closed. */
+   * the detached window becomes the mode's home until it is closed.
+   * P6.5: the launcher's page is the state source — snapshot it (the iframe
+   * is guaranteed mounted at click time) BEFORE the new window exists, so
+   * the detached page inherits it on its ready push. A dead page yields
+   * null and the detach degrades to the pre-snapshot behaviour. */
   async function detachMode(m: ModeId) {
     try {
+      let snapshot: unknown = null;
+      try {
+        snapshot = (await modeById(m)?.snapshot?.()) ?? null;
+      } catch {
+        // 页面快照失败不阻塞 detach —— 退化为既有行为（仅回放宿主状态）。
+      }
       await invoke("plugin_window_open", { id: m });
+      if (snapshot) storePendingSnapshot(m, snapshot);
       setPluginDetached(m, true);
       services.resetAndHide();
     } catch (err) {
@@ -623,9 +635,12 @@ function App() {
       onPluginWindowShown(e.payload);
     });
     onCleanup(() => unlistenPwShown());
-    const unlistenPwClosed = await listen<string>("plugin-window-closed", (e) => {
-      onPluginWindowClosed(e.payload);
-    });
+    const unlistenPwClosed = await listen<{ id: string; snapshot?: unknown; query?: string | null }>(
+      "plugin-window-closed",
+      (e) => {
+        onPluginWindowClosed(e.payload);
+      }
+    );
     onCleanup(() => unlistenPwClosed());
     // `app.redirect` from a detached page: route it like any feature entry.
     const unlistenPwRedirect = await listen<{

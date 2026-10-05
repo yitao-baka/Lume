@@ -146,7 +146,7 @@ function App() {
     },
   };
 
-  const { View, post } = createIframeView(
+  const { View, post, snapshot: viewSnapshot } = createIframeView(
     (method, args) => execHostRpc(id, method, args, services),
     () => {
       // The bridge is live — ask the launcher to push the current state
@@ -172,6 +172,27 @@ function App() {
     { class: "titlebar-frame", name: "titlebar" }
   );
   slotPost = slotView.post;
+
+  // ── 关闭与快照（P6.5）──
+  // 用户发起的关闭（× / Esc / Rust 的 close-requested 应答）先向页面要状态
+  // 快照再上报销毁：启动器侧在下一次打开时恢复。快照失败/超时也必须能关掉
+  // —— close_report 失败时兜底走立即关闭。titlebar 槽的状态 ≈ query（它的
+  // 搜索框经 app.setQuery 驱动视图），不需要单独快照。
+  const closeWithSnapshot = () => {
+    void (async () => {
+      const snapshot = await viewSnapshot();
+      try {
+        await invoke("plugin_window_close_report", {
+          id,
+          snapshot,
+          query: typeof lastState.query === "string" ? lastState.query : null,
+        });
+      } catch (err) {
+        plog.error(id, "close report failed — closing without snapshot:", err);
+        void invoke("plugin_window_close", { id }).catch(() => {});
+      }
+    })();
+  };
   // The slot element is created EXACTLY ONCE, outside any reactive
   // expression: a `<slotView.View />` written inline in the `slot={…}` prop
   // getter is re-invoked whenever its dependencies change (titlebarHtml,
@@ -239,6 +260,7 @@ function App() {
       enter?: FeatureEnterInfo | null;
       settings?: Record<string, unknown> | null;
       theme?: string | null;
+      snapshot?: unknown;
     }>("plugin-state", (e) => {
       const s = e.payload;
       plog.debug(id, "plugin-state:", JSON.stringify(s).slice(0, 200));
@@ -268,6 +290,9 @@ function App() {
         lastState.theme = s.theme;
         fan("theme", s.theme);
       }
+      // Attach 快照（P6.5）：标准回放之后投递 —— 页面自身的状态最后落地，
+      // 覆盖与宿主回放重叠的部分。
+      if (s.snapshot) fan("restore", s.snapshot);
     }).then((u) => (unlisteners.push(u), undefined));
 
     // Re-focus: replay `show` into the page (the window never unloads, so
@@ -278,6 +303,11 @@ function App() {
     }).then(
       (u) => (unlisteners.push(u), undefined)
     );
+
+    // Rust 拦截的用户发起关闭（× / Esc / Alt+F4）：先快照再上报销毁（P6.5）。
+    void listen("plugin-window-close-requested", () => {
+      closeWithSnapshot();
+    }).then((u) => (unlisteners.push(u), undefined));
 
     // Theme follows the launcher's settings while the window is open; the
     // permission source rides along (启用/权限清单可能在窗口存续期间变化).
@@ -297,7 +327,7 @@ function App() {
     // preventDefault-ing, the same contract as the launcher).
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        void invoke("plugin_window_close", { id }).catch(() => {});
+        closeWithSnapshot();
         return;
       }
       post("key", { key: e.key, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey });
@@ -321,7 +351,7 @@ function App() {
         title={pluginName()}
         pin
         slot={slotHost}
-        onClose={() => void invoke("plugin_window_close", { id }).catch(() => {})}
+        onClose={() => closeWithSnapshot()}
       />
       <View />
       <div id="plugin-window-toast" role="status" />

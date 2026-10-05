@@ -91,6 +91,7 @@ pub fn run() {
         .manage(dirwatch::DirWatchState::default())
         .manage(window::PreviewState::default())
         .manage(plugin_perm::PluginPermState::default())
+        .manage(plugin_window::ClosingSet::default())
         .plugin(hotkey::build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -432,6 +433,7 @@ pub fn run() {
             plugin_window::plugin_window_redirect,
             plugin_window::plugin_window_push_state,
             plugin_window::plugin_window_close,
+            plugin_window::plugin_window_close_report,
             plugin_store::plugin_db_get,
             plugin_store::plugin_db_put,
             plugin_store::plugin_db_remove,

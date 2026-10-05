@@ -13,7 +13,7 @@ import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { createHostApi } from "./hostApi";
-import { createIframeView, injectBridge } from "./iframeBridge";
+import { capSnapshot, createIframeView, injectBridge } from "./iframeBridge";
 import { createListTemplateMode } from "./listTemplate";
 import { fetchDiskFile } from "./disk";
 import { execHostRpc as execHostRpcShared } from "./rpc";
@@ -364,10 +364,26 @@ function createDiskModeInstance(
   // window, this window's iframe is unmounted — page state travels over the
   // Rust `plugin-window` event channel instead of postMessage.
   detachedSuppliers.set(m.id, {
-    push: (show) => {
+    push: (show, includeSnapshot = false) => {
+      // Detach 快照（P6.5）：detachMode 在开窗前从本页取走的状态，只在
+      // ready 握手的那次推送里带过去（取出即删）。shown 事件的推送发生在
+      // 建窗瞬间（页面尚未加载），绝不能消费快照 —— 否则独立窗口永远收
+      // 不到它。
+      let pending: { view?: unknown } | undefined;
+      if (includeSnapshot) {
+        pending = pendingSnapshots.get(m.id);
+        pendingSnapshots.delete(m.id);
+      }
       void invoke("plugin_window_push_state", {
         id: m.id,
-        state: { show, query: query(), enter: enterPayload, settings: settingsValues, theme: currentThemeMode() },
+        state: {
+          show,
+          query: query(),
+          enter: enterPayload,
+          settings: settingsValues,
+          theme: currentThemeMode(),
+          ...(pending?.view ? { snapshot: pending.view } : {}),
+        },
       }).catch((err) => plog.error(m.id, "detached state push failed:", err));
     },
     pushTheme: (t) => {
@@ -384,7 +400,17 @@ function createDiskModeInstance(
   themePosters.set(m.id, (t) => {
     if (viewReady) postEv("theme", t);
   });
-  const { View, post, live: viewLive } = createIframeView(
+  // 状态快照（P6.5）：独立窗口关闭时页面可能仍挂载（搜索记忆保留住了 mode），
+  // 此时 restore 直接投进活 iframe；否则存入 attachSnapshots，由下一次 ready
+  // 握手消费。判定用 live()（当前文档的桥是否活着）而不是 viewReady（那只
+  // 表示 view HTML 已取回、一次性为 true）——页面未挂载时 poster 返回 false，
+  // 调用方据此落到 ready 握手路径。
+  directPosters.set(m.id, (type, payload) => {
+    if (!viewLive()) return false;
+    postEv(type, payload);
+    return true;
+  });
+  const { View, post, snapshot: viewSnapshot, live: viewLive } = createIframeView(
     (method, args) => execHostRpc(m.id, method, args),
     () => {
       // The page's bridge is live and its handlers are assigned: push the
@@ -395,6 +421,18 @@ function createDiskModeInstance(
       postEv("theme", currentThemeMode());
       if (enterPayload) postEv("enter", enterPayload);
       if (settingsValues) postEv("settings", settingsValues);
+      // Attach-back restore (P6.5): the detached window's final page state,
+      // consumed once on the first ready after its close.
+      const att = attachSnapshots.get(m.id);
+      if (att) {
+        attachSnapshots.delete(m.id);
+        // CDP verify tap
+        ((window as unknown as { __snapConsume?: unknown[] }).__snapConsume ??= []).push({
+          id: m.id,
+          hadView: !!att.view,
+        });
+        if (att.view) postEv("restore", att.view);
+      }
     }
   );
   // Events (query/show/hide) mirror into the plugin log so a silent page is
@@ -481,6 +519,8 @@ function createDiskModeInstance(
     pageKind: () => "main",
     restorePage: () => {},
     applySettings: () => {},
+    // Detach/attach hand-off (P6.5): ask the page for its state snapshot.
+    snapshot: () => viewSnapshot(),
     onHide: () => {
       if (viewReady) postEv("hide");
       hook("onHide");
@@ -524,6 +564,9 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   moduleCache.clear();
   detachedSuppliers.delete(id);
   themePosters.delete(id);
+  pendingSnapshots.delete(id);
+  attachSnapshots.delete(id);
+  directPosters.delete(id);
   return true;
 }
 
@@ -874,11 +917,37 @@ export function modePlugins(): {
 // - activating the mode (pill / Tab / keyword / redirect) raises the window
 //   instead of switching pages here.
 const detachedIds = new Set<string>();
-/** Per detached disk mode: a state pusher + the logic-side onShow hook. */
+/** Per detached disk mode: a state pusher + the logic-side onShow hook.
+ * `includeSnapshot` (P6.5) only on the ready handshake — the shown-event
+ * push fires at window creation, before the page's iframes exist. */
 const detachedSuppliers = new Map<
   string,
-  { push: (show: boolean) => void; pushTheme: (t: string) => void; onShow: () => void }
+  { push: (show: boolean, includeSnapshot?: boolean) => void; pushTheme: (t: string) => void; onShow: () => void }
 >();
+
+// ── 状态快照（P6.5）──
+//
+// detach 方向：detachMode 在 `plugin_window_open` 之前从启动器内的活 iframe
+// 取快照（此刻页面必然挂载），暂存在这里，随独立窗口 ready 后的那次
+// push_state 一次性带过去（取出即删）。
+const pendingSnapshots = new Map<string, { view?: unknown }>();
+/** App.tsx 的 detachMode 在开窗前调用：页面无响应/未就绪传 null，不暂存。 */
+export function storePendingSnapshot(id: string, snapshot: unknown | null): void {
+  const capped = capSnapshot(snapshot);
+  // CDP verify tap（同 pluginWindow 的 __pluginStates 模式）
+  ((window as unknown as { __snapPending?: unknown[] }).__snapPending ??= []).push({
+    id,
+    stored: capped != null,
+  });
+  if (capped) pendingSnapshots.set(id, { view: capped });
+}
+// attach 方向：独立窗口关闭时上报的最终状态。启动器内的 iframe 若还活着
+// （搜索记忆留住了 mode）则直接投递；否则等下一次 ready 握手消费。
+const attachSnapshots = new Map<string, { view?: unknown }>();
+/** Per disk mode: a post-into-the-live-iframe guard — returns whether the
+ * event actually went into a mounted page (the closed-window restore uses
+ * it to decide between direct delivery and the ready-handshake path). */
+const directPosters = new Map<string, (type: string, payload?: unknown) => boolean>();
 
 // ── Theme push (P5 sandbox follow-up) ──
 //
@@ -936,7 +1005,7 @@ export function onPluginWindowReady(id: string): void {
   const s = detachedSuppliers.get(id);
   if (!s) return;
   detachedIds.add(id);
-  s.push(true);
+  s.push(true, true);
   s.onShow();
 }
 
@@ -952,9 +1021,33 @@ export function onPluginWindowShown(id: string): void {
 }
 
 /** `plugin-window-closed` — the window is gone; the mode returns to the
- * normal in-launcher behaviour. */
-export function onPluginWindowClosed(id: string): void {
+ * normal in-launcher behaviour. The payload (P6.5) carries the detached
+ * page's final snapshot + query so the state can travel back into the
+ * launcher: the query lands in the mode's signal immediately (the next
+ * summon's replay carries it), the snapshot either posts straight into a
+ * still-mounted iframe or waits for the next ready handshake. */
+export function onPluginWindowClosed(
+  payload: string | { id: string; snapshot?: unknown; query?: string | null }
+): void {
+  const id = typeof payload === "string" ? payload : payload.id;
   detachedIds.delete(id);
+  if (typeof payload === "string") return; // pre-P6.5 emitter (no snapshot)
+  const view = capSnapshot(payload.snapshot);
+  // The final query becomes the mode's query: the in-launcher replay (and
+  // the search box) pick it up on the next activation.
+  if (typeof payload.query === "string" && payload.query !== "") {
+    plugins.find((x) => x.id === id)?.mode?.setQuery(payload.query);
+  }
+  if (view == null) return;
+  const delivered = directPosters.get(id)?.("restore", view) ?? false;
+  // CDP verify tap
+  ((window as unknown as { __pwClosed?: unknown[] }).__pwClosed ??= []).push({
+    id,
+    hasSnapshot: view != null,
+    query: payload.query ?? null,
+    delivered,
+  });
+  if (!delivered) attachSnapshots.set(id, { view });
 }
 
 // ── Declarative entry rules (P2.1: `[[features]]` in the manifest) ──

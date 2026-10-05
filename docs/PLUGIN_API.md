@@ -478,6 +478,26 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 `enter`（若有）。含义：① 页面脚本请同步赋值 `lume.on.*`（异步赋值会错过首播）；
 ② 重复收到同一 `show`/`query` 是正常的，处理器应幂等。
 
+**状态快照（P6.5，可选实现）**：宿主在 detach / 关闭独立窗口前，经
+`__lumeCall{type:"snapshot"}`（宿主→页面的带响应调用，1.5s 超时兜底）向页面
+要一份状态，跨窗口传递后以 `restore` 事件回放。快照分两层：
+
+- **auto 层（桥自动捕获，无需插件参与）**：`input`/`textarea`/`select` 的
+  值（按 DOM 顺序成组，恢复时按同一顺序回放；`type=file` 跳过）与 document
+  滚动位置。恢复由桥自动完成，并对每个被赋值的控件补发 `input` 事件（页面
+  自己的监听照常触发）。
+- **custom 层（页面可选）**：赋值 `lume.on.snapshot = () => state`（可返回
+  Promise）提供任意可 JSON 化对象；恢复时桥把 `custom` 交给
+  `lume.on.restore = (state) => {}`。未实现时这两层自动缺席，行为与
+  P6.5 之前一致。
+
+快照结构 `{auto: {fields, scroll}, custom?}`，上限 1MB（超限先丢 `custom`
+再整体放弃）；**仅内存流转，不落盘**；`password` 输入框的值会进快照（同一
+插件的页面间传递，宿主不持久化）——不希望密码被快照的页面请在
+`lume.on.snapshot` 里自行剔除。`restore` 事件在标准状态重放（query/show/
+enter/settings/theme）**之后**投递：页面自身状态最后落地，覆盖与宿主回放
+重叠的部分。
+
 **沙箱边界（P5 起）**：iframe 是 opaque origin——`window.localStorage`/
 `document.cookie` 访问会**抛错**（插件数据请用 `ctx.storage`/`ctx.db`）；
 页面内直接 `fetch` 远程受 CORS 约束（opaque origin 发不出带凭据的请求），
@@ -1084,9 +1104,9 @@ detachable = true     # 允许分离为独立窗口
 |---|---|
 | 分离（按钮） | `plugin_window_open` 创建（或聚焦既有）窗口 `plugin-<id>`，加载 `plugin.html?plugin=<id>`；启动器隐藏 |
 | 再次激活 | pill 点击 / Tab 循环 / 关键字 / redirect 进入一个已分离的模式 → 聚焦其窗口（不切启动器页面），启动器隐藏 |
-| 就绪握手 | 窗口页监听器就绪后调 `plugin_window_ready` → 启动器注册表推送 `{show, query, enter, settings}`（`plugin-state` 事件）——跨窗口版的 `__lumeReady` 状态重放 |
-| 显隐 | 窗口获得焦点/重新打开 → `show` 事件重放 + `onShow` 钩子；窗口隐藏不留事件 |
-| 关闭 | × 按钮 / Esc / `plugin_window_close` → 窗口**销毁**（状态不保留，重开重建；插件数据在 `db`/`files` 里不受影响）；宿主记忆窗口几何（`settings.plugins.window_bounds`），下次分离原位打开 |
+| 就绪握手 | 窗口页监听器就绪后调 `plugin_window_ready` → 启动器注册表推送 `{show, query, enter, settings, snapshot?}`（`plugin-state` 事件）——跨窗口版的 `__lumeReady` 状态重放。`snapshot` 是 detach 时从启动器内页面取走的状态快照（P6.5，§6C），在标准回放之后以 `restore` 事件投给页面 |
+| 显隐 | 窗口获得焦点/重新打开 → `show` 事件重放 + `onShow` 钩子；窗口隐藏不留事件（shown 推送发生在建窗瞬间、页面尚未加载，**不携带快照**） |
+| 关闭 | × 按钮 / Esc / Alt+F4 → Rust 拦截一次 `CloseRequested`，页面先经 `__lumeCall` 出一份状态快照、连同最终 query 经 `plugin_window_close_report` 上报后销毁（**双向快照**，P6.5）；快照回到启动器：iframe 仍挂载（搜索记忆留住本模式）则直投 `restore`，否则暂存、下次在本模式 ready 握手时 `restore`（消费即删）；最终 query 写回模式查询信号，下次激活经既有回放带回搜索框。插件卡死时 3s 看门狗强制销毁（无快照）。禁用/重载走的 `plugin_window_close` 是**立即**路径（代码即将被替换，不快照）。宿主记忆窗口几何（`settings.plugins.window_bounds`），下次分离原位打开 |
 | 禁用/重载 | settings-applied 后插件被禁用/移除、或 设置 → 插件 点「↻ 重载」→ 独立窗口自动关闭 |
 
 ### 6G.2 桥接契约的窗口内差异
@@ -1115,6 +1135,9 @@ detachable = true     # 允许分离为独立窗口
 
 - 插件的**逻辑钩子**（`entry` 的 `onShow`/`onQuery`/…）始终跑在启动器窗口
   （注册表），独立窗口只是视图；`onQuery` 在窗口内不会到来（没有共享搜索框）。
+- **状态快照/恢复**（P6.5）只作用在视图侧（沙箱 iframe 的 DOM/页内状态）；
+  逻辑侧的注册表信号（query/enter/settings）本就跨窗口存活。快照链路的
+  端到端脚本见 `test/_snapshot_probe.mjs`（12 项断言，两条恢复路径全覆盖）。
 - `detachable = true` 声明的窗口是**运行时创建**的（lume 首例）——主窗口/
   设置/预览仍是启动时创建。按插件复用窗口（重复 open = 聚焦）。
 - 依赖启动器搜索框的模式（子输入框、query 驱动）**不要**声明 `detachable`；

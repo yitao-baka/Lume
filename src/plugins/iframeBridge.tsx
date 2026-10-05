@@ -158,7 +158,11 @@ export const BRIDGE_SCRIPT = `
       // opts: legacy number = max, or { offset, max, sort, exts, folder }
       files: function (q, opts) { return call("search.files", { q: q, opts: opts }); },
     },
-    on: {}, // the page assigns: lume.on.query / .show / .hide / .key / .enter / .subInput / .settings = function(payload)
+    on: {}, // the page assigns: lume.on.query / .show / .hide / .key / .enter / .subInput / .settings / .theme = function(payload)
+    // 状态快照（P6.5，可选实现）：lume.on.snapshot = () => state — 宿主在
+    // detach/关闭前向页面要一份状态（与桥自动捕获的表单/滚动合并后跨窗口
+    // 传递）；lume.on.restore = (state) => {} — 宿主把快照的 custom 层交给
+    // 页面（auto 层由桥自动回放）。快照仅内存流转，不落盘。
   };
   window.addEventListener("message", function (e) {
     var d = e.data || {};
@@ -170,6 +174,22 @@ export const BRIDGE_SCRIPT = `
         r.ok ? pend.resolve(r.result) : pend.reject(new Error(r.error));
       }
     }
+    if (d.__lumeCall) {
+      // 宿主 → 页面的带响应调用（P6.5）：今天只有 "snapshot"（状态快照）。
+      // 结果必须回执，宿主侧有超时兜底，但回执让它能提前收口。
+      var c = d.__lumeCall;
+      Promise.resolve()
+        .then(function () {
+          if (c.type === "snapshot") return captureSnapshot();
+          return undefined;
+        })
+        .then(function (result) {
+          parent.postMessage({ __lumeCallResult: { callId: c.callId, ok: true, result: result } }, "*");
+        })
+        .catch(function (err) {
+          parent.postMessage({ __lumeCallResult: { callId: c.callId, ok: false, error: String(err) } }, "*");
+        });
+    }
     if (d.__lumeEvent) {
       var ev = d.__lumeEvent;
       // 宿主拼接面：插件页画布默认取主题的实体面板色（--surface），随主题事件
@@ -180,6 +200,10 @@ export const BRIDGE_SCRIPT = `
           "--lume-page-bg",
           ev.payload === "light" ? "${PANEL_SURFACE_BG.light}" : "${PANEL_SURFACE_BG.dark}"
         );
+      }
+      if (ev.type === "restore") {
+        applySnapshot(ev.payload);
+        return;
       }
       var h = window.lume.on[ev.type];
       if (typeof h === "function") h(ev.payload);
@@ -196,6 +220,59 @@ export const BRIDGE_SCRIPT = `
       }
     }
   });
+  // ── 状态快照（P6.5）──
+  // detach / 关闭独立窗口前，宿主通过 __lumeCall{type:"snapshot"} 向页面要
+  // 一份状态。桥自动捕获两层：表单控件值（input/textarea/select，按 DOM 顺序
+  // 成组，恢复时按同一顺序回放）与 document 滚动位置。页面可选实现
+  // lume.on.snapshot 提供 custom 层（任意可 JSON 化对象）；恢复时 auto 层由
+  // 桥自动回放，custom 层交给 lume.on.restore。快照仅内存流转，不落盘。
+  function captureSnapshot() {
+    var nodes = document.querySelectorAll("input, textarea, select");
+    var fields = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (el.type === "file") continue; // FileList 不可序列化
+      fields.push({ v: el.value == null ? "" : String(el.value), c: !!el.checked });
+    }
+    var snap = {
+      auto: {
+        fields: fields,
+        scroll: { x: window.scrollX || 0, y: window.scrollY || 0 },
+      },
+    };
+    var h = window.lume.on.snapshot;
+    if (typeof h !== "function") return snap;
+    return Promise.resolve()
+      .then(h)
+      .then(function (custom) {
+        if (custom !== undefined && custom !== null) snap.custom = custom;
+        return snap;
+      });
+  }
+  function applySnapshot(snap) {
+    if (!snap || typeof snap !== "object") return;
+    var auto = snap.auto || {};
+    try {
+      var nodes = document.querySelectorAll("input, textarea, select");
+      var fields = auto.fields || [];
+      for (var i = 0, j = 0; i < nodes.length && j < fields.length; i++) {
+        var el = nodes[i];
+        if (el.type === "file") continue;
+        var f = fields[j++];
+        if (f && f.v != null) {
+          el.value = f.v;
+          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch (err) {}
+        }
+        if (f && "c" in f) el.checked = !!f.c;
+      }
+    } catch (err) {}
+    try {
+      window.scrollTo((auto.scroll && auto.scroll.x) || 0, (auto.scroll && auto.scroll.y) || 0);
+    } catch (err) {}
+    if (snap.custom !== undefined && typeof window.lume.on.restore === "function") {
+      try { window.lume.on.restore(snap.custom); } catch (err) {}
+    }
+  }
   // ── key forwarding (sandbox-safe) ──
   // The host cannot reach into this document (opaque origin), so forwarding
   // runs from inside: non-editable, not-yet-prevented keydowns bubble here
@@ -314,6 +391,24 @@ export const PLUGIN_FRAME_SANDBOX = "allow-scripts allow-forms allow-popups allo
  * spinner forever — past this grace period the page is shown as-is. */
 const READY_GRACE_MS = 3000;
 
+/** Snapshot size cap (P6.5): the snapshot travels as JSON through Tauri
+ * events and lives in session memory only — past this cap drop the plugin's
+ * custom layer first, then give up entirely. */
+const SNAPSHOT_MAX_CHARS = 1_000_000;
+
+export function capSnapshot(snap: unknown): unknown {
+  try {
+    if (snap == null) return null;
+    if (JSON.stringify(snap).length <= SNAPSHOT_MAX_CHARS) return snap;
+    if (typeof snap !== "object") return null;
+    const { custom: _drop, ...rest } = snap as { custom?: unknown };
+    if (JSON.stringify(rest).length <= SNAPSHOT_MAX_CHARS) return rest;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function createIframeView(
   onRpc: (method: string, args: Record<string, unknown>) => Promise<unknown>,
   onReady?: () => void,
@@ -321,6 +416,10 @@ export function createIframeView(
 ): {
   View: Component & { setHtml(html: string): void };
   post: (type: string, payload?: unknown) => void;
+  /** Ask the page for its state snapshot (P6.5). Resolves null when the page
+   * isn't live, doesn't answer within `timeoutMs`, or errors — a dead or
+   * hostile page must never block a detach/close. */
+  snapshot: (timeoutMs?: number) => Promise<unknown | null>;
   /** Whether the *current* document's bridge is live (it announced
    * `__lumeReady`). False while a fresh document is still loading — reset on
    * mount, on unmount (a remount is a new document) and when `setHtml` swaps
@@ -334,6 +433,30 @@ export function createIframeView(
   const post = (type: string, payload?: unknown) => {
     frame?.contentWindow?.postMessage({ __lumeEvent: { type, payload } }, "*");
   };
+  // Host→page calls (`__lumeCall`) awaiting their `__lumeCallResult` receipt.
+  const pendingCalls = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+  let callSeq = 0;
+  const snapshot = (timeoutMs = 1500): Promise<unknown | null> => {
+    if (!live() || !frame?.contentWindow) return Promise.resolve(null);
+    const callId = ++callSeq;
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        pendingCalls.delete(callId);
+        resolve(null);
+      }, timeoutMs);
+      pendingCalls.set(callId, {
+        resolve: (v) => {
+          window.clearTimeout(timer);
+          resolve(v);
+        },
+        reject: () => {
+          window.clearTimeout(timer);
+          resolve(null);
+        },
+      });
+      frame?.contentWindow?.postMessage({ __lumeCall: { callId, type: "snapshot" } }, "*");
+    });
+  };
   const View: Component & { setHtml(html: string): void } = () => {
     onMount(() => {
       setLive(false); // a fresh document starts loading
@@ -343,6 +466,7 @@ export function createIframeView(
         const d = (e.data || {}) as {
           __lumeRpc?: { id: number; method: string; args: Record<string, unknown> };
           __lumeReady?: unknown;
+          __lumeCallResult?: { callId: number; ok: boolean; result?: unknown; error?: string };
           __lumeKey?: {
             seq: number;
             key: string;
@@ -362,6 +486,15 @@ export function createIframeView(
             onReady?.();
           } catch (err) {
             console.error("[plugins] onReady failed:", err);
+          }
+        }
+        if (d.__lumeCallResult) {
+          const c = pendingCalls.get(d.__lumeCallResult.callId);
+          if (c) {
+            pendingCalls.delete(d.__lumeCallResult.callId);
+            d.__lumeCallResult.ok
+              ? c.resolve(d.__lumeCallResult.result ?? null)
+              : c.resolve(null);
           }
         }
         if (d.__lumeRpc) {
@@ -429,5 +562,5 @@ export function createIframeView(
     setLive(false); // the swapped-in document must announce itself again
     setSrcdoc(html);
   };
-  return { View, post, live };
+  return { View, post, snapshot, live };
 }

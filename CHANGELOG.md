@@ -8,6 +8,18 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件独立窗口双向状态快照/恢复（P6.5）** — 分离为独立窗口不再是「全新文档」：
+  detach 时启动器先经桥接新通道 `__lumeCall{type:"snapshot"}`（1.5s 超时兜底）
+  向页面要状态快照，随 ready 握手推送带进独立窗口，标准回放之后以 `restore`
+  事件落地；关闭窗口（×/Esc/Alt+F4）时 Rust 拦截一次 `CloseRequested`，页面
+  快照后经新命令 `plugin_window_close_report` 上报销毁（3s 看门狗兜底插件
+  卡死），快照与最终 query 回到启动器——iframe 仍挂载则直投恢复，已卸载则
+  下次进入本模式时经 ready 握手恢复（消费即删）。快照分两层：桥自动捕获的
+  `auto` 层（表单控件值 + 滚动位置，恢复时自动回放并补发 input 事件）与
+  页面可选的 `custom` 层（`lume.on.snapshot` / `lume.on.restore`，PLUGIN_API
+  §6C）；1MB 上限、仅内存不落盘。端到端脚本 `test/_snapshot_probe.mjs`
+  （12 项断言：两条继承/恢复路径 + query 连续性）。
+
 - **页面加载门控 + 加载反馈** — 切到剪贴板/插件页时「未加载完不显示」：窗口
   收拢成搜索行、`.results` 隐藏，该页 pill 变强调色（`#5ac8fa`）且图标上转圈
   （`ModeInstance.ready` 新契约成员：磁盘 view 页以页面桥接 `__lumeReady` 为准

@@ -40,6 +40,9 @@ use crate::settings::SettingsState;
 #[derive(Default)]
 struct CapsEntry {
     permissions: HashSet<String>,
+    /// `network_allow` hosts (SSRF override, #32.3): network targets matching
+    /// one of these skip the private-address check.
+    network_allow: Vec<String>,
 }
 
 /// Managed permission cache: plugin id → declared capabilities, plus the
@@ -125,6 +128,7 @@ fn entry_for(state: &PluginPermState, base: &Path, id: &str) -> Option<CapsEntry
     if let Some(e) = state.caps.lock().unwrap().get(id) {
         return Some(CapsEntry {
             permissions: e.permissions.clone(),
+            network_allow: e.network_allow.clone(),
         });
     }
     let manifest = find_manifest(base, id)?;
@@ -133,9 +137,27 @@ fn entry_for(state: &PluginPermState, base: &Path, id: &str) -> Option<CapsEntry
         id.to_string(),
         CapsEntry {
             permissions: permissions.clone(),
+            network_allow: manifest.network_allow.clone(),
         },
     );
-    Some(CapsEntry { permissions })
+    Some(CapsEntry {
+        permissions,
+        network_allow: manifest.network_allow.clone(),
+    })
+}
+
+/// The manifest's `network_allow` hosts for `id` (#32.3) — network targets
+/// matching one of these bypass the private-address refusal. Empty when the
+/// manifest is unknown (the network layer then refuses private targets
+/// unconditionally).
+pub fn network_allow_for(state: &PluginPermState, id: &str) -> Vec<String> {
+    state
+        .caps
+        .lock()
+        .unwrap()
+        .get(id)
+        .map(|e| e.network_allow.clone())
+        .unwrap_or_default()
 }
 
 /// Locate + parse the manifest that declares `id` (or whose directory is
@@ -339,6 +361,28 @@ mod tests {
         let perms = PluginPermState::default();
         assert!(assert_capability(&perms, &plugins(), &root, "clipboard", "clipboard").is_ok());
         assert!(assert_capability(&perms, &plugins(), &root, "preview", "fs.read").is_ok());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn network_allow_cached_after_capability_check() {
+        // network_allow_for reads the cache; the capability check is what
+        // warms it (the http command runs both in that order).
+        let root = std::env::temp_dir().join(format!("lume-perm-netallow-{}", std::process::id()));
+        write_plugin(
+            &root,
+            "selfhost",
+            "id = \"selfhost\"\npermissions = [\"network\"]\nnetwork_allow = [\"192.168.1.10\", \"*.internal.dev\"]\n",
+        );
+        let perms = PluginPermState::default();
+        assert!(assert_capability(&perms, &plugins(), &root, "selfhost", "network").is_ok());
+        let allow = network_allow_for(&perms, "selfhost");
+        assert_eq!(
+            allow,
+            vec!["192.168.1.10".to_string(), "*.internal.dev".to_string()]
+        );
+        // Unknown plugin → empty list (the network layer refuses private targets).
+        assert!(network_allow_for(&perms, "ghost").is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -700,6 +700,20 @@ res.truncated;         // 响应体超过 4 MiB 被截断时为 true
 - 仅允许 `http` / `https`；其他协议与非法 URL 直接 reject。
 - 主线程永不阻塞：请求跑在 Rust 工作线程上。
 - 权限：`network`（manifest 声明位；强制层见 §9 与 P3.2 规划）。
+- **内网防护（#32.3）**：插件请求默认拒绝解析到**回环/私网/链路本地**的
+  目标（127/8、::1、10/8、172.16/12、192.168/16、169.254/16、100.64/10、
+  fe80::/10、fc00::/7、未指定地址，含 IPv4-mapped IPv6）——防 SSRF（云
+  元数据 169.254.169.254、本机管理面板、内网服务探测）。需要触达自建服务
+  的插件在清单声明 `network_allow = ["192.168.1.10", "*.internal.dev"]`
+  （精确或 `*.` 通配后缀，大小写不敏感；裸 `*` 放行一切）。公网目标无需
+  声明。错误信息即指引：`network access to private address "<ip>" denied
+  (declare network_allow in plugin.toml to override)`。
+- **重定向逐跳校验**：跟随重定向（≤5 跳）不再交给 WinHTTP——每一跳的
+  Location 都重新做同样的目标检查（302 跳内网同样被拒）；301/302/303 降级
+  为 GET 并清空请求体，307/308 保留 method 与 body。
+- 已知边界：域名目标按「本次请求的 DNS 解析结果」判定——解析与连接之间的
+  DNS rebinding 理论上可绕过（白名单 host 不做解析检查）；`network_allow`
+  命中的 host 不做任何地址检查（声明即信任）。
 
 ### 6D.2 `app.notify` — 系统通知
 

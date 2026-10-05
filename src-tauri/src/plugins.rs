@@ -249,6 +249,12 @@ pub struct PluginManifest {
     /// instead of silently half-working.
     #[serde(default = "default_api")]
     pub api: u32,
+    /// `network` capability override (#32.3): hosts the plugin may reach even
+    /// when they resolve to loopback/private addresses (self-hosted services).
+    /// Exact host or `*.suffix` wildcard, case-insensitive; public targets
+    /// need no declaration. Empty = private addresses refused outright.
+    #[serde(default)]
+    pub network_allow: Vec<String>,
 }
 
 /// The plugin-API version this build implements (docs/PLUGIN_API.md §11).
@@ -598,6 +604,23 @@ mod tests {
         assert_eq!(m.permissions, vec!["fs-read".to_string()]);
         // A manifest without `id` is valid — the directory name fills in.
         assert_eq!(parse_manifest("name = \"no id\"").unwrap().id, "");
+    }
+
+    #[test]
+    fn manifest_api_defaults_to_host_and_network_allow_parses() {
+        // Missing fields → host version / empty allow list (legacy manifests).
+        let m = parse_manifest("id = \"legacy\"\n").unwrap();
+        assert_eq!(m.api, HOST_PLUGIN_API);
+        assert!(m.network_allow.is_empty());
+        let m = parse_manifest(
+            "id = \"selfhost\"\napi = 1\nnetwork_allow = [\"192.168.1.10\", \"*.internal.dev\"]\n",
+        )
+        .unwrap();
+        assert_eq!(m.api, 1);
+        assert_eq!(
+            m.network_allow,
+            vec!["192.168.1.10".to_string(), "*.internal.dev".to_string()]
+        );
     }
 
     #[test]

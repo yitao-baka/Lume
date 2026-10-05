@@ -16,6 +16,7 @@
 
 use base64::Engine;
 use std::ffi::c_void;
+use std::net::ToSocketAddrs;
 use tauri::async_runtime::spawn_blocking;
 use windows::core::{PCWSTR, HSTRING};
 use windows::Win32::Networking::WinHttp::{
@@ -23,7 +24,7 @@ use windows::Win32::Networking::WinHttp::{
     WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption,
     WinHttpSetTimeouts, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_DECOMPRESSION_FLAG_DEFLATE,
     WINHTTP_DECOMPRESSION_FLAG_GZIP, WINHTTP_FLAG_SECURE, WINHTTP_OPTION_DECOMPRESSION,
-    WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS,
+    WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_NEVER,
     WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_RAW_HEADERS_CRLF, WINHTTP_QUERY_STATUS_CODE,
 };
 
@@ -32,6 +33,9 @@ const MAX_BODY: usize = 4 * 1024 * 1024;
 /// Default / maximum request timeout (ms).
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
+/// Manual redirect budget (#32.3): every hop is re-checked, so the loop must
+/// be finite. 5 matches common client behaviour.
+const MAX_REDIRECTS: usize = 5;
 
 /// One request as the frontend sends it.
 #[derive(Debug, serde::Deserialize)]
@@ -84,31 +88,137 @@ fn parse_headers(raw: &str) -> std::collections::HashMap<String, String> {
     out
 }
 
-/// The blocking WinHTTP exchange. Split out so tests can drive it directly.
-fn fetch_blocking(req: HttpRequest) -> Result<HttpResponse, String> {
-    let url = tauri::Url::parse(&req.url).map_err(|e| format!("bad url: {e}"))?;
+// ── 私网/回环防护（#32.3）──
+//
+// `network` 能力默认不允许触达内网：插件拿到的是宿主任意 URL 的代理请求，
+// 不设防就是一个现成的 SSRF 探针（127.1 的管理面板、169.254 的云元数据、
+// 内网服务）。清单 `network_allow` 声明的 host 显式放行（自建服务场景）。
+
+fn forbidden_err(ip: &str) -> String {
+    format!(
+        "network access to private address \"{ip}\" denied \
+         (declare network_allow in plugin.toml to override)"
+    )
+}
+
+/// True for the addresses a plugin must not reach by default: loopback,
+/// unspecified, private/link-local/CGNAT v4, v6 loopback/unspecified/
+/// link-local/unique-local — and IPv4-mapped IPv6 of any v4 form.
+fn is_forbidden_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::{IpAddr, Ipv4Addr};
+    let v4 = |v: Ipv4Addr| {
+        let o = v.octets();
+        v.is_loopback()                                 // 127/8
+            || v.is_unspecified()                       // 0.0.0.0
+            || o[0] == 10                               // 10/8
+            || (o[0] == 172 && (o[1] & 0xf0) == 16)     // 172.16/12
+            || (o[0] == 192 && o[1] == 168)             // 192.168/16
+            || (o[0] == 169 && o[1] == 254)             // 169.254/16 (cloud metadata)
+            || (o[0] == 100 && (o[1] & 0xc0) == 64)     // 100.64/10 CGNAT
+    };
+    match ip {
+        IpAddr::V4(v) => v4(v),
+        IpAddr::V6(v) => {
+            if let Some(mapped) = v.to_ipv4_mapped() {
+                return v4(mapped);
+            }
+            v.is_loopback() || v.is_unspecified() || v.is_unicast_link_local() || v.is_unique_local()
+        }
+    }
+}
+
+/// `network_allow` host match: exact (case-insensitive), a leading `*.`
+/// wildcard matching any subdomain suffix, or a bare `*` (everything).
+/// The apex itself needs its own entry (`example.com` + `*.example.com`).
+fn host_allowed(host: &str, allow: &[String]) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    allow.iter().any(|raw| {
+        let a = raw.trim().to_ascii_lowercase();
+        if a == "*" || a == host {
+            return true;
+        }
+        a.strip_prefix("*.").map_or(false, |suffix| {
+            !suffix.is_empty() && host.ends_with(&format!(".{suffix}"))
+        })
+    })
+}
+
+/// The gate for one (redirect-hop) URL. Plugin calls only — the native path
+/// (first-party windows, no plugin id) never runs this.
+fn check_target(url: &tauri::Url, allow: &[String]) -> Result<(), String> {
     let scheme = url.scheme().to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
         return Err(format!("unsupported scheme: {scheme}"));
     }
-    let host = url.host_str().ok_or("url has no host")?.to_string();
-    let port = url.port_or_known_default().unwrap_or(if scheme == "https" { 443 } else { 80 });
-    let mut path = url.path().to_string();
-    if path.is_empty() {
-        path.push('/');
+    let Some(host) = url.host_str() else {
+        return Err("url has no host".into());
+    };
+    if host_allowed(host, allow) {
+        return Ok(());
     }
-    if let Some(q) = url.query() {
-        path.push('?');
-        path.push_str(q);
+    let bare = host.trim_matches(|c| c == '[' || c == ']');
+    if let Ok(ip) = bare.parse::<std::net::IpAddr>() {
+        return if is_forbidden_ip(ip) {
+            Err(forbidden_err(&ip.to_string()))
+        } else {
+            Ok(())
+        };
     }
-    let method = req.method.unwrap_or_else(|| "GET".into()).to_uppercase();
-    if method.is_empty() || !method.chars().all(|c| c.is_ascii_alphabetic()) {
-        return Err(format!("bad method: {method}"));
+    // Hostname: resolve and classify EVERY answer (fail closed on no answer /
+    // resolution failure). Note: WinHTTP resolves again per connection — the
+    // TOCTOU gap (DNS rebinding between here and connect) is documented in §9.
+    let port = url.port_or_known_default().unwrap_or(0);
+    let addrs: Vec<std::net::SocketAddr> = (bare, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("dns resolution failed for \"{bare}\": {e}"))?
+        .collect();
+    if addrs.is_empty() {
+        return Err(format!("dns resolution returned nothing for \"{bare}\""));
+    }
+    for addr in addrs {
+        if is_forbidden_ip(addr.ip()) {
+            return Err(forbidden_err(&addr.ip().to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// Native wrapper (first-party windows, no plugin id): no target checks.
+fn fetch_blocking(req: HttpRequest) -> Result<HttpResponse, String> {
+    fetch_blocking_checked(req, &[], false)
+}
+
+/// The blocking WinHTTP exchange. Split out so tests can drive it directly.
+/// `enforce` turns on the #32.3 target checks (plugin calls); `allow` is the
+/// manifest's `network_allow`. Redirects are followed MANUALLY (≤5) so every
+/// hop passes the same checks — the old ALWAYS policy would let a public URL
+/// 302 into an intranet address.
+fn fetch_blocking_checked(
+    req: HttpRequest,
+    allow: &[String],
+    enforce: bool,
+) -> Result<HttpResponse, String> {
+    let mut current = tauri::Url::parse(&req.url).map_err(|e| format!("bad url: {e}"))?;
+    // Fast scheme rejection for both paths (per-hop re-checks happen in
+    // check_target when enforced).
+    {
+        let scheme = current.scheme().to_ascii_lowercase();
+        if scheme != "http" && scheme != "https" {
+            return Err(format!("unsupported scheme: {scheme}"));
+        }
     }
     let timeout = req
         .timeout_ms
         .unwrap_or(DEFAULT_TIMEOUT_MS)
         .clamp(1_000, MAX_TIMEOUT_MS) as i32;
+
+    let mut method = req.method.unwrap_or_else(|| "GET".into()).to_uppercase();
+    if method.is_empty() || !method.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err(format!("bad method: {method}"));
+    }
 
     let agent = HSTRING::from(concat!("Lume/", env!("CARGO_PKG_VERSION"), " (plugin host)"));
     let session = unsafe {
@@ -130,62 +240,18 @@ fn fetch_blocking(req: HttpRequest) -> Result<HttpResponse, String> {
         let _ = WinHttpSetTimeouts(session.0, timeout, timeout, timeout, timeout);
     }
 
-    let host_w = HSTRING::from(host.as_str());
-    let connect = unsafe { WinHttpConnect(session.0, PCWSTR(host_w.as_ptr()), port as u16, 0) };
-    if connect.is_null() {
-        return Err("WinHttpConnect failed".into());
-    }
-    let connect = Handle(connect);
+    // Decompression: WinHTTP unwraps gzip/deflate so plugins never see
+    // compressed bytes as "the body".
+    let decomp = (WINHTTP_DECOMPRESSION_FLAG_GZIP | WINHTTP_DECOMPRESSION_FLAG_DEFLATE)
+        .to_le_bytes();
 
-    let method_w = HSTRING::from(method.as_str());
-    let path_w = HSTRING::from(path.as_str());
-    let flags = if scheme == "https" { WINHTTP_FLAG_SECURE } else { Default::default() };
-    let request = unsafe {
-        WinHttpOpenRequest(
-            connect.0,
-            PCWSTR(method_w.as_ptr()),
-            PCWSTR(path_w.as_ptr()),
-            PCWSTR::null(),
-            PCWSTR::null(),
-            std::ptr::null(),
-            flags,
-        )
-    };
-    if request.is_null() {
-        return Err("WinHttpOpenRequest failed".into());
-    }
-    let request = Handle(request);
-
-    // Deterministic behaviour: follow redirects, and let WinHTTP decompress
-    // gzip/deflate so plugins never see compressed bytes as "the body".
-    unsafe {
-        let policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS.to_le_bytes();
-        let _ = WinHttpSetOption(
-            Some(request.0 as *const c_void),
-            WINHTTP_OPTION_REDIRECT_POLICY,
-            Some(&policy),
-        );
-        let decomp = (WINHTTP_DECOMPRESSION_FLAG_GZIP | WINHTTP_DECOMPRESSION_FLAG_DEFLATE)
-            .to_le_bytes();
-        let _ = WinHttpSetOption(
-            Some(request.0 as *const c_void),
-            WINHTTP_OPTION_DECOMPRESSION,
-            Some(&decomp),
-        );
-    }
-
-    // Headers: one "K: V\r\n" block, UTF-16 without a terminator (the wrapper
-    // passes the length explicitly).
-    let header_block = req
+    let mut header_block = req
         .headers
         .unwrap_or_default()
         .iter()
         .map(|(k, v)| format!("{k}: {v}\r\n"))
         .collect::<String>();
-    let header_wide: Option<Vec<u16>> = (!header_block.is_empty())
-        .then(|| header_block.encode_utf16().collect());
-
-    let body_bytes: Vec<u8> = match (req.body_base64.as_deref(), req.body.as_deref()) {
+    let mut body_bytes: Vec<u8> = match (req.body_base64.as_deref(), req.body.as_deref()) {
         (Some(b64), _) => base64::engine::general_purpose::STANDARD
             .decode(b64)
             .map_err(|e| format!("bad body_base64: {e}"))?,
@@ -193,90 +259,177 @@ fn fetch_blocking(req: HttpRequest) -> Result<HttpResponse, String> {
         (None, None) => Vec::new(),
     };
 
-    unsafe {
-        WinHttpSendRequest(
-            request.0,
-            header_wide.as_deref(),
-            (!body_bytes.is_empty()).then_some(body_bytes.as_ptr() as *const c_void),
-            body_bytes.len() as u32,
-            body_bytes.len() as u32,
-            0,
-        )
-    }
-    .map_err(|e| format!("WinHttpSendRequest: {e}"))?;
-
-    unsafe { WinHttpReceiveResponse(request.0, std::ptr::null_mut()) }
-        .map_err(|e| format!("WinHttpReceiveResponse: {e}"))?;
-
-    // Status code.
-    let mut status: u32 = 0;
-    let mut len = std::mem::size_of::<u32>() as u32;
-    unsafe {
-        WinHttpQueryHeaders(
-            request.0,
-            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            PCWSTR::null(),
-            Some(&mut status as *mut u32 as *mut c_void),
-            &mut len,
-            std::ptr::null_mut(),
-        )
-    }
-    .map_err(|e| format!("query status: {e}"))?;
-
-    // Raw headers (CRLF block) → map. A missing header block is not fatal.
-    let mut headers = std::collections::HashMap::new();
-    let mut raw: Vec<u16> = vec![0; 8192];
-    let mut raw_len = (raw.len() * 2) as u32;
-    if unsafe {
-        WinHttpQueryHeaders(
-            request.0,
-            WINHTTP_QUERY_RAW_HEADERS_CRLF,
-            PCWSTR::null(),
-            Some(raw.as_mut_ptr() as *mut c_void),
-            &mut raw_len,
-            std::ptr::null_mut(),
-        )
-    }
-    .is_ok()
-    {
-        let units = (raw_len as usize / 2).saturating_sub(1);
-        if let Ok(text) = String::from_utf16(&raw[..units.min(raw.len())]) {
-            headers = parse_headers(&text);
+    let mut result: Option<HttpResponse> = None;
+    for _hop in 0..=MAX_REDIRECTS {
+        // Same gate for the first hop and every redirect target.
+        if enforce {
+            check_target(&current, allow)?;
         }
-    }
+        let scheme = current.scheme().to_ascii_lowercase();
+        let Some(host) = current.host_str().map(str::to_string) else {
+            return Err("url has no host".into());
+        };
+        let port = current
+            .port_or_known_default()
+            .unwrap_or(if scheme == "https" { 443 } else { 80 });
+        let mut path = current.path().to_string();
+        if path.is_empty() {
+            path.push('/');
+        }
+        if let Some(q) = current.query() {
+            path.push('?');
+            path.push_str(q);
+        }
 
-    // Body: read until the peer stops or the cap is hit.
-    let mut body: Vec<u8> = Vec::new();
-    let mut truncated = false;
-    loop {
-        let mut chunk = [0u8; 16 * 1024];
-        let mut read: u32 = 0;
+        let host_w = HSTRING::from(host.as_str());
+        let connect = unsafe { WinHttpConnect(session.0, PCWSTR(host_w.as_ptr()), port as u16, 0) };
+        if connect.is_null() {
+            return Err(format!("WinHttpConnect failed for \"{host}\""));
+        }
+        let connect = Handle(connect);
+
+        let method_w = HSTRING::from(method.as_str());
+        let path_w = HSTRING::from(path.as_str());
+        let flags = if scheme == "https" { WINHTTP_FLAG_SECURE } else { Default::default() };
+        let request = unsafe {
+            WinHttpOpenRequest(
+                connect.0,
+                PCWSTR(method_w.as_ptr()),
+                PCWSTR(path_w.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                std::ptr::null(),
+                flags,
+            )
+        };
+        if request.is_null() {
+            return Err("WinHttpOpenRequest failed".into());
+        }
+        let request = Handle(request);
+
+        // Redirects are manual (checked per hop); decompression always on.
         unsafe {
-            WinHttpReadData(
+            let policy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER.to_le_bytes();
+            let _ = WinHttpSetOption(
+                Some(request.0 as *const c_void),
+                WINHTTP_OPTION_REDIRECT_POLICY,
+                Some(&policy),
+            );
+            let _ = WinHttpSetOption(
+                Some(request.0 as *const c_void),
+                WINHTTP_OPTION_DECOMPRESSION,
+                Some(&decomp),
+            );
+        }
+
+        let header_wide: Option<Vec<u16>> = (!header_block.is_empty())
+            .then(|| header_block.encode_utf16().collect());
+
+        unsafe {
+            WinHttpSendRequest(
                 request.0,
-                chunk.as_mut_ptr() as *mut c_void,
-                chunk.len() as u32,
-                &mut read,
+                header_wide.as_deref(),
+                (!body_bytes.is_empty()).then_some(body_bytes.as_ptr() as *const c_void),
+                body_bytes.len() as u32,
+                body_bytes.len() as u32,
+                0,
             )
         }
-        .map_err(|e| format!("WinHttpReadData: {e}"))?;
-        if read == 0 {
-            break;
+        .map_err(|e| format!("WinHttpSendRequest: {e}"))?;
+
+        unsafe { WinHttpReceiveResponse(request.0, std::ptr::null_mut()) }
+            .map_err(|e| format!("WinHttpReceiveResponse: {e}"))?;
+
+        // Status code.
+        let mut status: u32 = 0;
+        let mut len = std::mem::size_of::<u32>() as u32;
+        unsafe {
+            WinHttpQueryHeaders(
+                request.0,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                PCWSTR::null(),
+                Some(&mut status as *mut u32 as *mut c_void),
+                &mut len,
+                std::ptr::null_mut(),
+            )
         }
-        let take = (read as usize).min(MAX_BODY - body.len());
-        body.extend_from_slice(&chunk[..take]);
-        if take < read as usize || body.len() >= MAX_BODY {
-            truncated = true;
-            break;
+        .map_err(|e| format!("query status: {e}"))?;
+
+        // Raw headers (CRLF block) → map. A missing header block is not fatal.
+        let mut headers = std::collections::HashMap::new();
+        let mut raw: Vec<u16> = vec![0; 8192];
+        let mut raw_len = (raw.len() * 2) as u32;
+        if unsafe {
+            WinHttpQueryHeaders(
+                request.0,
+                WINHTTP_QUERY_RAW_HEADERS_CRLF,
+                PCWSTR::null(),
+                Some(raw.as_mut_ptr() as *mut c_void),
+                &mut raw_len,
+                std::ptr::null_mut(),
+            )
         }
+        .is_ok()
+        {
+            let units = (raw_len as usize / 2).saturating_sub(1);
+            if let Ok(text) = String::from_utf16(&raw[..units.min(raw.len())]) {
+                headers = parse_headers(&text);
+            }
+        }
+
+        // Manual redirect: re-check and re-issue (301/302/303 → GET, no body;
+        // 307/308 keep method + body, per common client behaviour).
+        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+            let Some(loc) = headers.get("location") else {
+                return Err(format!("redirect {status} without a Location header"));
+            };
+            let next = current
+                .join(loc.trim())
+                .map_err(|e| format!("bad redirect target \"{loc}\": {e}"))?;
+            if matches!(status, 301 | 302 | 303) {
+                method = "GET".into();
+                body_bytes.clear();
+            }
+            current = next;
+            continue; // per-hop handles drop here
+        }
+
+        // Final response: read the body until the peer stops or the cap hits.
+        let mut body: Vec<u8> = Vec::new();
+        let mut truncated = false;
+        loop {
+            let mut chunk = [0u8; 16 * 1024];
+            let mut read: u32 = 0;
+            unsafe {
+                WinHttpReadData(
+                    request.0,
+                    chunk.as_mut_ptr() as *mut c_void,
+                    chunk.len() as u32,
+                    &mut read,
+                )
+            }
+            .map_err(|e| format!("WinHttpReadData: {e}"))?;
+            if read == 0 {
+                break;
+            }
+            let take = (read as usize).min(MAX_BODY - body.len());
+            body.extend_from_slice(&chunk[..take]);
+            if take < read as usize || body.len() >= MAX_BODY {
+                truncated = true;
+                break;
+            }
+        }
+
+        result = Some(HttpResponse {
+            status: status as u16,
+            headers,
+            body: base64::engine::general_purpose::STANDARD.encode(&body),
+            truncated,
+        });
+        break;
     }
 
-    Ok(HttpResponse {
-        status: status as u16,
-        headers,
-        body: base64::engine::general_purpose::STANDARD.encode(&body),
-        truncated,
-    })
+    result.ok_or_else(|| format!("too many redirects (>{MAX_REDIRECTS})"))
 }
 
 /// One HTTP request from a plugin. Blocks on a worker thread — the webview
@@ -299,9 +452,19 @@ pub async fn plugin_http_fetch(
         host_token.as_deref(),
         "network",
     )?;
+    // #32.3: plugin calls get the private-address gate + the manifest's
+    // `network_allow` override. assert_* above already warmed the permission
+    // cache (entry_for on miss), so the lookup below is a map read.
+    let (allow, enforce) = match plugin_id.as_deref() {
+        Some(id) => (
+            crate::plugin_perm::network_allow_for(&perms, id),
+            true,
+        ),
+        None => (Vec::new(), false),
+    };
     let url = req.url.clone();
     let started = std::time::Instant::now();
-    let out = spawn_blocking(move || fetch_blocking(req))
+    let out = spawn_blocking(move || fetch_blocking_checked(req, &allow, enforce))
         .await
         .map_err(|e| format!("http worker panicked: {e}"))?;
     match &out {
@@ -326,12 +489,13 @@ mod tests {
     /// (base url, join handle + captured request).
     fn one_shot_server(
         status_line: &'static str,
-        extra_headers: &'static str,
+        extra_headers: impl Into<String> + Send + 'static,
         body: &'static str,
     ) -> (String, std::thread::JoinHandle<String>) {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        let extra_headers = extra_headers.into();
         let handle = std::thread::spawn(move || {
             let (mut sock, _) = listener.accept().unwrap();
             let mut raw: Vec<u8> = Vec::new();
@@ -476,5 +640,103 @@ mod tests {
         assert!(out.truncated, "5MiB body must be flagged truncated");
         let decoded = base64::engine::general_purpose::STANDARD.decode(&out.body).unwrap();
         assert_eq!(decoded.len(), MAX_BODY);
+    }
+
+    // ── #32.3 私网防护 ──
+
+    #[test]
+    fn forbidden_ip_vectors() {
+        let f = |s: &str| is_forbidden_ip(s.parse().unwrap());
+        // Loopback / unspecified.
+        assert!(f("127.0.0.1") && f("127.8.8.8") && f("0.0.0.0"));
+        // Private v4.
+        assert!(f("10.1.2.3") && f("172.16.0.1") && f("172.31.255.255") && f("192.168.1.1"));
+        // Link-local (cloud metadata!) + CGNAT.
+        assert!(f("169.254.169.254") && f("100.64.0.1"));
+        // v6 loopback/unspecified/link-local/unique-local.
+        assert!(f("::1") && f("::") && f("fe80::1") && f("fc00::1"));
+        // IPv4-mapped IPv6 of forbidden v4 forms.
+        assert!(f("::ffff:127.0.0.1") && f("::ffff:10.0.0.1") && f("::ffff:169.254.169.254"));
+        // Public stays reachable.
+        let ok = |s: &str| !is_forbidden_ip(s.parse().unwrap());
+        assert!(ok("8.8.8.8") && ok("1.1.1.1") && ok("172.32.0.1"));
+        assert!(ok("2606:4700::1111") && ok("::ffff:8.8.8.8"));
+    }
+
+    #[test]
+    fn host_allow_matches_exact_wildcard_and_case() {
+        let a = ["Example.COM".to_string(), "*.internal.dev".to_string()];
+        assert!(host_allowed("example.com", &a));
+        // Exact match is exact — a subdomain needs a `*.` entry.
+        assert!(!host_allowed("API.Example.com", &a));
+        assert!(host_allowed("x.internal.dev", &a));
+        assert!(host_allowed("a.b.internal.dev", &a));
+        // The apex needs its own entry — `*.` covers subdomains only.
+        assert!(!host_allowed("internal.dev", &a));
+        assert!(!host_allowed("example.org", &a));
+        assert!(host_allowed("anything.net", &["*".to_string()]));
+        assert!(!host_allowed("example.com", &[]));
+    }
+
+    #[test]
+    fn target_checks_reject_private_and_allow_listed() {
+        // Loopback literal refused, allowed when listed.
+        let url = tauri::Url::parse("http://127.0.0.1:9/x").unwrap();
+        assert!(check_target(&url, &[]).is_err());
+        assert!(check_target(&url, &["127.0.0.1".to_string()]).is_ok());
+        // Public literal fine.
+        let pub_url = tauri::Url::parse("https://8.8.8.8/dns-query").unwrap();
+        assert!(check_target(&pub_url, &[]).is_ok());
+        // Non-http scheme always refused.
+        let file = tauri::Url::parse("file:///C:/x").unwrap();
+        assert!(check_target(&file, &[]).is_err());
+    }
+
+    #[test]
+    fn direct_private_target_refused_when_enforced() {
+        // No server needed: the gate fires before any connect.
+        let err = fetch_blocking_checked(
+            HttpRequest {
+                url: "http://127.0.0.1:1/x".into(),
+                method: None,
+                headers: None,
+                body: None,
+                body_base64: None,
+                timeout_ms: Some(1000),
+            },
+            &[],
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("private address"), "{err}");
+    }
+
+    #[test]
+    fn redirect_into_private_is_refused_but_allow_listed_is_followed() {
+        // Hop 1 returns 302 → hop 2 (another loopback server). Enforced with an
+        // empty allow list the redirect is refused; with 127.0.0.1 listed it is
+        // followed to the final 200 — the SSRF-via-redirect hole is closed.
+        let (base2, server2) = one_shot_server("HTTP/1.1 200 OK", "", "final");
+        let (base1, _server1) = one_shot_server("HTTP/1.1 302 Found", format!("Location: {base2}/final\r\n"), "");
+        let req = |url: String| HttpRequest {
+            url,
+            method: None,
+            headers: None,
+            body: None,
+            body_base64: None,
+            timeout_ms: Some(5000),
+        };
+        let err = fetch_blocking_checked(req(format!("{base1}/go")), &[], true).unwrap_err();
+        assert!(err.contains("private address"), "{err}");
+        let out = fetch_blocking_checked(
+            req(format!("{base1}/go")),
+            &["127.0.0.1".to_string()],
+            true,
+        )
+        .expect("allow-listed redirect should be followed");
+        assert_eq!(out.status, 200);
+        let body = base64::engine::general_purpose::STANDARD.decode(&out.body).unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "final");
+        let _ = server2.join().unwrap();
     }
 }

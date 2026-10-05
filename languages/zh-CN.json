@@ -300,6 +300,7 @@
   "pluginToastEnabled": "「{name}」已启用",
   "pluginToastDisabled": "「{name}」已停用",
   "pluginToastReloaded": "「{name}」已重载",
+  "pluginApiMismatch": "「{name}」需要插件 API {api}，当前宿主支持 {host}，已停用",
   "pluginPermEnforcedHint": "插件只能调用已声明的能力，未声明的调用会被拒绝。",
   "pluginsDevMode": "开发者模式",
   "pluginsDevModeHint": "显示重载、全部授权等开发者选项；「全部授权」仅在此开启时生效。",

@@ -243,6 +243,21 @@ pub struct PluginManifest {
     /// without a restart. Plugin authors opt in via the manifest.
     #[serde(default)]
     pub development: bool,
+    /// Host plugin-API version this plugin targets (docs/PLUGIN_API.md §11).
+    /// Missing → the host's current version (legacy manifests keep loading);
+    /// a version ABOVE the host's is refused at load with a clear error
+    /// instead of silently half-working.
+    #[serde(default = "default_api")]
+    pub api: u32,
+}
+
+/// The plugin-API version this build implements (docs/PLUGIN_API.md §11).
+/// Bump on breaking contract changes; plugins declaring a higher version are
+/// refused at load (frontend gate + logic-host defense in depth).
+pub const HOST_PLUGIN_API: u32 = 1;
+
+fn default_api() -> u32 {
+    HOST_PLUGIN_API
 }
 
 fn default_kind() -> String {
@@ -287,6 +302,8 @@ pub struct PluginInfo {
     /// Development flag (manifest `development`): the frontend reloads this
     /// plugin on every refresh so code edits take effect without a restart.
     pub development: bool,
+    /// Host plugin-API version the manifest declares (missing → the host's).
+    pub api: u32,
     /// Pinyin search aids for `keywords` (same order); empty when the plugin
     /// has no keywords. Backend-computed (the frontend has no pinyin table).
     #[serde(rename = "keywordsPinyin")]
@@ -455,6 +472,7 @@ pub fn list_plugins(
             detachable: false,
             icon: String::new(),
             development: false,
+            api: HOST_PLUGIN_API,
             keywords_pinyin: Vec::new(),
             features: Vec::new(),
             settings: Vec::new(),
@@ -497,6 +515,7 @@ pub fn list_plugins(
             detachable: m.detachable,
             icon: m.icon,
             development: m.development,
+            api: m.api,
             keywords_pinyin,
             features: m.features,
             settings: m.settings.iter().map(|s| s.info()).collect(),

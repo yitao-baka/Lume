@@ -13,6 +13,7 @@ import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
+import { HOST_PLUGIN_API } from "./types";
 import { capSnapshot, createIframeView, injectBridge } from "./iframeBridge";
 import { createListTemplateMode } from "./listTemplate";
 import { fetchDiskFile } from "./disk";
@@ -20,6 +21,7 @@ import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
 import { currentThemeMode } from "../theme";
+import { t } from "../i18n";
 export {
   APPS_MODE,
   type LauncherPlugin,
@@ -672,6 +674,19 @@ export async function loadDiskPlugins() {
         m.id,
         "skip load:",
         m.builtin ? "builtin" : !m.enabled ? "disabled in settings" : "no dir"
+      );
+      continue;
+    }
+    // API 版本门（#32.1）：清单声明的版本超过宿主支持 → 明确停用 + 提示，
+    // 而不是加载后行为怪异（§11 兼容性：低版本/缺省照常加载）。
+    if (m.api > HOST_PLUGIN_API) {
+      plog.error(m.id, `manifest api=${m.api} > host ${HOST_PLUGIN_API} — refusing to load`);
+      services?.showToast(
+        t("pluginApiMismatch", {
+          name: m.name || m.id,
+          api: String(m.api),
+          host: String(HOST_PLUGIN_API),
+        })
       );
       continue;
     }

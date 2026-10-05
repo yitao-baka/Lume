@@ -91,6 +91,7 @@ pub fn plugin_logic_meta(
         "dir": m.dir,
         "entry": m.entry,
         "name": m.name,
+        "api": m.api,
     }))
 }
 

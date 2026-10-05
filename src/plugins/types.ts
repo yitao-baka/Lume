@@ -23,6 +23,12 @@ export type { FileSearchOut };
  * them. */
 export type PageRow = AppEntry | ClipboardItem;
 
+/** The plugin-API version this build implements (docs/PLUGIN_API.md §11) —
+ * must mirror `HOST_PLUGIN_API` in src-tauri/src/plugins.rs. Manifests
+ * declaring a higher version are refused at load (registry gate + logic-host
+ * defense in depth); lower/missing versions load as-is. */
+export const HOST_PLUGIN_API = 1;
+
 /** Manifest as reported by the Rust `get_plugins` command. */
 export interface PluginManifest {
   id: string;
@@ -67,6 +73,10 @@ export interface PluginManifest {
    * plugin from disk on every refresh (settings-applied) — code edits take
    * effect without a restart. */
   development: boolean;
+  /** Host plugin-API version the manifest targets (`api = 1` in plugin.toml).
+   * Missing manifests default to the host's version; a version ABOVE
+   * `HOST_PLUGIN_API` is refused at load with a clear error (§11 版本化). */
+  api: number;
   /** Backend-computed pinyin of `keywords` (same order) — lets the frontend
    * match "miao"/"ms" against the Chinese keyword 「秒搜」 without a pinyin
    * library. Empty entries when the plugin has no keywords. */

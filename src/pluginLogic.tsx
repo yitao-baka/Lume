@@ -19,6 +19,7 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { PluginManifest, PluginServices } from "./plugins/types";
+import { HOST_PLUGIN_API } from "./plugins/types";
 import { setPermissionSource } from "./plugins/permissions";
 import { execHostRpc } from "./plugins/rpc";
 import { plog } from "./plugins/log";
@@ -98,14 +99,26 @@ async function readPluginFile(entry: LogicEntry, rawPath: string): Promise<strin
 
 async function loadPlugin(id: string) {
   if (entries.has(id)) return;
-  let meta: { dir: string; entry: string; name: string };
+  let meta: { dir: string; entry: string; name: string; api: number };
   try {
-    meta = await invoke<{ dir: string; entry: string; name: string }>("plugin_logic_meta", { id });
+    meta = await invoke<{ dir: string; entry: string; name: string; api: number }>(
+      "plugin_logic_meta",
+      { id }
+    );
   } catch (err) {
     plog.error(id, "logic host: meta fetch failed:", err);
     return;
   }
   if (!meta.entry) return; // 纯视图模式无逻辑
+  // API 版本二次校验（#32.1 防御纵深）：registry 门在前，这里兜底（如
+  // 旧 main 窗口残留在发 load）。拒绝建帧，而非加载后行为怪异。
+  if (meta.api > HOST_PLUGIN_API) {
+    plog.error(
+      id,
+      `logic host: manifest api=${meta.api} > host ${HOST_PLUGIN_API} — refusing`
+    );
+    return;
+  }
   const token = crypto.randomUUID();
   const entry: LogicEntry = {
     token,

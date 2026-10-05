@@ -100,6 +100,8 @@ export default {
 | `template` | string | `""` | mode 插件：`"list"` = 用内置列表模板渲染 `entry` 逻辑的行，**免 `view` HTML**（§6E.5） |
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
+| `api` | integer | `1` | **目标宿主 API 版本**（#32.1）— 插件针对的契约版本（§11）。缺省 = 当前宿主版本（旧清单零改动）；声明**高于**宿主支持的版本（`HOST_PLUGIN_API`）→ 加载期明确拒绝 + toast 提示，而不是静默半坏。 |
+| `network_allow` | string[] | `[]` | **网络白名单**（#32.3）— `network` 能力的私网放行名单（§6D.1）：默认拒绝回环/私网/链路本地目标（防 SSRF），`network_allow = ["192.168.1.10", "*.internal.example.com"]` 声明的 host（精确或 `*.` 通配后缀，大小写不敏感）跳过该检查。公网访问无需声明。 |
 | `settings` | array of table | `[]` | **声明式设置**（P3.4，§6F.3）——`[[settings]]` 子表：`key`、`label`、`type`（`toggle`/`select`/`text`）、`default`、`[[settings.options]]`（`value`/`label`）。设置 → 插件 自动渲染，值存插件 `__settings` 文档，插件经 `ctx.settings.get/all` 读、`onSettings` 感知变更。 |
 | `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入，含 `file_type` 类别，§6E.1.1）、`"img"`（剪贴板图片）与 `"window"`（活动窗口匹配，§6H.4）规则见对应小节。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。分离窗口的默认高度同样取它（§6G）。 |
@@ -1515,12 +1517,19 @@ pluginBuiltin`。
 
 ## 11. 兼容性与版本化
 
-- v1 没有 manifest 版本字段与协商机制——契约变更以「字段只增不改义」的
-  方式演进；`kind` 是分发键，新增贡献类型会引入新的 kind 值。
+- **宿主 API 版本契约（#32.1）**：宿主实现的版本 = `HOST_PLUGIN_API`（当前
+  **1**，Rust `plugins.rs` 与前端 `types.ts` 双侧镜像）。清单 `api` 字段缺省
+  = 当前版本；声明更高版本 → 加载期拒绝 + 明确提示（前端加载门 + 逻辑宿主
+  二次校验）。演进规则：**破坏性变更必须 bump 版本**；非破坏性新增（新能力、
+  新 hook、新字段）不 bump；废弃的 API 先标注、保留至少一个版本周期后再在
+  bump 时移除。v1 之前以「字段只增不改义」演进的历史照旧成立。
+- `kind` 是分发键，新增贡献类型会引入新的 kind 值。
 - `ModeInstance.rows` 已泛化为 `PageRow`（`AppEntry | ClipboardItem`，#30
   主窗口部件化改造）；任意模式自定义行模型仍留待后续。
 - 磁盘插件的 JS 在 blob URL 中执行：可用标准 Web API 与标准 ESM 语法
-  （`export`），但**不能 `import` 项目内部模块或第三方包**（无解析根）。
+  （`export`），但**不能 `import` 项目内部模块或第三方包**（无解析根）；
+  blob 带 `//# sourceURL=lume-plugin/<id>/<相对路径>`，DevTools 按真实
+  文件名显示（#32.9）。
 - **插件数据的落点变了（P3.1）**：`storage.json` 已迁到 `<base>/data/plugin_store.db`
   的 `__storage` 文档（旧文件改名为 `storage.json.migrated` 保留）。`storage.*`
   旧调用语义不变，但**换机/备份时不要只拷 `plugins/`**——插件数据在 `data/` 里。
@@ -1548,7 +1557,5 @@ pluginBuiltin`。
 
 未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4 后半）：
 
-- `.lupx` 市场源（静态索引 + 应用内安装 + 版本提示）、签名校验、
-  拖包/文件关联安装
+- `.lupx` 市场源（静态索引 + 应用内安装 + 版本提示）、拖包/文件关联安装
 - 浏览器 URL / 划词捕获（UIA）、超级面板、AI 宿主 API
-- 宿主窗口内插件逻辑的进程级隔离（沙箱已覆盖 mode 页与命令侧，§9 残余边界）

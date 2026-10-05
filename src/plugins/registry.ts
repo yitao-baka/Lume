@@ -1006,8 +1006,11 @@ export function onPluginWindowClosed(
   if (typeof payload === "string") return; // pre-P6.5 emitter (no snapshot)
   const view = capSnapshot(payload.snapshot);
   // The final query becomes the mode's query: the in-launcher replay (and
-  // the search box) pick it up on the next activation.
-  if (typeof payload.query === "string" && payload.query !== "") {
+  // the search box) pick it up on the next activation. **"" is a real
+  // value** — the user may have cleared the text inside the detached window;
+  // only null/undefined means "no query info" (keep the current signal).
+  // Skipping "" here would resurrect pre-detach text into the search box.
+  if (typeof payload.query === "string") {
     plugins.find((x) => x.id === id)?.mode?.setQuery(payload.query);
   }
   if (view == null) return;

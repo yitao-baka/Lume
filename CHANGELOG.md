@@ -6,6 +6,15 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Changed
+
+- **版本号与二进制图标（Pre-26.10 发布准备）** — 内部 semver `3.0.0` → `2.8.0`
+  （package.json / tauri.conf.json / Cargo.toml / Cargo.lock），对外标签
+  `Pre-26.9` → `Pre-26.10`（`APP_VERSION_LABEL`，About 页展示）；静态 exe
+  图标（Explorer / 安装器场景）改用 `res/icons/application.png` 经
+  `tauri icon` 重新生成（浅底黑鸽 artwork，运行期任务栏/托盘的主题图标对
+  不变）。
+
 ### Added
 
 - **独立窗任务栏图标与身份（P6.8，ROADMAP #34）** — 分离出的插件窗口在任务栏

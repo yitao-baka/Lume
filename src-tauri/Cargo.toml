@@ -1,6 +1,6 @@
 [package]
 name = "lume"
-version = "3.0.0"
+version = "2.8.0"
 description = "A lightweight Windows productivity launcher."
 authors = ["Lume"]
 edition = "2021"

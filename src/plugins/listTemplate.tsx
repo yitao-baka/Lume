@@ -25,7 +25,7 @@ import type {
   ProviderResult,
 } from "./types";
 import type { ClipboardItem } from "../launcher/types";
-import { callHook } from "./registry";
+import { callHook, throttledLogicCall } from "./registry";
 import { plog } from "./log";
 import { t } from "../i18n";
 
@@ -100,7 +100,7 @@ export function createListTemplateMode(
     query,
     setQuery: (q: string) => {
       setQuerySig(q);
-      hook("onQuery", q);
+      throttledLogicCall(m.id, "onQuery", [q]);
     },
     search: async (q: string) => {
       setQuerySig(q);
@@ -145,7 +145,7 @@ export function createListTemplateMode(
     applySettings: () => {},
     onHide: () => hook("onHide"),
     onEnter: (info: FeatureEnterInfo) => hook("onFeature", info),
-    onSubInput: (text: string) => hook("onSubInput", text),
+    onSubInput: (text: string) => throttledLogicCall(m.id, "onSubInput", [text]),
     onSettings: (values: Record<string, unknown>) => hook("onSettings", values),
     View: (() => (
       <ListTemplateView

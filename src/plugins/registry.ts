@@ -167,6 +167,46 @@ function pushLogicLoad(id: string): void {
     .catch((err) => plog.error(id, "logic load push failed:", err));
 }
 
+// ── 高频 hook 的跨进程节流（#32.5）──
+//
+// onQuery / onSubInput 随每次键击跨 3 个进程（主窗 → Rust 中继 → 逻辑宿主
+// iframe，3-10ms/次），打字快时是事件风暴。trailing 合并：窗口内后到的值
+// 覆盖先到的，一个窗口只发一次——插件收到的仍是"最新输入"，API 语义不变。
+
+const THROTTLE_MS = 120;
+const throttledCalls = new Map<string, { timer: number; args: unknown[] }>();
+
+/** fire-and-forget 的节流版 logicCall：仅用于高频、无返回值消费的 hook。 */
+export function throttledLogicCall(
+  id: string,
+  name: string,
+  args: unknown[],
+  ms = THROTTLE_MS
+): void {
+  const key = `${id}\u0000${name}`;
+  const existing = throttledCalls.get(key);
+  if (existing) {
+    existing.args = args; // 窗口内只留最新值，到点发一次
+    return;
+  }
+  const slot: { timer: number; args: unknown[] } = { timer: 0, args };
+  throttledCalls.set(key, slot);
+  slot.timer = window.setTimeout(() => {
+    throttledCalls.delete(key);
+    void logicCall(id, name, slot.args).catch(() => {});
+  }, ms);
+}
+
+/** 卸载/重载时丢弃未发送的高频 hook——插件已不在，迟到调用只会白报错误。 */
+function clearThrottledCalls(id: string): void {
+  for (const [key, slot] of throttledCalls) {
+    if (key.startsWith(id + "\u0000")) {
+      window.clearTimeout(slot.timer);
+      throttledCalls.delete(key);
+    }
+  }
+}
+
 /** ctx 动作分发（Rust 中继已按令牌归属 id）。 */
 function handleLogicAction(id: string, action: string, args: Record<string, unknown>): void {
   const services = pluginServices;
@@ -500,11 +540,11 @@ function createDiskModeInstance(
     setQuery: (q) => {
       setQuerySig(q);
       if (viewReady) postEv("query", q);
-      hook("onQuery", q);
+      throttledLogicCall(m.id, "onQuery", [q]);
     },
     search: async (q) => {
       if (viewReady) postEv("query", q);
-      hook("onQuery", q);
+      throttledLogicCall(m.id, "onQuery", [q]);
       // ModeInstance contract: every search ends with a resize request —
       // without it the window keeps the previous page's size after a mode
       // switch (the fixed-height model differs per mode).
@@ -568,7 +608,7 @@ function createDiskModeInstance(
     },
     onSubInput: (text) => {
       if (viewReady) postEv("subInput", text);
-      hook("onSubInput", text);
+      throttledLogicCall(m.id, "onSubInput", [text]);
     },
     onSettings: (values) => {
       settingsValues = values;
@@ -593,6 +633,7 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
     if (plugins[i].id === id) plugins.splice(i, 1);
   }
   logicLoadedIds.delete(id);
+  clearThrottledCalls(id);
   void invoke("plugin_logic_push", { id, kind: "unload", payload: {} }).catch(() => {});
   pendingLogicSettings.delete(id);
   detachedSuppliers.delete(id);
@@ -753,9 +794,9 @@ export async function loadDiskPlugins() {
           lifecycle: {
             onShow: () => void logicCall(m.id, "onShow", []).catch(() => {}),
             onHide: () => void logicCall(m.id, "onHide", []).catch(() => {}),
-            onQuery: (q) => void logicCall(m.id, "onQuery", [q]).catch(() => {}),
+            onQuery: (q) => throttledLogicCall(m.id, "onQuery", [q]),
             onFeature: (info) => void logicCall(m.id, "onFeature", [info]).catch(() => {}),
-            onSubInput: (text) => void logicCall(m.id, "onSubInput", [text]).catch(() => {}),
+            onSubInput: (text) => throttledLogicCall(m.id, "onSubInput", [text]),
             onSettings: (values) => void logicCall(m.id, "onSettings", [values]).catch(() => {}),
           },
           features: m.features ?? [],

@@ -2239,3 +2239,84 @@ pill 排序/隐藏设置、§10.4 剪贴板页重设计（本重构为其结构�
   dark/light，`test/_icon_probe.ps1` 读各窗口 ICON_BIG 像素均值亮度：暗色
   三窗口全 255.0（白鸽）、浅色全 0.0（黑鸽）、无 `[appicon]` 错误日志）+
   用户手动目检任务栏/托盘随主题翻转通过。
+
+## 32. 插件系统加固（规划）
+
+**状态：规划完成（2026-10-05），待批准实施。** 背景：P6.5 逻辑隔离落地后的
+整体评估结论——信任边界骨架正确（opaque 沙箱 + Rust 侧 token 门控 +
+fail-closed），短板集中在**生态契约缺失**（无签名、无 API 版本）、**共享
+故障域**（一个插件拖累全窗）与**高频链路无节流**。趁第三方生态未起，契约类
+问题现在补最便宜。优先级排序：契约（32.1-32.3）→ 健壮性（32.4-32.6）→
+开发体验（32.7-32.10）。
+
+### 32.1 宿主 API 版本契约（P0）
+
+manifest 无 `api` 版本字段（`plugins.rs` PluginManifest 只有插件自身
+version），桥协议（`__lumeReady/__lumeRpc/__lumeCall`）无版本协商——宿主
+升级可能让旧插件静默半坏。方案：manifest 增 `api` 字段（缺省 = 1，向后
+兼容）；逻辑帧/视图桥握手带版本，不匹配时明确报错而非怪异行为；
+`PLUGIN_API.md` 建弃用流程（先加后删、留一个版本周期）。
+
+### 32.2 `.lupx` 签名与完整性（P0）
+
+`plugin_install.rs` 只做路径规范化/大小上限/内容清点，zip 即装，无签名无
+哈希——分发链路被篡改无从发现。方案：`.lupx` 增签名条目（ed25519 对
+manifest + 文件清单签名），Rust 端内置公钥验签、允许用户导入自签公钥；
+未签名包降级为现有确认流 + 展示 sha256。签名工具用 Node 脚本（node:crypto
+原生 ed25519，零新依赖），商店端同一工具。
+
+### 32.3 网络能力内网防护（P0）
+
+`plugin_net.rs` 仅限 http/https scheme，`network` 权限 = 任意 URL，可探测/
+访问内网服务（SSRF）。方案：默认拒绝回环/私网目标（127/8、10/8、172.16/12、
+192.168/16、169.254/16、::1），manifest 可选 `network_allow = ["host"]`
+白名单放行（面向自建服务场景）；既有插件默认行为不变（只是内网默认关闭）。
+
+### 32.4 插件熔断（P1）
+
+共享逻辑宿主 = 共享故障域：单插件死循环/连续超时拖慢同窗其它插件。方案：
+supervisor 侧统计每插件 hook 结果，连续 N 次超时/异常自动标记离线 + toast
+（其余插件不受影响），手动重载/设置刷新恢复；声明高消耗的插件可后续提供
+独立进程选项（基建已在）。
+
+### 32.5 onQuery 跨进程节流（P1）
+
+`registry.ts` 每个 input 事件都 `logicCall("onQuery")` 跨 3 进程（主窗 →
+Rust 中继 → 逻辑窗 → iframe，3-10ms/次），打字快时是事件风暴。方案：宿主
+侧 ~120ms trailing 合并再 push，API 语义不变（收到的仍是最新输入），所有
+插件免费受益。
+
+### 32.6 UA 版本修正（P1）
+
+`plugin_net.rs` 硬编码 `Lume/2.0 (plugin host)`，应用已 3.0.0。改
+`env!("CARGO_PKG_VERSION")`。
+
+### 32.7 dev 目录监听热重载（P2）
+
+热重载目前是设置面板手动按钮（仅 `development` 清单生效）。方案：dev_mode
+下用 `ReadDirectoryChangesW` 监听插件目录（沿用 repo 零依赖手写 Win32 惯例，
+参考 dirwatch/usnidx），变更去抖后走现有 `reloadDiskPlugin` 推送。
+
+### 32.8 快照降级可感知（P2）
+
+`iframeBridge.tsx capSnapshot` 超 1MB 静默丢 custom、再静默整体置 null——
+表现为"状态继承时灵时不灵"最难查。方案：降级发生时 `plog.warn` + dev_mode
+下 toast 提示。
+
+### 32.9 逻辑帧调试名（P2）
+
+blob URL 模块在 DevTools 显示匿名 hash，断点/定位困难。方案：blob 尾部追加
+`//# sourceURL=<plugin-id>/<entry>.js`（diskLoader 与 pluginLogicFrame 两处
+编译点都要加）。
+
+### 32.10 `plugin-api.d.ts` 类型定义（P2）
+
+examples 增类型定义 + JSDoc（与 PLUGIN_API.md 同源），至少一个示例插件用
+`@ts-check` 证明可校验；文档说明引用方式；长期可发 npm 包。
+
+### 32.11 暂缓（记录在案，等真实需求）
+
+- 逻辑宿主空闲自动关闭（省 ~20MB+，冷启 ~107ms；可做设置项）。
+- service 心跳改 Rust 侧计时 push 唤醒（规避隐藏窗 timer 节流）。
+- manifest `kind` 字段强制校验（声明与实际贡献不符时安装期报错）。
+

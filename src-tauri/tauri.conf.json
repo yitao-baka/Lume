@@ -21,7 +21,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [],
+    "targets": ["msi", "nsis"],
     "resources": {
       "../languages/*.json": "languages/",
       "../res/icons/*": "res/icons/"

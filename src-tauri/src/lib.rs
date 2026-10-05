@@ -22,6 +22,7 @@ mod plugin_install;
 mod plugin_logic;
 mod plugin_net;
 mod plugin_perm;
+pub mod plugin_sign;
 mod plugin_store;
 mod plugin_window;
 mod plugins;

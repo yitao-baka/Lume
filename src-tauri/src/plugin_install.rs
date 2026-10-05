@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
 use crate::paths::base_dir;
+use crate::plugin_sign::{verify_sign_blob, SIGN_ENTRY};
 use crate::plugins::{parse_manifest, valid_plugin_id, PluginManifest};
 
 /// Cap on one extracted file. A plugin is view HTML + a JS bundle + icons;
@@ -53,9 +54,17 @@ pub struct LupxInfo {
     /// the card shows an overwrite warning instead of a fresh install.
     #[serde(rename = "existingVersion")]
     pub existing_version: Option<String>,
+    /// `LUME.SIGN` status (#32.2): `"valid"` (ed25519 signature verified) or
+    /// `"unsigned"` (no signature block — the card shows the archive hash).
+    /// Invalid signatures never get here: `read_lupx` refuses them outright.
+    pub signature: &'static str,
+    /// SHA-256 of the whole archive file (integrity display / comparing
+    /// distributions).
+    pub sha256: String,
 }
 
 /// One archive pass: manifest, its prefix inside the zip, payload facts.
+#[derive(Debug)]
 struct LupxArchive {
     manifest: PluginManifest,
     /// `""` when `plugin.toml` sits at the archive root, else the single
@@ -64,6 +73,20 @@ struct LupxArchive {
     prefix: String,
     file_count: usize,
     total_bytes: u64,
+    /// A `LUME.SIGN` block was present AND verified (invalid ones error out).
+    signed: bool,
+    /// SHA-256 of the whole archive file (confirmation card display).
+    archive_sha256: String,
+}
+
+/// One file entry of the archive: raw + normalized name, header size and the
+/// content hash (feeds the LUME.SIGN verification, #32.2). Only file entries
+/// are kept (dirs carry no payload).
+struct Entry {
+    raw: String,
+    normalized: String,
+    size: u64,
+    hash: [u8; 32],
 }
 
 /// Windows device names that must never appear as a path segment (on Windows
@@ -95,7 +118,11 @@ fn segment_ok(seg: &str) -> Result<(), String> {
 /// path inside the extraction root. Tolerates the quirks real-world archives
 /// have (backslash separators, `./` segments, trailing slash for directories)
 /// and refuses anything that could escape the root.
-fn normalize_entry(raw: &str) -> Result<String, String> {
+/// Normalize + validate one archive entry name: `\` → `/` (PowerShell
+/// `Compress-Archive` archives pass), reject absolute/relative escapes,
+/// reserved device names and control characters. Empty result = skip (the
+/// bare root entry). Shared with the signing CLI (`plugin_sign.rs`).
+pub(crate) fn normalize_entry(raw: &str) -> Result<String, String> {
     let unified = raw.replace('\\', "/");
     if unified.contains(':') {
         return Err(format!("archive entry \"{raw}\" must not be an absolute path"));
@@ -117,28 +144,41 @@ fn normalize_entry(raw: &str) -> Result<String, String> {
 /// Read + validate a `.lupx` archive without writing anything: locate the
 /// manifest, enforce the caps, collect the payload facts (counted over the
 /// entries that will actually be extracted — under the manifest's prefix —
-/// so the confirmation card shows the real footprint).
+/// so the confirmation card shows the real footprint). Trust roots come from
+/// the release key const + `<base>/settings/trust-keys/`.
 fn read_lupx(path: &str) -> Result<LupxArchive, String> {
+    read_lupx_verified(path, &load_trust_keys(&base_dir()))
+}
+
+/// Same, with explicit trust roots (tests pass keys in memory).
+fn read_lupx_verified(
+    path: &str,
+    trust: &[ed25519_dalek::VerifyingKey],
+) -> Result<LupxArchive, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("cannot open archive: {e}"))?;
     let mut zip = ZipArchive::new(file).map_err(|e| format!("not a readable zip archive: {e}"))?;
     if zip.len() > MAX_ENTRIES {
         return Err(format!("archive has {} entries (cap {MAX_ENTRIES})", zip.len()));
     }
     // Pass 1: validate every name, remember where each entry lives.
-    // Only file entries are kept (dirs carry no payload); the `is_dir` local
-    // below gates that, so the struct itself doesn't need the flag.
-    struct Entry {
-        raw: String,
-        normalized: String,
-        size: u64,
-    }
     let mut entries: Vec<Entry> = Vec::with_capacity(zip.len());
+    // The signature block (#32.2) travels alongside the payload — captured
+    // here, excluded from the payload facts, verified after the manifest.
+    let mut sign_blob: Option<String> = None;
     for i in 0..zip.len() {
-        let entry = zip.by_index(i).map_err(|e| format!("archive entry {i}: {e}"))?;
+        let mut entry = zip.by_index(i).map_err(|e| format!("archive entry {i}: {e}"))?;
         let raw = entry.name().to_string();
         let normalized = normalize_entry(&raw)?;
         if normalized.is_empty() {
             continue; // the bare root entry some writers add
+        }
+        if normalized.eq_ignore_ascii_case(SIGN_ENTRY) {
+            let mut text = String::new();
+            entry
+                .read_to_string(&mut text)
+                .map_err(|e| format!("read {SIGN_ENTRY}: {e}"))?;
+            sign_blob = Some(text);
+            continue;
         }
         let is_dir = entry.is_dir();
         let size = entry.size();
@@ -148,10 +188,24 @@ fn read_lupx(path: &str) -> Result<LupxArchive, String> {
                     "archive entry \"{raw}\" is {size} bytes (cap {MAX_ENTRY_BYTES})"
                 ));
             }
+            // Content hash for the signature check (streamed; the entry is
+            // the reader, nothing is buffered).
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                let n = entry.read(&mut buf).map_err(|e| format!("read \"{raw}\": {e}"))?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+            }
+            let hash: [u8; 32] = hasher.finalize().into();
             entries.push(Entry {
                 raw,
                 normalized,
                 size,
+                hash,
             });
         }
     }
@@ -221,12 +275,89 @@ fn read_lupx(path: &str) -> Result<LupxArchive, String> {
             manifest.id
         ));
     }
+    // #32.2: a `LUME.SIGN` block must verify against the manifest bytes and
+    // the exact file set just hashed — any mismatch hard-fails the inspect/
+    // install. Unsigned archives keep the plain confirmation-card flow.
+    let signed = sign_blob.is_some();
+    if let Some(blob) = sign_blob {
+        verify_sign_blob(&blob, text.as_bytes(), &signed_file_list(&prefix, &entries), trust)?;
+    }
+    // Whole-archive hash for the confirmation card (integrity display /
+    // comparing distributions).
+    let archive_sha256 = {
+        use sha2::Digest;
+        let mut file = std::fs::File::open(path).map_err(|e| format!("cannot open archive: {e}"))?;
+        let mut hasher = sha2::Sha256::new();
+        std::io::copy(&mut file, &mut hasher).map_err(|e| format!("hash archive: {e}"))?;
+        let digest: [u8; 32] = hasher.finalize().into();
+        digest.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
     Ok(LupxArchive {
         manifest,
         prefix,
         file_count,
         total_bytes,
+        signed,
+        archive_sha256,
     })
+}
+
+/// The accepted signing keys: the compiled-in release key (when configured)
+/// plus every `*.pub` file the user dropped into `<base>/settings/trust-keys/`
+/// (one base64 ed25519 public key per file — the "import a publisher's key"
+/// flow needs no UI).
+fn load_trust_keys(base: &Path) -> Vec<ed25519_dalek::VerifyingKey> {
+    let mut out = Vec::new();
+    if !crate::plugin_sign::RELEASE_PUBKEY_B64.is_empty() {
+        match crate::plugin_sign::parse_pubkey_b64(crate::plugin_sign::RELEASE_PUBKEY_B64) {
+            Ok(k) => out.push(k),
+            Err(e) => eprintln!("[plugins] built-in release key unusable: {e}"),
+        }
+    }
+    let dir = base.join("settings").join("trust-keys");
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| !x.eq_ignore_ascii_case("pub")) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            match crate::plugin_sign::parse_pubkey_b64(&text) {
+                Ok(k) => out.push(k),
+                Err(err) => eprintln!("[plugins] ignoring trust key {}: {err}", p.display()),
+            }
+        }
+    }
+    out
+}
+
+/// The signed file list for one archive: normalized paths relative to the
+/// manifest's prefix, name+hash pairs (must match what `plugin_sign` signs —
+/// the manifest itself is covered separately as raw bytes, not listed here).
+fn signed_file_list(prefix: &str, entries: &[Entry]) -> Vec<(String, [u8; 32])> {
+    let prefix_root = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{prefix}/")
+    };
+    let manifest_normalized = format!("{prefix_root}plugin.toml");
+    let mut files: Vec<(String, [u8; 32])> = entries
+        .iter()
+        .filter(|e| e.normalized != manifest_normalized)
+        .filter(|e| prefix_root.is_empty() || e.normalized.starts_with(&prefix_root))
+        .map(|e| {
+            let rel = if prefix_root.is_empty() {
+                e.normalized.clone()
+            } else {
+                e.normalized[prefix_root.len()..].to_string()
+            };
+            (rel, e.hash)
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
 }
 
 /// `<base>/data/install-staging/` — extraction happens here, out of the
@@ -340,6 +471,8 @@ pub fn plugin_lupx_inspect(source_path: String) -> Result<LupxInfo, String> {
         file_count: arch.file_count,
         total_bytes: arch.total_bytes,
         existing_version: existing_version(&base, &arch.manifest.id),
+        signature: if arch.signed { "valid" } else { "unsigned" },
+        sha256: arch.archive_sha256,
     })
 }
 
@@ -347,7 +480,9 @@ pub fn plugin_lupx_inspect(source_path: String) -> Result<LupxInfo, String> {
 /// an existing installation. Returns the installed id and the real payload
 /// facts. (Split from the command so tests can drive it without an app.)
 fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64), String> {
-    let arch = read_lupx(source_path)?;
+    // Trust roots come from `base` — the caller's data dir, not whatever the
+    // process-wide `base_dir()` happens to be (tests drive other bases).
+    let arch = read_lupx_verified(source_path, &load_trust_keys(base))?;
     let id = arch.manifest.id.clone();
     let plugins = base.join("plugins");
     std::fs::create_dir_all(&plugins).map_err(|e| format!("create plugins dir: {e}"))?;
@@ -404,6 +539,8 @@ pub fn plugin_lupx_install(
         file_count,
         total_bytes,
         existing_version: None, // installed by now; the card is gone
+        signature: if info.signed { "valid" } else { "unsigned" },
+        sha256: info.archive_sha256,
     })
 }
 
@@ -642,5 +779,151 @@ mod tests {
         assert!(uninstall_dir(&base, "..\\evil").is_err());
         std::fs::remove_dir_all(&base).ok();
         std::fs::remove_file(zip).ok();
+    }
+
+    // ── #32.2 LUME.SIGN 签名 ──
+
+    fn test_signing_key(seed_byte: u8) -> ed25519_dalek::SigningKey {
+        use base64::Engine;
+        crate::plugin_sign::parse_seed_b64(&base64::engine::general_purpose::STANDARD.encode(
+            [seed_byte; 32],
+        ))
+        .unwrap()
+    }
+
+    /// Rewrite one entry of a zip (simulating post-signature tampering).
+    fn rebuild_zip_with(path: &str, entry_name: &str, bytes: &[u8]) -> String {
+        let f = std::fs::File::open(path).unwrap();
+        let mut z = ZipArchive::new(f).unwrap();
+        let out_path = std::env::temp_dir().join(format!(
+            "lume-lupx-tampered-{}-{}.zip",
+            std::process::id(),
+            path.chars().filter(|c| c.is_ascii_digit()).take(6).collect::<String>()
+        ));
+        let out_f = std::fs::File::create(&out_path).unwrap();
+        let mut out = zip::ZipWriter::new(out_f);
+        let opts: zip::write::SimpleFileOptions = Default::default();
+        for i in 0..z.len() {
+            let mut e = z.by_index(i).unwrap();
+            let n = e.name().to_string();
+            out.start_file(n.as_str(), opts).unwrap();
+            if n == entry_name {
+                std::io::Write::write_all(&mut out, bytes).unwrap();
+            } else {
+                std::io::copy(&mut e, &mut out).unwrap();
+            }
+        }
+        out.finish().unwrap();
+        out_path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn lupx_signature_round_trip_and_prefix_paths() {
+        // Top-level dir layout exercises the prefix-relative signed names.
+        let zip = make_zip(
+            "sig",
+            &[
+                ("demo/plugin.toml", MANIFEST),
+                ("demo/main.js", b"export default { search: () => [] }".as_slice()),
+                ("demo/res/icon.svg", b"<svg/>".as_slice()),
+            ],
+        );
+        let key = test_signing_key(7);
+        crate::plugin_sign::sign_archive(Path::new(&zip), &key).unwrap();
+        let trust = vec![key.verifying_key()];
+        let arch = read_lupx_verified(&zip, &trust).unwrap();
+        assert!(arch.signed);
+        assert_eq!(arch.file_count, 3); // plugin.toml + main.js + icon; LUME.SIGN not payload
+        assert_eq!(arch.archive_sha256.len(), 64);
+        std::fs::remove_file(zip).ok();
+    }
+
+    #[test]
+    fn lupx_tampered_payload_or_untrusted_key_is_refused() {
+        let zip = make_zip(
+            "tamper",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
+        let key = test_signing_key(8);
+        crate::plugin_sign::sign_archive(Path::new(&zip), &key).unwrap();
+        let trust = vec![key.verifying_key()];
+
+        // A flipped payload byte after signing → refused.
+        let tampered = rebuild_zip_with(&zip, "main.js", b"v2");
+        let err = read_lupx_verified(&tampered, &trust).unwrap_err();
+        assert!(err.contains("does not match the signed list"), "{err}");
+
+        // A different signer's key is not trusted → refused even unmodified.
+        let zip2 = make_zip(
+            "untrusted",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
+        let other = test_signing_key(9);
+        crate::plugin_sign::sign_archive(Path::new(&zip2), &other).unwrap();
+        let err = read_lupx_verified(&zip2, &trust).unwrap_err();
+        assert!(err.contains("not trusted"), "{err}");
+
+        // The untampered archive with the right key still passes.
+        assert!(read_lupx_verified(&zip, &trust).unwrap().signed);
+        for f in [zip, tampered, zip2] {
+            std::fs::remove_file(f).ok();
+        }
+    }
+
+    #[test]
+    fn lupx_unsigned_still_installs_with_hash_shown() {
+        let base = temp_base("unsigned");
+        let zip = make_zip("unsigned2", &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())]);
+        let arch = read_lupx(&zip).unwrap();
+        assert!(!arch.signed);
+        assert_eq!(arch.archive_sha256.len(), 64);
+        install_into(&base, &zip).unwrap();
+        assert!(base.join("plugins").join("demo").exists());
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::remove_file(zip).ok();
+    }
+
+    #[test]
+    fn trust_keys_directory_grants_verification() {
+        // The end-to-end shape: `lume --sign-lupx` (sign_archive) writes the
+        // blob; the user drops the .pub into settings/trust-keys/; read_lupx
+        // (via load_trust_keys) verifies and the install flows through.
+        use base64::Engine;
+        let base = temp_base("trustkeys");
+        let key = test_signing_key(11);
+        let key_dir = base.join("settings").join("trust-keys");
+        std::fs::create_dir_all(&key_dir).unwrap();
+        std::fs::write(
+            key_dir.join("publisher.pub"),
+            base64::engine::general_purpose::STANDARD.encode(key.verifying_key().to_bytes()),
+        )
+        .unwrap();
+
+        let zip = make_zip(
+            "trusted",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
+        crate::plugin_sign::sign_archive(Path::new(&zip), &key).unwrap();
+
+        // Without the key directory the same archive is untrusted.
+        let zip2 = make_zip(
+            "trusted2",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
+        crate::plugin_sign::sign_archive(Path::new(&zip2), &key).unwrap();
+        let empty = temp_base("trustkeys-empty");
+        assert!(read_lupx_verified(&zip2, &load_trust_keys(&empty)).is_err());
+        std::fs::remove_dir_all(&empty).ok();
+
+        let trust = load_trust_keys(&base);
+        assert_eq!(trust.len(), 1);
+        let arch = read_lupx_verified(&zip, &trust).unwrap();
+        assert!(arch.signed);
+        install_into(&base, &zip).unwrap();
+        assert!(base.join("plugins").join("demo").join("main.js").exists());
+        std::fs::remove_dir_all(&base).ok();
+        for f in [zip, zip2] {
+            std::fs::remove_file(f).ok();
+        }
     }
 }

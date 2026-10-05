@@ -2271,6 +2271,10 @@ body.settings-window #root {
   color: #ffb020;
 }
 
+.plg-note.ok {
+  color: #4cc38a;
+}
+
 /* 全部授权 row — visually flagged as the dangerous escape hatch. */
 .plg-trust {
   display: flex;

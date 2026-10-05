@@ -186,7 +186,8 @@ fn check_target(url: &tauri::Url, allow: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Native wrapper (first-party windows, no plugin id): no target checks.
+/// Test wrapper (the command picks enforce/allow from the plugin context).
+#[cfg(test)]
 fn fetch_blocking(req: HttpRequest) -> Result<HttpResponse, String> {
     fetch_blocking_checked(req, &[], false)
 }
@@ -245,7 +246,7 @@ fn fetch_blocking_checked(
     let decomp = (WINHTTP_DECOMPRESSION_FLAG_GZIP | WINHTTP_DECOMPRESSION_FLAG_DEFLATE)
         .to_le_bytes();
 
-    let mut header_block = req
+    let header_block = req
         .headers
         .unwrap_or_default()
         .iter()

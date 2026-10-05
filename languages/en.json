@@ -275,6 +275,8 @@
   "pluginsInstallCancel": "Cancel",
   "pluginsInstallStats": "{count} files · {size}",
   "pluginsInstallOverwrite": "Version {old} is installed and will be replaced by {new}.",
+  "pluginsInstallSignatureValid": "Signature verified (ed25519) — the package matches its publisher's key.",
+  "pluginsInstallUnsigned": "Unsigned package · SHA-256 {sha256}… — verify it out of band if you care about its origin.",
   "pluginsInstallDone": "\"{name}\" installed",
   "pluginUninstall": "Uninstall",
   "pluginUninstallHint": "Uninstall and delete the plugin directory (including its private files); document-store data is kept.",

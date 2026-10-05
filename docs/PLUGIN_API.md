@@ -1287,10 +1287,25 @@ registry（重）发全部 load（覆盖建窗竞态）；宿主窗口 `Destroye
 
 **安装流程（设置 → 插件）**：工具栏「安装插件…」→ 选 `.lupx` 文件 → 宿主
 `plugin_lupx_inspect` 只读校验并弹**内联确认卡**（名称/版本/kind/描述/
-**权限 chips（本地化）**/文件数与大小；已装同 id 显示「将覆盖 vX → vY」）→
-确认 → `plugin_lupx_install` 解压换位。这张卡就是权限模型的「安装时知情
-同意」时刻。**卸载**：每张磁盘插件卡（内置无）的卸载按钮，两段式确认
-（3 秒武装窗口）。
+**权限 chips（本地化）**/文件数与大小/签名状态；已装同 id 显示「将覆盖
+vX → vY」）→ 确认 → `plugin_lupx_install` 解压换位。这张卡就是权限模型的
+「安装时知情同意」时刻。**卸载**：每张磁盘插件卡（内置无）的卸载按钮，
+两段式确认（3 秒武装窗口）。
+
+**签名（#32.2）**：包内可选条目 `LUME.SIGN`（ed25519）——签名工具与宿主
+同源：
+
+```bash
+lume --gen-key <目录>                              # 生成 lume-signing.key/.pub
+lume --sign-lupx <包.lupx> --key lume-signing.key  # 就地重写包 + 注入 LUME.SIGN
+```
+
+`LUME.SIGN` 覆盖 manifest 字节 + 全部文件（逐个 SHA-256，按名排序）；
+验签信任根 = 内置发行公钥（`plugin_sign.rs::RELEASE_PUBKEY_B64`）+ 用户
+`<base>/settings/trust-keys/*.pub`（发布者发 .pub 文件，用户丢进目录即
+导入，无 UI）。三态：**已验证**（确认卡绿字徽标）/ **未签名**（维持现有
+流程，卡上展示归档 SHA-256 供线下核对）/ **签名无效**（篡改或密钥不符 →
+inspect 直接报错、install 不可达——硬拒）。私钥永不进仓库。
 
 Rust 侧（`plugin_install.rs`）语义：
 

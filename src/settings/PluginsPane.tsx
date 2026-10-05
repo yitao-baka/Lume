@@ -31,6 +31,13 @@ interface LupxInfo {
   fileCount: number;
   totalBytes: number;
   existingVersion: string | null;
+  /** `LUME.SIGN` status (#32.2): `"valid"` = ed25519 signature verified
+   * against a trusted key; `"unsigned"` = no signature block (the card shows
+   * the archive hash instead). Invalid signatures never reach the card —
+   * inspect fails outright. */
+  signature: "valid" | "unsigned";
+  /** SHA-256 of the whole archive file (integrity display). */
+  sha256: string;
 }
 
 /** Localized label for a plugin kind. */
@@ -394,6 +401,19 @@ export default function PluginsPane() {
                 })}
               </span>
             </div>
+            {/* Signature status (#32.2): a verified signature is a badge, an
+                unsigned package shows the archive hash for out-of-band
+                comparison. Invalid signatures never reach this card. */}
+            <Show
+              when={info().signature === "valid"}
+              fallback={
+                <span class="plg-note" title={info().sha256}>
+                  {t("pluginsInstallUnsigned", { sha256: info().sha256.slice(0, 16) })}
+                </span>
+              }
+            >
+              <span class="plg-note ok">{t("pluginsInstallSignatureValid")}</span>
+            </Show>
             <Show when={info().existingVersion !== null}>
               <span class="plg-note warn">
                 {t("pluginsInstallOverwrite", {

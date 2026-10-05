@@ -275,6 +275,8 @@
   "pluginsInstallCancel": "取消",
   "pluginsInstallStats": "{count} 個檔案 · {size}",
   "pluginsInstallOverwrite": "已安裝版本 {old}，將覆蓋為 {new}。",
+  "pluginsInstallSignatureValid": "簽章已驗證（ed25519）—— 套件內容與發佈者金鑰一致。",
+  "pluginsInstallUnsigned": "未簽章套件 · SHA-256 {sha256}… —— 如需確認來源請另行核對。",
   "pluginsInstallDone": "「{name}」已安裝",
   "pluginUninstall": "解除安裝",
   "pluginUninstallHint": "解除安裝並刪除外掛目錄（含其私有檔案）；文件庫資料保留。",

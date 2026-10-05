@@ -28,9 +28,17 @@ console.log(`[package] tauri build (${productName} v${version})…`);
 const build = spawnSync("pnpm tauri build", { shell: true, stdio: "inherit", cwd: root });
 if (build.status !== 0) process.exit(build.status ?? 1);
 
-const stageRoot = path.join(release, "bundle", "portable");
+let stageRoot = path.join(release, "bundle", "portable");
+try {
+  rmSync(stageRoot, { recursive: true, force: true });
+} catch (err) {
+  // 上次的 staging 里可能有仍被占用的 exe 副本（运行中的进程/杀软）——
+  // 换一个带时间戳的 staging 目录，不硬删。
+  const stamp = Date.now().toString(36);
+  stageRoot = path.join(release, "bundle", `portable-${stamp}`);
+  console.log(`[package] staging 目录被占用 (${err.code}) —— 改用 portable-${stamp}`);
+}
 const stage = path.join(stageRoot, productName);
-rmSync(stageRoot, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
 for (const exe of ["lume.exe", "lume-agent.exe", "lume-svc.exe"]) {
@@ -66,9 +74,16 @@ copyDir(path.join(root, "res", "icons"), path.join(stage, "res", "icons"));
 
 const outDir = path.join(release, "bundle", "zip");
 mkdirSync(outDir, { recursive: true });
-const zipName = `${productName}_${version}_x64_portable.zip`;
-const zipPath = path.join(outDir, zipName);
-rmSync(zipPath, { force: true });
+let zipPath = path.join(outDir, `${productName}_${version}_x64_portable.zip`);
+try {
+  rmSync(zipPath, { force: true });
+} catch (err) {
+  // 目标 zip 被占用（资源管理器打开/杀软扫描）：不覆盖别人的文件，改用带
+  // 时间戳的名字并说明。
+  const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+  zipPath = path.join(outDir, `${productName}_${version}_x64_portable-${stamp}.zip`);
+  console.log(`[package] 目标 zip 被占用 (${err.code}) —— 改用 ${path.basename(zipPath)}`);
+}
 
 // Compress-Archive 以 -Path 指向的文件夹本身作为 zip 根（Lume/…）。
 const ps =

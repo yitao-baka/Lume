@@ -125,15 +125,16 @@ fn read_lupx(path: &str) -> Result<LupxArchive, String> {
         return Err(format!("archive has {} entries (cap {MAX_ENTRIES})", zip.len()));
     }
     // Pass 1: validate every name, remember where each entry lives.
+    // Only file entries are kept (dirs carry no payload); the `is_dir` local
+    // below gates that, so the struct itself doesn't need the flag.
     struct Entry {
         raw: String,
         normalized: String,
-        is_dir: bool,
         size: u64,
     }
     let mut entries: Vec<Entry> = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| format!("archive entry {i}: {e}"))?;
+        let entry = zip.by_index(i).map_err(|e| format!("archive entry {i}: {e}"))?;
         let raw = entry.name().to_string();
         let normalized = normalize_entry(&raw)?;
         if normalized.is_empty() {
@@ -150,7 +151,6 @@ fn read_lupx(path: &str) -> Result<LupxArchive, String> {
             entries.push(Entry {
                 raw,
                 normalized,
-                is_dir,
                 size,
             });
         }

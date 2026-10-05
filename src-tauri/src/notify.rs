@@ -27,16 +27,16 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyIcon, LoadIconW, RegisterClassExW, HICON, HWND_MESSAGE,
-    IDI_APPLICATION, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WNDCLASSEXW, WNDCLASS_STYLES,
+    IDI_APPLICATION, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WNDCLASSEXW,
 };
 
 /// One hidden notification icon owned by this process (created on first use).
 /// Handles are kept as raw `isize` values: the shell owns their lifetime and
-/// raw pointers are not `Send`, which the `Mutex` requires.
+/// raw pointers are not `Send`, which the `Mutex` requires. The icon lives for
+/// the whole process — there is no teardown, so the extracted-vs-stock
+/// distinction only matters at the registration failure path in `ensure_icon`.
 struct NotifyIcon {
     hwnd: isize,
-    /// Owned only when extracted from our own exe (stock icons are not ours).
-    own_icon: Option<isize>,
 }
 
 impl NotifyIcon {
@@ -154,7 +154,6 @@ fn ensure_icon() -> Result<(), String> {
     eprintln!("[plugins] notify: hidden notification icon registered (hwnd {hwnd:?})");
     *guard = Some(NotifyIcon {
         hwnd: hwnd.0 as isize,
-        own_icon: owned.then_some(hicon.0 as isize),
     });
     Ok(())
 }

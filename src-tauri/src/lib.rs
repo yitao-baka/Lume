@@ -20,6 +20,7 @@ mod plugin_fs;
 mod plugin_host;
 mod plugin_install;
 mod plugin_logic;
+mod plugin_devwatch;
 mod plugin_net;
 mod plugin_perm;
 pub mod plugin_sign;
@@ -91,6 +92,7 @@ pub fn run() {
         .manage(automation::AutomationState::default())
         .manage(window::FocusState::default())
         .manage(dirwatch::DirWatchState::default())
+        .manage(plugin_devwatch::DevWatchState::default())
         .manage(window::PreviewState::default())
         .manage(plugin_perm::PluginPermState::default())
         .manage(plugin_window::ClosingSet::default())
@@ -343,6 +345,8 @@ pub fn run() {
             // Watch the index dirs for file changes and refresh on change
             // (FindFirstChangeNotification, event-driven — no polling).
             dirwatch::start(&app.handle());
+            // Dev-mode plugin directory watch (edit → auto hot-reload, #32.7).
+            plugin_devwatch::start(&app.handle());
             // Clipboard history listener + SQLite store (docs/ARCHITECTURE.md).
             clipboard::init(app);
             // Pinned-apps store (Navigate main-menu bar).

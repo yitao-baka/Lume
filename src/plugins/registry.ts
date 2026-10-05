@@ -146,9 +146,20 @@ const logicLoadedIds = new Set<string>();
 const CIRCUIT_THRESHOLD = 3;
 const logicFailCounts = new Map<string, number>();
 const logicOffline = new Set<string>();
+/** 24 条失败原因环形缓冲（CDP 诊断；`__logicCircuit.log`）。 */
+const circuitLog: { id: string; why: string; at: number }[] = [];
+
+// 已注册但逻辑帧未就绪的插件（首载 + 重载窗口）。此时宿主侧 entry 可能
+// 尚不存在（hook 被静默丢弃 → 8s 超时），或被 post 给正在销毁的旧帧——
+// 两条路都会把正常注册流程误判成插件故障。逻辑就绪信号（supervisor 的
+// logic-loaded action）到达前，hook 一律快速失败（"logic not loaded" 前缀，
+// 不计熔断）。
+const logicPendingReady = new Set<string>();
 
 function noteLogicFailure(id: string, why: string): void {
   if (logicOffline.has(id)) return;
+  circuitLog.push({ id, why, at: Date.now() });
+  if (circuitLog.length > 24) circuitLog.shift();
   const n = (logicFailCounts.get(id) ?? 0) + 1;
   logicFailCounts.set(id, n);
   if (n < CIRCUIT_THRESHOLD) return;
@@ -172,6 +183,7 @@ function resetCircuit(id: string): void {
 (window as unknown as { __logicCircuit?: unknown }).__logicCircuit = {
   failCounts: logicFailCounts,
   offline: logicOffline,
+  log: circuitLog,
 };
 
 /** 一次 hook 调用：跨窗口 RPC，8s 超时（与桥接 10s 语义对齐、略短）。 */
@@ -180,6 +192,11 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
   if (logicOffline.has(id)) {
     plog.debug(id, `call skipped (circuit open): ${name}`);
     return Promise.reject(new Error(`plugin "${id}" is offline (circuit open — reload it to retry)`));
+  }
+  // 逻辑帧未就绪（首载/重载窗口）：同样快速失败，但用 "logic not loaded"
+  // 前缀——不是插件故障，不计熔断（宿主 side 的丢包是注册时序，不是它的错）。
+  if (logicPendingReady.has(id)) {
+    return Promise.reject(new Error(`logic not loaded for "${id}"`));
   }
   const callId = ++logicCallSeq;
   return new Promise((resolve, reject) => {
@@ -215,6 +232,7 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
  * （#32.4：保持暂停直到重载/保存设置）。 */
 function pushLogicLoad(id: string): void {
   if (logicOffline.has(id)) return;
+  logicPendingReady.add(id); // 帧就绪信号（logic-loaded）到达前 hook 快速失败
   logicLoadedIds.add(id);
   void invoke("plugin_logic_host_ensure")
     .then(() => invoke("plugin_logic_push", { id, kind: "load", payload: {} }))
@@ -286,9 +304,10 @@ function handleLogicAction(id: string, action: string, args: Record<string, unkn
       });
       break;
     case "logic-loaded":
-      // 逻辑帧就绪：补投 load 前积压的声明式设置（applyPluginSettings 的
-      // 首投可能早于逻辑就绪而落空）。
+      // 逻辑帧就绪：解除"未就绪"快速失败 + 补投 load 前积压的声明式设置
+      // （applyPluginSettings 的首投可能早于逻辑就绪而落空）。
       {
+        logicPendingReady.delete(id);
         const values = pendingLogicSettings.get(id);
         if (values) {
           pendingLogicSettings.delete(id);
@@ -698,7 +717,12 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   logicLoadedIds.delete(id);
   clearThrottledCalls(id);
   resetCircuit(id); // 重载 = 重新开始：熔断状态不跨代（#32.4）
-  void invoke("plugin_logic_push", { id, kind: "unload", payload: {} }).catch(() => {});
+  // 重载窗口 = 未就绪：帧已拆、新帧未起，期间的 hook 快速失败（不计熔断）。
+  logicPendingReady.add(id);
+  // await 而非 fire-and-forget：宿主必须先把帧拆掉再放行后续注册流程——
+  // 否则紧随其后的 navBars/onSettings 拉取可能被 post 到正在销毁的旧帧
+  // （无回执 → 8s 超时 → 重载把插件误判进熔断）。
+  await invoke("plugin_logic_push", { id, kind: "unload", payload: {} }).catch(() => {});
   pendingLogicSettings.delete(id);
   detachedSuppliers.delete(id);
   themePosters.delete(id);
@@ -762,6 +786,9 @@ export async function loadDiskPlugins() {
       if (m.kind === "provider" && m.entry) {
         // P6.5：逻辑在共享宿主窗口的沙箱 iframe 里 —— 这里只注册代理贡献。
         // 帧内未实现/未就绪的 hook 安全返回 undefined（search → 空结果）。
+        // pushLogicLoad 先于任何 hook 拉取（navBarsContribution）：未就绪窗口
+        // 内的调用走 registry 的快速失败，而不是被宿主静默丢弃后拖满 8s。
+        pushLogicLoad(m.id);
         const proxy = logicProxy(m.id);
         const navBars = navBarsContribution(m.id, proxy);
         definePlugin({
@@ -800,7 +827,6 @@ export async function loadDiskPlugins() {
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
-        pushLogicLoad(m.id);
         void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(m.id, `registered provider proxy (entry=${m.entry})`);
@@ -809,6 +835,7 @@ export async function loadDiskPlugins() {
         // host-side (provider trust model) and the built-in list component
         // renders its rows.
         // P6.5：逻辑在共享宿主的沙箱 iframe（list 模板消费的是代理 hook）。
+        pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const logic = logicProxy(m.id);
         const instance = createListTemplateMode(m, logic, services!);
         definePlugin({
@@ -827,7 +854,6 @@ export async function loadDiskPlugins() {
           mode: instance,
         });
         registeredDiskIds.add(m.id);
-        pushLogicLoad(m.id);
         void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(
@@ -836,6 +862,7 @@ export async function loadDiskPlugins() {
             `${m.height != null ? `, height=${m.height}` : ""}${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
         );
       } else if (m.kind === "mode" && m.view) {
+        if (m.entry) pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const logic = m.entry ? logicProxy(m.id) : {};
         const instance = createDiskModeInstance(m, logic, services!);
         const navBars = navBarsContribution(m.id, logic);
@@ -856,7 +883,6 @@ export async function loadDiskPlugins() {
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
-        if (m.entry) pushLogicLoad(m.id);
         void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(
@@ -865,6 +891,7 @@ export async function loadDiskPlugins() {
             `${m.height != null ? `, height=${m.height}` : ""}${navBars ? ", navBars" : ""})`
         );
       } else if (m.kind === "service" && m.entry) {
+        pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const navBars = navBarsContribution(m.id, logicProxy(m.id));
         definePlugin({
           id: m.id,
@@ -881,7 +908,6 @@ export async function loadDiskPlugins() {
           ...(navBars ? { navBars } : {}),
         });
         registeredDiskIds.add(m.id);
-        pushLogicLoad(m.id);
         void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(m.id, `registered service proxy (entry=${m.entry})`);

@@ -679,6 +679,9 @@ pub fn save_settings(new: Settings, app: AppHandle, state: State<SettingsState>)
         // Also rebuild the directory watcher to follow the new index dirs.
         crate::dirwatch::rebuild(&app);
     }
+    // Dev-mode plugin watch follows plugins.dev_mode (#32.7) — runs on every
+    // save so toggling developer mode takes effect immediately.
+    crate::plugin_devwatch::rebuild(&app);
     // Notify the launcher webview (language + entry-box size it renders).
     app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
     Ok(())
@@ -870,6 +873,9 @@ pub fn set_plugin_dev_mode(
     write_settings_light(&paths::base_dir(), &next)?;
     *guard = next;
     drop(guard);
+    // Light-write path (not save_settings): the dev-mode watch follows here
+    // so toggling developer mode takes effect immediately (#32.7).
+    crate::plugin_devwatch::rebuild(&app);
     app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
     Ok(())
 }

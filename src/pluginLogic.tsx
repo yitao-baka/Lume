@@ -170,6 +170,10 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
         entry.loaded = true;
         const hooks = (result as { hooks?: string[] } | null)?.hooks ?? [];
         plog.info(id, `logic host: loaded (${hooks.length} hooks: ${hooks.join("/")})`);
+        // 通知启动器：逻辑就绪（registry 解除"未就绪"快速失败并补投积压设置）。
+        void invoke("plugin_logic_action", { token: entry.token, action: "logic-loaded", args: {} }).catch(
+          (err) => plog.error(id, "logic-loaded relay failed:", err)
+        );
       },
       reject: (err) => plog.error(id, "logic load failed:", err),
       // 首次 load 要取多个模块文本再编译，比 hook 宽松；卡死同样清槽
@@ -290,7 +294,10 @@ function callHook(id: string, payload: { callId: number; name: string; args: unk
     }
     return;
   }
-  const HOOK_TIMEOUT_MS = 10_000;
+  // 帧内卡死（死循环/未捕获异常）→ 主动回执失败。6s 先于 registry 的 8s
+  // 超时到达：调用方拿到的是明确的 "logic hook timeout"（计入熔断）而不是
+  // 泛化的 logic call timeout——帧真死了就该熔断，重载竞态由 unload await 消除。
+  const HOOK_TIMEOUT_MS = 6_000;
   const timer = window.setTimeout(() => {
     entry.calls.delete(payload.callId);
     // 帧内卡死（死循环/未捕获异常）→ 主动回执失败，registry 侧按普通

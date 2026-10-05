@@ -624,6 +624,15 @@ function App() {
     });
     onCleanup(() => unlistenPluginReload());
 
+    // Dev-mode plugin directory watch (#32.7): editing code under plugins/
+    // triggers this (the Rust side debounces the burst); refreshPlugins
+    // reloads exactly the manifests flagged `development` — the same path as
+    // the settings-pane button, minus per-plugin targeting.
+    const unlistenDevChanged = await listen("plugin-dev-changed", () => {
+      void refreshPlugins().then(() => navigatePlugin.refreshBars());
+    });
+    onCleanup(() => unlistenDevChanged());
+
     // Detached plugin windows (P6): state handshakes + lifecycle. The
     // registry owns the per-plugin push suppliers; these listeners just
     // forward the window events.

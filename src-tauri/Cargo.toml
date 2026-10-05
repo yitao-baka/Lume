@@ -17,11 +17,21 @@ default-run = "lume"
 name = "lume_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+# Production: serve the embedded frontend (dist) instead of the dev URL.
+# tauri CLI (`tauri build`) enables this automatically when the feature
+# exists; `tauri dev` / bare `cargo run` leave it off and load devUrl
+# (localhost:1420) — the same split as the create-tauri-app template.
+# Recipe: it must NOT be pinned in the tauri dependency's features list,
+# or every build (dev included) would serve the embedded dist.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "tray-icon", "custom-protocol"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
 # WebView2 idle memory trimming (`SetMemoryUsageTargetLevel` via the COM

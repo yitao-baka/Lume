@@ -160,11 +160,11 @@ export function createHostApi(
         plog.debug(id, "app.foreground");
         // The snapshot of the window that had focus before the summon; the
         // Rust side gates the call on the `window` capability.
-        return invoke<ForegroundInfo | null>("plugin_foreground_context", { pluginId: id });
+        return inv<ForegroundInfo | null>("plugin_foreground_context", { pluginId: id });
       },
     },
     clipboard: {
-      readText: () => invoke<string | null>("get_clipboard_text"),
+      readText: () => inv<string | null>("get_clipboard_text"),
       writeText: async (text) => {
         await inv("set_clipboard_text", { text });
       },
@@ -176,10 +176,10 @@ export function createHostApi(
         plog.debug(id, "clipboard.writeFiles:", paths.length, "path(s)");
         await inv("plugin_clipboard_write_files", { paths, pluginId: id });
       },
-      readFiles: () => invoke<string[]>("plugin_clipboard_read_files", { pluginId: id }),
+      readFiles: () => inv<string[]>("plugin_clipboard_read_files", { pluginId: id }),
       readImage: () => {
         plog.debug(id, "clipboard.readImage");
-        return invoke<string | null>("plugin_clipboard_read_image", { pluginId: id });
+        return inv<string | null>("plugin_clipboard_read_image", { pluginId: id });
       },
       paste: async (payload) => {
         plog.debug(id, "clipboard.paste:", Object.keys(payload ?? {}).join("/"));
@@ -194,7 +194,7 @@ export function createHostApi(
     http: {
       request: async (req: HttpRequest) => {
         plog.debug(id, "http.request:", req?.method ?? "GET", req?.url);
-        const raw = await invoke<HttpResponse>("plugin_http_fetch", {
+        const raw = await inv<HttpResponse>("plugin_http_fetch", {
           req: {
             url: req?.url,
             method: req?.method,
@@ -211,17 +211,17 @@ export function createHostApi(
     dialog: {
       open: async (opts?: DialogOptions) => {
         plog.debug(id, "dialog.open:", opts?.title ?? "");
-        return invoke<string[]>("plugin_dialog_open", { params: dialogParams(opts), pluginId: id });
+        return inv<string[]>("plugin_dialog_open", { params: dialogParams(opts), pluginId: id });
       },
       save: async (opts?: DialogOptions) => {
         plog.debug(id, "dialog.save:", opts?.title ?? "");
-        return invoke<string | null>("plugin_dialog_save", { params: dialogParams(opts), pluginId: id });
+        return inv<string | null>("plugin_dialog_save", { params: dialogParams(opts), pluginId: id });
       },
     },
     screen: {
-      cursor: () => invoke<{ x: number; y: number }>("plugin_cursor_pos", { pluginId: id }),
+      cursor: () => inv<{ x: number; y: number }>("plugin_cursor_pos", { pluginId: id }),
       displays: async () => {
-        const raw = await invoke<
+        const raw = await inv<
           {
             x: number;
             y: number;
@@ -251,7 +251,7 @@ export function createHostApi(
     },
     storage: {
       get: async <T,>(key: string) => {
-        const raw = await invoke<string | null>("plugin_storage_get", { id, key });
+        const raw = await inv<string | null>("plugin_storage_get", { id, key });
         return raw == null ? null : (JSON.parse(raw) as T);
       },
       set: async (key, value) => {
@@ -263,13 +263,13 @@ export function createHostApi(
     },
     db: {
       get: async (docId) => {
-        const row = await invoke<DbDocRow | null>("plugin_db_get", { id, docId });
+        const row = await inv<DbDocRow | null>("plugin_db_get", { id, docId });
         return row ? withBookkeeping(row) : null;
       },
       put: async (doc: PluginDocInput) => {
         const { _id, _rev, ...body } = doc ?? ({} as PluginDocInput);
         if (!_id) throw new Error("db.put needs a document with an _id");
-        const rev = await invoke<number>("plugin_db_put", {
+        const rev = await inv<number>("plugin_db_put", {
           id,
           docId: _id,
           json: JSON.stringify(body),
@@ -292,7 +292,7 @@ export function createHostApi(
         plog.debug(id, `db.remove ${docId} (rev ${r})`);
       },
       allDocs: async (opts) => {
-        const rows = await invoke<DbDocRow[]>("plugin_db_all_docs", {
+        const rows = await inv<DbDocRow[]>("plugin_db_all_docs", {
           id,
           prefix: opts?.idStartsWith ?? null,
           limit: opts?.limit ?? null,
@@ -306,7 +306,7 @@ export function createHostApi(
           if (!_id) throw new Error("db.bulkDocs: every document needs an _id");
           return { docId: _id, json: JSON.stringify(body), rev: _rev ?? null };
         });
-        const res = await invoke<{ id: string; rev: number | null; error: string | null }[]>(
+        const res = await inv<{ id: string; rev: number | null; error: string | null }[]>(
           "plugin_db_bulk_docs",
           { id, docs: payload }
         );
@@ -318,9 +318,9 @@ export function createHostApi(
       },
     },
     settings: {
-      all: async () => (await invoke<Record<string, unknown>>("plugin_settings_get", { id })) ?? {},
+      all: async () => (await inv<Record<string, unknown>>("plugin_settings_get", { id })) ?? {},
       get: async <T,>(key: string) => {
-        const values = await invoke<Record<string, unknown>>("plugin_settings_get", { id });
+        const values = await inv<Record<string, unknown>>("plugin_settings_get", { id });
         const v = values?.[key];
         return v === undefined ? null : (v as T);
       },
@@ -330,49 +330,49 @@ export function createHostApi(
         plog.debug(id, "fs.readText:", path);
         // >512KB rejects (Rust side) — the plugin shows a "preview first
         // 512KB" message; binary content comes back lossy-UTF8 decoded.
-        return invoke<string>("get_file_text", { path });
+        return inv<string>("get_file_text", { path });
       },
       bytes: (path: string) => {
         plog.debug(id, "fs.bytes:", path);
         // Raw bytes, base64 (≤32 MB, Rust side). The P5 sandbox made plugin
         // pages opaque origins, so fetch(asset://) is CORS-refused there —
         // binary preview renderers (pdf.js / SheetJS) get their bytes here.
-        return invoke<string>("get_file_bytes", { path });
+        return inv<string>("get_file_bytes", { path });
       },
       thumb: (path: string) => {
         plog.debug(id, "fs.thumb:", path);
-        return invoke<string>("get_file_thumb", { path }); // base64 PNG data URI
+        return inv<string>("get_file_thumb", { path }); // base64 PNG data URI
       },
       videoPoster: (path: string) => {
         plog.debug(id, "fs.videoPoster:", path);
-        return invoke<string>("get_video_thumb", { path }); // base64 PNG data URI
+        return inv<string>("get_video_thumb", { path }); // base64 PNG data URI
       },
       icon: (paths: string[]) => {
         plog.debug(id, "fs.icon:", paths.length, "path(s)");
-        return invoke<{ path: string; icon: string | null }[]>("get_app_icons", { paths });
+        return inv<{ path: string; icon: string | null }[]>("get_app_icons", { paths });
       },
       writeText: (name, text) => {
         plog.debug(id, "fs.writeText:", name, text.length, "chars");
-        return invoke<string>("plugin_fs_private_write", { id, name, text });
+        return inv<string>("plugin_fs_private_write", { id, name, text });
       },
       writeBytes: (name, base64) => {
         plog.debug(id, "fs.writeBytes:", name, base64.length, "base64 chars");
-        return invoke<string>("plugin_fs_private_write_b64", { id, name, data: base64 });
+        return inv<string>("plugin_fs_private_write_b64", { id, name, data: base64 });
       },
       readPrivate: (name) => {
         plog.debug(id, "fs.readPrivate:", name);
-        return invoke<string>("plugin_fs_private_read", { id, name });
+        return inv<string>("plugin_fs_private_read", { id, name });
       },
       listPrivate: () =>
-        invoke<{ name: string; size: number; mtime: number }[]>("plugin_fs_private_list", { id }),
-      privatePath: (name) => invoke<string>("plugin_fs_private_path", { id, name }),
+        inv<{ name: string; size: number; mtime: number }[]>("plugin_fs_private_list", { id }),
+      privatePath: (name) => inv<string>("plugin_fs_private_path", { id, name }),
       removePrivate: async (name) => {
         plog.debug(id, "fs.removePrivate:", name);
         await inv("plugin_fs_private_remove", { id, name });
       },
       writeFile: (path, text) => {
         plog.debug(id, "fs.writeFile:", path, text.length, "chars");
-        return invoke<void>("plugin_fs_write_any", { id, path, text });
+        return inv<void>("plugin_fs_write_any", { id, path, text });
       },
     },
     search: {
@@ -380,7 +380,7 @@ export function createHostApi(
         // Legacy callers pass a bare number (max); new callers an object.
         const o: PluginFileSearchOptions = typeof opts === "number" ? { max: opts } : (opts ?? {});
         plog.debug(id, "search.files:", q, o);
-        return invoke<FileSearchOut>("file_search", {
+        return inv<FileSearchOut>("file_search", {
           query: q,
           max: o.max,
           offset: o.offset,

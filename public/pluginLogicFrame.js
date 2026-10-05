@@ -41,10 +41,14 @@
       post({ __lumeRpc: { id: id, method: method, args: args } });
     });
   }
+  // 透明传递：**不吞错**。曾经这里 catch 后 return undefined，把超时/权限
+  // 拒绝/内网拒绝等失败静默伪装成「返回 undefined」——插件无法区分失败与空值
+  // （http.request 失败后访问 res.status 抛 TypeError），安全错误也不可感知。
+  // 视图桥（iframeBridge 的 rpc）一直是 reject 语义——两个宿主保持一致。
   function call(method, args) {
     return rpc(method, args).catch(function (err) {
       console.error("[lume logic]", method, err);
-      return undefined;
+      throw err;
     });
   }
   function stripMeta(doc) {

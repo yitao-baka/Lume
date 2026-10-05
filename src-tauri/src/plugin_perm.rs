@@ -220,11 +220,27 @@ pub fn assert_native_or_capability(
     host_token: Option<&str>,
     cap: &str,
 ) -> Result<(), String> {
+    assert_native_or_capability_resolved(perms, settings, window, plugin_id, host_token, cap)
+        .map(|_| ())
+}
+
+/// Same check, but also returns the **resolved** plugin id (`None` = native
+/// path). Callers that branch on the plugin's own manifest after the check
+/// (e.g. `network_allow`, #32.3) must use this: the raw `plugin_id` argument
+/// is empty for logic-host callers, whose id only exists behind the token.
+pub fn assert_native_or_capability_resolved(
+    perms: &PluginPermState,
+    settings: &SettingsState,
+    window: &tauri::WebviewWindow,
+    plugin_id: Option<&str>,
+    host_token: Option<&str>,
+    cap: &str,
+) -> Result<Option<String>, String> {
     let resolved = resolve_plugin_caller(perms, window, plugin_id, host_token)?;
-    match resolved {
-        Some(id) => assert_capability(perms, &settings.current().plugins, &base_dir(), &id, cap),
-        None => Ok(()),
+    if let Some(id) = &resolved {
+        assert_capability(perms, &settings.current().plugins, &base_dir(), id, cap)?;
     }
+    Ok(resolved)
 }
 
 /// 策略类命令的窗口守卫：`set_plugin_*` / `plugin_lupx_install` /

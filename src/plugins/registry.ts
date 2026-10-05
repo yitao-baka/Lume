@@ -52,6 +52,10 @@ export function definePlugin(plugin: LauncherPlugin) {
  * load any newly discovered disk plugins. */
 export async function refreshPlugins() {
   try {
+    // 保存设置 = 用户出手干预：熔断状态整体复位（#32.4；用户可能刚改过
+    // 出问题插件的配置或做了重载）。
+    logicFailCounts.clear();
+    logicOffline.clear();
     const list = await invoke<PluginManifest[]>("get_plugins");
     plog.info(
       null,
@@ -132,17 +136,62 @@ let logicCallSeq = 0;
 /** 已向宿主发过 load 的插件（宿主 ready 时重发；unload 时移除）。 */
 const logicLoadedIds = new Set<string>();
 
+// ── 插件熔断（#32.4）──
+//
+// 共享逻辑宿主 = 共享故障域：一个插件死循环/连续超时会把同窗所有插件的
+// 调用拖慢。连续 3 次失败（超时 / push 失败 / ok:false 回执）→ 标记离线：
+// 后续调用立即快速失败（调用点既有 catch 路径天然降级为空结果），load 不再
+// 重发。恢复：重载插件 / 保存设置（refreshPlugins）清标记。其余插件不受影响。
+
+const CIRCUIT_THRESHOLD = 3;
+const logicFailCounts = new Map<string, number>();
+const logicOffline = new Set<string>();
+
+function noteLogicFailure(id: string, why: string): void {
+  if (logicOffline.has(id)) return;
+  const n = (logicFailCounts.get(id) ?? 0) + 1;
+  logicFailCounts.set(id, n);
+  if (n < CIRCUIT_THRESHOLD) return;
+  logicOffline.add(id);
+  plog.error(id, `circuit open after ${n} consecutive failures (${why}) — plugin paused`);
+  const m = manifests().find((x) => x.id === id);
+  pluginServices?.showToast(t("pluginCircuitOpen", { name: m?.name || id }));
+}
+
+function noteLogicSuccess(id: string): void {
+  logicFailCounts.delete(id);
+}
+
+/** 清一个插件的熔断状态（重载/重启加载时调用）。 */
+function resetCircuit(id: string): void {
+  logicFailCounts.delete(id);
+  logicOffline.delete(id);
+}
+
+// CDP verify tap（同 __logicEntries/__pluginStates 模式）
+(window as unknown as { __logicCircuit?: unknown }).__logicCircuit = {
+  failCounts: logicFailCounts,
+  offline: logicOffline,
+};
+
 /** 一次 hook 调用：跨窗口 RPC，8s 超时（与桥接 10s 语义对齐、略短）。 */
 function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000): Promise<unknown> {
+  // 熔断打开：快速失败（不是静默——调用点会打日志/降级空结果）。
+  if (logicOffline.has(id)) {
+    plog.debug(id, `call skipped (circuit open): ${name}`);
+    return Promise.reject(new Error(`plugin "${id}" is offline (circuit open — reload it to retry)`));
+  }
   const callId = ++logicCallSeq;
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       logicPending.delete(callId);
+      noteLogicFailure(id, `timeout: ${name}`);
       reject(new Error(`logic call timeout: ${id}.${name}`));
     }, timeoutMs);
     logicPending.set(callId, {
       resolve: (v) => {
         window.clearTimeout(timer);
+        noteLogicSuccess(id);
         resolve(v);
       },
       reject: (e) => {
@@ -154,6 +203,7 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
       (err) => {
         window.clearTimeout(timer);
         logicPending.delete(callId);
+        noteLogicFailure(id, `push failed: ${name}`);
         reject(err);
       }
     );
@@ -161,8 +211,10 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
 }
 
 /** 建窗（幂等）+ 发一次 load 指令。supervisor 未就绪时 load 会丢失——由
- * `plugin-logic-host-ready` 通告驱动重发兜底。 */
+ * `plugin-logic-host-ready` 通告驱动重发兜底。熔断打开的插件不再重发
+ * （#32.4：保持暂停直到重载/保存设置）。 */
 function pushLogicLoad(id: string): void {
+  if (logicOffline.has(id)) return;
   logicLoadedIds.add(id);
   void invoke("plugin_logic_host_ensure")
     .then(() => invoke("plugin_logic_push", { id, kind: "load", payload: {} }))
@@ -280,11 +332,20 @@ function initLogicRelay(): void {
   void listen<{ id: string; callId: number; ok: boolean; result?: unknown; error?: string }>(
     "plugin-logic-result",
     (e) => {
-      const { callId, ok, result, error } = e.payload;
+      const { id, callId, ok, result, error } = e.payload;
       const p = logicPending.get(callId);
       if (p) {
         logicPending.delete(callId);
-        ok ? p.resolve(result) : p.reject(new Error(error ?? "logic call failed"));
+        if (ok) {
+          noteLogicSuccess(id);
+          p.resolve(result);
+        } else {
+          // "未就绪"不是插件故障（load 在途时的高频 hook 会短暂命中）——
+          // 不计入熔断，否则启动瞬间就会误打开断路器。
+          const notReady = typeof error === "string" && error.startsWith("logic not loaded");
+          if (!notReady) noteLogicFailure(id, error ?? "hook failed");
+          p.reject(new Error(error ?? "logic call failed"));
+        }
       }
     }
   );
@@ -636,6 +697,7 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   }
   logicLoadedIds.delete(id);
   clearThrottledCalls(id);
+  resetCircuit(id); // 重载 = 重新开始：熔断状态不跨代（#32.4）
   void invoke("plugin_logic_push", { id, kind: "unload", payload: {} }).catch(() => {});
   pendingLogicSettings.delete(id);
   detachedSuppliers.delete(id);
@@ -962,10 +1024,13 @@ const pendingSnapshots = new Map<string, { view?: unknown }>();
 /** App.tsx 的 detachMode 在开窗前调用：页面无响应/未就绪传 null，不暂存。 */
 export function storePendingSnapshot(id: string, snapshot: unknown | null): void {
   const capped = capSnapshot(snapshot, id);
-  // CDP verify tap（同 pluginWindow 的 __pluginStates 模式）
+  // CDP verify tap（同 pluginWindow 的 __pluginStates 模式）；fields 是快照
+  // 内容摘录，供 probe 不依赖帧内 DOM 也能校验捕获到的值。
+  const auto = (capped as { auto?: { fields?: unknown[] } } | null)?.auto;
   ((window as unknown as { __snapPending?: unknown[] }).__snapPending ??= []).push({
     id,
     stored: capped != null,
+    fields: auto?.fields ?? null,
   });
   if (capped) pendingSnapshots.set(id, { view: capped });
 }
@@ -1069,16 +1134,15 @@ export function onPluginWindowClosed(
   if (typeof payload.query === "string") {
     plugins.find((x) => x.id === id)?.mode?.setQuery(payload.query);
   }
-  if (view == null) return;
-  const delivered = directPosters.get(id)?.("restore", view) ?? false;
-  // CDP verify tap
+  const delivered = view == null ? false : directPosters.get(id)?.("restore", view) ?? false;
+  // CDP verify tap（无快照的关闭也记录——query 清空语义同样需要可观测）
   ((window as unknown as { __pwClosed?: unknown[] }).__pwClosed ??= []).push({
     id,
     hasSnapshot: view != null,
     query: payload.query ?? null,
     delivered,
   });
-  if (!delivered) attachSnapshots.set(id, { view });
+  if (view != null && !delivered) attachSnapshots.set(id, { view });
 }
 
 // ── Declarative entry rules (P2.1: `[[features]]` in the manifest) ──

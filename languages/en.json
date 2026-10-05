@@ -303,6 +303,7 @@
   "pluginToastDisabled": "{name} disabled",
   "pluginToastReloaded": "{name} reloaded",
   "pluginApiMismatch": "\"{name}\" needs plugin API {api}, but this build supports {host} — plugin disabled",
+  "pluginCircuitOpen": "\"{name}\" keeps failing and was paused (other plugins are unaffected — reload it or save settings to retry)",
   "pluginPermEnforcedHint": "The plugin can only call the capabilities it declares; anything else is refused.",
   "pluginsDevMode": "Developer mode",
   "pluginsDevModeHint": "Show the developer options (Reload, Trust all). 「Trust all」 only takes effect while this is on.",

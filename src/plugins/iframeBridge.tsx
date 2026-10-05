@@ -32,9 +32,13 @@ export const BRIDGE_SCRIPT = `
       }, 10000);
     });
   }
+  // 透明传递：**不吞错**（与逻辑帧 pluginLogicFrame.js 的 call 一致）。曾经
+  // catch 后无 return 把失败静默成 undefined —— 权限拒绝/超时等错误不可感知，
+  // 与 P3.2「fail loud」相悖。
   var call = function (method, args) {
     return rpc(method, args).catch(function (err) {
       console.error("[lume bridge]", method, err);
+      throw err;
     });
   };
   // The store's bookkeeping fields are not part of a document's body: the
@@ -273,7 +277,40 @@ export const BRIDGE_SCRIPT = `
     if (snap.custom !== undefined && typeof window.lume.on.restore === "function") {
       try { window.lume.on.restore(snap.custom); } catch (err) {}
     }
+    reportState("restored");
   }
+  // ── 状态上报（诊断用）──
+  // srcdoc 帧的 CDP execution context 在较新的 WebView2 里不再暴露给宿主
+  // target，外部工具（CDP probe）无法直接读帧内 DOM。桥把关键控件值随
+  // postMessage 报给宿主，宿主收口到 window.__frameStates（有上限、仅内存）——
+  // 大步骤（就绪/恢复）即时报，另有 1s 心跳供工具轮询。
+  function reportState(reason) {
+    try {
+      var values = [];
+      var nodes = document.querySelectorAll("input, textarea, select");
+      for (var i = 0; i < nodes.length && values.length < 24; i++) {
+        var el = nodes[i];
+        if (el.type === "file") continue;
+        values.push({
+          id: el.id || "",
+          name: el.name || "",
+          value: el.value == null ? "" : String(el.value),
+        });
+      }
+      parent.postMessage(
+        {
+          __lumeFrameState: {
+            name: window.name || "",
+            reason: reason,
+            ready: document.readyState,
+            values: values,
+          },
+        },
+        "*"
+      );
+    } catch (err) {}
+  }
+  window.setInterval(function () { reportState("tick"); }, 1000);
   // ── key forwarding (sandbox-safe) ──
   // The host cannot reach into this document (opaque origin), so forwarding
   // runs from inside: non-editable, not-yet-prevented keydowns bubble here
@@ -329,6 +366,7 @@ export const BRIDGE_SCRIPT = `
     if (announced) return;
     announced = true;
     parent.postMessage({ __lumeReady: { frame: window.name } }, "*");
+    reportState("ready");
   }
   if (document.readyState === "complete") announce();
   else window.addEventListener("load", announce);
@@ -478,6 +516,7 @@ export function createIframeView(
           __lumeRpc?: { id: number; method: string; args: Record<string, unknown> };
           __lumeReady?: unknown;
           __lumeCallResult?: { callId: number; ok: boolean; result?: unknown; error?: string };
+          __lumeFrameState?: unknown;
           __lumeKey?: {
             seq: number;
             key: string;
@@ -507,6 +546,14 @@ export function createIframeView(
               ? c.resolve(d.__lumeCallResult.result ?? null)
               : c.resolve(null);
           }
+        }
+        if (d.__lumeFrameState) {
+          // 帧内状态上报（桥的 reportState）：收口到本窗口的 __frameStates
+          // 环形缓冲。srcdoc 帧的 CDP context 在新 WebView2 里对宿主 target 不
+          // 可见，外部工具（probe）改从这读取；生产路径无人消费，成本 ~KB/s。
+          const states = ((window as unknown as { __frameStates?: unknown[] }).__frameStates ??= []);
+          states.push(d.__lumeFrameState);
+          if (states.length > 40) states.shift();
         }
         if (d.__lumeRpc) {
           const { id, method, args } = d.__lumeRpc;

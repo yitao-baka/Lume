@@ -445,7 +445,10 @@ pub async fn plugin_http_fetch(
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<HttpResponse, String> {
-    crate::plugin_perm::assert_native_or_capability(
+    // The resolved id (not the raw argument — logic-host callers carry their
+    // id behind the token) decides whether the private-address gate applies:
+    // any plugin call gets it, the native first-party path does not.
+    let effective = crate::plugin_perm::assert_native_or_capability_resolved(
         &perms,
         &settings,
         &window,
@@ -454,13 +457,10 @@ pub async fn plugin_http_fetch(
         "network",
     )?;
     // #32.3: plugin calls get the private-address gate + the manifest's
-    // `network_allow` override. assert_* above already warmed the permission
+    // `network_allow` override. The check above already warmed the permission
     // cache (entry_for on miss), so the lookup below is a map read.
-    let (allow, enforce) = match plugin_id.as_deref() {
-        Some(id) => (
-            crate::plugin_perm::network_allow_for(&perms, id),
-            true,
-        ),
+    let (allow, enforce) = match effective.as_deref() {
+        Some(id) => (crate::plugin_perm::network_allow_for(&perms, id), true),
         None => (Vec::new(), false),
     };
     let url = req.url.clone();

@@ -30,6 +30,9 @@ interface FrameCall {
   kind: "load" | "hook";
   resolve?: (v: unknown) => void;
   reject?: (e: unknown) => void;
+  /** hook 回执兜底（#32.4）：帧卡死/不回执时主动回执失败并清槽，
+   * 否则 `entry.calls` 的条目永久滞留（泄漏）且 registry 侧只能等 8s。 */
+  timer?: number;
 }
 
 interface LogicEntry {
@@ -45,6 +48,15 @@ interface LogicEntry {
 const entries = new Map<string, LogicEntry>();
 // CDP verify tap（同 __pluginStates/__pwClosed 模式）
 (window as unknown as { __logicEntries?: Map<string, LogicEntry> }).__logicEntries = entries;
+/** 最近 80 条帧 rpc 的结局摘要（#32 加固核验用；CDP 直读）。 */
+const rpcLog: {
+  id: string;
+  method: string;
+  ok: boolean;
+  error?: string;
+  resultType: string;
+}[] = [];
+(window as unknown as { __rpcLog?: unknown }).__rpcLog = rpcLog;
 
 function postTo(entry: LogicEntry, msg: unknown) {
   entry.frame?.contentWindow?.postMessage(msg, "*");
@@ -160,6 +172,13 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
         plog.info(id, `logic host: loaded (${hooks.length} hooks: ${hooks.join("/")})`);
       },
       reject: (err) => plog.error(id, "logic load failed:", err),
+      // 首次 load 要取多个模块文本再编译，比 hook 宽松；卡死同样清槽
+      // （否则 entry.calls 泄漏且插件永远半死）。
+      timer: window.setTimeout(() => {
+        if (entry.calls.delete(callId)) {
+          plog.error(id, "logic load timed out — frame stuck during module load");
+        }
+      }, 15_000),
     });
     postTo(entry, {
       __lumeCall: { callId, type: "load", payload: { dir: entry.dir, entry: entry.entry } },
@@ -171,6 +190,7 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
     const call = entry.calls.get(r.callId);
     if (!call) return;
     entry.calls.delete(r.callId);
+    if (call.timer) window.clearTimeout(call.timer);
     if (call.kind === "load") {
       r.ok ? call.resolve?.(r.result) : call.reject?.(new Error(r.error ?? "logic load failed"));
     } else {
@@ -187,17 +207,62 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
   }
   if (d.__lumeRpc) {
     const rpc = d.__lumeRpc as { id: number; method: string; args: Record<string, unknown> };
-    const reply = (ok: boolean, result: unknown, error?: string) =>
-      postTo(entry, { __lumeRpcResult: { id: rpc.id, ok, result, error } });
+    rpcLog.push({ id, method: rpc.method, ok: true, resultType: "(recv)" });
+    if (rpcLog.length > 80) rpcLog.shift();
+    // CDP verify tap（同 __logicEntries 模式）：最近 80 条 rpc 的结果摘要。
+    const rec = (ok: boolean, error?: string, result?: unknown) => {
+      rpcLog.push({
+        id,
+        method: rpc.method,
+        ok,
+        error: error ? String(error).slice(0, 200) : undefined,
+        resultType: result === undefined ? "undefined" : typeof result,
+      });
+      if (rpcLog.length > 80) rpcLog.shift();
+    };
+    /** JSON 往返：剥掉函数等不可结构化克隆值（http 响应的 text()/json()）——
+     * 数据保留，函数由帧侧 wrapper 按需重建（pluginLogicFrame 就是这么设计的）。 */
+    const jsonSafe = (v: unknown): unknown => {
+      try {
+        return JSON.parse(JSON.stringify(v ?? null));
+      } catch {
+        return null;
+      }
+    };
+    const reply = (ok: boolean, result: unknown, error?: string) => {
+      const msg = { __lumeRpcResult: { id: rpc.id, ok, result, error } };
+      try {
+        postTo(entry, msg);
+        rec(ok, error, result);
+        return;
+      } catch {
+        // 不可克隆（P6.5 回归：http.request 成功也带函数）→ 剥离后重发，
+        // 绝不当成失败——那会把可用的结果变成假错误。
+      }
+      msg.__lumeRpcResult.result = jsonSafe(result);
+      try {
+        postTo(entry, msg);
+        rec(ok, error, msg.__lumeRpcResult.result);
+      } catch (err2) {
+        rec(false, `clone failed: ${err2}`);
+        postTo(entry, { __lumeRpcResult: { id: rpc.id, ok: false, result: null, error: String(err2) } });
+      }
+    };
     if (rpc.method === "__readPluginFile") {
       readPluginFile(entry, String(rpc.args?.path ?? ""))
         .then((text) => reply(true, text))
         .catch((err) => reply(false, null, String(err)));
       return;
     }
-    execHostRpc(id, rpc.method, rpc.args ?? {}, makeServices(id, entry.token), entry.token)
-      .then((result) => reply(true, result))
-      .catch((err) => reply(false, null, String(err)));
+    // execHostRpc 也会同步抛（未知方法名以外的意外）——记录并回执，
+    // 否则帧侧挂到 30s 超时、诊断时看不见任何痕迹。
+    try {
+      execHostRpc(id, rpc.method, rpc.args ?? {}, makeServices(id, entry.token), entry.token)
+        .then((result) => reply(true, result))
+        .catch((err) => reply(false, null, String(err)));
+    } catch (err) {
+      reply(false, null, `sync throw: ${String(err)}`);
+    }
   }
 }
 
@@ -225,7 +290,20 @@ function callHook(id: string, payload: { callId: number; name: string; args: unk
     }
     return;
   }
-  entry.calls.set(payload.callId, { kind: "hook" });
+  const HOOK_TIMEOUT_MS = 10_000;
+  const timer = window.setTimeout(() => {
+    entry.calls.delete(payload.callId);
+    // 帧内卡死（死循环/未捕获异常）→ 主动回执失败，registry 侧按普通
+    // 失败处理（计入熔断），无需等它自己的 8s 超时。
+    void invoke("plugin_logic_result", {
+      token: entry.token,
+      callId: payload.callId,
+      ok: false,
+      result: null,
+      error: `logic hook timeout after ${HOOK_TIMEOUT_MS}ms: ${payload.name}`,
+    }).catch(() => {});
+  }, HOOK_TIMEOUT_MS);
+  entry.calls.set(payload.callId, { kind: "hook", timer });
   postTo(entry, {
     __lumeCall: {
       callId: payload.callId,

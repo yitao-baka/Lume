@@ -8,6 +8,29 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **独立窗任务栏图标与身份（P6.8，ROADMAP #34）** — 分离出的插件窗口在任务栏
+  用**插件自己的图标**，并以独立身份成项，不再显示启动器图标/与 Lume 窗口
+  合并：
+  - **每窗图标**：分离时启动器在 webview 里把 manifest `icon`（多为 SVG）光栅
+    化成 256×256 PNG（Rust 侧 `image` 只有 PNG 特性、无 SVG 解码器），随
+    `plugin_window_open` 上传；Rust 复用 appicon 的 RGBA→HICON 路径，在
+    `show()` 之前设好 ICON_BIG/ICON_SMALL —— 任务栏按钮与 Alt+Tab 都是插件
+    图标。深色主题按 `--icon-filter` 约定反相（与 pill 内图标一致），主题
+    切换时已开窗口自动重绘；重开/焦点路径复用已存位图。无 `icon` 或光栅化
+    失败 → 回退 Lume 主题图标（静默，只记日志）。
+  - **独立任务栏项**：每个插件窗写独立 AppUserModelID `Lume.Plugin.<id>`
+    （`SHGetPropertyStoreForWindow` + `PKEY_AppUserModel_ID`，Electron
+    `setAppDetails` 等价、Tauri 无此 API；windows crate 补 3 个 feature，
+    无新依赖）。实测默认「始终合并」下与启动器/设置窗各占一个任务栏按钮、
+    可单独钉住；写入必须发生在创窗线程（主线程，`run_on_main_thread`），
+    工作线程的 store 写 S_OK 但不生效。
+  - 验证：`scripts/cdp_plugin_icon_verify.mjs` **8/8**（真实分离流程的图标
+    上传：插件窗 ICON_BIG ≠ 启动器图标；UIA 任务栏按钮
+    `Appid: Lume.Plugin.file-search`；无 icon 的插件回退 Lume 图标且仍独立
+    成项）；实机截图复验「仅插件窗」「与设置窗同屏两个独立按钮」
+    「light↔dark 主题翻转重绘」；`cdp_plugin_blank_verify` **0/12**、
+    `cdp_plugin_window_verify` **12/12** 无回归。
+
 - **插件系统加固（ROADMAP #32，P6.6）** — 契约/安全/健壮性/DX 四组十项：
   - **宿主 API 版本契约**：清单新增 `api`（缺省 = 宿主版本）；声明高于
     `HOST_PLUGIN_API`（=1）→ 加载期明确拒绝 + toast，逻辑宿主二次校验

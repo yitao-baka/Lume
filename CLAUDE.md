@@ -193,6 +193,32 @@ use `--no-bundle` to get just the exe without needing WiX/NSIS installers.
 
 ## Current iteration
 
+**独立窗任务栏图标与身份（ROADMAP #34，P6.8, complete） — as of 2026-10-05**:
+分离出的插件窗口此前在任务栏显示**启动器图标**（建窗时被显式设成 Lume 主题
+图标），且与其它 Lume 窗口共享任务栏身份。现在每个独立窗用插件 manifest
+`icon` + 独立 AppUserModelID。实现：①**图标**——`icon` 多为 SVG 而 Rust
+`image` 只有 PNG 特性 → 前端光栅化（`src/plugins/windowIcon.ts`：asset →
+data:URL → 256×256 canvas → PNG base64，按 URL 缓存），分离时随
+`plugin_window_open(iconPng)` 上传；`appicon` 新增 `PluginIcons` 状态，
+RGBA→HICON 复用主题图标的 `CreateIcon`/`WM_SETICON` 路径，`show()` 前设好，
+深色主题按 `--icon-filter` 约定反相，`appicon::apply` 在主题切换时重绘已开
+窗口；无 `icon`/解码失败 → 回退 Lume 图标。②**身份**——每窗
+`AppUserModelID = Lume.Plugin.<id>`（SHGetPropertyStoreForWindow +
+PKEY_AppUserModel_ID + Commit；windows crate 补
+Win32_Storage_EnhancedStorage / Win32_UI_Shell_PropertiesSystem /
+Win32_System_Com_StructuredStorage 三个 feature，无新依赖；
+windows-rs 0.61 未生成 `InitPropVariantFromString`、`From<&str>` 给的是
+VT_BSTR → 手工构造 VT_LPWSTR）。两个反直觉实测（已固化为代码注释）：该窗口
+属性存储**写后读回永远为空**（壳层只消费、不持久化；PowerShell 复现同款，
+故验证改用 UIA 任务栏按钮 AutomationId `Appid: <AUMID>` + 截图）；**写入必须
+发生在创窗线程（主线程）**，工作线程拿到的 store 写 S_OK 不生效 →
+`run_on_main_thread` + 500ms 回执（仍在 show 之前）。**验证**：
+`scripts/cdp_plugin_icon_verify.mjs` **8/8**（真实分离流程：插件窗 ICON_BIG
+≠ 启动器图标；任务栏按钮 `Appid: Lume.Plugin.file-search`；无 icon 的
+hello-mode 回退且仍独立成项）；实机截图：仅独立窗 = 放大镜图标（深色反相）、
+与设置窗同屏 = 两个独立按钮、light↔dark 翻转重绘、重开复用已存位图；
+`cdp_plugin_blank_verify` 0/12、`cdp_plugin_window_verify` 12/12 无回归。
+
 **独立窗口视图帧导航丢失修复（ROADMAP #33，P6.7, complete） — as of
 2026-10-05**: release 构建下打开插件独立窗口 1/3–5/6 概率整页空白（只剩宿主
 chrome，视图 + titlebar 槽两个 iframe 全空）。根因：`createIframeView` 挂载时

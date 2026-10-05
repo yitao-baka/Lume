@@ -14,8 +14,17 @@
 //! ICON_BIG, and nothing set it (the shell fell back to the exe's embedded
 //! icon). Both sizes are set here via `WM_SETICON` with an HICON built from
 //! the same decoded RGBA the tray uses.
+//!
+//! P6.8 (ROADMAP #34): a detached plugin window gets its own taskbar icon —
+//! the plugin's manifest `icon`, rasterized by the launcher's webview at
+//! detach time (this crate has no SVG decoder; `image` is PNG-only) and
+//! uploaded through `plugin_window_open`. Dark mode inverts it exactly like
+//! the launcher's `--icon-filter` treats the in-app pill, so icon and pill
+//! never disagree; icon-less plugins keep the Lume theme icon. The separate
+//! taskbar identity (AppUserModelID) is set in `plugin_window.rs`.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use tauri::{image::Image, AppHandle, Manager, Runtime, WebviewWindow};
 use windows::Win32::Foundation::{LPARAM, WPARAM};
@@ -68,33 +77,100 @@ fn themed_hicon(dark: bool) -> Option<HICON> {
     let slot = if dark { &DARK_HICON } else { &LIGHT_HICON };
     slot.get_or_init(|| {
         let img = themed_icon(dark)?;
-        // BGRA pixel order + inverted-alpha AND mask — the format CreateIcon
-        // expects (mirrors tray-icon's RGBA → HICON conversion).
-        let mut xor: Vec<u8> = img.rgba().to_vec();
-        for px in xor.chunks_exact_mut(4) {
-            px.swap(0, 2);
-        }
-        let and: Vec<u8> = img
-            .rgba()
-            .chunks_exact(4)
-            .map(|px| 255u8.wrapping_sub(px[3]))
-            .collect();
-        unsafe {
-            CreateIcon(
-                None,
-                img.width() as i32,
-                img.height() as i32,
-                1,
-                32,
-                and.as_ptr(),
-                xor.as_ptr(),
-            )
-        }
-        .ok()
-        .map(SendHicon)
+        hicon_from_rgba(img.width(), img.height(), img.rgba())
     })
     .as_ref()
     .map(|h| h.0)
+}
+
+/// Build an HICON from raw RGBA: BGRA pixel order + inverted-alpha AND mask
+/// — the format `CreateIcon` expects (mirrors tray-icon's RGBA → HICON
+/// conversion). Shared by the theme icons and the per-plugin icons (P6.8).
+fn hicon_from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<SendHicon> {
+    let mut xor: Vec<u8> = rgba.to_vec();
+    for px in xor.chunks_exact_mut(4) {
+        px.swap(0, 2);
+    }
+    let and: Vec<u8> = rgba
+        .chunks_exact(4)
+        .map(|px| 255u8.wrapping_sub(px[3]))
+        .collect();
+    unsafe {
+        CreateIcon(
+            None,
+            width as i32,
+            height as i32,
+            1,
+            32,
+            and.as_ptr(),
+            xor.as_ptr(),
+        )
+    }
+    .ok()
+    .map(SendHicon)
+}
+
+/// Per-plugin taskbar icons for detached windows (P6.8, ROADMAP #34): the
+/// RGBA the launcher rasterized at detach, plus the built HICONs — one per
+/// theme variant, so a theme flip rebuilds without another round trip.
+#[derive(Default)]
+pub struct PluginIcons(Mutex<PluginIconStore>);
+
+#[derive(Default)]
+struct PluginIconStore {
+    rgba: HashMap<String, (u32, u32, Vec<u8>)>,
+    hicons: HashMap<(String, bool), SendHicon>,
+}
+
+impl PluginIcons {
+    /// Decode the uploaded base64 PNG and remember it for `id` (the cached
+    /// HICONs are dropped so the next apply rebuilds them). Failures are
+    /// logged and ignored — the window keeps the Lume theme icon.
+    pub fn remember(&self, id: &str, png_base64: &str) {
+        use base64::Engine as _;
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(png_base64) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[appicon] plugin \"{id}\" icon: bad base64 ({e})");
+                return;
+            }
+        };
+        match image::load_from_memory(&bytes) {
+            Ok(img) => {
+                let img = img
+                    .resize_exact(ICON_PX, ICON_PX, image::imageops::FilterType::Lanczos3)
+                    .into_rgba8();
+                let mut store = self.0.lock().unwrap();
+                store.rgba.insert(id.to_string(), (ICON_PX, ICON_PX, img.into_raw()));
+                store.hicons.remove(&(id.to_string(), true));
+                store.hicons.remove(&(id.to_string(), false));
+            }
+            Err(e) => eprintln!("[appicon] plugin \"{id}\" icon: decode failed ({e})"),
+        }
+    }
+
+    /// The theme-variant HICON for `id`, built on first use; None when this
+    /// plugin never uploaded an icon.
+    fn hicon(&self, id: &str, dark: bool) -> Option<HICON> {
+        let mut store = self.0.lock().unwrap();
+        if let Some(icon) = store.hicons.get(&(id.to_string(), dark)) {
+            return Some(icon.0);
+        }
+        let (width, height, rgba) = store.rgba.get(id)?.clone();
+        let pixels = if dark { invert_rgb(&rgba) } else { rgba };
+        let icon = hicon_from_rgba(width, height, &pixels)?;
+        let handle = icon.0;
+        store.hicons.insert((id.to_string(), dark), icon);
+        Some(handle)
+    }
+}
+
+/// Invert RGB, keep alpha — the same treatment as `--icon-filter: invert(1)`
+/// (theme.css) the launcher applies to plugin icons in dark mode.
+fn invert_rgb(rgba: &[u8]) -> Vec<u8> {
+    rgba.chunks_exact(4)
+        .flat_map(|px| [255 - px[0], 255 - px[1], 255 - px[2], px[3]])
+        .collect()
 }
 
 /// Whether the effective color mode is dark — an explicit dark/light setting
@@ -123,6 +199,18 @@ pub fn apply(app: &AppHandle<impl Runtime>, color_mode: &str) {
             set_window_icon(&win, dark);
         }
     }
+    // Detached plugin windows (P6.8): re-derive their variant on a theme
+    // flip — the plugin's own icon when one was uploaded, the Lume theme
+    // icon otherwise (icon-less plugins only got it at creation).
+    let icons = app.state::<PluginIcons>();
+    for (label, win) in app.webview_windows() {
+        if let Some(id) = label.strip_prefix("plugin-") {
+            match icons.hicon(id, dark) {
+                Some(hicon) => set_hicon(&win, hicon),
+                None => set_window_icon(&win, dark),
+            }
+        }
+    }
     match (themed_icon(dark), app.tray_by_id(tray::TRAY_ID)) {
         (Some(icon), Some(tray)) => {
             if let Err(e) = tray.set_icon(Some(icon)) {
@@ -140,10 +228,37 @@ pub fn apply_window<R: Runtime>(win: &WebviewWindow<R>, color_mode: &str) {
     set_window_icon(win, is_dark(win.app_handle(), color_mode));
 }
 
+/// Apply a detached plugin window's OWN icon (`PluginIcons`, P6.8). Returns
+/// false when no icon was uploaded for `id` — the caller then falls back to
+/// `apply_window` (the Lume theme icon).
+pub fn apply_plugin_window<R: Runtime>(
+    win: &WebviewWindow<R>,
+    icons: &PluginIcons,
+    id: &str,
+    color_mode: &str,
+) -> bool {
+    let dark = is_dark(win.app_handle(), color_mode);
+    match icons.hicon(id, dark) {
+        Some(hicon) => {
+            set_hicon(win, hicon);
+            true
+        }
+        None => false,
+    }
+}
+
 /// Set both icon slots (ICON_BIG = taskbar / Alt-Tab, ICON_SMALL = title bar)
 /// on one window from the theme HICON.
 fn set_window_icon<R: Runtime>(win: &WebviewWindow<R>, dark: bool) {
-    let (Ok(hwnd), Some(hicon)) = (win.hwnd(), themed_hicon(dark)) else {
+    if let Some(hicon) = themed_hicon(dark) {
+        set_hicon(win, hicon);
+    }
+}
+
+/// Set both icon slots on one window — shared by the theme icons and the
+/// per-plugin icons (P6.8).
+fn set_hicon<R: Runtime>(win: &WebviewWindow<R>, hicon: HICON) {
+    let Ok(hwnd) = win.hwnd() else {
         return;
     };
     unsafe {

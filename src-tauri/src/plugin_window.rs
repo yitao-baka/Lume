@@ -35,12 +35,21 @@
 //! `window.rs`). Detach is a user action on a visible window, so the risk
 //! window is small; creation is hidden-then-shown and per-plugin windows are
 //! reused, never duplicated.
+//!
+//! Taskbar identity (P6.8, ROADMAP #34): the window carries its own
+//! AppUserModelID (`Lume.Plugin.<id>`) so the shell gives it a separate
+//! taskbar entry — own button, own icon, individually pinnable — instead of
+//! merging it into the launcher's. The icon is the plugin's manifest `icon`
+//! (rasterized by the launcher's webview and uploaded as a base64 PNG, since
+//! Rust has no SVG decoder); icon-less plugins keep the Lume theme icon.
+//! Both are applied before the first `show()`.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
+use crate::appicon::{self, PluginIcons};
 use crate::paths::base_dir;
 use crate::settings::{self, SettingsState};
 
@@ -77,9 +86,11 @@ pub fn window_label(id: &str) -> String {
 #[tauri::command]
 pub async fn plugin_window_open(
     id: String,
+    icon_png: Option<String>,
     app: AppHandle,
     state: State<'_, SettingsState>,
     closing: State<'_, ClosingSet>,
+    icons: State<'_, PluginIcons>,
 ) -> Result<String, String> {
     let label = window_label(&id);
     if let Some(win) = app.get_webview_window(&label) {
@@ -143,9 +154,31 @@ pub async fn plugin_window_open(
     // shadow(true) windows draw DWM's documented 1px white border — suppress
     // it (shadow + Win11 rounded corners stay).
     crate::window::clear_dwm_border(&win);
-    // Created after startup, so `appicon::apply` never covered this window —
-    // theme-match its taskbar icon here.
-    crate::appicon::apply_window(&win, &snapshot.appearance.color_mode);
+    // Separate taskbar identity before the window is ever shown (P6.8). The
+    // property-store write must run on the window's owning (main) thread: a
+    // store obtained elsewhere accepts SetValue with S_OK and drops the
+    // value (实测回读为空 —— PowerShell 复现同款行为), so this hops over
+    // and waits a moment.
+    {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let win_main = win.clone();
+        let id_main = id.clone();
+        app.run_on_main_thread(move || {
+            set_window_aumid(&win_main, &id_main);
+            let _ = tx.send(());
+        })
+        .map_err(|e| e.to_string())?;
+        let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
+    }
+    // Icon before the first paint: the plugin's own (uploaded at detach) or
+    // — for icon-less plugins — the theme-matched Lume icon, which
+    // `appicon::apply` never covered (created after startup).
+    if let Some(b64) = icon_png.as_deref() {
+        icons.remember(&id, b64);
+    }
+    if !appicon::apply_plugin_window(&win, &icons, &id, &snapshot.appearance.color_mode) {
+        appicon::apply_window(&win, &snapshot.appearance.color_mode);
+    }
     let app2 = app.clone();
     let id2 = id.clone();
     let win2 = win.clone();
@@ -340,4 +373,98 @@ fn remember_bounds(app: &AppHandle, id: &str, win: &tauri::WebviewWindow) {
             },
         );
     }
+}
+
+/// Give a detached window its own AppUserModelID (`Lume.Plugin.<id>`) so the
+/// taskbar treats it as a separate app: own button, own icon, individually
+/// pinnable — Electron's `setAppDetails({ appId })` equivalent, for which
+/// Tauri has no API. Runs before the window is ever shown; the id is stable
+/// per plugin (pinning keys off it) and needs no registry registration — for
+/// an unregistered id the shell falls back to the window icon, which
+/// `appicon` sets from the plugin's manifest `icon`.
+///
+/// COM note: the window store write is dispatched to the main thread (see
+/// the call site) — the apartment is initialized here anyway as a safety
+/// net, uninit stays balanced and only when this call did the init
+/// (RPC_E_CHANGED_MODE / already-inited S_FALSE tell us someone else owns
+/// the apartment choice).
+fn set_window_aumid(win: &tauri::WebviewWindow, id: &str) {
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
+
+    let Ok(hwnd) = win.hwnd() else {
+        return;
+    };
+    unsafe {
+        let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        if let Some(store) = property_store(hwnd) {
+            if let Some(pv) = str_propvariant(&format!("Lume.Plugin.{id}")) {
+                match store.SetValue(&PKEY_AppUserModel_ID, &pv) {
+                    Ok(()) => {
+                        // Belt and braces: some store implementations only
+                        // publish on Commit (E_NOTIMPL here is harmless).
+                        let _ = store.Commit();
+                    }
+                    Err(e) => eprintln!("[plugin_window] AUMID for \"{id}\" rejected: {e}"),
+                }
+            }
+        }
+        if initialized {
+            CoUninitialize();
+        }
+    }
+}
+
+/// The window's `IPropertyStore` (`SHGetPropertyStoreForWindow`). Errors are
+/// logged — a window without an AUMID simply merges into the launcher's
+/// taskbar entry, the pre-P6.8 behaviour.
+unsafe fn property_store(
+    hwnd: windows::Win32::Foundation::HWND,
+) -> Option<windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore> {
+    use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
+
+    match SHGetPropertyStoreForWindow::<IPropertyStore>(hwnd) {
+        Ok(store) => Some(store),
+        Err(e) => {
+            eprintln!("[plugin_window] SHGetPropertyStoreForWindow failed: {e}");
+            None
+        }
+    }
+}
+
+/// A VT_LPWSTR `PROPVARIANT` — what `InitPropVariantFromString` produces, but
+/// that function is not exposed by windows-rs 0.61 and the crate's
+/// `From<&str>` impl yields VT_BSTR, which the shell's window property store
+/// does not accept for this key. The allocation is CoTaskMem (freed by
+/// `PROPVARIANT`'s Drop → `PropVariantClear`).
+unsafe fn str_propvariant(s: &str) -> Option<windows::Win32::System::Com::StructuredStorage::PROPVARIANT> {
+    use windows::core::PWSTR;
+    use windows::Win32::System::Com::CoTaskMemAlloc;
+    use windows::Win32::System::Com::StructuredStorage::{
+        PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
+    };
+    use windows::Win32::System::Variant::VT_LPWSTR;
+
+    let mut wide: Vec<u16> = s.encode_utf16().collect();
+    wide.push(0);
+    let mem = CoTaskMemAlloc(wide.len() * 2) as *mut u16;
+    if mem.is_null() {
+        return None;
+    }
+    std::ptr::copy_nonoverlapping(wide.as_ptr(), mem, wide.len());
+    // The exact shape the crate's own `variant_from_value!` macro builds —
+    // spelled out because windows-rs has no `From<&str>` for VT_LPWSTR (its
+    // string impl is VT_BSTR) and `InitPropVariantFromString` is not
+    // generated in 0.61.
+    Some(PROPVARIANT {
+        Anonymous: PROPVARIANT_0 {
+            Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
+                vt: VT_LPWSTR,
+                wReserved1: 0,
+                wReserved2: 0,
+                wReserved3: 0,
+                Anonymous: PROPVARIANT_0_0_0 { pwszVal: PWSTR(mem) },
+            }),
+        },
+    })
 }

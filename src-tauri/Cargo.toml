@@ -65,6 +65,9 @@ windows = { version = "0.61", features = [
   "Win32_UI_Shell_Common",    # SHGetPathFromIDListW / IPersistFolder2::GetCurFolder (explorer)
   "Win32_System_Ole",         # IShellBrowser->IOleWindow::GetWindow (match shell window hwnd)
   "Win32_UI_Shell",           # IShellItemImageFactory, SHCreateItemFromParsingName
+  "Win32_Storage_EnhancedStorage", # P6.8: PKEY_AppUserModel_ID (per-window AUMID)
+  "Win32_UI_Shell_PropertiesSystem", # P6.8: IPropertyStore + SHGetPropertyStoreForWindow
+  "Win32_System_Com_StructuredStorage", # P6.8: PROPVARIANT for IPropertyStore::SetValue
   "Win32_System_Services",    # SCM: CreateServiceW / StartServiceCtrlDispatcherW (LumeSVC)
   "Win32_System_Registry",    # HKLM DataDir, HKCU Run (autostart)
   "Win32_System_Pipes",       # CreateNamedPipeW (LumeSVC IPC)

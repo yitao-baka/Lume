@@ -49,6 +49,7 @@ import {
 import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
 import { createClipboardPlugin } from "./plugins/clipboard";
 import { createPreviewPlugin } from "./plugins/preview";
+import { rasterizePluginIcon } from "./plugins/windowIcon";
 
 function App() {
   const [mode, setMode] = createSignal<ModeId>(NAVIGATE_MODE_ID);
@@ -339,8 +340,11 @@ function App() {
         // raise it — no page switch happens here (P6).
         if (isPluginDetached(pluginId)) {
           // Raise/focus first (its shown event replays `show`), then deliver
-          // the payload — onEnter pushes it into the window either way.
-          void invoke("plugin_window_open", { id: pluginId })
+          // the payload — onEnter pushes it into the window either way. The
+          // icon rides along: this path also covers a stale detached flag
+          // whose window is gone and would be recreated (P6.8).
+          pluginWindowIcon(pluginId)
+            .then((iconPng) => invoke("plugin_window_open", { id: pluginId, iconPng }))
             .then(() => deliverFeature(pluginId, info))
             .catch((err) => console.error("plugin_window_open failed:", err));
           return true;
@@ -505,6 +509,14 @@ function App() {
    * is guaranteed mounted at click time) BEFORE the new window exists, so
    * the detached page inherits it on its ready push. A dead page yields
    * null and the detach degrades to the pre-snapshot behaviour. */
+  /** Rasterized taskbar icon for a detached plugin window (P6.8): the mode's
+   * manifest `icon`, or undefined when it has none / cannot be read — the
+   * window then keeps the Lume theme icon. */
+  function pluginWindowIcon(id: ModeId): Promise<string | undefined> {
+    const url = modePlugins().find((p) => p.id === id)?.modeMeta?.icon;
+    return url ? rasterizePluginIcon(url) : Promise.resolve(undefined);
+  }
+
   async function detachMode(m: ModeId) {
     try {
       let snapshot: unknown = null;
@@ -513,7 +525,7 @@ function App() {
       } catch {
         // 页面快照失败不阻塞 detach —— 退化为既有行为（仅回放宿主状态）。
       }
-      await invoke("plugin_window_open", { id: m });
+      await invoke("plugin_window_open", { id: m, iconPng: await pluginWindowIcon(m) });
       if (snapshot) storePendingSnapshot(m, snapshot);
       setPluginDetached(m, true);
       services.resetAndHide();

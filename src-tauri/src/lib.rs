@@ -96,6 +96,7 @@ pub fn run() {
         .manage(window::PreviewState::default())
         .manage(plugin_perm::PluginPermState::default())
         .manage(plugin_window::ClosingSet::default())
+        .manage(appicon::PluginIcons::default())
         .plugin(hotkey::build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

@@ -106,7 +106,7 @@ export default {
 | `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入，含 `file_type` 类别，§6E.1.1）、`"img"`（剪贴板图片）与 `"window"`（活动窗口匹配，§6H.4）规则见对应小节。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。分离窗口的默认高度同样取它（§6G）。 |
 | `detachable` | bool | `false` | **mode 专属**（P6，§6G）— 页面可以分离为独立窗口：设置页显示「可分离」chip，激活该模式时页面右上角悬停出现「在独立窗口打开」按钮。依赖启动器搜索框交互（`setSubInput`/`setQuery` 驱动）的模式不要声明。 |
-| `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。 |
+| `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。分离窗口（§6G）的任务栏图标同源：分离时宿主把该文件光栅化后设为窗口图标（省略 = 独立窗回退 Lume 主题图标）。 |
 
 **解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
 
@@ -1123,6 +1123,7 @@ detachable = true     # 允许分离为独立窗口
 | 动作 | 行为 |
 |---|---|
 | 分离（按钮） | `plugin_window_open` 创建（或聚焦既有）窗口 `plugin-<id>`，加载 `plugin.html?plugin=<id>`；启动器隐藏 |
+| 任务栏图标 / 身份 | 分离时按 manifest `icon` 光栅化为窗口图标（无 `icon` 回退 Lume 主题图标）：任务栏按钮与 Alt+Tab 都是插件图标，深色主题按 `--icon-filter` 约定反相（跟随应用主题），主题切换/重开自动重绘；窗口携带独立 AppUserModelID `Lume.Plugin.<id>`，任务栏独立成项（可单独钉住，不与其他 Lume 窗口合并） |
 | 再次激活 | pill 点击 / Tab 循环 / 关键字 / redirect 进入一个已分离的模式 → 聚焦其窗口（不切启动器页面），启动器隐藏 |
 | 就绪握手 | 窗口页监听器就绪后调 `plugin_window_ready` → 启动器注册表推送 `{show, query, enter, settings, snapshot?}`（`plugin-state` 事件）——跨窗口版的 `__lumeReady` 状态重放。`snapshot` 是 detach 时从启动器内页面取走的状态快照（P6.5，§6C），在标准回放之后以 `restore` 事件投给页面 |
 | 显隐 | 窗口获得焦点/重新打开 → `show` 事件重放 + `onShow` 钩子；窗口隐藏不留事件（shown 推送发生在建窗瞬间、页面尚未加载，**不携带快照**） |

@@ -2367,3 +2367,50 @@ WebView2 会**丢掉后一个导航**：
 `cdp_sandbox_verify` **14/14**；`cdp_p3_verify` **36/9** 与修复前基线逐项一致
 （9 项为既有失败，与本轮无关）。启动器内 mode 页（同一装载路径）实机截图
 复验正常（file-search 2.2MB 页在启动器内渲染 + 搜索 + 预览全通）。
+
+---
+
+## 34. 独立窗任务栏图标与身份（P6.8，已实现）
+
+分离出的插件窗口在任务栏上应当「是它自己」：图标 = 插件 manifest `icon`、
+身份独立成项（可单独钉住），而不是显示启动器图标、与 Lume 的其它窗口合并。
+
+### 34.1 实现
+
+- **图标数据面**：manifest `icon` 多为 SVG，宿主 Rust 侧 `image` 只启用 PNG
+  → 由 **webview 光栅化**（`src/plugins/windowIcon.ts`：asset fetch →
+  data:URL → 256×256 canvas → PNG base64，按 URL 缓存），分离时随
+  `plugin_window_open(iconPng)` 上传；App.tsx 的两处 detach 调用点（分离
+  按钮 / 已分离模式的 enter 提升）都带上。
+- **应用面**：`appicon` 新增每插件位图状态（`PluginIcons`，managed state）：
+  解码上传的 PNG → 256×256 RGBA → 按主题反相（`--icon-filter` 约定）→
+  RGBA→HICON（`CreateIcon`，与主题图标同一路径）→ `WM_SETICON` 两档；
+  `show()` 前完成，主题切换经 `appicon::apply` 重绘已开窗口；无 `icon`
+  或解码失败 → `apply_window` 回退 Lume 主题图标。
+- **身份面**：每插件窗 `AppUserModelID = Lume.Plugin.<id>`
+  （`SHGetPropertyStoreForWindow` + `PKEY_AppUserModel_ID` + `Commit`；
+  windows crate 补 `Win32_Storage_EnhancedStorage` /
+  `Win32_UI_Shell_PropertiesSystem` / `Win32_System_Com_StructuredStorage`
+  三个 feature，无新依赖）。windows-rs 0.61 未生成
+  `InitPropVariantFromString`、`From<&str>` 给的是 VT_BSTR → 手工构造
+  VT_LPWSTR（CoTaskMem 分配，`PROPVARIANT::drop` 负责释放）。
+
+### 34.2 实测踩坑（反直觉，已固化为注释）
+
+- **该属性存储「写后读回为空」**：SetValue/Commit 均为 S_OK，但 GetValue 仍
+  是 VT_EMPTY（PowerShell 用 SHGetPropertyStoreForWindow 复现同款）——壳层
+  只消费 AUMID、不把它持久化在 store 里。验证手段因此改为 **UIA 任务栏
+  按钮**（每个按钮的 AutomationId = `Appid: <AUMID>`）与任务栏截图。
+- **写入必须发生在创窗线程（主线程）**：工作线程拿到的 store 写 S_OK 但不
+  生效 → `plugin_window_open` 里 `run_on_main_thread` 派发 + 500ms 等回执
+  （仍在 `show()` 之前）。
+
+### 验证
+
+`scripts/cdp_plugin_icon_verify.mjs` **8/8**：真实分离流程（进模式页 → 点
+「在独立窗口打开」）后 ①插件窗 ICON_BIG 存在且 ≠ 启动器图标 ②任务栏存在
+`Appid: Lume.Plugin.file-search` 按钮 ③无 `icon` 的 hello-mode 回退到与
+启动器相同的图标、且仍独立成项。实机截图：仅插件窗时任务栏按钮为放大镜
+图标（深色反相）；与设置窗同屏为**两个**独立按钮；light↔dark 翻转按预期
+重绘（#333 ↔ 浅灰）；关闭重开复用已存位图。回归：`cdp_plugin_blank_verify`
+**0/12**、`cdp_plugin_window_verify` **12/12**。

@@ -1293,8 +1293,11 @@ registry（重）发全部 load（覆盖建窗竞态）；宿主窗口 `Destroye
 
 **安装流程（设置 → 插件）**：工具栏「安装插件…」→ 选 `.lupx` 文件 → 宿主
 `plugin_lupx_inspect` 只读校验并弹**内联确认卡**（名称/版本/kind/描述/
-**权限 chips（本地化）**/文件数与大小/签名状态；已装同 id 显示「将覆盖
-vX → vY」）→ 确认 → `plugin_lupx_install` 解压换位。这张卡就是权限模型的
+**权限 chips（本地化）**/文件数与大小/签名状态；已装同 id 时对包内/已装
+版本做 semver-ish 比较（点分段数字序、缺段补 0、release 高于 prerelease），
+按关系显示「升级 vX → vY」/「同版本重装 vX」/「降级 vX → vY」（黄字）——
+关系只决定措辞，任何关系确认后都安装，降级即回滚旧包）→ 确认 →
+`plugin_lupx_install` 解压换位。这张卡就是权限模型的
 「安装时知情同意」时刻。**卸载**：每张磁盘插件卡（内置无）的卸载按钮，
 两段式确认（3 秒武装窗口）。
 
@@ -1318,7 +1321,7 @@ Rust 侧（`plugin_install.rs`）语义：
 | 环节 | 行为 |
 |---|---|
 | 校验 | 清单解析（`parse_manifest`）+ 必须显式声明 `id`（包内无目录名可回退）+ `valid_plugin_id` 字符集；entry 名逐段守卫（`\`→`/` 规范化——PowerShell 兼容、拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点、单段 ≤120 字符）；单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096 |
-| 换位 | 解压到 `<base>/data/install-staging/<id>-<ts>`（**不在 `plugins/` 下**——半成品不会被扫描发现）→ 旧安装 rename 到 staging 备份 → rename 到位（**失败自动还原旧安装**）→ 清备份 |
+| 换位 | 解压到 `<base>/data/install-staging/<id>-<ts>`（**不在 `plugins/` 下**——半成品不会被扫描发现）→ 旧安装 rename 到 staging 备份 → rename 到位（**失败自动还原旧安装**）→ 旧安装私有 `files/` 移入新目录（目录名常量在 `plugin_fs::PRIVATE_FILES_DIRNAME`；无则跳过，双方都有则逐项合并、**旧数据赢**同路径冲突；恢复失败把旧安装改名 `<id>-files-recovery-<pid>` 留在 `plugins/` 待手动处理——数据安全前不删备份）→ 清备份 |
 | 生效 | 双事件：`settings-applied`（清单刷新）+ `plugin-reload`（已加载模块立即从新文件重 import——**升级无需重启**） |
 | 卸载 | 删 `<plugins>/<id>/`（私有 `files/` 随目录走——它就在插件目录里；`data/plugin_store.db` 的文档**保留**）；目录不存在不算错（重复卸载幂等） |
 | 残留 | staging 目录在启动时整体清理（崩溃/被杀不留垃圾） |

@@ -17,6 +17,10 @@
 //! discovered by the scan) before a rename swap puts it in place — the
 //! previous installation is renamed aside first and restored if the swap
 //! fails, so a failed upgrade never leaves the user with no plugin at all.
+//! The package version is compared against the installed one (semver-ish)
+//! so the confirmation card words an overwrite as upgrade / reinstall /
+//! downgrade, and the plugin's private `files/` survives the swap — it is
+//! runtime data, not package content.
 
 use serde::Serialize;
 use std::io::Read;
@@ -51,9 +55,16 @@ pub struct LupxInfo {
     #[serde(rename = "totalBytes")]
     pub total_bytes: u64,
     /// Version of the installed plugin with the same id, when one exists —
-    /// the card shows an overwrite warning instead of a fresh install.
+    /// the card shows an overwrite notice instead of a fresh install.
     #[serde(rename = "existingVersion")]
     pub existing_version: Option<String>,
+    /// How the package version relates to the installed one with the same
+    /// id: `"fresh"` (nothing installed) / `"upgrade"` / `"reinstall"` /
+    /// `"downgrade"` — the confirmation card words the overwrite notice by
+    /// it (the downgrade is the one that warns). Purely informational: any
+    /// of the three installs on confirm (rolling back to an older package
+    /// is a legitimate move, not an error).
+    pub relation: &'static str,
     /// `LUME.SIGN` status (#32.2): `"valid"` (ed25519 signature verified) or
     /// `"unsigned"` (no signature block — the card shows the archive hash).
     /// Invalid signatures never get here: `read_lupx` refuses them outright.
@@ -416,7 +427,9 @@ fn extract_to(source_path: &str, prefix: &str, staging: &Path) -> Result<(usize,
 /// Swap a fully-extracted `staging` directory into `<base>/plugins/<id>/`,
 /// replacing an existing installation. The old installation is renamed aside
 /// first; if the final rename fails it is renamed back — a failed upgrade
-/// must not leave the user with no plugin at all.
+/// must not leave the user with no plugin at all. After the swap the old
+/// installation's private files move into the fresh one (an upgrade must not
+/// wipe plugin data); the backup is only deleted once they are safe.
 fn swap_installed(base: &Path, staging: &Path, id: &str) -> Result<(), String> {
     let target = base.join("plugins").join(id);
     let backup = staging
@@ -437,7 +450,77 @@ fn swap_installed(base: &Path, staging: &Path, id: &str) -> Result<(), String> {
         }
         return Err(format!("install failed: {e}"));
     }
-    let _ = std::fs::remove_dir_all(&backup);
+    if restore_private_files(base, &backup, &target, id) {
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+    Ok(())
+}
+
+/// Move the previous installation's private files (`files/` — runtime data
+/// written through the fs API; it lives inside the plugin directory by
+/// design, so a naive swap destroys it) into the fresh install. Old data
+/// wins on a path conflict: a package-shipped `files/` entry is stale from
+/// the user's point of view once the plugin has been writing. Returns `true`
+/// when the backup holds nothing worth keeping anymore. Best effort: on
+/// failure the whole old installation is renamed next to the plugin
+/// (`<id>-files-recovery-<pid>` — no `plugin.toml` inside, so the scan
+/// ignores it) instead of being deleted, and the install stays successful —
+/// a failed data restore must not fail an install that already happened.
+fn restore_private_files(base: &Path, backup: &Path, target: &Path, id: &str) -> bool {
+    let src = backup.join(crate::plugin_fs::PRIVATE_FILES_DIRNAME);
+    if !src.is_dir() {
+        return true;
+    }
+    let dst = target.join(crate::plugin_fs::PRIVATE_FILES_DIRNAME);
+    let moved = if !dst.exists() {
+        std::fs::rename(&src, &dst).map_err(|e| e.to_string())
+    } else {
+        merge_move(&src, &dst).and_then(|()| {
+            std::fs::remove_dir_all(&src)
+                .map_err(|e| format!("remove emptied source: {e}"))
+        })
+    };
+    match moved {
+        Ok(()) => true,
+        Err(e) => {
+            let rescue = base
+                .join("plugins")
+                .join(format!("{id}-files-recovery-{}", std::process::id()));
+            match std::fs::rename(backup, &rescue) {
+                Ok(()) => eprintln!(
+                    "[plugins] \"{id}\": private files restore failed ({e}); old install kept at {}",
+                    rescue.display()
+                ),
+                Err(e2) => eprintln!(
+                    "[plugins] \"{id}\": private files restore failed ({e}); old install kept at {} ({e2})",
+                    backup.display()
+                ),
+            }
+            false
+        }
+    }
+}
+
+/// Merge `src`'s contents into `dst` (which exists), replacing same-named
+/// entries — the shape when both the fresh install and the old one carry a
+/// `files/` directory.
+fn merge_move(src: &Path, dst: &Path) -> Result<(), String> {
+    let rd = std::fs::read_dir(src).map_err(|e| format!("read dir: {e}"))?;
+    for e in rd {
+        let e = e.map_err(|e| format!("read dir entry: {e}"))?;
+        let from = e.path();
+        let to = dst.join(e.file_name());
+        if from.is_dir() {
+            std::fs::create_dir_all(&to).map_err(|e| format!("create dir: {e}"))?;
+            merge_move(&from, &to)?;
+        } else {
+            if to.exists() {
+                std::fs::remove_file(&to)
+                    .map_err(|e| format!("replace \"{}\": {e}", to.display()))?;
+            }
+            std::fs::rename(&from, &to).map_err(|e| format!("move \"{}\": {e}", from.display()))?;
+        }
+    }
     Ok(())
 }
 
@@ -455,12 +538,73 @@ fn existing_version(base: &Path, id: &str) -> Option<String> {
     }
 }
 
+/// One dot segment of a version string: the numeric prefix (missing → 0)
+/// plus the rest (`None` when the segment is a bare number — semver ranks a
+/// release above its own prerelease suffixes).
+fn segment_key(seg: &str) -> (u64, Option<&str>) {
+    let digits = seg
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
+    let num = seg[..digits].parse().unwrap_or(0);
+    let suffix = &seg[digits..];
+    (num, if suffix.is_empty() { None } else { Some(suffix) })
+}
+
+/// Compare two manifest versions semver-ish: dot-separated segments compare
+/// numerically first (`1.10.0` > `1.9.0`), missing segments count as 0
+/// (`1.0` == `1.0.0`), a bare release outranks its prerelease
+/// (`1.0.0` > `1.0.0-alpha`), non-numeric segments degrade to lexicographic.
+/// Manifest versions are free-form strings, so this is a best-effort order —
+/// good enough to word an install, never used to refuse one.
+fn cmp_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    let mut sa = a.trim().split('.');
+    let mut sb = b.trim().split('.');
+    loop {
+        match (sa.next(), sb.next()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (pa, pb) => {
+                let ka = pa.map(segment_key).unwrap_or((0, None));
+                let kb = pb.map(segment_key).unwrap_or((0, None));
+                if ka.0 != kb.0 {
+                    return ka.0.cmp(&kb.0);
+                }
+                match (ka.1, kb.1) {
+                    (None, None) => {}
+                    (None, Some(_)) => return std::cmp::Ordering::Greater,
+                    (Some(_), None) => return std::cmp::Ordering::Less,
+                    (Some(x), Some(y)) => {
+                        if x != y {
+                            return x.cmp(y);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `"fresh"` / `"upgrade"` / `"reinstall"` / `"downgrade"` — what the
+/// confirmation card says about this package relative to the installation.
+fn install_relation(incoming: &str, existing: Option<&str>) -> &'static str {
+    match existing {
+        None => "fresh",
+        Some(old) => match cmp_versions(incoming, old) {
+            std::cmp::Ordering::Greater => "upgrade",
+            std::cmp::Ordering::Equal => "reinstall",
+            std::cmp::Ordering::Less => "downgrade",
+        },
+    }
+}
+
 /// Inspect a `.lupx` archive: validate + report the manifest and payload
 /// facts for the confirmation card. Nothing is written.
 #[tauri::command]
 pub fn plugin_lupx_inspect(source_path: String) -> Result<LupxInfo, String> {
     let base = base_dir();
     let arch = read_lupx(&source_path)?;
+    let existing = existing_version(&base, &arch.manifest.id);
+    let relation = install_relation(&arch.manifest.version, existing.as_deref());
     Ok(LupxInfo {
         id: arch.manifest.id.clone(),
         name: arch.manifest.name.clone(),
@@ -470,20 +614,25 @@ pub fn plugin_lupx_inspect(source_path: String) -> Result<LupxInfo, String> {
         permissions: arch.manifest.permissions.clone(),
         file_count: arch.file_count,
         total_bytes: arch.total_bytes,
-        existing_version: existing_version(&base, &arch.manifest.id),
+        existing_version: existing,
+        relation,
         signature: if arch.signed { "valid" } else { "unsigned" },
         sha256: arch.archive_sha256,
     })
 }
 
 /// Validate + extract + swap a `.lupx` into `<base>/plugins/<id>/`, replacing
-/// an existing installation. Returns the installed id and the real payload
-/// facts. (Split from the command so tests can drive it without an app.)
-fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64), String> {
+/// an existing installation. Returns the installed id, the real payload
+/// facts and the version relation that was acted on (computed before the
+/// swap — afterwards the installed manifest IS the package's). (Split from
+/// the command so tests can drive it without an app.)
+fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64, &'static str), String> {
     // Trust roots come from `base` — the caller's data dir, not whatever the
     // process-wide `base_dir()` happens to be (tests drive other bases).
     let arch = read_lupx_verified(source_path, &load_trust_keys(base))?;
     let id = arch.manifest.id.clone();
+    let relation =
+        install_relation(&arch.manifest.version, existing_version(base, &id).as_deref());
     let plugins = base.join("plugins");
     std::fs::create_dir_all(&plugins).map_err(|e| format!("create plugins dir: {e}"))?;
     let staging_root = staging_root(base);
@@ -506,7 +655,7 @@ fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64), 
         "[plugins] installed \"{id}\" ({} file(s), {total} bytes) from {source_path}",
         files
     );
-    Ok((id, files, total))
+    Ok((id, files, total, relation))
 }
 
 /// Install a `.lupx` archive. The frontend confirmation happens between
@@ -524,7 +673,7 @@ pub fn plugin_lupx_install(
     crate::plugin_perm::deny_from_plugin_windows(&window)?;
     use tauri::Emitter;
     let base = base_dir();
-    let (id, file_count, total_bytes) = install_into(&base, &source_path)?;
+    let (id, file_count, total_bytes, relation) = install_into(&base, &source_path)?;
     crate::plugin_perm::invalidate(&perms, &id);
     let info = read_lupx(&source_path)?;
     app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
@@ -539,6 +688,7 @@ pub fn plugin_lupx_install(
         file_count,
         total_bytes,
         existing_version: None, // installed by now; the card is gone
+        relation,               // what the swap just acted on
         signature: if info.signed { "valid" } else { "unsigned" },
         sha256: info.archive_sha256,
     })
@@ -703,9 +853,10 @@ mod tests {
                 ("main.js", b"export default {}; version=1;".as_slice()),
             ],
         );
-        let (id, files, _) = install_into(&base, &v1).unwrap();
+        let (id, files, _, rel) = install_into(&base, &v1).unwrap();
         assert_eq!(id, "demo");
         assert_eq!(files, 2);
+        assert_eq!(rel, "fresh", "nothing installed before this");
         assert!(base.join("plugins").join("demo").join("main.js").exists());
         assert_eq!(existing_version(&base, "demo").as_deref(), Some("1.0.0"));
         // Upgrade: v2 replaces v1, and no staging junk is left behind.
@@ -716,7 +867,8 @@ mod tests {
                 ("main.js", b"export default {}; version=2;".as_slice()),
             ],
         );
-        install_into(&base, &v2).unwrap();
+        let (_, _, _, rel) = install_into(&base, &v2).unwrap();
+        assert_eq!(rel, "upgrade");
         let text =
             std::fs::read_to_string(base.join("plugins").join("demo").join("plugin.toml")).unwrap();
         assert!(text.contains("2.0.0"), "{text}");
@@ -748,6 +900,126 @@ mod tests {
     }
 
     #[test]
+    fn version_ordering_is_semver_ish() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(cmp_versions("1.0.0", "1.0.0"), Equal);
+        assert_eq!(cmp_versions("1.2.0", "1.0.0"), Greater);
+        assert_eq!(cmp_versions("1.0.0", "1.2.0"), Less);
+        assert_eq!(cmp_versions("1.10.0", "1.9.0"), Greater, "numeric, not lexicographic");
+        assert_eq!(cmp_versions("2.0.0", "1.9.9"), Greater);
+        assert_eq!(cmp_versions("1.0", "1.0.0"), Equal, "missing segments count as 0");
+        assert_eq!(cmp_versions("1.0", "1.0.1"), Less);
+        assert_eq!(cmp_versions("1.0.0", "1.0.0-alpha"), Greater, "release > prerelease");
+        assert_eq!(cmp_versions("1.0.0-alpha", "1.0.0-beta"), Less);
+        assert_eq!(cmp_versions("0.9.0", "1.0.0"), Less);
+    }
+
+    #[test]
+    fn install_relation_tracks_package_vs_installed_version() {
+        let base = temp_base("relation");
+        let v1 = make_zip(
+            "rel1",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
+        let fresh = read_lupx(&v1).unwrap();
+        assert_eq!(
+            install_relation(&fresh.manifest.version, existing_version(&base, "demo").as_deref()),
+            "fresh"
+        );
+        install_into(&base, &v1).unwrap();
+        // Newer package → upgrade.
+        let v2 = make_zip(
+            "rel2",
+            &[
+                ("plugin.toml", b"id = \"demo\"\nversion = \"2.0.0\"\n".as_slice()),
+                ("main.js", b"v2".as_slice()),
+            ],
+        );
+        let arch2 = read_lupx(&v2).unwrap();
+        assert_eq!(
+            install_relation(&arch2.manifest.version, existing_version(&base, "demo").as_deref()),
+            "upgrade"
+        );
+        // Same version → reinstall.
+        let again = read_lupx(&v1).unwrap();
+        assert_eq!(
+            install_relation(&again.manifest.version, existing_version(&base, "demo").as_deref()),
+            "reinstall"
+        );
+        // Older package → downgrade (allowed, the card just warns).
+        let v0 = make_zip(
+            "rel0",
+            &[
+                ("plugin.toml", b"id = \"demo\"\nversion = \"0.9.0\"\n".as_slice()),
+                ("main.js", b"v0".as_slice()),
+            ],
+        );
+        let arch0 = read_lupx(&v0).unwrap();
+        assert_eq!(
+            install_relation(&arch0.manifest.version, existing_version(&base, "demo").as_deref()),
+            "downgrade"
+        );
+        // install_into reports the relation it acted on, computed pre-swap.
+        let (_, _, _, rel) = install_into(&base, &v0).unwrap();
+        assert_eq!(rel, "downgrade");
+        std::fs::remove_dir_all(&base).ok();
+        for f in [v1, v2, v0] {
+            std::fs::remove_file(f).ok();
+        }
+    }
+
+    #[test]
+    fn upgrade_keeps_the_previous_private_files() {
+        let base = temp_base("privfiles");
+        let v1 = make_zip(
+            "pf1",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
+        install_into(&base, &v1).unwrap();
+        let files = base.join("plugins").join("demo").join("files");
+        std::fs::create_dir_all(files.join("sub")).unwrap();
+        std::fs::write(files.join("note.txt"), "user data").unwrap();
+        std::fs::write(files.join("sub").join("deep.txt"), "deep").unwrap();
+        // v2 ships its own files/ entries; old runtime data wins on conflict.
+        let v2 = make_zip(
+            "pf2",
+            &[
+                ("plugin.toml", b"id = \"demo\"\nversion = \"2.0.0\"\n".as_slice()),
+                ("main.js", b"v2".as_slice()),
+                ("files/note.txt", b"package seed".as_slice()),
+                ("files/seed.txt", b"seed".as_slice()),
+            ],
+        );
+        install_into(&base, &v2).unwrap();
+        let files = base.join("plugins").join("demo").join("files");
+        assert_eq!(
+            std::fs::read_to_string(files.join("note.txt")).unwrap(),
+            "user data",
+            "old private data wins the conflict"
+        );
+        assert_eq!(
+            std::fs::read_to_string(files.join("seed.txt")).unwrap(),
+            "seed",
+            "package-shipped files/ entries land too"
+        );
+        assert_eq!(
+            std::fs::read_to_string(files.join("sub").join("deep.txt")).unwrap(),
+            "deep",
+            "nested private files survive"
+        );
+        assert_eq!(
+            std::fs::read_to_string(base.join("plugins").join("demo").join("main.js")).unwrap(),
+            "v2",
+            "the code really was replaced"
+        );
+        // Nothing is left in staging: the backup went away with the files.
+        assert_eq!(std::fs::read_dir(staging_root(&base)).unwrap().count(), 0);
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::remove_file(v1).ok();
+        std::fs::remove_file(v2).ok();
+    }
+
+    #[test]
     fn subdir_archive_extracts_only_its_own_directory() {
         let base = temp_base("prefix");
         // A stray file OUTSIDE the plugin's top-level dir must not land.
@@ -759,7 +1031,7 @@ mod tests {
                 ("README.txt", b"not part of the plugin".as_slice()),
             ],
         );
-        let (id, files, _) = install_into(&base, &zip).unwrap();
+        let (id, files, _, _) = install_into(&base, &zip).unwrap();
         assert_eq!(id, "demo");
         assert_eq!(files, 2, "README.txt must be ignored");
         assert!(!base.join("plugins").join("README.txt").exists());

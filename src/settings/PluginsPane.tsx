@@ -31,6 +31,11 @@ interface LupxInfo {
   fileCount: number;
   totalBytes: number;
   existingVersion: string | null;
+  /** Package version vs the installed one with the same id (`"fresh"` =
+   * nothing installed): the card words the overwrite notice by it — the
+   * downgrade is the one that warns. Any of the three still installs on
+   * confirm. */
+  relation: "fresh" | "upgrade" | "reinstall" | "downgrade";
   /** `LUME.SIGN` status (#32.2): `"valid"` = ed25519 signature verified
    * against a trusted key; `"unsigned"` = no signature block (the card shows
    * the archive hash instead). Invalid signatures never reach the card —
@@ -414,12 +419,19 @@ export default function PluginsPane() {
             >
               <span class="plg-note ok">{t("pluginsInstallSignatureValid")}</span>
             </Show>
-            <Show when={info().existingVersion !== null}>
-              <span class="plg-note warn">
-                {t("pluginsInstallOverwrite", {
-                  old: info().existingVersion || "-",
-                  new: info().version || "-",
-                })}
+            {/* Overwrite notice, worded by how the package version relates
+                to the installed one (Rust compares semver-ish): an upgrade is
+                routine, a downgrade is the one that warns. */}
+            <Show when={info().relation !== "fresh"}>
+              <span class={"plg-note" + (info().relation === "downgrade" ? " warn" : "")}>
+                {t(
+                  info().relation === "upgrade"
+                    ? "pluginsInstallUpgrade"
+                    : info().relation === "reinstall"
+                      ? "pluginsInstallReinstall"
+                      : "pluginsInstallDowngrade",
+                  { old: info().existingVersion || "-", new: info().version || "-" },
+                )}
               </span>
             </Show>
             <div class="plg-install-actions">

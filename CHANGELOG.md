@@ -15,6 +15,20 @@ All notable changes to Lume are documented here. Format based on
   `tauri icon` 重新生成（浅底黑鸽 artwork，运行期任务栏/托盘的主题图标对
   不变）。
 
+- **`.lupx` 覆盖安装按版本关系措辞（ROADMAP #28.1）** — 原实现遇到同 id 已装
+  插件不看版本号，确认卡永远显示「将覆盖 vX → vY」。现在 Rust 侧对包内/已装
+  版本做 semver-ish 比较（点分段数字序、缺段补 0、release 高于 prerelease；
+  manifest version 是自由字符串，排序尽力而为、永不用于拒绝），
+  `plugin_lupx_inspect` 结果新增 `relation`（`fresh`/`upgrade`/`reinstall`/
+  `downgrade`），确认卡相应显示「升级 / 同版本重装 / 降级（黄字提示）」；
+  **降级仍允许安装**——回滚旧包是正当操作，只提示不拦。三语键同步
+  （`pluginsInstallOverwrite` → `pluginsInstallUpgrade` / `…Reinstall` /
+  `…Downgrade`）。
+  验证：cargo test **210**（+3：版本排序十条断言、fresh→upgrade→reinstall→
+  downgrade 全序 + install_into 预换位取值、私有 files 保留——见下条）；
+  tsc / vite build 干净；重建 exe 后 `cdp_lupx_verify.mjs` **24 项全过**
+  （relation fresh/upgrade/reinstall 三态实机 + 私有 files 升级保留）。
+
 ### Added
 
 - **独立窗任务栏图标与身份（P6.8，ROADMAP #34）** — 分离出的插件窗口在任务栏
@@ -67,6 +81,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **`.lupx` 升级不再清空插件私有 `files/`（ROADMAP #28.1）** — 私有目录
+  `<plugins>/<id>/files/` 在插件目录里、由 fs API 运行期写入，原换位流程把
+  旧目录整体 rename 备份后删除，升级即丢数据。现在新安装就位后、删备份前，
+  旧 `files/` 移入新目录（目录名常量 `plugin_fs::PRIVATE_FILES_DIRNAME`
+  单一来源；旧目录无 `files/` 跳过；双方都有则逐项合并、**旧数据赢**同路径
+  冲突——包内随包 `files/` 对运行过的插件是陈旧种子）。尽力而为：恢复失败
+  时旧安装改名 `<id>-files-recovery-<pid>` 留在 `plugins/`（无 plugin.toml，
+  扫描不可见）+ 日志报路径，备份在数据安全前不删；已成功的安装不因数据恢复
+  失败改口失败。
+  验证：`upgrade_keeps_the_previous_private_files`（旧数据赢冲突 + 包内
+  files 落地 + 嵌套目录存活 + staging 清空）；
+  `failed_swap_restores_the_previous_installation` 回归不破；实机
+  `cdp_lupx_verify.mjs` 升级前写 `plugins/lupx-demo/files/upgrade-keep.txt`、
+  v1→v2 换位后内容原样。
 - **纯视图 mode 被误熔断：「文件秒搜」连续调用失败（不进插件页也弹，ROADMAP
   #32.12）** — 无 `entry` 的 mode（file-search 等）实例在 `setQuery`/`search`/
   `onSubInput` 里无条件把 onQuery/onSubInput 转发进逻辑中继，而宿主里没有它的

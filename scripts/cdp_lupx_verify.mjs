@@ -5,8 +5,10 @@
 //               可见（settings-applied + plugin-reload 生效）
 //   ③ subdir    「右键压缩文件夹」形状（plugin.toml 在唯一顶层目录内）可装，
 //               前缀外的散文件被忽略（确认卡与实际解压都是 2 个文件）
-//   ④ upgrade   v1 → v2：inspect 报 existingVersion=1.0.0（覆盖警示的依据），
-//               安装后 get_plugins 版本变 2.0.0，搜索行照常（模块已重 import）
+//   ④ upgrade   v1 → v2：inspect 报 existingVersion=1.0.0 + relation="upgrade"
+//               （版本判断的依据），私有 files/ 在覆盖后保留（#28.1）；安装后
+//               get_plugins 版本变 2.0.0，搜索行照常（模块已重 import）；同
+//               版本包再 inspect → relation="reinstall"
 //   ⑤ uninstall 卸载 → get_plugins 不再列出 → 搜索行消失；重复卸载不报错
 //   ⑥ 设置页    工具栏有「安装插件」按钮；磁盘插件卡片有卸载按钮（两段式，
 //               armed 类名出现再消失）；内置插件没有
@@ -14,7 +16,7 @@
 // 以设置页手工清单兜底（docs/TESTING.md）；本脚本覆盖命令层全链路。
 // 截图：test/lupx_settings.png
 import { spawn, execSync } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync, openSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, openSync, existsSync, readFileSync } from "node:fs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
@@ -173,7 +175,8 @@ const pluginIds = async () => (await invoke("get_plugins")).map((p) => p.id);
 const v1 = await tryInvoke("plugin_lupx_inspect", { sourcePath: abs("lupx_v1.lupx") });
 check("inspect: 合法包返回清单事实",
   v1.ok && v1.ok.id === "lupx-demo" && v1.ok.version === "1.0.0" && v1.ok.kind === "provider"
-  && Array.isArray(v1.ok.permissions) && v1.ok.fileCount === 2 && v1.ok.existingVersion === null,
+  && Array.isArray(v1.ok.permissions) && v1.ok.fileCount === 2 && v1.ok.existingVersion === null
+  && v1.ok.relation === "fresh",
   JSON.stringify(v1.ok ?? v1.err));
 const evil = await tryInvoke("plugin_lupx_inspect", { sourcePath: abs("lupx_evil.lupx") });
 check("inspect: ../ 条目被拒", evil.err && evil.err.includes("escapes"), evil.err);
@@ -205,16 +208,26 @@ await sleep(600);
 const rowsSub = await rowNames();
 check("install: subdir 安装后 provider 行仍在", Array.isArray(rowsSub) && rowsSub.some((r) => r.includes("LUPX 测试条目")), JSON.stringify(rowsSub));
 
-// ── ④ upgrade：existingVersion + 覆盖 + 重 import ──
+// ── ④ upgrade：existingVersion + relation + 私有 files 保留 + 重 import ──
+// 升级前写一个「插件运行期数据」文件（fs API 私有目录的等价物），升级后必须还在。
+mkdirSync(`${BASE}/plugins/lupx-demo/files`, { recursive: true });
+writeFileSync(`${BASE}/plugins/lupx-demo/files/upgrade-keep.txt`, "user data");
 const v2 = await tryInvoke("plugin_lupx_inspect", { sourcePath: abs("lupx_v2.lupx") });
-check("inspect: 已装同 id → existingVersion=1.0.0", v2.ok && v2.ok.existingVersion === "1.0.0", JSON.stringify(v2.ok?.existingVersion));
+check("inspect: 已装同 id → existingVersion=1.0.0 + relation=upgrade",
+  v2.ok && v2.ok.existingVersion === "1.0.0" && v2.ok.relation === "upgrade",
+  JSON.stringify(v2.ok?.existingVersion));
 await tryInvoke("plugin_lupx_install", { sourcePath: abs("lupx_v2.lupx") });
 await sleep(1400);
+check("upgrade: 私有 files/ 保留（升级不清数据）",
+  existsSync(`${BASE}/plugins/lupx-demo/files/upgrade-keep.txt`)
+  && readFileSync(`${BASE}/plugins/lupx-demo/files/upgrade-keep.txt`, "utf8") === "user data");
 const info2 = (await invoke("get_plugins")).find((p) => p.id === "lupx-demo");
 check("upgrade: get_plugins 版本变为 2.0.0", info2?.version === "2.0.0", info2?.version);
 await type("zzqq");
 await sleep(800);
 check("upgrade: 重 import 后 provider 行仍可用", (await rowNames()).some((r) => r.includes("LUPX 测试条目")));
+const again = await tryInvoke("plugin_lupx_inspect", { sourcePath: abs("lupx_v2.lupx") });
+check("inspect: 同版本包 → relation=reinstall", again.ok?.relation === "reinstall", JSON.stringify(again.ok?.relation));
 
 // ── ⑤ uninstall ──
 const uni = await tryInvoke("plugin_uninstall", { id: "lupx-demo" });

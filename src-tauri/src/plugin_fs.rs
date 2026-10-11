@@ -33,12 +33,17 @@ pub struct PrivateFile {
     pub mtime: i64,
 }
 
+/// Name of the per-plugin private directory inside `<base>/plugins/<id>/`.
+/// One source of truth: `plugin_install.rs` preserves exactly this directory
+/// across `.lupx` upgrades.
+pub(crate) const PRIVATE_FILES_DIRNAME: &str = "files";
+
 /// `<base>/plugins/<id>/files/`.
 fn private_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
     if !valid_plugin_id(id) {
         return Err("invalid plugin id".into());
     }
-    Ok(base.join("plugins").join(id).join("files"))
+    Ok(base.join("plugins").join(id).join(PRIVATE_FILES_DIRNAME))
 }
 
 /// Windows device names that must never be used as a file name.

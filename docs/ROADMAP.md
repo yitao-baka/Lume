@@ -1951,6 +1951,39 @@ folder 激活路径真实投递；原 files/img/list/重排全回归）；
 （宿主窗口内插件逻辑的进程级隔离已由 P6.5 完成——共享逻辑宿主窗口 + 每插件
 沙箱 iframe + 令牌归属，见 PLUGIN_API §6I。）
 
+### 28.1 覆盖安装：版本号参与判断 + 私有 files 保留（2026-10-11 追加）✓
+
+原实现遇到同 id 已装插件时不看版本号——确认卡永远显示「将覆盖 vX → vY」
+（降级与升级同话术），且整个 `<plugins>/<id>/` 被换位删除：插件运行期经 fs
+API 写进私有 `files/` 的数据随旧目录一起消失。两处都改（`plugin_install.rs`）：
+
+- **版本关系**：新增 `cmp_versions`（semver-ish：点分段先比数字
+  ——`1.10.0` > `1.9.0`；缺段补 0——`1.0` == `1.0.0`；release 高于自身
+  prerelease——`1.0.0` > `1.0.0-alpha`；非数字段退化为字典序）+
+  `install_relation`，`LupxInfo` 新增 `relation`（`fresh` / `upgrade` /
+  `reinstall` / `downgrade`）。确认卡按关系换话术（升级/重装常规文案，仅
+  降级走 warn 黄字）；**降级仍允许安装**（回滚旧包是正当操作，只提示不拦）；
+  `install_into` 在换位**前**计算关系并随结果返回。manifest 的 version 是
+  自由字符串，比较是尽力而为的排序、永不用于拒绝安装。
+- **私有 files 保留**：`swap_installed` 在新安装就位后、删备份前，把
+  `<id>-old-<pid>/files/` 移入新 `<plugins>/<id>/files/`（目录名常量
+  `plugin_fs::PRIVATE_FILES_DIRNAME` 单一来源；旧目录无 `files/` 则跳过；
+  双方都有则逐项合并、**旧数据赢**同路径冲突——包内随包携带的 `files/`
+  对已运行过的插件来说是陈旧种子）。尽力而为：恢复失败时把整个旧安装
+  rename 到 `<plugins>/<id>-files-recovery-<pid>`（无 `plugin.toml`，扫描
+  不可见）留待手动处理并 eprintln 路径——数据恢复失败不让已成功的安装改口
+  失败，备份在确认安全前不删。
+
+**验证**：cargo test **210**（+3：`version_ordering_is_semver_ish` 十条
+排序断言、`install_relation_tracks_package_vs_installed_version`
+fresh→upgrade→reinstall→downgrade 全序 + install_into 预换位取值、
+`upgrade_keeps_the_previous_private_files` 旧数据赢冲突 + 包内 files 落地 +
+嵌套目录存活 + staging 清空）、tsc/vite build 干净；重建 debug exe 后
+`scripts/cdp_lupx_verify.mjs` **24 项全过**（原 22 + 2：inspect 的 relation
+三态实机断言——fresh / upgrade（1.0.0 已装 inspect 2.0.0 包）/
+reinstall（同版本包 + subdir 形状重装实机同走）、「升级不清私有 files/」——
+升级前写 `plugins/lupx-demo/files/upgrade-keep.txt`，v1→v2 换位后内容原样）。
+
 ## 29. 插件系统 P4：活动窗口匹配（`[[features]] type = "window"`，已实现）
 
 **状态：已实现（2026-09-25）。** uTools `window` feature 的对位能力：按

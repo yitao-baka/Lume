@@ -392,6 +392,39 @@ export const BRIDGE_SCRIPT = `
 })();
 `;
 
+/** Host default for titlebar slot pages: blank areas drag the detached
+ * window. Events inside the slot iframe never reach the host chrome row
+ * (opaque origin, PLUGIN_API.md §6G.5), and a page that ships the slot only
+ * as decoration — no drag handling of its own, e.g. a blank discriminator
+ * page — would otherwise leave the middle of the title bar dead (only the
+ * host-rendered title stayed draggable). Interactive elements keep their
+ * clicks; selectable text keeps text selection; a page opts out wholesale
+ * with `data-lume-drag="off"` on itself or any ancestor (or per-element with
+ * `data-lume-no-drag`). Double clicks do nothing here (no maximize RPC —
+ * and dragging on detail===2 would jiggle the window). Runs in CAPTURE phase
+ * before page handlers; a plugin's own `app.dragWindow()` on the same gesture
+ * is deduped by the host (pluginWindow's services.dragWindow time-gate), so
+ * pages that implement the §6G.5 convention themselves keep working. */
+export const TITLEBAR_DRAG_SCRIPT = `
+/* lume-titlebar-drag-default */
+(function () {
+  var INTERACTIVE = "a,button,input,select,textarea,label,summary," +
+    "[contenteditable],[tabindex],[role],[data-lume-no-drag]";
+  function wantsDrag(e) {
+    if (e.button !== 0 || e.detail !== 1) return false;
+    var t = e.target;
+    if (!t || !t.closest) return false;
+    if (t.closest(INTERACTIVE)) return false;
+    if (t.closest('[data-lume-drag="off"]')) return false;
+    try { if (getComputedStyle(t).userSelect === "text") return false; } catch (err) {}
+    return true;
+  }
+  document.addEventListener("mousedown", function (e) {
+    if (wantsDrag(e) && window.lume && window.lume.app) window.lume.app.dragWindow();
+  }, true);
+})();
+`;
+
 /** Inject the bridge + a blank-target base + the page-canvas default into a
  * plugin view page.
  *
@@ -407,10 +440,22 @@ export const BRIDGE_SCRIPT = `
  * and a plugin that paints its own `html`/`body` background still wins (its
  * rule comes later in the document). */
 export function injectBridge(html: string): string {
+  return injectAtHead(html, "");
+}
+
+/** Titlebar slot pages (detached window chrome row, manifest `titlebar`):
+ * the bridge plus the host's default window-drag for blank areas
+ * (TITLEBAR_DRAG_SCRIPT). */
+export function injectTitlebarBridge(html: string): string {
+  return injectAtHead(html, `<script>${TITLEBAR_DRAG_SCRIPT}</script>`);
+}
+
+function injectAtHead(html: string, tail: string): string {
   const injection =
     `<base target="_blank">` +
     `<style>html{background:var(--lume-page-bg,${PANEL_SURFACE_BG[currentThemeMode()]})}</style>` +
-    `<script>${BRIDGE_SCRIPT}</script>`;
+    `<script>${BRIDGE_SCRIPT}</script>` +
+    tail;
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + injection);
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + injection);
   return injection + html;

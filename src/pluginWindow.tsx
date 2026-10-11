@@ -33,7 +33,7 @@ import { applyColorMode } from "./theme";
 import { TitleBar } from "./components/TitleBar";
 import type { FeatureEnterInfo, PluginManifest, PluginServices } from "./plugins/types";
 import { setPermissionSource } from "./plugins/permissions";
-import { createIframeView, injectBridge } from "./plugins/iframeBridge";
+import { createIframeView, injectBridge, injectTitlebarBridge } from "./plugins/iframeBridge";
 import { execHostRpc } from "./plugins/rpc";
 import { fetchDiskFile } from "./plugins/disk";
 import { plog } from "./plugins/log";
@@ -84,6 +84,13 @@ function App() {
   };
 
   // Window-local PluginServices (rpc.ts's router needs the full shape).
+  // dragWindow's gate: the host-injected slot drag default (iframeBridge's
+  // TITLEBAR_DRAG_SCRIPT) and a plugin's own §6G.5 handler (titlebar-demo's
+  // grip, file-search's body listener) both land here for ONE mousedown —
+  // tao posts WM_NCLBUTTONDOWN (HTCAPTION) asynchronously, so a second
+  // start_dragging would start a second modal move loop after release and
+  // latch the window to the cursor. One real start per gesture window.
+  let lastDragAt = 0;
   const services: PluginServices = {
     showToast: (text) => localToast(text),
     markEntryOpened: () => {},
@@ -126,8 +133,12 @@ function App() {
       })().catch((err) => plog.error(id, "resize failed:", err));
     },
     dragWindow: () => {
-      // Events inside the slot iframe never reach the host drag region —
-      // the titlebar page calls this on its blank areas instead.
+      const now = Date.now();
+      if (now - lastDragAt < 300) return;
+      lastDragAt = now;
+      // Debug tap for the CDP verify scripts (same pattern as __pluginStates).
+      const w = window as unknown as { __dragStarts?: number };
+      w.__dragStarts = (w.__dragStarts ?? 0) + 1;
       void getCurrentWindow().startDragging().catch((err) =>
         plog.error(id, "drag failed:", err)
       );
@@ -236,7 +247,11 @@ function App() {
           void wirePerms
             .then(() => fetchDiskFile(dir + "\\" + meta.titlebar))
             .then((html) => {
-              slotView.View.setHtml(injectBridge(html));
+              // Titlebar pages get the bridge PLUS the host's default
+              // blank-area window drag (the slot iframe swallows pointer
+              // events; a page without drag handling of its own would leave
+              // the middle of the chrome row dead).
+              slotView.View.setHtml(injectTitlebarBridge(html));
               setTitlebarHtml(html);
             })
             .catch((err) => plog.error(id, "titlebar load failed:", err));

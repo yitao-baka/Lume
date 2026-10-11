@@ -2498,3 +2498,55 @@ WebView2 会**丢掉后一个导航**：
 图标（深色反相）；与设置窗同屏为**两个**独立按钮；light↔dark 翻转按预期
 重绘（#333 ↔ 浅灰）；关闭重开复用已存位图。回归：`cdp_plugin_blank_verify`
 **0/12**、`cdp_plugin_window_verify` **12/12**。
+
+## 35. 独立窗口标题栏槽位拖动兜底（P6.9，已实现）
+
+用户报告：translator 的独立窗口拖不动标题栏——只有「翻译」两字处可以拖。
+根因在宿主与插件的**契约缝隙**：chrome 行中段整块被插件 titlebar 槽 iframe
+占满（`flex: 1`），iframe 内事件不越过文档边界，而 §6G.5 的老约定是「空白区
+由插件自己调 `app.dragWindow()`」——translator 的 `titlebar.html` 是纯空白页
+（槽位只当宿主形态判别器用：父文档 iframe 数 = 2），没有任何 JS，于是中段
+成为死区，宿主拖动区只剩标题文字 + 左 padding + 元素间隙。
+
+### 35.1 修复（都在宿主侧）
+
+- **槽页注入默认拖动助手**（`iframeBridge.tsx` 新增 `TITLEBAR_DRAG_SCRIPT` +
+  `injectTitlebarBridge`，`pluginWindow.tsx` 对 titlebar 页改用后者）：
+  capture 阶段 mousedown → 目标非交互元素（`a/button/input/select/textarea/
+  label/summary`、`contenteditable`/`tabindex`/`role`/`data-lume-no-drag`
+  豁免，`user-select: text` 让位文字选择）→ 自动 `app.dragWindow()`；
+  `e.detail !== 1`（双击）不拖。整页退出：`<html data-lume-drag="off">`。
+  走 `lume.app.dragWindow` 单一收口，不带 Tauri 内部 IPC。
+- **dragWindow 去重门**（`pluginWindow.tsx` services.dragWindow，300ms）：
+  助手与插件自带 handler（file-search 的 body 监听、titlebar-demo 的 grip）
+  会对**同一手势**各调一次 —— tao 的 `drag_window` 是异步 `PostMessageW
+  (WM_NCLBUTTONDOWN, HTCAPTION)`，两次投递会在松手后开启第二个模态移动
+  循环，窗口吸住鼠标。去重门保证一个手势窗口内只放行一次。
+
+### 35.2 实测踩坑（自动化真实拖拽，已固化到探针）
+
+- **PowerShell 必须 `SetProcessDPIAware()`**：否则 `SetCursorPos` 坐标被
+  DPI 虚拟化缩放（dpr 1.5 时点 (1346,410) 实际落在 (2019,615)），点击全部
+  落空且无任何报错。
+- **后台进程不能抢前台**：lume 在编辑器后台时，`plugin_window_open` 新建的
+  窗口压不到前台应用之下层之上——`WindowFromPoint` 显示拖拽点属于编辑器。
+  自动化必须先发真实 Alt+Space 热键（热键激活授予 lume 前台权）再走 open
+  的聚焦路径置顶。
+- **WebView2 命中 hwnd 的属主是 msedgewebview2 子进程**：判断拖拽点在哪个
+  窗口上要 `GetAncestor(GA_ROOT)` 取顶级窗口再查 pid。
+- tao 对 `WM_NCLBUTTONDOWN/HTCAPTION` 的处理是 post 一条 `WM_MOUSEMOVE` 后
+  落回 `DefWindowProc` 的模态循环——CDP 合成 mousedown 能触发 `start_dragging`
+  （`__dragStarts` 计数），但物理按键抬起状态会让模态循环不跟随，位移断言
+  必须真实鼠标。
+
+### 验证
+
+- 重建 exe 后 `scripts/cdp_plugin_window_verify.mjs` **16/16**（新增 ⑥：以
+  titlebar-demo 断言槽页 srcdoc 携带拖动助手标记、视图页不带——srcdoc 属性
+  宿主可读、沙箱文档不可达，无需跨 iframe）。
+- 实机真实拖拽 `test/_drag_probe.mjs`（scratch）**8/8**：translator 槽位
+  中段（修复前的死区）与 file-search 槽位空白区（助手 + 插件自带 handler
+  双触发）各 4 项——窗口随拖移动 Δ≈(120,80)、松手光标移动窗口不动（不吸
+  鼠标）、`__dragStarts` 均为 1（去重生效）。
+- 回归：translator / file-search / titlebar-demo 三槽页注入逐一对拍；
+  hello-mode（无 titlebar）路径未触碰。

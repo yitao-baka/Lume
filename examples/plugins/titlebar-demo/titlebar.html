@@ -42,7 +42,10 @@
       document.body.classList.toggle("light", mode === "light");
     };
 
-    // iframe 里的事件不会越过文档边界 —— 拖窗口要显式请求（空白区约定）。
+    // iframe 里的事件不会越过文档边界。宿主会向标题栏页注入「空白区默认
+    // 拖动」（非交互元素的按下自动 app.dragWindow，见 PLUGIN_API §6G.5），
+    // 所以这个显式 grip 已经冗余 —— 保留它演示插件自管拖动的老契约：同一
+    // 手势的重复调用会被宿主去重（300ms 门），两种写法可以共存。
     document.getElementById("grip").addEventListener("mousedown", function () {
       lume.app.dragWindow();
     });

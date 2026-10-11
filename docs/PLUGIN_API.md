@@ -1219,6 +1219,17 @@ getter（如 `slot={cond ? <View /> : undefined}`）会在依赖变化时重新�
 - 窗口控制按钮（钉住/最小化/最大化/关闭）与拖动间隙归宿主；**iframe 内的
   事件不会越过文档边界**，宿主拖动区覆盖不到——空白区拖窗口调
   `app.dragWindow()`（仅用户手势内调用有意义）。
+- **宿主默认拖动（兜底，2026-10-11 补）**：宿主向标题栏页注入一个拖动
+  助手——**非交互元素的按下自动调 `app.dragWindow()`**，交互元素
+  （`a/button/input/select/textarea/label/summary`、`contenteditable`、
+  `tabindex`、`role`）保留自己的点击，`user-select: text` 的目标不拖
+  （让位文字选择），双击不拖。装饰性/空白槽页（如 translator 把槽位只当
+  宿主形态判别器）因此整条可拖，插件**无需**再自带拖动处理；自带处理的
+  页面（titlebar-demo 的 grip、file-search 的 body 监听）照常工作——同一
+  手势的重复调用被宿主去重（300ms 门，防两次 `start_dragging` 让窗口在
+  松手后吸住鼠标）。整页退出：`<html data-lume-drag="off">`（任意祖先
+  元素均可）；单元素退出：`data-lume-no-drag`。双击最大化仍只在宿主
+  区域（标题/间隙）生效，槽内没有 maximize RPC。
 
 示例：`examples/plugins/titlebar-demo/`（标题栏搜索框 + 拖动区，输入驱动
 视图列表过滤）。

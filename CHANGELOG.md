@@ -6,6 +6,21 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **独立窗口标题栏槽位拖动兜底（ROADMAP #35，P6.9）** — translator 等插件的
+  独立窗口只有「翻译」标题文字处能拖动：chrome 行中段整块被 titlebar 槽
+  iframe 占满，插件把槽位当宿主形态判别器（纯空白页、无 JS），而老契约
+  「空白区由插件自己调 `app.dragWindow()`」没人履行，中段成死区。宿主侧
+  兜底：向标题栏页注入默认拖动助手（非交互元素的按下自动 `app.dragWindow`，
+  交互元素/文字选择豁免，`data-lume-drag="off"` 可整页退出）；插件自带的
+  拖动处理照常工作，同一手势的重复调用被宿主 300ms 去重门合并——tao 的
+  `drag_window` 异步投递 `HTCAPTION`，两次 `start_dragging` 会让窗口在松手
+  后吸住鼠标。装饰性槽页插件**无需任何改动**即整条标题栏可拖。
+  验证：重建 exe 后 `cdp_plugin_window_verify.mjs` **16/16**（新增 ⑥ 槽页
+  注入断言三项目）；实机真实拖拽探针 **8/8**（translator 死区与 file-search
+  双触发路径：窗口随拖移动、松手不吸鼠标、去重后 `__dragStarts` 均为 1）。
+
 ### Changed
 
 - **版本号与二进制图标（Pre-26.10 发布准备）** — 内部 semver `3.0.0` → `2.8.0`

@@ -18,6 +18,8 @@ const BASE = "src-tauri/target/debug";
 mkdirSync("test", { recursive: true });
 rmSync(`${BASE}/plugins/hello-mode`, { recursive: true, force: true });
 cpSync(`examples/plugins/hello-mode`, `${BASE}/plugins/hello-mode`, { recursive: true });
+rmSync(`${BASE}/plugins/titlebar-demo`, { recursive: true, force: true });
+cpSync(`examples/plugins/titlebar-demo`, `${BASE}/plugins/titlebar-demo`, { recursive: true });
 const logFd = openSync("test/plugin_window_lume.log", "w");
 spawn(`${BASE}/lume.exe`, [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9228" },
@@ -85,15 +87,19 @@ const clickKwRow = async (label) => {
   await m.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }))`);
   return true;
 };
-const pluginWindowTarget = async () => {
+const pluginWindowTarget = async (pluginId = "hello-mode") => {
   for (let i = 0; i < 20; i++) {
-    const t = await findWindow("plugin.html?plugin=hello-mode");
+    const t = await findWindow(`plugin.html?plugin=${pluginId}`);
     if (t) return t;
     await sleep(400);
   }
   return null;
 };
 
+// 自愈：脚本自身 ⑤c 会重启用 hello-mode，但中途被杀会留下禁用态（本机
+// settings 是持久的），关键词行就再也不出现。开跑前先确保启用。
+await invoke("set_plugin_enabled", { id: "hello-mode", enabled: true });
+await sleep(800);
 await invoke("toggle_launcher");
 await sleep(1500);
 
@@ -183,6 +189,36 @@ await sleep(2000);
 const goneAfterDisable = !(await pluginWindowTarget());
 check("⑤c disabling the plugin closes its detached window", goneAfterDisable);
 await invoke("set_plugin_enabled", { id: "hello-mode", enabled: true });
+
+// ⑥ 标题栏槽拖动兜底（宿主默认空白区拖动）：声明 titlebar 的插件 ——
+//    槽页注入桥 + 宿主拖动助手（标记常量可从宿主页读 iframe srcdoc 属性
+//    断言——srcdoc 属性可读，沙箱文档内容不可达），视图页仍只注入桥。
+await invoke("plugin_window_open", { id: "titlebar-demo" });
+const tbWin = await pluginWindowTarget("titlebar-demo");
+check("⑥a titlebar-demo window created with slot iframe",
+  !!tbWin && (await tbWin.conn.evalJs(`!!document.querySelector("iframe.titlebar-frame")`)));
+// 槽页/视图页的 srcdoc 是窗口起来后异步 fetch + 注入的，轮询等待落地。
+const waitForSrcdoc = async (frameSel, needle) => {
+  if (!tbWin) return false;
+  for (let i = 0; i < 20; i++) {
+    const html = await tbWin.conn.evalJs(
+      `document.querySelector(${JSON.stringify(frameSel)})?.getAttribute("srcdoc") ?? ""`
+    );
+    if (html.includes(needle)) return true;
+    await sleep(300);
+  }
+  return false;
+};
+check("⑥b slot page carries the host default drag script",
+  await waitForSrcdoc("iframe.titlebar-frame", "lume-titlebar-drag-default"));
+check("⑥c view page does NOT get the titlebar drag script",
+  (await waitForSrcdoc("iframe.plugin-frame", "__lumeFrameBoot")) &&
+  !(await tbWin.conn.evalJs(
+    `(document.querySelector("iframe.plugin-frame")?.getAttribute("srcdoc") ?? "").includes("lume-titlebar-drag-default")`
+  )));
+await tbWin?.conn.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); "ok"`);
+await sleep(1500);
+check("⑥d titlebar-demo window closed by host Esc", !(await pluginWindowTarget("titlebar-demo")));
 
 pwReopened?.conn.ws.close();
 console.log(`\nPLUGIN WINDOW VERIFY ${fail === 0 ? "OK" : "FAILED"} (${pass} passed, ${fail} failed)`);

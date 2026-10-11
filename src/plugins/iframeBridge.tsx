@@ -25,6 +25,19 @@ export const BRIDGE_SCRIPT = `
   try { parent.postMessage({ __lumeFrameBoot: { frame: window.name } }, "*"); } catch (err) {}
   var pending = new Map();
   var rpcId = 0;
+  // Watchdog only — a net for a host that never answers, so it must not fire
+  // before the call's own deadline. \`http.request\` carries its own timeoutMs
+  // (the host clamps it to 1–60s, docs/PLUGIN_API.md §6D.1); the old flat 10s
+  // cut every slower reply, and the answer arriving after it landed with no
+  // pending entry left to resolve (silent drop). Everything else keeps 10s.
+  function watchdogMs(method, args) {
+    if (method === "http.request" && args && args.req && typeof args.req.timeoutMs === "number") {
+      var t = args.req.timeoutMs;
+      if (!(t > 0)) t = 10000;
+      return Math.min(t, 60000) + 5000;
+    }
+    return 10000;
+  }
   function rpc(method, args) {
     return new Promise(function (resolve, reject) {
       var id = ++rpcId;
@@ -35,7 +48,7 @@ export const BRIDGE_SCRIPT = `
           pending.delete(id);
           reject(new Error("lume bridge timeout: " + method));
         }
-      }, 10000);
+      }, watchdogMs(method, args));
     });
   }
   // 透明传递：**不吞错**（与逻辑帧 pluginLogicFrame.js 的 call 一致）。曾经
@@ -567,6 +580,40 @@ export function createIframeView(
   const post = (type: string, payload?: unknown) => {
     frame?.contentWindow?.postMessage({ __lumeEvent: { type, payload } }, "*");
   };
+  /** JSON round-trip: drop values that cannot be structured-cloned (the
+   * `text()`/`json()` helpers on an `http.request` reply). The data survives;
+   * the page's bridge re-attaches the helpers on its side (§6D.1). Mirrors
+   * `jsonSafe` in src/pluginLogic.tsx — the view bridge lacked this step, so a
+   * **successful** http.request was downgraded to a DataCloneError failure. */
+  const jsonSafe = (v: unknown): unknown => {
+    try {
+      return JSON.parse(JSON.stringify(v ?? null));
+    } catch {
+      return null;
+    }
+  };
+  /** Answer a page RPC, staying structured-cloneable: post directly (the
+   * common case) and, if the clone is refused, strip the non-clonable parts
+   * and re-send — never turn a usable result into a fake failure. */
+  const replyRpc = (id: number, ok: boolean, result: unknown, error?: string) => {
+    const msg = { __lumeRpcResult: { id, ok, result: ok ? result : null, error } };
+    try {
+      frame?.contentWindow?.postMessage(msg, "*");
+      return;
+    } catch {
+      // DataCloneError (or a dead frame window) — retry with the stripped result.
+    }
+    msg.__lumeRpcResult.result = jsonSafe(result);
+    try {
+      frame?.contentWindow?.postMessage(msg, "*");
+    } catch (err2) {
+      plog.error(opts?.id ?? null, `${frameLabel} rpc reply not cloneable: ${err2}`);
+      frame?.contentWindow?.postMessage(
+        { __lumeRpcResult: { id, ok: false, result: null, error: String(err2) } },
+        "*"
+      );
+    }
+  };
   // Host→page calls (`__lumeCall`) awaiting their `__lumeCallResult` receipt.
   const pendingCalls = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
   let callSeq = 0;
@@ -651,18 +698,8 @@ export function createIframeView(
         if (d.__lumeRpc) {
           const { id, method, args } = d.__lumeRpc;
           onRpc(method, args)
-            .then((result) =>
-              frame?.contentWindow?.postMessage(
-                { __lumeRpcResult: { id, ok: true, result } },
-                "*"
-              )
-            )
-            .catch((err) =>
-              frame?.contentWindow?.postMessage(
-                { __lumeRpcResult: { id, ok: false, error: String(err) } },
-                "*"
-              )
-            );
+            .then((result) => replyRpc(id, true, result))
+            .catch((err) => replyRpc(id, false, null, String(err)));
         }
         if (d.__lumeKey) {
           // Re-dispatch through the host's window so the existing key router

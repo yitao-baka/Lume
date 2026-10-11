@@ -67,6 +67,24 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **视图桥把 http.request 的成功结果降级为假失败（第三方 translator 全引擎
+  报错的根因，ROADMAP #32.11）** — mode 页（沙箱 iframe）的 RPC 回执由视图桥
+  直发 `postMessage`，而 `http.request` 的成功结果带 `text()`/`json()` 函数
+  （不可结构化克隆）→ `DataCloneError: ()=>f(r.body??"")` 被宿主 catch 成
+  `ok:false`：**请求成功也报错**，用网络的 mode 插件（翻译/图片翻译/朗读）
+  全灭。P6.5 只给逻辑宿主（`pluginLogic.tsx`）补了「不可克隆 → 剥离函数重发」，
+  §9 文档声称已修但视图桥漏网。修复：视图桥回执与逻辑宿主同款 try →
+  `jsonSafe`（JSON 往返剥函数，帧侧桥按 §6D.1 契约重建助手）→ 重发，仍失败
+  才回执错误；`createIframeView` 同时服务 mode 页与独立插件窗，一处修复两处
+  生效。同修：视图桥看门狗 10s 死限短于 `http.request` 自己的 `timeoutMs`
+  （契约 1–60s）→ 大于 10s 的合法慢请求被提前判超时、迟到的真回复落空；改按
+  请求 `timeoutMs`（钳 1–60s）+5s，其余方法维持 10s。
+  验证：translator 实测进页自动翻译出结果（谷歌在本机不可达、按插件声明的
+  20s 预算判失败后回退，腾讯交互 ~1s 出译文，DataCloneError 0 次）；新增
+  **离线**回归 `scripts/cdp_http_probe_verify.mjs` + `scripts/fixtures/
+  http-probe/`（本地 echo 服务，不碰外网）：修复版 **11/11**，stash 修复的
+  旧二进制 **1/11**（首条请求即复现同一 DataCloneError）；
+  `cdp_plugin_verify`、`cdp_plugin_frame_load_verify` **5/5** 无回归。
 - **独立窗口偶发全白（P6.7，ROADMAP #33）** — release 构建下打开插件独立窗口
   会有约 1/3–5/6 的概率整页空白（只剩宿主 chrome，视图帧什么都没有）。根因
   不在插件侧：`createIframeView` 挂载 iframe 时把信号初值 `""` 写进了

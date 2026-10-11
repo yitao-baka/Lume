@@ -1,0 +1,26 @@
+# Host HTTP Probe — CDP 宿主 HTTP 回归夹具（scripts/cdp_http_probe_verify.mjs 专用）。
+#
+# 为什么需要它：视图帧（mode 页沙箱 iframe）的 RPC 回执曾经把 http.request 的
+# **成功**结果（带 text()/json() 函数，不可结构化克隆）当成 DataCloneError 假
+# 失败；桥的看门狗又是 10s 死限，比 http.request 自己的 timeoutMs 短。两条都
+# 在真实插件（translator 翻译）上炸过。夹具不依赖外网：宿主侧起一个
+# 127.0.0.1 的 echo 服务，探针页在沙箱里跑四条路径自检，结果经 lume.storage
+# 落盘，脚本从宿主窗口读回逐项断言。
+id = "http-probe"
+name = "HTTP Probe"
+kind = "mode"
+description = "宿主 HTTP 回归探针（CDP 专用夹具）"
+permissions = ["network"]
+# 回环目标默认被拒（#32.3），夹具按契约显式白名单放行自己的 echo 服务。
+network_allow = ["127.0.0.1"]
+view = "view.html"
+keywords = ["httpprobe"]
+
+# 端口由脚本经查询文本投递（"HTTP 探针 <port>"）：关键字行只在「查询是关键字
+# 前缀」时出现，带 payload 的查询匹配不上，所以用 over 特性进页（与 translator
+# 的「翻译」行同机制）。
+[[features]]
+code = "probe"
+label = "HTTP 探针"
+over = true
+min_length = 1

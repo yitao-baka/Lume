@@ -2315,7 +2315,35 @@ pluginLogicFrame 两处编译点）。
 事件钩子）；list-demo `@ts-check` + JSDoc 示范；`examples/tsconfig.json`
 （`pnpm exec tsc -p examples/tsconfig.json` 校验，已通过）。
 
-### 32.11 暂缓（记录在案，等真实需求）
+### 32.11 视图桥回执克隆兜底 + 看门狗分级（2026-10-11 追加）✓
+
+第三方 **translator（翻译）插件全引擎报错**挖出的 P6.5 同类回归：P6.5 只给
+**逻辑宿主**（`pluginLogic.tsx`）补了「reply 不可克隆 → 剥离函数重发」，
+**视图桥**（`iframeBridge.tsx` 的 `__lumeRpc` 回执）漏网——`http.request`
+成功结果带 `text()`/`json()` 函数，直接 postMessage 抛 `DataCloneError`，
+再被宿主 catch 降级成 `ok:false` 假失败：mode 页只要用网络，**成功的请求也
+报错**（§9 文档当时就声称已修，实现与文档不符）。修复：视图桥回执改
+try → `jsonSafe`（JSON 往返剥函数，帧侧桥本来就会重建助手）→ 重发，仍失败
+才回执错误；`createIframeView` 同时服务 mode 页与独立插件窗，一处修复两处
+生效。同修第二处：视图桥看门狗 10s 死限短于 `http.request` 自己的
+`timeoutMs`（契约 1–60s，§6D.1），>10s 的合法请求被提前判超时、迟到的真
+回复落空（pending 已删）→ 改为按请求 `timeoutMs`（钳 1–60s）+5s 余量，其余
+方法维持 10s（逻辑帧 rpc 本就是 30s）。已知余量：`plugin_net` 的 WinHTTP
+各阶段超时各自取满 `timeoutMs`，被墙端点的实际失败耗时约 1.2–2×请求值，
+看门狗（+5s）通常先到——引擎回退由插件自己按错误处理，语义不变。
+
+验证：translator 实测（debug exe + CDP 进帧）进页自动翻译出结果
+（`25.4s · 1 个服务失败 · 27 字`——谷歌在本机不可达按插件自身 20s 预算判
+失败，腾讯交互 ~1s 出译文，全程 DataCloneError 0 次）；新增**离线**回归
+`scripts/cdp_http_probe_verify.mjs` + `scripts/fixtures/http-probe/`（宿主
+起 127.0.0.1 echo 服务，夹具 manifest 按 §6D.1 契约 `network_allow` 放行，
+探针页在沙箱里自检 status/headers/text()/json()/非 2xx/12s 慢响应/卡死
+fail-loud/超时后桥可用）：修复版 **11/11**，stash 修复的旧二进制 **1/11**
+（首条请求即复现同一 DataCloneError）；`cdp_plugin_verify`、
+`cdp_plugin_frame_load_verify` **5/5** 无回归（`cdp_sandbox_verify` 的 ③h
+在修复前后同样失败，既有问题、与本次无关）。
+
+### 32.12 暂缓（记录在案，等真实需求）
 
 - 逻辑宿主空闲自动关闭（省 ~20MB+，冷启 ~107ms；可做设置项）。
 - service 心跳改 Rust 侧计时 push 唤醒（规避隐藏窗 timer 节流）。

@@ -1498,8 +1498,15 @@ pluginBuiltin`。
     重载/保存设置复位。帧卡死由 supervisor 6s 兜底回执（先于 registry 8s
     超时），未就绪/重载窗口的调用按"未就绪"快速失败、不计熔断。
   - **失败不再静默**：帧侧与视图桥的 rpc 不吞错（此前把权限拒绝/网络拒绝
-    伪装成 resolve(undefined)）；宿主 reply 遇不可克隆值（http 的
-    `text()`/`json()`）剥离函数重发而非降级为假失败。
+    伪装成 resolve(undefined)）；两个宿主（逻辑宿主与视图桥）的 reply 遇
+    不可克隆值（http 的 `text()`/`json()`）都剥离函数重发而非降级为假失败
+    ——视图桥 2026-10-11 补齐，此前只有逻辑宿主有这层兜底，mode 页的
+    `http.request` 成功结果会被 DataCloneError 降级成假失败。
+  - **桥看门狗不抢请求自己的超时**（2026-10-11）：视图桥 rpc 兜底超时对
+    `http.request` 取其 `timeoutMs`（钳 1–60s）+5s 余量，其余方法 10s
+    （逻辑帧 rpc 为 30s）。此前视图桥一律 10s 死限：`timeoutMs` 声明 10s
+    以上的合法慢请求被提前判超时，迟到的真回复落空（pending 已删）。
+    回归探针：`scripts/cdp_http_probe_verify.mjs`（离线，本地 echo 服务）。
 - `fs.readText`/`thumb`/`icon`（及 `app.trash`）暴露任意路径的读取与删除能力，
   现已被 `fs.read` / `trash` 声明覆盖。
 - 内置插件与磁盘插件在注册表/启停上无差别，但内置代码经编译审计随包发布且不

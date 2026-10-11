@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font:13px sans-serif;padding:12px">
+<div id="out">http probe running…</div>
+<script>
+// 视图帧宿主 HTTP 自检（在 opaque-origin iframe 内执行，结果经 lume.storage
+// 落盘，脚本从宿主侧读回）。端口由脚本经查询文本投递（"httpprobe <port>"）。
+var results = { started: Date.now() };
+function done() {
+  document.getElementById("out").textContent = JSON.stringify(results);
+  lume.storage.set("probe", JSON.stringify(results));
+}
+// 回显脚本投递的原始文本（脚本用其中的运行令牌确认读到的是本次结果，
+// 而不是上一轮留在 plugin_store.db 里的旧文档）。
+function textOf(payload, q) {
+  if (typeof payload === "string") return payload;
+  if (payload && typeof payload.payload === "string") return payload.payload;
+  if (payload && typeof payload.text === "string") return payload.text;
+  return typeof q === "string" ? q : "";
+}
+function portFrom(s) {
+  var m = String(s || "").match(/\d{2,5}/);
+  return m ? Number(m[0]) : 0;
+}
+var port = 0;
+lume.on.query = function (q) { if (!port) { port = portFrom(q); results.query = q; } };
+lume.on.enter = function (payload) { if (!port) { port = portFrom(textOf(payload)); results.query = textOf(payload); } };
+
+function run() {
+  var base = "http://127.0.0.1:" + port;
+  results.port = port;
+  var chain = Promise.resolve();
+  // ① 正常 JSON：status/headers/body/text()/json() 全都要能用。
+  chain = chain.then(function () {
+    var t0 = Date.now();
+    return lume.http.request({ url: base + "/json", timeoutMs: 5000 }).then(function (res) {
+      results.json = {
+        ms: Date.now() - t0,
+        status: res && res.status,
+        hasText: typeof (res && res.text),
+        hasJson: typeof (res && res.json),
+        textLen: res && res.text ? res.text().length : -1,
+        ok: (function () { try { return res.json().ok === true; } catch (e) { return "throw: " + e; } })(),
+        contentType: res && res.headers && res.headers["content-type"],
+        truncated: res && res.truncated,
+      };
+    });
+  });
+  // ② 非 2xx 不抛错：插件要能读到状态码自己处理。
+  chain = chain.then(function () {
+    return lume.http.request({ url: base + "/err", timeoutMs: 5000 }).then(function (res) {
+      results.err = { status: res && res.status, body: res && res.text ? res.text() : null };
+    });
+  });
+  // ③ 比自己 timeoutMs 预想更慢、但仍然成功的请求（12s > 旧的 10s 看门狗死限）：
+  //    必须拿到 200 + 解析出的 JSON，而不是被桥提前判超时。
+  chain = chain.then(function () {
+    var t0 = Date.now();
+    return lume.http.request({ url: base + "/slow?ms=12000", timeoutMs: 20000 }).then(function (res) {
+      results.slow = {
+        ms: Date.now() - t0,
+        status: res && res.status,
+        ok: (function () { try { return res.json().ok === true; } catch (e) { return "throw: " + e; } })(),
+      };
+    }, function (e) { results.slow = { ms: Date.now() - t0, error: String(e) }; });
+  });
+  // ④ 真卡死的目标（timeoutMs 3000 → 看门狗 8s）：必须**报错**（fail loud），
+  //    不能静默成 resolve(undefined)，之后桥还得照常干活。
+  chain = chain.then(function () {
+    var t0 = Date.now();
+    return lume.http.request({ url: base + "/hang", timeoutMs: 3000 }).then(function (res) {
+      results.hang = { ms: Date.now() - t0, resolved: res === undefined ? "undefined" : JSON.stringify(res).slice(0, 80) };
+    }, function (e) { results.hang = { ms: Date.now() - t0, error: String(e) }; });
+  });
+  chain = chain.then(function () {
+    return lume.storage.get("no-such-doc").then(function () { results.afterHangRpc = "ok"; },
+      function (e) { results.afterHangRpc = "error: " + e; });
+  });
+  chain = chain.then(function () { results.finished = Date.now(); done(); },
+    function (e) { results.fatal = String(e); done(); });
+}
+
+// 端口由查询/enter 投递——等到有端口再跑（最多 12s），否则用夹具默认值。
+var waited = 0;
+(function wait() {
+  if (port || waited >= 12000) {
+    if (!port) port = 17813;
+    run();
+    return;
+  }
+  waited += 200;
+  setTimeout(wait, 200);
+})();
+</script>
+</body>
+</html>

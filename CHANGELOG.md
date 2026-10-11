@@ -67,6 +67,21 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **纯视图 mode 被误熔断：「文件秒搜」连续调用失败（不进插件页也弹，ROADMAP
+  #32.12）** — 无 `entry` 的 mode（file-search 等）实例在 `setQuery`/`search`/
+  `onSubInput` 里无条件把 onQuery/onSubInput 转发进逻辑中继，而宿主里没有它的
+  逻辑帧：`clearSearch` 每次呼出/隐藏都对全部 mode 广播 `setQuery("")`，
+  supervisor 对未加载 id 静默丢弃（无令牌、无法回执）→ registry 等满 8s 记
+  `timeout: onQuery`，**3 轮呼出即熔断 + toast，插件从未被打开**（实测
+  file-search/http-probe/sandbox-probe/translator 四个纯视图 mode 全中；带
+  entry 的插件不受影响）。修复两层：`createDiskModeInstance` 以 `hasLogic`
+  门控三处 `throttledLogicCall`（视图页状态本就走 iframe 桥）；`logicCall`
+  对从未申请逻辑帧（`!logicLoadedIds.has(id)`）的调用按 "logic not loaded"
+  快速失败、不计熔断。
+  验证：新增 `scripts/cdp_circuit_verify.mjs`（3 轮呼出/隐藏 + `__logicCircuit`
+  探针 + supervisor 侧 entry 路径正面探针）：修复版熔断全空、无 toast、
+  hello-mode hook 派发 9 次 0 挂起；stash 修复的旧二进制同序列复现 4 个纯视图
+  mode 全部熔断。
 - **视图桥把 http.request 的成功结果降级为假失败（第三方 translator 全引擎
   报错的根因，ROADMAP #32.11）** — mode 页（沙箱 iframe）的 RPC 回执由视图桥
   直发 `postMessage`，而 `http.request` 的成功结果带 `text()`/`json()` 函数

@@ -2343,7 +2343,30 @@ fail-loud/超时后桥可用）：修复版 **11/11**，stash 修复的旧二进
 `cdp_plugin_frame_load_verify` **5/5** 无回归（`cdp_sandbox_verify` 的 ③h
 在修复前后同样失败，既有问题、与本次无关）。
 
-### 32.12 暂缓（记录在案，等真实需求）
+### 32.12 纯视图 mode 误熔断修复（2026-10-11 追加）✓
+
+实测报告「启动后不进插件页，过段时间弹『文件秒搜』连续调用失败」：纯视图
+mode（无 `entry`）的实例在 `setQuery`/`search`/`onSubInput` 里**无条件**把
+onQuery/onSubInput 转发进逻辑中继，而宿主里根本没有它的逻辑帧——`clearSearch`
+每次呼出/隐藏对全部 mode 广播 `setQuery("")`（onMount + launcher-shown +
+resetAndHide），每轮给每个纯视图 mode 记一次 `timeout: onQuery`（supervisor
+对未加载 id 无令牌、无法回执，只能静默丢弃，registry 等满 8s）；3 轮呼出即
+熔断 + toast，插件从未被打开。同报根因还有第二层：`logicCall` 的"未就绪"
+豁免只覆盖 `logicPendingReady`（push 过 load 的 id），纯视图 id 永远不在。
+修复（两层）：① `createDiskModeInstance` 以 `hasLogic = !!m.entry` 门控三处
+`throttledLogicCall`（视图页状态本就走 iframe 桥，转发是纯浪费）；②
+`logicCall` 对 `!logicLoadedIds.has(id)`（从未申请逻辑帧）的调用按
+"logic not loaded" 快速失败、不计熔断——与未就绪窗口同语义，挡住未来一切
+旁路调用。entry 插件路径不受影响（pushLogicLoad 先于一切 hook 拉取）。
+
+验证：新增 `scripts/cdp_circuit_verify.mjs`（临时启用 hello-mode 跑完恢复，
+先杀 exe 再还原 settings）：修复版 3 轮呼出/隐藏后 `__logicCircuit` 全空、
+无 toast，且 hello-mode 逻辑帧 loaded、hook 派发 9 次 0 挂起（entry 路径
+无回归）；stash 修复的旧二进制同序列复现 **4 个启用的纯视图 mode
+（file-search/http-probe/sandbox-probe/translator）全部 `timeout: onQuery`
+×3 → 熔断**，hello-mode 前后均正常（bug 只打纯视图 mode）。
+
+### 32.13 暂缓（记录在案，等真实需求）
 
 - 逻辑宿主空闲自动关闭（省 ~20MB+，冷启 ~107ms；可做设置项）。
 - service 心跳改 Rust 侧计时 push 唤醒（规避隐藏窗 timer 节流）。

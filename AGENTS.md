@@ -110,6 +110,12 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
   ——在 JSX 属性位置以访问器求值。
 - **剪贴板 probe 与 reader 必须同链**：`plugin_clipboard_has_image` 的格式判定与
   `plugin_clipboard_read_image` 的采集链是同一逻辑的镜像，改一边必须改另一边。
+- **hook 转发按 entry 门控**：mode 实例（`createDiskModeInstance`）对无 `entry`
+  的纯视图插件也存在，`clearSearch` 每次呼出/隐藏广播 `setQuery("")` 会经过它
+  ——转发进逻辑中继的调用注定无人应答（宿主无帧、supervisor 静默丢弃 → 8s
+  超时），必须用 `hasLogic` 拦下；`logicCall` 对 `logicLoadedIds` 之外的 id
+  快速失败且不计熔断，别把这个豁免改回去（否则每次呼出给纯视图 mode 计一次
+  失败，3 轮呼出就弹「连续调用失败」，插件从未被打开，#32.12）。
 - **磁贴重排是 pointer events 版**：主窗口的 Tauri drag-drop handler 必须保持启用（真实
   拖入路径只有 OLE drop target 拿得到）；改回 HTML5 DnD 会同时废掉拖入与重排。
 - **提权边界**：`lume.exe` 永远保持中完整性（`Nothing higher-integrity runs in the launcher

@@ -193,6 +193,12 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
     plog.debug(id, `call skipped (circuit open): ${name}`);
     return Promise.reject(new Error(`plugin "${id}" is offline (circuit open — reload it to retry)`));
   }
+  // 逻辑帧从未申请过（纯视图 mode 无 entry；supervisor 对这类 id 静默丢弃，
+  // 等满超时只会误开熔断——#32.4 假阳性）：与"未就绪"同语义快速失败，
+  // "logic not loaded" 前缀，不计熔断。
+  if (!logicLoadedIds.has(id)) {
+    return Promise.reject(new Error(`logic not loaded for "${id}"`));
+  }
   // 逻辑帧未就绪（首载/重载窗口）：同样快速失败，但用 "logic not loaded"
   // 前缀——不是插件故障，不计熔断（宿主 side 的丢包是注册时序，不是它的错）。
   if (logicPendingReady.has(id)) {
@@ -502,6 +508,10 @@ function createDiskModeInstance(
   const [query, setQuerySig] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   const hook = (name: string, ...args: unknown[]) => callHook(m.id, logic, name, ...args);
+  // 纯视图 mode（无 `entry`）：宿主里没有它的逻辑帧，onQuery/onSubInput 的
+  // 中继调用注定无人应答（supervisor 对未加载 id 静默丢弃 → 8s 超时 → 误开
+  // 熔断）。视图页的全部状态走 iframe 桥，转发只会白烧 IPC。
+  const hasLogic = !!m.entry;
   // How this page was entered (`[[features]]` payload / redirect). Kept until
   // the mode resets and REPLAYED on every ready handshake: the View mounts
   // (and the srcdoc document loads) only when the mode becomes active, so an
@@ -623,11 +633,11 @@ function createDiskModeInstance(
     setQuery: (q) => {
       setQuerySig(q);
       if (viewReady) postEv("query", q);
-      throttledLogicCall(m.id, "onQuery", [q]);
+      if (hasLogic) throttledLogicCall(m.id, "onQuery", [q]);
     },
     search: async (q) => {
       if (viewReady) postEv("query", q);
-      throttledLogicCall(m.id, "onQuery", [q]);
+      if (hasLogic) throttledLogicCall(m.id, "onQuery", [q]);
       // ModeInstance contract: every search ends with a resize request —
       // without it the window keeps the previous page's size after a mode
       // switch (the fixed-height model differs per mode).
@@ -691,7 +701,7 @@ function createDiskModeInstance(
     },
     onSubInput: (text) => {
       if (viewReady) postEv("subInput", text);
-      throttledLogicCall(m.id, "onSubInput", [text]);
+      if (hasLogic) throttledLogicCall(m.id, "onSubInput", [text]);
     },
     onSettings: (values) => {
       settingsValues = values;

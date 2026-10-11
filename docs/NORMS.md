@@ -1,7 +1,7 @@
 # 项目规范（Norms）
 
-跨功能的通用约定。每个新功能在设计阶段都要对照本文件；与 `CLAUDE.md`
-的 Conventions、`docs/UI_GUIDELINES.md` 配合使用。
+跨功能的通用约定。每个新功能在设计阶段都要对照本文件；与 `AGENTS.md`
+的硬性约定、`docs/UI_GUIDELINES.md` 配合使用。
 
 ## 目录结构（exe 同级便携目录）
 

@@ -201,7 +201,7 @@ Business logic belongs to Rust.
 
 Read:
 
-- CLAUDE.md
+- AGENTS.md
 - docs/RULES.md
 - docs/ARCHITECTURE.md
 

@@ -1449,7 +1449,7 @@ nor the return value will indicate the failure was caused by UIPI blocking」—
 **关键结论**：完整性级别是**进程级**属性（线程 impersonation 无法升 IL，
 UIAccess 文档也写明「UIAccess is not enough for a process to move up through
 the IL boundary」），所以"局部提权"只能靠**拆进程**：把唯一需要特权的动作
-隔离进一个极小的提权二进制，主进程保持中 IL（CLAUDE.md 的既定不变量
+隔离进一个极小的提权二进制，主进程保持中 IL（AGENTS.md 的既定不变量
 「the launcher itself stays non-elevated」得以保留）。
 
 **参照实现**：`babalae/better-genshin-impact`（实机能在原神工作）走的就是这条路

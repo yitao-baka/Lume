@@ -95,7 +95,7 @@ const setDevMode = async (on) => {
 };
 await setDevMode(false);
 const devOff = await s.evalJs(`({
-  reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
+  reloads: document.querySelectorAll('.plg-card .settings-icon-btn:not(.plg-uninstall)').length,
   badges: Array.from(document.querySelectorAll('.plg-badge')).map((b) => b.textContent.trim()).filter((t) => t === "开发"),
   trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
 })`);
@@ -104,7 +104,7 @@ check("dev mode off hides developer options", devOff.reloads === 0 && devOff.bad
 // Turn developer mode ON deterministically → developer options appear
 await setDevMode(true);
 const devOnState = await s.evalJs(`({
-  reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
+  reloads: document.querySelectorAll('.plg-card .settings-icon-btn:not(.plg-uninstall)').length,
   trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
 })`);
 check("dev mode on shows reload + global trust-all", devOnState.reloads > 0 && devOnState.trustAllLabel === 1, JSON.stringify(devOnState));
@@ -192,7 +192,7 @@ await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).find((b) 
 await sleep(400);
 await setDevMode(false);
 const devRestored = await s.evalJs(`({
-  reloads: document.querySelectorAll('.plg-card .settings-icon-btn').length,
+  reloads: document.querySelectorAll('.plg-card .settings-icon-btn:not(.plg-uninstall)').length,
   trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
 })`);
 check("dev mode restored to off", devRestored.reloads === 0 && devRestored.trustAllLabel === 0, JSON.stringify(devRestored));

@@ -4,7 +4,7 @@ Planned features for Lume, in priority order. Items are added here before
 implementation; each becomes a scoped iteration when started. See
 `CHANGELOG.md` for what shipped.
 
-> **当前快照（2026-10-12，Pre-26.10）**：路线已推进到 #38。插件系统、
+> **当前快照（2026-10-12，Pre-26.10）**：路线已推进到 #39。插件系统、
 > `.lupx` 安装/签名、三层权限与逻辑宿主隔离、独立插件窗口、文件秒搜、
 > 自动动作和提权代理均已落地；本文较早章节保留当时的设计与验收记录，
 > 当前 API/行为以 `docs/PLUGIN_API.md`、`docs/PLUGINS.md`、
@@ -2682,7 +2682,9 @@ WebView2 会**丢掉后一个导航**：
   18/22 —— 失败项为 `clipboard.readImage` 在 `src/plugins/rpc.ts` 缺
   case（`unknown lume rpc`）、逻辑帧 ctx 缺 `fs` 组
   （`public/pluginLogicFrame.js`）与两条指向旧日志文本的断言；
-  均可在当前 HEAD 上直接重现，不是 #37 引入。
+  均可在当前 HEAD 上直接重现，不是 #37 引入。**（2026-10-12 跟进：#38 修掉
+  前两项宿主链路问题、#39 修掉脚本断言与选择器 —— `cdp_p2b_verify` 现
+  **24/24**、`cdp_plugins_pane_verify` **ALL PASS**。）**
 
 ## 38. 插件宿主链路修复：`clipboard.readImage` 路由 + 逻辑帧 ctx 面补齐（已实现）
 
@@ -2715,3 +2717,25 @@ WebView2 会**丢掉后一个导航**：
   指向旧日志文本的陈旧断言（`loaded provider (entry=` 等），见 #39。
 - `tsc --noEmit` 干净；`pnpm run build` + `pnpm run tauri build --debug
   --no-bundle` 重建后实测（逻辑帧是 `public/` 静态文件，必须重建 exe）。
+
+## 39. 插件回归脚本修复：p2b 陈旧断言 / 夹具自启用 + 面板选择器（已实现）
+
+来源：#37/#38 回归中确认的两处脚本自身问题（非产品代码）：
+
+- **`cdp_p2b_verify` 的两条日志断言指向旧文案**：P6.5 重构后注册表的加载
+  日志从 `loaded provider (entry=…)` 改成
+  `registered provider proxy (entry=…)`（list 模板同理），断言一直没跟。
+  另加**夹具自启用**：`files-img-demo` / `list-demo` 的启停是逐机设置，
+  脚本此前假定它们已启用（禁用时 files/img/列表段连锁失败，ROADMAP #30
+  记过「环境注意」）；现在脚本启动即幂等 `set_plugin_enabled`，不再依赖
+  外部状态。
+- **`cdp_plugins_pane_verify` 的选择器把卸载按钮算成重载按钮**：
+  `.plg-card .settings-icon-btn` 同时命中常驻的 `.plg-uninstall`，于是
+  「dev mode off 应 0 个重载按钮」恒失败；改为
+  `.plg-card .settings-icon-btn:not(.plg-uninstall)`。
+
+### 39.1 实测
+
+- `cdp_p2b_verify` **24/24**（含 #38 新增的两条 ctx 面断言；夹具初始为
+  禁用态，脚本自行启用后全过）。
+- `cdp_plugins_pane_verify` **ALL PASS**（9/9）。

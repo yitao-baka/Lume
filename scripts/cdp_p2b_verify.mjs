@@ -96,6 +96,17 @@ for (let i = 0; i < 40 && !mainT; i++) {
 if (!mainT) { console.error("launcher window missing"); process.exit(1); }
 const m = await connect(mainT.webSocketDebuggerUrl);
 const invoke = (cmd, args = {}) => m.evalJs(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
+
+// 夹具必须处于启用态：`settings.plugins.disabled` 是逐机状态，其它脚本或
+// 手工操作可能把它们关过。幂等启用（已启用则不动；settings-applied 会让
+// 注册表重载，等一会儿再跑检查）。
+const disabledIds = (await invoke("get_settings"))?.plugins?.disabled ?? [];
+for (const id of ["files-img-demo", "list-demo"]) {
+  if (disabledIds.includes(id)) {
+    await invoke("set_plugin_enabled", { id, enabled: true });
+    await sleep(900);
+  }
+}
 const type = (q) => m.evalJs(`(() => { const i = document.getElementById("search-input"); i.focus(); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
 const rowNames = () => m.evalJs(`Array.from(document.querySelectorAll(".result-box-name")).map((n) => n.textContent)`);
 const clickRow = (name) => m.evalJs(`(() => { const b = Array.from(document.querySelectorAll(".result-box")).find((x) => x.querySelector(".result-box-name")?.textContent === ${JSON.stringify(name)}); if (!b) return "missing"; b.click(); return "clicked"; })()`);
@@ -310,8 +321,10 @@ await invoke("reload_plugin", { id: "list-demo" });
 await invoke("reload_plugin", { id: "files-img-demo" });
 await sleep(2500);
 const plogText = await m.evalJs(`(window.__plog ?? []).join(String.fromCharCode(10))`);
-check("list-demo loaded as template=list", plogText.includes("loaded mode (template=list, entry=main.js"), "");
-check("files-img-demo loaded as provider", plogText.includes('loaded provider (entry=main.js'), "");
+check("list-demo loaded as template=list",
+  plogText.includes("registered mode proxy (template=list, entry=main.js"), "");
+check("files-img-demo loaded as provider",
+  plogText.includes("registered provider proxy (entry=main.js"), "");
 
 // ── ⑤ ctx 面一致性（静态，ROADMAP #38）──
 // 两个 ctx 面（视图桥 iframeBridge.tsx 的客户端、逻辑帧 public/pluginLogicFrame.js）

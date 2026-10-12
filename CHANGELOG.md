@@ -49,6 +49,16 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **插件回归脚本修复（ROADMAP #39）** — `cdp_p2b_verify` 的两条日志断言
+  仍指向 P6.5 前的旧文案（`loaded provider (entry=` / `loaded mode
+  (template=list, entry=`），改为现行的 `registered provider proxy (entry=`
+  与 `registered mode proxy (template=list, entry=`；并让脚本自行幂等启用
+  `files-img-demo` / `list-demo` 两个夹具（启用态是逐机设置，此前靠环境，
+  禁用时整段连锁失败）。`cdp_plugins_pane_verify` 的开发者选项断言改用
+  `.plg-card .settings-icon-btn:not(.plg-uninstall)` —— 常驻的卸载按钮与
+  重载按钮共用类名，原选择器让「dev mode off 应 0 个重载按钮」恒红。
+  验证：`cdp_p2b_verify` **24/24**、`cdp_plugins_pane_verify` **ALL PASS**。
+
 - **插件宿主链路回归：`clipboard.readImage` 路由与逻辑帧 ctx 面（ROADMAP #38）** —
   两个「接口在、路没通」的既有问题（自 P6.5 逻辑宿主隔离起）：① 视图桥与
   逻辑帧的 ctx 都调 `clipboard.readImage`，`src/plugins/rpc.ts` 的 switch

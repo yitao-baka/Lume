@@ -287,7 +287,11 @@ dev URL instead.
 
 1. **Core plugin contract** — `node scripts/cdp_plugin_verify.mjs` (provider
    rows + sandboxed mode page + plugin pane), then
-   `node scripts/cdp_plugin_v2_verify.mjs` for the expanded host API.
+   `node scripts/cdp_plugin_v2_verify.mjs` for the expanded host API. The P2
+   feature series (file drop / clipboard image / list template / tile reorder)
+   plus the static ctx-surface parity checks (logic-frame ctx ≡ view bridge ≡
+   rpc.ts cases) run as `node scripts/cdp_p2b_verify.mjs`; it enables its two
+   fixture plugins itself.
 2. **Sandbox and permissions** — `node scripts/cdp_sandbox_verify.mjs` proves
    opaque-origin isolation, bridge behavior and Rust-side command whitelisting.
    A plugin that calls an undeclared capability must fail with an explicit

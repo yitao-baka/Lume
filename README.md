@@ -14,7 +14,7 @@ The goal is:
 
 # Status
 
-**Pre-26.8 — clipboard manager + satellite preview + memory optimization**
+**Pre-26.10 — plugin platform + whole-drive file search + system integration**
 (current)
 
 - ✅ Global shortcut — Alt+Space preferred, auto-fallback to a free combo
@@ -39,11 +39,18 @@ The goal is:
 - ✅ Auto-sizing window — height fits the results, stays centered (fixed
   height in clipboard mode)
 - ✅ Settings window — appearance / navigation / clipboard / hotkeys / search
-  / system / about (grouped-card layout with a settings search box, matching
-  the Flutter settings edition)
+  / automation / plugins / about (grouped-card layout with a settings search
+  box)
 - ✅ Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows
-- 🔲 Plugin system — planned (see [docs/ROADMAP.md](docs/ROADMAP.md))
+- ✅ Whole-drive file search — Everything IPC first, then the LumeSVC
+  NTFS USN/MFT index, exposed through one async search facade
+- ✅ Plugin platform — provider / mode / service contributions, sandboxed UI,
+  Rust-side permission checks, `.lupx` install/signature support, detached
+  windows, declarative settings, private storage, and development hot reload
+- ✅ Automation + elevation agent — foreground-window rules can send a
+  configured hotkey, including to elevated targets through the minimal
+  `lume-agent.exe` helper
 
 Version history in [CHANGELOG.md](CHANGELOG.md); how to run and verify in
 [docs/TESTING.md](docs/TESTING.md).
@@ -96,8 +103,10 @@ The UI should feel native, clean and focused.
 ## Database
 
 - SQLite via `rusqlite` (bundled) — clipboard history, recent opens and pinned
-  apps live in `<base>/data/lume.db` (`<base>` = the exe dir in portable mode,
-  or `%LOCALAPPDATA%\Lume` when installed under Program Files)
+  apps live in `<base>/data/lume.db`; plugin documents live in
+  `plugin_store.db`, and rebuildable index/icon caches use separate databases
+  (`<base>` = the exe dir in portable mode, or `%LOCALAPPDATA%\Lume` when
+  installed under Program Files)
 
 ---
 
@@ -116,14 +125,14 @@ Rust Core
 
 Windows API
 
-
-Business logic belongs to Rust.
+Lume ships three binaries (`lume.exe`, `lume-svc.exe`, `lume-agent.exe`).
+Business logic belongs to Rust; the webview only renders and invokes commands.
 
 ---
 
 # Features
 
-## Current (Pre-26.8)
+## Current (Pre-26.10)
 
 - Launcher — hidden at startup, Alt+Space toggles (auto-fallback to a free
   combo when Alt+Space is taken, e.g. by uTools); auto-hides on focus loss;
@@ -165,9 +174,24 @@ Business logic belongs to Rust.
 - Pinyin search — Chinese app names match by pinyin (`kuake`/`kk` → 夸克)
 - Run as administrator — app-entry right-click launches via the `runas` verb;
   Shift+Enter launches the selected app elevated
-- LumeSVC SYSTEM service — a companion `lume-svc.exe` (dormant skeleton)
-  registered via a settings button + UAC, holding the SCM lifecycle and a
-  named pipe as a bridge for future SYSTEM features
+- Whole-drive file search — `file_search` prefers a running Everything
+  instance, then falls back to the self-hosted USN/MFT index in
+  `lume-svc.exe`; the service is registered through UAC and answers over a
+  scoped named pipe
+- Plugin platform — first-party pages and disk plugins share one registry:
+  `provider` contributes search rows, `mode` contributes full pages (optional
+  logic entry, detached windows, titlebar slot and list template), and
+  `service` contributes lifecycle hooks. Mode pages run in opaque-origin
+  sandboxes; plugin capabilities are checked in Rust by manifest permission;
+  `.lupx` packages support install/uninstall, signature verification and
+  private-file preservation across upgrades
+- Plugin developer workflow — dev mode, reload, change watching,
+  `plugin-api.d.ts`, source URLs and CDP probes; plugin logic runs outside the
+  launcher window in per-plugin sandbox frames, with circuit breaking and
+  failure reporting
+- Elevation agent — the only privileged code is `lume-agent.exe`; Lume itself
+  stays at medium integrity and can send a configured hotkey to an elevated
+  foreground window through the agent
 - Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows
 - Automation (自动动作) — when a configured program opens a new window and takes
@@ -188,7 +212,10 @@ Business logic belongs to Rust.
 
 ## Planned
 
-- Plugin system
+- Plugin ecosystem follow-ups — `.lupx` market/source, drag-package install,
+  browser URL and selection capture, super panel
+- File-search hardening — non-NTFS volumes, orphan cleanup, index persistence,
+  richer search settings
 - Workflow
 - OCR
 - AI commands
@@ -216,7 +243,9 @@ The frontend is managed with **pnpm** (`pnpm install`; see `.npmrc`,
 `pnpm-workspace.yaml`, `package.json` → `packageManager`). Commands:
 
 - **Development**: `pnpm run tauri dev` (loads the frontend from the vite dev
-  server; run from a terminal — the debug exe needs `localhost:1420`).
+  server; run from a terminal).
+- **Embedded debug build**: `pnpm run tauri build --debug --no-bundle` — the
+  frontend is compiled into the exe and CDP scripts can run without vite.
 - **Standalone**: `pnpm run tauri build --no-bundle`, then run
   `src-tauri/target/release/lume.exe` — it embeds the frontend and shows no
   console window.
@@ -225,10 +254,12 @@ The frontend is managed with **pnpm** (`pnpm install`; see `.npmrc`,
 
 The standard release is a **portable zip** (no MSI/NSIS), produced by:
 
-```bash
-bash scripts/package-zip.sh   # → target/release/Lume-<version>-win-x64.zip
+```powershell
+pnpm run package:zip
 ```
 
-It assembles `lume.exe` + `lume-agent.exe` + `lume-svc.exe` + `languages/` +
-`res/` into one portable folder and zips it, so the elevation agent and service
-ship next to the main exe as the portable model expects.
+The script runs the release Tauri build and writes
+`src-tauri/target/release/bundle/zip/Lume_<version>_x64_portable.zip`. The zip
+contains `lume.exe` + `lume-agent.exe` + `lume-svc.exe` + `languages/` +
+`res/icons/`, so the elevation agent and service ship next to the main exe as
+the portable model expects.

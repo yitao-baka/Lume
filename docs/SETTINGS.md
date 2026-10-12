@@ -34,8 +34,8 @@
 ```
 
 - **顶栏**：`Lume` 标题 + 「搜索设置」输入框。
-- **导航栏**（160px）：8 个分区，图标取 `res/icons/`（platte / navigate /
-  clipboard / keyboard / search / system / plugins / about.svg）。
+- **导航栏**（160px）：9 个分区，图标取 `res/icons/`，顺序为外观 / 导航页 /
+  剪贴板 / 快捷键 / 搜索 / 系统 / 自动化 / 插件 / 关于。
 - **内容列**：居中、max-width 720；每分区由若干「分组标题 + 卡片」组成，
   卡片 = `--surface-raised` 底、12px 圆角、细边框；行 = 标签左 + 控件右。
 - **底栏**：「恢复默认设置」（次要）+「保存并应用」（主要，`!dirty` 禁用）。
@@ -238,7 +238,7 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 旧的大图标居中头部移除。
 
 ## 实现说明（2026-08-30 重排）
-- 壳：`src/settings/Settings.tsx`（顶栏 / 搜索过滤 / 7 导航 / 底栏）；
+- 壳：`src/settings/Settings.tsx`（顶栏 / 搜索过滤 / 9 导航 / 底栏）；
   分区组件 `AppearancePane` / `LauncherPane` / `ClipboardPane` / `HotkeysPane`
   / `SearchPane` / `SystemPane` / `AboutPane`；共享控件 `controls.tsx`
   （Chip / Toggle / NumberPreset / Row）。旧 `InterfacePane.tsx` 删除（拆入

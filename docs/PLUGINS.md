@@ -1,4 +1,4 @@
-# 插件开发指南（ROADMAP #7，v1）
+# 插件开发指南（ROADMAP #7，Pre-26.10）
 
 > **完整 API 参考**见 `docs/PLUGIN_API.md`（清单字段表、Provider 契约、
 > ModeInstance/PluginServices 逐方法时序、启停语义、安全模型、调试）。

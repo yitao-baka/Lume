@@ -1,6 +1,6 @@
 # Lume 插件 API 参考（v1）
 
-> 适用版本：Pre-26.8+（ROADMAP #7 v1 + 第二/三/四轮）。
+> 适用版本：Pre-26.10+（ROADMAP #7 v1 + P0–P6 迭代）。
 > 快速上手见 `docs/PLUGINS.md`；本文是完整的 API 参考。
 > 所有契约以源码为唯一事实：`src/plugins/types.ts`（契约）、
 > `src/plugins/registry.ts`(注册表与加载器)、`src-tauri/src/plugins.rs`
@@ -738,7 +738,8 @@ res.truncated;         // 响应体超过 4 MiB 被截断时为 true
   `bodyBase64`（二进制，优先于 `body`）、`timeoutMs`（钳制 1–60 秒）。
 - 仅允许 `http` / `https`；其他协议与非法 URL 直接 reject。
 - 主线程永不阻塞：请求跑在 Rust 工作线程上。
-- 权限：`network`（manifest 声明位；强制层见 §9 与 P3.2 规划）。
+- 权限：`network`（必须在 manifest 声明；前端守卫与 Rust
+  `plugin_perm.rs` 都会按调用方 plugin id fail-closed 校验）。
 - **内网防护（#32.3）**：插件请求默认拒绝解析到**回环/私网/链路本地**的
   目标（127/8、::1、10/8、172.16/12、192.168/16、169.254/16、100.64/10、
   fe80::/10、fc00::/7、未指定地址，含 IPv4-mapped IPv6）——防 SSRF（云
@@ -833,7 +834,7 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 > 新增宿主命令时**必须**在这里登记一行、并在该文件里加一条
 > `RPC_PERMISSION`；`信任全部权限`（「全部授权」）是开发逃生门。细节与边界
 > 见 §6F.4，信任模型见 §9。
-> **P5 起双层防线**：同一张表在 **Rust 侧**也强制（`src-tauri/src/plugin_perm.rs`
+> **P5/P6 起三层防线**：同一张表在 **Rust 侧**也强制（`src-tauri/src/plugin_perm.rs`
 > ——每个宿主能力命令按调用方 plugin_id 对照清单 `permissions` 校验，
 > fail-closed；`file_search`/`trash_to_recycle` 的原生调用路径按「main 窗口 +
 > 无 plugin_id」放行）。绕过前端守卫的调用（直连 `invoke`）同样被拦。
@@ -1694,7 +1695,7 @@ pluginBuiltin`。
 
 ## 12. 路线
 
-已完成（细节见对应章节与 `docs/ROADMAP.md` #23–#28）：
+已完成（细节见对应章节与 `docs/ROADMAP.md` #23–#36）：
 
 - ✅ 权限强制层（`permissions` → 逐 RPC 校验 + 设置页 chips + 全部授权）—— §6F.4
 - ✅ 宿主能力面：HTTP 代理（打掉 CORS）、系统通知、剪贴板图片/文件、对话框、
@@ -1704,12 +1705,20 @@ pluginBuiltin`。
 - ✅ 插件级设置界面（`[[settings]]` → 设置页自动渲染 → `onSettings`）—— §6F.3
 - ✅ storage → SQLite 文档库（`_rev` 乐观锁 + allDocs/bulkDocs + 自动迁移）—— §6F.1
 - ✅ 插件私有文件目录（`<plugin>/files/`）与 `fs.write` 能力 —— §6F.2
-- ✅ 沙箱机制（opaque iframe + Rust 命令侧白名单 + 前端守卫双层防线）—— §6C、§9
+- ✅ 沙箱机制（opaque iframe + Rust 命令侧白名单 + 前端守卫三层防线）—— §6C、§9
 - ✅ mode 页独立窗口（`detachable` 清单字段 + 运行时插件窗口 + 跨窗口状态推送）—— §6G
 - ✅ `.lupx` 打包、安装确认与卸载；`app.foreground`（`window` 权限）；
   files 规则 `file_type` 类别与文件夹匹配（P4 前半）—— §6H.1–6H.3
 - ✅ 活动窗口匹配（`[[features]] type = "window"`，process/class/title
   维度，呼出时快照匹配）—— §6H.4
+- ✅ 插件系统加固：API 版本契约、`.lupx` ed25519 签名、网络内网防护、
+  熔断、逻辑帧节流、开发热重载、类型定义与 sourceURL（P6.6）—— §6I、§9
+- ✅ 逻辑进程级隔离：共享 `plugin-logic-host` + 每插件 opaque 沙箱帧 +
+  supervisor 令牌归属（P6.5）—— §6I
+- ✅ 独立窗口加固：空白页看门狗、任务栏图标/AUMID、标题栏拖动兜底与
+  `emit_to` 目标隔离 —— §6G、§9
+- ✅ 插件自身颜色模式（`lume.theme.set` + `settings.plugins.color_modes`，
+  ROADMAP #36）—— §6C、§6G.4
 
 未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4 后半）：
 

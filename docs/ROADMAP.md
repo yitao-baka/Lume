@@ -4,6 +4,12 @@ Planned features for Lume, in priority order. Items are added here before
 implementation; each becomes a scoped iteration when started. See
 `CHANGELOG.md` for what shipped.
 
+> **当前快照（2026-10-12，Pre-26.10）**：路线已推进到 #36。插件系统、
+> `.lupx` 安装/签名、三层权限与逻辑宿主隔离、独立插件窗口、文件秒搜、
+> 自动动作和提权代理均已落地；本文较早章节保留当时的设计与验收记录，
+> 当前 API/行为以 `docs/PLUGIN_API.md`、`docs/PLUGINS.md`、
+> `docs/ARCHITECTURE.md` 和 `CHANGELOG.md` 为准。
+
 ## 0. ✓ Navigate 主菜单网格化
 
 **状态：已实现（v0.2.2）**
@@ -51,13 +57,13 @@ Navigate 模式的应用条目从长条列表改为方框网格（5 列），支
 0.9）。"kuake" / "kk" → 夸克，"wanmei" → 完美解码。拼音字段仅搜索用，不
 序列化到前端。**后续可扩展**：剪贴板内容的拼音搜索、多音字优化。
 
-## 6. 设置界面
+## 6. ✓ 设置界面
 
-**状态：规划完成（2026-08-03），等待实现。优先级高于插件系统。**
+**状态：已实现（2026-08-03，6.1–6.6 全部完成；后扩展为 9 个分区）。**
 
-独立设置窗口（齿轮按钮 + 托盘入口），左侧 4 大选项（界面 / 系统 / 插件 /
-关于），右下角「保存 / 应用」。完整功能规范见 `docs/SETTINGS.md`，通用
-文件规范见 `docs/NORMS.md`。
+独立设置窗口（齿轮按钮 + 托盘入口），当前为分组卡片布局与设置搜索框：
+外观 / 导航页 / 剪贴板 / 快捷键 / 搜索 / 系统 / 自动化 / 插件 / 关于。
+完整功能规范见 `docs/SETTINGS.md`，通用文件规范见 `docs/NORMS.md`。
 
 子步骤（按顺序实施）：
 - **6.1 ✓ i18n 规范化（2026-08-03 完成）** — 语言文件迁移到
@@ -133,12 +139,16 @@ Navigate 模式的应用条目从长条列表改为方框网格（5 列），支
   chinese_traditional）。**图标提取失败回退改为 `unknow_universal.svg`**（不再
   用字母 tile，移除 tileColor/TILE_COLORS）。SVG 随包打包到 exe 同级 res/
 
-## 7. 插件系统
+## 7. ✓ 插件系统
 
-**状态：v1 已实现（2026-08-30），剪贴板与预览已插件化。**
+**状态：已实现并持续迭代（v1 于 2026-08-30，当前推进到 #36）。**
 
 插件 = 清单（`<base>/plugins/<id>/plugin.toml`）+ 前端贡献（`src/plugins/`）。
-v1 两类贡献，由两个第一方插件完整验证：
+v1 先从 mode/service 两类贡献起步，随后补齐 provider、磁盘 JS 加载、权限
+强制、宿主能力、`.lupx`、沙箱/逻辑宿主隔离、独立窗口与插件自身颜色模式。
+当前完整契约以 `docs/PLUGIN_API.md` 为准。
+
+最早的 v1 由两个第一方插件完整验证：
 
 - **mode 贡献**（整页模式）：`clipboard` 插件——自带 query/rows/selection、
   视图（`ClipboardView`）、模式键处理（`onKey`/`onEscape`）、搜索
@@ -163,7 +173,8 @@ v1 两类贡献，由两个第一方插件完整验证：
   → 前端经 asset 协议取文件、blob URL 动态 import，默认导出
   `{ search(query) }` 即成为 provider。加载失败/形状不对只记录跳过；
   每个插件只尝试一次（不重试刷屏）。信任模型 = 显式放置即信任，
-  `permissions` 仍为预留。示例见 `examples/plugins/web-search/`，
+  `permissions` 当时仍为预留，后在 #26 变为强制执行。示例见
+  `examples/plugins/web-search/`，
   开发指南见 `docs/PLUGINS.md`。
 - **插件管理设置页**：设置新增第 8 分区「插件」（`PluginsPane`）——每个
   插件一行（名称 + 类型/内置/磁盘/版本 chips + 启停 toggle），写
@@ -171,7 +182,7 @@ v1 两类贡献，由两个第一方插件完整验证：
 
 内置插件编译进二进制但与磁盘插件走同一注册表/启停路径。
 
-## 8. Program Files 安装 + LumeSVC 服务 + 管理员启动 + 开机自启
+## 8. ✓ Program Files 安装 + LumeSVC 服务 + 管理员启动 + 开机自启
 
 **状态：已实现（2026-08-04）。**
 
@@ -197,8 +208,10 @@ SYSTEM 级能力（如 USN 全盘索引）铺路。
 - **主程序 = 唯一刷新者**：启动一次 + 每小时（间隔可配）+ 改索引配置即时
   刷新，与服务互不依赖；便携版 / 未注册服务时行为一致。
 
-**后续可扩展**：USN / 全盘增量索引（服务是为此铺路的骨架）；在管道协议上
-扩展服务职责（REFRESH_NOW 推送等）；托盘服务状态实时推送。
+**后续扩展已落地**：服务不再是空转骨架，#20 已把自研 USN/MFT 全盘索引放进
+`lume-svc.exe`，`filesearch.rs` 在 Everything 不可用时分页查询该服务；管道上
+新增 `search` / `status` 协议。#22 又拆出了最小提权注入代理 `lume-agent.exe`。
+仍可扩展：索引持久化、非 NTFS 卷、孤立节点回收和服务状态实时推送。
 
 ## 9. 环境变量同步（WM_SETTINGCHANGE 监听）
 
@@ -293,7 +306,8 @@ SYSTEM 级能力（如 USN 全盘索引）铺路。
 
 ### 10.4 剪贴板页面重新设计
 
-**仅记入规划，方案待定**——由用户后续提供设计后，再开子步骤实现。
+**已由 #13 实现（2026-08-13）**：剪贴板升级为整页模式、分类标签、虚拟列表、
+右键菜单、批量粘贴、撤销删除与设置页联动；本小节保留当时的立项记录。
 
 ### 测试
 

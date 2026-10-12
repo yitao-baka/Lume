@@ -6,6 +6,13 @@
 > 本文是规划文档：§1–3 盘点差距，§4 给取舍原则，§5 是分阶段实现步骤，
 > §6 是与 ROADMAP 的衔接。**每个阶段独立可交付，开始前须按 ROADMAP 惯例另行立项。**
 
+> **状态更新（2026-10-12）**：本文是 P0 之前的规划快照，已归档用于回看决策，
+> 不再代表当前实现。P0–P4 前半、P5 沙箱、P6 逻辑隔离/独立窗口加固、
+> `.lupx` 签名与 #32 插件系统加固均已落地；当前契约唯一事实源是
+> `docs/PLUGIN_API.md`，功能进度见 `docs/ROADMAP.md` #23–#36 与
+> `CHANGELOG.md [Unreleased]`。下文凡写“预留 / 未做 / 未来”的段落均按
+> 当时状态理解。
+
 ---
 
 ## 0. TL;DR
@@ -31,22 +38,23 @@ uTools 的插件生态比 Lume 成熟一个量级，但差距不是均匀分布�
 4. **无热重载、无打包格式**——改一行插件代码要重启 Lume，分发靠手工拷目录。
 5. **数据能力弱**——`storage.json` 是无结构的字符串 KV；uTools 是带
    `_rev` 乐观锁的文档库 + 附件 + 云同步。
-6. **无权限强制**——`permissions` 字段预留了但 v1 不校验。这是 Lume **相对
-   uTools 的反超机会**（uTools 没有运行时权限模型，靠人工审核兜底），而 Lume
-   的「能力按需注入」架构天生适合做这个。
+6. **无权限强制**——当时 `permissions` 字段预留了但 v1 不校验（P3.2 后已变
+   为 fail-closed 强制，P5/P6 又加了 Rust 白名单、沙箱与逻辑宿主令牌）。
+   这是 Lume **相对 uTools 的反超机会**（uTools 没有运行时权限模型，靠人工
+   审核兜底），而 Lume 的「能力按需注入」架构天生适合做这个。
 
 uTools 有而 Lume **明确不学**的：无沙箱 preload + 完整 Node.js 执行模型、
 ubrowser/Sharp/FFmpeg/AI 这类重能力底座、账号与付费分发闭环。理由见 §4。
 
 ---
 
-## 1. 对比基线：Lume 插件系统现状
+## 1. 对比基线：Lume 插件系统（P0 前历史快照）
 
 三部分构成（契约源：`src/plugins/types.ts`、`src/plugins/registry.ts`、
 `src-tauri/src/plugins.rs`）：
 
 - **清单**：`<base>/plugins/<id>/plugin.toml`（id/name/version/kind/
-  description/permissions[预留]/entry/view/keywords/height/icon）。
+  description/permissions[当时预留]/entry/view/keywords/height/icon）。
 - **三类贡献**：`provider`（搜索追加 `{name, path}` 条目）、`mode`
   （`view.html` 渲染进 srcdoc iframe + `window.lume` Promise RPC 桥接，可选
   entry 逻辑钩子）、`service`（onShow/onHide/onQuery 无 UI 钩子）；任意 kind
@@ -58,10 +66,11 @@ ubrowser/Sharp/FFmpeg/AI 这类重能力底座、账号与付费分发闭环。�
   videoPoster/icon`、`search.files`（全盘文件秒搜门面，分页/排序/扩展名过滤）、
   事件 `query/show/hide/key`。
 
-信任模型 = 显式放置即信任；磁盘 JS 经 asset 协议 + blob `import()` 在启动器
-webview 内执行（provider/entry），mode UI 在同源 iframe；`permissions` 不校验。
-启停走 设置→插件（`settings.plugins.disabled`），禁用 provider 立即从合并中
-消失但模块驻留内存；**改代码必须重启 Lume**（每会话只加载一次）。
+信任模型 = 显式放置即信任；当时磁盘 JS 经 asset 协议 + blob `import()` 在
+启动器 webview 内执行（provider/entry），mode UI 在同源 iframe；
+`permissions` 不校验。启停走 设置→插件（`settings.plugins.disabled`），禁用
+provider 立即从合并中消失但模块驻留内存；**改代码必须重启 Lume**（每会话只
+加载一次）。这些边界后续均已改变：见 `PLUGIN_API.md` §6C、§6I、§9。
 
 ## 2. uTools 能力全景（摘要）
 

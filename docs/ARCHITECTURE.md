@@ -19,6 +19,13 @@ Rust Core (src-tauri/src/)
   ├─ plugin_window.rs — detached mode-plugin windows (`plugin-<id>`, first
   │                runtime-created windows): open/focus/close, ready
   │                handshake, state push, geometry remembered per plugin
+  ├─ plugin_host.rs / plugin_net.rs — host capabilities behind plugin RPC
+  │                (HTTP, dialogs, screen, file metadata) + SSRF guards
+  ├─ plugin_store.rs / plugin_fs.rs — document DB, declarative settings and
+  │                plugin-private files
+  ├─ plugin_install.rs / plugin_sign.rs — `.lupx` inspect/install/uninstall,
+  │                staging swap, private-file preservation, ed25519 signatures
+  ├─ plugin_logic.rs / plugin_devwatch.rs — logic-host protocol and dev reload
   ├─ apps.rs     — file search from the index caches, fuzzy + pinyin scoring,
   │                ShellExecuteW launch (+ records recent-opens)
   ├─ cache.rs    — System32 / user / icons SQLite index caches
@@ -36,6 +43,9 @@ Rust Core (src-tauri/src/)
   ├─ everything.rs— Everything voidtools WM_COPYDATA IPC client (no DLL)
   ├─ filesearch.rs— unified file-search facade (Everything / LumeSVC backends)
   ├─ usnidx.rs   — self-hosted NTFS USN/MFT full-drive index (runs in lume-svc)
+  ├─ automation.rs / dirwatch.rs — foreground-window rules and index watching
+  ├─ explorer.rs / appicon.rs / notify.rs — Explorer context, themed icons,
+  │                and notifications
   └─ envwatch.rs — keep the process env block in sync with system env changes
         ▼
 Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
@@ -460,13 +470,15 @@ before adding a field:
 
 ## Tests
 
-Rust unit tests cover the app fuzzy scorer, the real Start Menu scan
-(`src-tauri/src/apps.rs`) and the clipboard store: schema migration, text
-upsert recency, image round-trip/thumbnail, pin ordering & prune exemption,
-delete and clear (`src-tauri/src/clipboard.rs`). Run with `cargo test` — see
-`docs/TESTING.md`.
+Rust unit tests cover the app fuzzy/pinyin scorer, clipboard store and
+migrations, settings defaults/migrations, plugin manifests/permissions/storage,
+`.lupx` installation and signatures, pipe/protocol helpers, filesystem
+indexing primitives, automation and agent helpers. Run with `cargo test` — see
+`docs/TESTING.md`. Frontend behavior and the Windows/WebView2 integration
+surface are verified with the `scripts/cdp_*.mjs` probes.
 
 ## Future
 
-Planned work is tracked in `docs/ROADMAP.md`: the plugin system (started only on
-explicit instruction) and the clipboard-page redesign (design pending).
+Planned work is tracked in `docs/ROADMAP.md`: plugin ecosystem follow-ups
+(market, drag-package install, browser/selection capture), file-search
+hardening, workflow/OCR/AI commands and cross-platform exploration.

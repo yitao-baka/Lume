@@ -72,6 +72,12 @@ All notable changes to Lume are documented here. Format based on
   `tauri icon` 重新生成（浅底黑鸽 artwork，运行期任务栏/托盘的主题图标对
   不变）。
 
+- **发布前文档同步（Pre-26.10）** — README 状态/功能/打包命令更新到插件平台、
+  全盘文件搜索与提权代理；`RULES` / `NORMS` / `ARCHITECTURE` / `SETTINGS` /
+  `TESTING` 按当前三二进制、插件权限与构建/验收流程校正；`ROADMAP` 标记 #6、
+  #7、#8、#10.4 的后续落地，并加入 2026-10-12 当前快照；`PLUGIN_API` 修正
+  权限与沙箱层数措辞；`PLUGIN_GAP_ANALYSIS` 明确归档为 P0 前历史分析。
+
 - **`.lupx` 覆盖安装按版本关系措辞（ROADMAP #28.1）** — 原实现遇到同 id 已装
   插件不看版本号，确认卡永远显示「将覆盖 vX → vY」。现在 Rust 侧对包内/已装
   版本做 semver-ish 比较（点分段数字序、缺段补 0、release 高于 prerelease；

@@ -4,33 +4,52 @@ How to verify Lume.
 
 ## Automated checks
 
-Rust unit tests cover the app fuzzy scorer, the real Start Menu scan and the
-clipboard store (upsert recency, pruning, substring search):
+Rust unit tests and frontend compile checks are the baseline:
 
 ```bash
+pnpm install
+pnpm exec tsc --noEmit
+pnpm run build
 cd src-tauri
+cargo check
 cargo test
 ```
 
-The frontend build catches TypeScript / SolidJS errors:
+Coverage includes the app fuzzy/pinyin scorer, clipboard store and migrations,
+settings defaults/migrations, plugin manifests/permissions/storage, `.lupx`
+inspection/installation/signatures, pipe/protocol helpers, USN index
+primitives, automation helpers and the elevation-agent boundary. The Rust
+suite intentionally does not register a service, show UAC, touch the real
+registry or perform a real injection.
+
+The Windows/WebView2 behavior is verified with `scripts/cdp_*.mjs`. Those
+scripts launch an already built exe, so rebuild first:
 
 ```bash
-pnpm run build
+pnpm run tauri build --debug --no-bundle
+node scripts/cdp_plugin_verify.mjs
 ```
+
+`tauri build` embeds `dist/` into the binary. A bare `cargo build` / `cargo run`
+is a dev build that loads `http://localhost:1420`; it is not suitable for CDP
+smoke tests unless the vite server is also running.
 
 ## Manual verification
 
 Run the app:
 
 ```bash
-pnpm run tauri dev          # dev (needs the vite dev server)
-pnpm run tauri build --no-bundle   # standalone release exe
+pnpm run tauri dev                          # dev: vite + Tauri console
+pnpm run tauri build --debug --no-bundle    # embedded debug exe for CDP
+pnpm run tauri build --no-bundle            # standalone release exe
 ```
 
 The standalone release exe (`src-tauri/target/release/lume.exe`) embeds the
 frontend, shows no console window and does not need `localhost:1420` running —
-that is what to double-click / distribute. The debug exe only works with the
-dev server.
+that is what to double-click / distribute. The debug exe from
+`tauri build --debug --no-bundle` also embeds the frontend and carries a console;
+use it for CDP and manual debugging. A plain `cargo build` debug binary loads the
+dev URL instead.
 
 ### Plugin file drop / pin reorder (P2.2)
 
@@ -53,12 +72,10 @@ dev server.
 2. **Toggle** — press the registered combo: the launcher appears centered with
    the search input focused; it should feel instant (< 50ms target).
 3. **Auto-hide** — click any other window: the launcher dismisses itself.
-4. **Navigate grid** — on show, the main menu is a grid of app boxes (empty
-   query browses all apps). Letter tiles appear first, then each box's **real
-   icon** loads in and replaces the letter. `←` / `→` / `↑` / `↓` move the
-   selection; hover selects; click or `Enter` launches the app and hides.
-   Re-opening or re-searching the same apps shows their icons instantly from
-   the in-memory cache.
+4. **Navigate menu** — on show, the empty query renders the
+   最近使用 / 已固定 / plugin / Explorer bars, not an all-apps browse grid.
+   Type to switch to the results grid. Icons load progressively; keyboard and
+   mouse selection both launch on click / `Enter`.
 5. **Search** — type a fragment (e.g. `code`, `fire`, `note`); matching apps
    stay in the grid, best-ranked first.
 6. **Pinned bar** — right-click a selected app and choose 「固定」to pin it to
@@ -119,11 +136,11 @@ dev server.
 
 1. **Entry** — click the gear button in the launcher's search row, or
    「设置」 in the tray right-click menu: the settings window opens.
-2. **Layout** — the left sidebar shows 界面 / 系统 / 插件 / 关于; clicking
-   swaps the right pane. 「保存」/「应用」 are disabled until a change is made.
-3. **Save vs Apply** — 「应用」writes `settings.toml` and applies immediately,
-   staying in the window; 「保存」does the same and closes it. Both write a
-   backup of the previous file to `backup.toml` first.
+2. **Layout** — the left sidebar shows 外观 / 导航页 / 剪贴板 / 快捷键 /
+   搜索 / 系统 / 自动化 / 插件 / 关于; clicking swaps the right pane.
+   「保存并应用」 is disabled until a change is made.
+3. **Save** — 「保存并应用」 writes `settings.toml`, applies immediately and
+   closes the window. The previous file is copied to `backup.toml` first.
 4. **Settings files** — live under the writable base dir: portable is the exe
    dir (dev: `src-tauri/target/debug/`), installed (exe under `Program Files`)
    is `%LOCALAPPDATA%\Lume\`; `settings/settings.toml` is created from
@@ -149,12 +166,10 @@ dev server.
    `reg query HKLM\Software\Lume\DataDir` points at `%LOCALAPPDATA%\Lume`.
 3. **UAC cancel** — click 注册服务 then choose 否 in the prompt → the UI shows
    操作已取消 and the state is unchanged.
-4. **The service is dormant** — with it running, close Lume, add/remove a file
-   on the Desktop, wait past one cache-refresh interval (set it low, e.g. 5
-   minutes, in 设置→系统 first): `user_cache.db` mtime is **unchanged** (the
-   service never scans). Re-open Lume — it refreshes at startup and finds the
-   new file; with Lume left open, the hourly in-process refresh finds it within
-   one interval.
+4. **File-search service** — with the service running, query a file that is
+   not in the local index. With Everything stopped, Lume should answer through
+   `\\.\pipe\LumeSVC` (the self-hosted USN/MFT backend) and return the path.
+   The launcher's own cache refresh remains independent of the service.
 5. **Portable / no service** — without the service, while Lume runs, change a
    Desktop file and it appears after ~one interval (in-process loop). Behavior
    is identical with or without the service registered.
@@ -166,10 +181,12 @@ dev server.
    HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Lume` shows the quoted
    exe path; after a reboot/logon Lume starts by itself. Disabling deletes the
    value.
-8. **Dev loopback** — `lume-svc.exe --foreground` runs dormant (Ctrl+C quits);
-   the service holds `\\.\pipe\LumeSVC` ready for a future client.
-9. **Bundle** — `pnpm run tauri build` puts `lume-svc.exe` next to `lume.exe`
-   in the installer (lume-svc 作为 cargo bin 随包安装，无需 externalBin).
+8. **Dev loopback** — `lume-svc.exe --foreground` starts the service in a
+   console (Ctrl+C quits) and exposes `\\.\pipe\LumeSVC` for `search`/`status`.
+9. **Bundle** — `pnpm run package:zip` runs the release Tauri build and
+   assembles `lume.exe` + `lume-svc.exe` + `lume-agent.exe` + `languages/` +
+   `res/icons/` into the portable zip under
+   `src-tauri/target/release/bundle/zip/`.
 
 ### Elevation agent (ROADMAP #22)
 
@@ -234,7 +251,8 @@ dev server.
 ### Recent + pinned bars (ROADMAP #10)
 
 > `cargo test` covers the recent store (upsert / dedupe / pruning); the UI is
-> manual-only. Requires a dev build (`pnpm run tauri dev`).
+> manual-only. Use either `pnpm run tauri dev` or an embedded debug/release
+> build.
 
 1. **Recording** — launch a few apps/files from Lume (search, grid, context
    menu, 管理员). Re-open the main menu → 「最近使用」 shows them newest-first.
@@ -259,6 +277,40 @@ dev server.
    「从最近使用中删除」/ 以管理员身份启动 (remove-from-recent sits just before
    the admin item); pin moves it into 「已固定」; remove-from-recent (or `Del` on
    a selected recent entry) drops it from the list without touching the file.
+
+### Plugin platform
+
+> Rebuild before running these probes:
+> `pnpm run tauri build --debug --no-bundle`. The scripts kill stale Lume
+> processes, copy fixtures into `src-tauri/target/debug/plugins/`, launch the
+> exe with a CDP port and print `PASS` / `FAIL`; any failure exits non-zero.
+
+1. **Core plugin contract** — `node scripts/cdp_plugin_verify.mjs` (provider
+   rows + sandboxed mode page + plugin pane), then
+   `node scripts/cdp_plugin_v2_verify.mjs` for the expanded host API.
+2. **Sandbox and permissions** — `node scripts/cdp_sandbox_verify.mjs` proves
+   opaque-origin isolation, bridge behavior and Rust-side command whitelisting.
+   A plugin that calls an undeclared capability must fail with an explicit
+   message.
+3. **Logic isolation and circuit breaker** — `node
+   scripts/cdp_circuit_verify.mjs`; verify three consecutive hook failures mark
+   only that plugin offline, while pure-view modes never accumulate false
+   timeouts.
+4. **Detached windows** — `node scripts/cdp_plugin_window_verify.mjs` and
+   `node scripts/cdp_plugin_blank_verify.mjs`; cover open/focus/state restore/
+   close, geometry memory and the empty-`srcdoc` navigation watchdog.
+5. **Theme override** — `node scripts/cdp_plugin_theme_verify.mjs`; inspect the
+   rendered canvas with the 1x1 screenshot sampler, not the sandbox DOM.
+6. **`.lupx` packages** — `node scripts/cdp_lupx_verify.mjs`; cover inspect,
+   install, overwrite relation (`upgrade` / `reinstall` / `downgrade`),
+   uninstall and private-file preservation.
+7. **HTTP and slow requests** — `node scripts/cdp_http_probe_verify.mjs`
+   (offline local echo server) covers status/headers/text/json, non-2xx,
+   request timeout and post-timeout bridge health.
+8. **Manual item** — real OS file drag into the launcher, real UAC prompts,
+   service/agent registration, taskbar AUMID pinning and actual drag of a
+   detached-window titlebar cannot be fully automated; use the sections above
+   plus `docs/PLUGIN_API.md` §10.
 
 ## Known hotkey conflicts
 

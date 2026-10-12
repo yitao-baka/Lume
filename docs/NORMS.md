@@ -13,8 +13,8 @@ dev 为 `src-tauri/target/debug/` 下）。Lume 因此可以整体拷贝带走�
 ├── settings/      # 设置文件：settings.toml 唯一生效（含 default/backup）
 ├── languages/     # i18n 语言文件（JSON + i18next）
 ├── res/           # 软件资源（图标、音乐等）；res/icons/ 放应用图标
-├── data/          # 程序所有数据库（lume.db 等）
-└── plugins/       # （预留）插件配置，插件系统实现后启用
+├── data/          # lume.db、plugin_store.db 与可重建的索引/图标缓存
+└── plugins/       # 磁盘插件：<id>/plugin.toml + 入口/视图/私有 files/
 ```
 
 **安装模式（Program Files）**：当 exe 位于 `Program Files`（普通用户只读）
@@ -49,11 +49,20 @@ dev 为 `src-tauri/target/debug/` 下）。Lume 因此可以整体拷贝带走�
 
 ## data/ 数据库
 
-- 程序所有 SQLite / 数据库文件放 `data/`。剪贴板历史即 `data/lume.db`。
+- 程序所有 SQLite / 数据库文件放 `data/`：
+  - `lume.db` — 剪贴板历史、最近使用、固定项；
+  - `plugin_store.db` — 插件文档库与声明式设置值；
+  - `system32_cache.db` / `user_cache.db` / `icons.db` — 可随时重建的索引缓存。
 
-## 插件配置（预留）
+## plugins/ 插件目录
 
-- 每个插件一个独立配置文件；插件系统实现后生效，届时再细化。
+- 每个磁盘插件占 `<base>/plugins/<id>/`，清单为 `plugin.toml`，入口/视图
+  资产相对插件目录解析；插件私有文件写在 `<id>/files/`。
+- 清单 `permissions` 是强制执行的能力台账，不是展示字段；新增能力必须同时
+  更新前端 RPC 台账与 Rust 侧 `plugin_perm.rs`。
+- `.lupx` 是插件分发包；安装、签名、覆盖升级与私有文件保留由
+  `plugin_install.rs` / `plugin_sign.rs` 负责。
+- 内置插件（apps / clipboard / preview）与磁盘插件走同一注册表和启停路径。
 
 ## 组件质量（UI）
 
@@ -65,7 +74,7 @@ dev 为 `src-tauri/target/debug/` 下）。Lume 因此可以整体拷贝带走�
 ## 版本号（双版本机制）
 
 - **对外标签**：用户可见版本，位于 `src/appVersion.ts` 的 `APP_VERSION_LABEL`，
-  About 页渲染它（如 `Pre-26.8`，`<年份-月份>` 预发布格式）。
+  About 页渲染它（当前 `Pre-26.10`，`<年份-月份>` 预发布格式）。
 - **内部 semver**：`Cargo.toml` / `tauri.conf.json` / `package.json` 的
   `version`，仅用于构建/打包，**必须满足 semver**（tauri 构建强制校验版本，
   报 `'tauri.conf.json > version' must be a semver string`）。当前为 `2.8.0`。
@@ -76,7 +85,9 @@ dev 为 `src-tauri/target/debug/` 下）。Lume 因此可以整体拷贝带走�
 - **每完成一处改动，立即编译验证**，交付时必须是「可直接运行测试」的状态，
   方便用户马上验证：Rust 侧跑 `cargo check` + 相关单测；前端改动跑
   `pnpm run build` + `pnpm exec tsc --noEmit`；大改动/收尾时用
-  `pnpm run tauri build --no-bundle` 出独立 exe 并启动冒烟测试。
+  `pnpm run tauri build --debug --no-bundle` 出内嵌前端的 debug exe 供 CDP
+  冒烟；发布/手工分发用 `pnpm run tauri build --no-bundle`，便携包用
+  `pnpm run package:zip`。
 - **编译或测试失败不允许声称完成**——如实报告失败输出，修复通过后再交付。
 - 涉及新 i18n 文案时，编译前确认 en / zh-CN / zh-TW 三语键已同步（`Messages`
   类型以 en.json 为准，缺键会导致 tsc 报错）。

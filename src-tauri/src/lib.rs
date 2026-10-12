@@ -441,6 +441,7 @@ pub fn run() {
             plugin_window::plugin_window_push_state,
             plugin_window::plugin_window_close,
             plugin_window::plugin_window_close_report,
+            plugin_window::set_plugin_color_mode,
             plugin_logic::plugin_logic_host_ensure,
             plugin_logic::plugin_logic_host_close,
             plugin_logic::plugin_logic_meta,

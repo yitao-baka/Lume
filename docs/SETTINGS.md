@@ -220,6 +220,16 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 启动器重读注册表；关闭活动模式插件自动回导航页。格式与开发见
 `docs/PLUGINS.md`。
 
+**非 UI 字段（宿主静默写入，设置页不渲染）**：
+
+| 键 | 含义 |
+|---|---|
+| `plugins.window_bounds.<id>` | 独立窗口记住的几何（P6，关闭时写） |
+| `plugins.color_modes.<id>` | 本插件自己的颜色模式（`lume.theme.set`，ROADMAP #36）：`system` \| `light` \| `dark`，缺省 = `system`（跟随启动器）。插件调 `theme.set` 时写；重启、独立窗口建窗（窗口底色 + 任务栏图标变体）与主题翻转时都读它 |
+
+两者都只写 `settings.toml`、**不发 `settings-applied`**：改的是插件自己的
+表面，不需要让整个前端刷新一遍（几何/颜色由发起方或下一次窗口事件自行收敛）。
+
 ### 9. 关于（`about`）
 
 行式布局（对齐 Flutter）：描述（`aboutTagline`）、版本（`APP_VERSION_LABEL`，

@@ -112,6 +112,16 @@ export interface SettingsData {
       delay_ms: number;
     }[];
   };
+  /** Plugin management (Rust `settings.plugins`). Deliberately partial: this
+   * section is mostly Rust-owned (`disabled` / `trusted` / `window_bounds`
+   * are consumed by the backend and the settings pane), and only the field
+   * the launcher windows read is typed here. It is also optional, so
+   * `DEFAULT_SETTINGS` (「恢复默认设置」) stays free of it. */
+  plugins?: {
+    /** Per-plugin color-mode preference (`lume.theme.set`, ROADMAP #36):
+     * plugin id → `"system" | "light" | "dark"`. Absent = `"system"`. */
+    color_modes?: Record<string, string>;
+  };
 }
 
 /** Mirrors the Rust `impl Default for Settings` (src-tauri/src/settings.rs) —

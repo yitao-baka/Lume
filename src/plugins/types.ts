@@ -15,8 +15,20 @@
 
 import type { Component } from "solid-js";
 import type { AppEntry, ClipboardItem, FileSearchOut, PreviewReq } from "../launcher/types";
+import type { ColorMode, PluginColorMode } from "../theme";
 
-export type { FileSearchOut };
+export type { FileSearchOut, PluginColorMode, ColorMode };
+
+/** One plugin's color-mode state (`lume.theme.get`, docs/PLUGIN_API.md §6C). */
+export interface PluginColorState {
+  /** The plugin's own preference (`"system"` when it never set one). */
+  pref: PluginColorMode;
+  /** What the plugin's surfaces render in right now — `pref` resolved against
+   * `host`, i.e. the value its `theme` events carry. */
+  mode: ColorMode;
+  /** The launcher's effective mode, which a `"system"` pref follows. */
+  host: ColorMode;
+}
 
 /** One row of a page's current results — a navigate-grid entry or a clipboard
  * history row. Pages own their rows; the shell only counts and activates
@@ -191,6 +203,20 @@ export interface FeatureEnterInfo {
 /** The capability surface handed to disk plugin factories (v2, uTools-
  * inspired). First-party plugins get the same shape via `createHostApi`. */
 export interface PluginHostApi {
+  theme: {
+    /** Pin **this plugin's own** color mode (ROADMAP #36, docs/PLUGIN_API.md
+     * §6C): `"system"` follows the launcher, `"light"` / `"dark"` force the
+     * plugin's surfaces (page canvas + detached window chrome) whatever the
+     * launcher does. The launcher itself is never affected — no launcher
+     * `data-theme` write, no other plugin's `theme` push touched. Persisted,
+     * so the value holds across restarts and reaches a detached window before
+     * its first paint. Rejects an unknown mode. Permission: none
+     * (plugin-local UI, §6D.6). */
+    set(mode: PluginColorMode): Promise<void>;
+    /** This plugin's color-mode state: its own `pref`, the `mode` its surfaces
+     * render in now, and the launcher's `host` mode a `"system"` pref follows. */
+    get(): Promise<PluginColorState>;
+  };
   app: {
     /** Hide the launcher (equivalent to Esc/blur). */
     hide(): void;
@@ -556,6 +582,15 @@ export interface PluginServices {
    * window (P6, §6G). In a detached window this raises/focuses it (the
    * mode is already detached there). */
   detachMode(pluginId: string): void;
+  /** `theme.set` bridge RPC (ROADMAP #36) — the caller's **own** color-mode
+   * preference. Persisted (`settings.plugins.color_modes`); the caller is
+   * responsible for re-deriving the effective mode afterwards
+   * (`applyPluginColorMode`, registry.ts). Resolves once the value is
+   * durable, so a plugin may read it back at once. */
+  setPluginColorMode(pluginId: string, mode: PluginColorMode): Promise<void>;
+  /** `theme.get` bridge RPC — the caller's color-mode state (mirror + the
+   * launcher's current effective mode). */
+  pluginColorState(pluginId: string): PluginColorState;
 }
 
 /** Structural subset of the shared MenuState (avoids a launcher import). */

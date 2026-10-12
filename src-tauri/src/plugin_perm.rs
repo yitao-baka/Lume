@@ -313,6 +313,7 @@ mod tests {
             dev_mode,
             trust_all,
             window_bounds: HashMap::new(),
+            color_modes: HashMap::new(),
         }
     }
 

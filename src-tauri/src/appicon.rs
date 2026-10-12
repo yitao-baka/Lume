@@ -201,13 +201,23 @@ pub fn apply(app: &AppHandle<impl Runtime>, color_mode: &str) {
     }
     // Detached plugin windows (P6.8): re-derive their variant on a theme
     // flip — the plugin's own icon when one was uploaded, the Lume theme
-    // icon otherwise (icon-less plugins only got it at creation).
+    // icon otherwise (icon-less plugins only got it at creation). Each window
+    // uses its plugin's **effective** mode (ROADMAP #36): a plugin pinned to
+    // dark keeps the dark variant while the launcher flips to light, exactly
+    // like the canvas and chrome of that window.
     let icons = app.state::<PluginIcons>();
+    let prefs = app.state::<crate::settings::SettingsState>().current();
     for (label, win) in app.webview_windows() {
         if let Some(id) = label.strip_prefix("plugin-") {
-            match icons.hicon(id, dark) {
+            let plugin_dark = is_dark(
+                app,
+                prefs
+                    .plugins
+                    .color_mode_for(id, &prefs.appearance.color_mode),
+            );
+            match icons.hicon(id, plugin_dark) {
                 Some(hicon) => set_hicon(&win, hicon),
-                None => set_window_icon(&win, dark),
+                None => set_window_icon(&win, plugin_dark),
             }
         }
     }

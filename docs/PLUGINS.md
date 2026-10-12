@@ -223,7 +223,9 @@ permissions = ["network", "clipboard", "fs.write"]
 | 前台窗口信息 / Explorer 当前文件夹（`app.foreground`） | `window` |
 
 不用声明的：`app.hide/toast/setQuery/openPath/…` 这类基础动作、插件自有数据
-（`storage`/`db`/`settings`）与私有目录 `files/`。完整台账与边界（含「这是
+（`storage`/`db`/`settings`）、私有目录 `files/`，以及 `theme.set`（让插件把
+**自己**的明暗定成浅/深，不跟随启动器 —— 只改本插件的页面画布与独立窗口
+chrome，启动器不受影响；见 `docs/PLUGIN_API.md` §6C「插件自身颜色模式」）。完整台账与边界（含「这是
 前端关卡、不是沙箱」的说明）见 `docs/PLUGIN_API.md` §6D.6 与 §9。
 
 ## 安装与卸载（`.lupx`，P4）

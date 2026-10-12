@@ -776,21 +776,44 @@ pub fn set_panel_frame_border(win: &WebviewWindow, color_mode: &str) {
     set_dwm_border(win, Some(panel_surface_rgb(win, color_mode)))
 }
 
+/// The two solid panel surfaces — `PANEL_SURFACE_BG` in src/theme.ts, the same
+/// pair `theme.css` uses for `--surface`.
+pub(crate) const PANEL_SURFACE_DARK: (u8, u8, u8) = (30, 30, 32);
+pub(crate) const PANEL_SURFACE_LIGHT: (u8, u8, u8) = (251, 251, 253);
+
 /// The theme's solid panel surface (`src/theme.css` `--surface`) for a color
 /// mode setting — the one value shared by the launcher panel, the DWM frame
 /// strip, the default plugin-page canvas and `PANEL_SURFACE_BG`
 /// (src/theme.ts); `"system"` follows the OS app theme (the same source the
 /// frontend's `prefers-color-scheme` resolves against).
-fn panel_surface_rgb(win: &WebviewWindow, color_mode: &str) -> (u8, u8, u8) {
+///
+/// `pub(crate)`: a detached plugin window paints the same value as its own
+/// opaque canvas, in the PLUGIN's effective mode (plugin_window.rs).
+pub(crate) fn panel_surface_rgb(win: &WebviewWindow, color_mode: &str) -> (u8, u8, u8) {
     let dark = match color_mode {
         "light" => false,
         "dark" => true,
         _ => win.theme().map(|t| t == tauri::Theme::Dark).unwrap_or(true),
     };
     if dark {
-        (30, 30, 32)
+        PANEL_SURFACE_DARK
     } else {
-        (251, 251, 253)
+        PANEL_SURFACE_LIGHT
+    }
+}
+
+/// `panel_surface_rgb` for a window that does not exist yet (the detached
+/// plugin window's builder call): `"system"` resolves through the main
+/// window's OS app theme, exactly as it does for a live window. A missing main
+/// window can only mean the launcher is between windows — dark is the same
+/// fallback `panel_surface_rgb` uses.
+pub(crate) fn panel_surface_rgb_for(app: &AppHandle, color_mode: &str) -> (u8, u8, u8) {
+    match app.get_webview_window("main") {
+        Some(win) => panel_surface_rgb(&win, color_mode),
+        None => match color_mode {
+            "light" => PANEL_SURFACE_LIGHT,
+            _ => PANEL_SURFACE_DARK,
+        },
     }
 }
 

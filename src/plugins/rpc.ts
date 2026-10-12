@@ -7,7 +7,7 @@
 //! id — only the `PluginServices` differ (the detached window answers
 //! window-locally where it can and forwards launcher-bound actions).
 
-import type { PluginServices } from "./types";
+import type { PluginColorMode, PluginServices } from "./types";
 import { createHostApi } from "./hostApi";
 import { plog } from "./log";
 
@@ -60,6 +60,11 @@ export async function execHostRpc(
       return api.app.foreground();
     case "app.detach":
       return api.app.detach();
+    case "theme.set":
+      // `mode` is validated inside the host API (a page can pass anything).
+      return api.theme.set(String(args.mode ?? "") as PluginColorMode);
+    case "theme.get":
+      return api.theme.get();
     case "clipboard.writeImage":
       return api.clipboard.writeImage(a.data);
     case "clipboard.writeFiles":

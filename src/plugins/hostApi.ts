@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
+import { normalizePluginColorMode } from "../theme";
 import type {
   BulkDocResult,
   DialogOptions,
@@ -83,7 +84,27 @@ export function createHostApi(
     hostToken
       ? invoke(cmd, { ...(args ?? {}), hostToken })
       : invoke(cmd, args)) as typeof invoke;
-  return guardHostApi(id, {    app: {
+  return guardHostApi(id, {    theme: {
+      set: async (mode) => {
+        // Validate here, not in the services: both hosts (launcher + detached
+        // window) get the same rejection, and a page's `theme.set(undefined)`
+        // fails loudly instead of silently pinning nothing.
+        const pref = normalizePluginColorMode(mode);
+        if (!pref) {
+          throw new Error(
+            `theme.set: mode must be "system", "light" or "dark" (got ${JSON.stringify(mode)})`
+          );
+        }
+        plog.debug(id, "theme.set:", pref);
+        await services.setPluginColorMode(id, pref);
+      },
+      get: async () => {
+        const state = services.pluginColorState(id);
+        plog.debug(id, "theme.get:", state.pref, "→", state.mode, "(host", state.host + ")");
+        return state;
+      },
+    },
+    app: {
       hide: () => {
         plog.debug(id, "app.hide");
         services.resetAndHide();

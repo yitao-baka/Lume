@@ -12,7 +12,7 @@
 import { createSignal } from "solid-js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
+import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginColorMode, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { HOST_PLUGIN_API } from "./types";
 import { capSnapshot, createIframeView, injectBridge } from "./iframeBridge";
 import { createListTemplateMode } from "./listTemplate";
@@ -21,6 +21,13 @@ import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
 import { currentThemeMode } from "../theme";
+import {
+  pluginColorMode,
+  pluginColorPref,
+  seedPluginColorPrefs,
+  setPluginColorPref,
+  type PluginColorSource,
+} from "./themePrefs";
 import { t } from "../i18n";
 export {
   APPS_MODE,
@@ -547,22 +554,38 @@ function createDiskModeInstance(
           query: query(),
           enter: enterPayload,
           settings: settingsValues,
-          theme: currentThemeMode(),
+          theme: pluginColorMode(m.id, currentThemeMode()),
+          // The plugin's own preference rides along: the detached window
+          // derives its OWN chrome from (pref, launcher setting) — the
+          // effective mode above cannot say whether an override is in play,
+          // and `"system"` must keep following the OS live.
+          themePref: pluginColorPref(m.id),
           ...(pending?.view ? { snapshot: pending.view } : {}),
         },
       }).catch((err) => plog.error(m.id, "detached state push failed:", err));
     },
-    pushTheme: (t) => {
-      void invoke("plugin_window_push_state", { id: m.id, state: { theme: t } }).catch((err) =>
-        plog.error(m.id, "detached theme push failed:", err)
-      );
+    pushTheme: (t, pref) => {
+      // Diagnostic tap (docs/PLUGIN_API.md §10): cross-window state pushes are
+      // otherwise invisible from the launcher side — the receiving window is a
+      // different target. Reads the value AND the mirror state that produced
+      // it (a stale mirror here is what a `themePref`-driven flip looks like).
+      const w = window as unknown as { __pwPush?: unknown[] };
+      (w.__pwPush ??= []).push({ id: m.id, theme: t, themePref: pref });
+      (w.__pwPush as unknown[]).splice(0, Math.max(0, (w.__pwPush as unknown[]).length - 60));
+      void invoke("plugin_window_push_state", {
+        id: m.id,
+        state: { theme: t, themePref: pref },
+      }).catch((err) => plog.error(m.id, "detached theme push failed:", err));
     },
     onShow: () => hook("onShow"),
   });
   // Theme replays (P5 sandbox follow-up): the opaque iframe cannot read the
   // launcher document, so the host pushes the color mode — on the ready
   // handshake below and on every `data-theme` flip (see the observer at the
-  // bottom of this module).
+  // bottom of this module). The value is this plugin's **effective** mode: a
+  // `theme.set` override pins it, `"system"` follows the launcher (ROADMAP
+  // #36). Only `--lume-page-bg` and `lume.on.theme` ride it — the launcher's
+  // own palette never moves.
   themePosters.set(m.id, (t) => {
     if (viewReady) postEv("theme", t);
   });
@@ -584,7 +607,7 @@ function createDiskModeInstance(
       // raced the srcdoc document).
       postEv("query", query());
       postEv("show");
-      postEv("theme", currentThemeMode());
+      postEv("theme", pluginColorMode(m.id, currentThemeMode()));
       if (enterPayload) postEv("enter", enterPayload);
       if (settingsValues) postEv("settings", settingsValues);
       // Attach-back restore (P6.5): the detached window's final page state,
@@ -606,6 +629,14 @@ function createDiskModeInstance(
   // distinguishable from one that never received anything.
   const postEv = (type: string, payload?: unknown) => {
     plog.debug(m.id, `event → ${type}`, payload ?? "");
+    // Diagnostic tap (docs/PLUGIN_API.md §10): the color mode a page was told
+    // to render in is invisible from outside (the sandboxed document is
+    // unreachable), so probes read every delivered value here instead.
+    if (type === "theme") {
+      const w = window as unknown as { __themeLog?: unknown[] };
+      (w.__themeLog ??= []).push({ id: m.id, mode: payload });
+      (w.__themeLog as unknown[]).splice(0, Math.max(0, (w.__themeLog as unknown[]).length - 60));
+    }
     post(type, payload);
   };
   let viewReady = false;
@@ -1052,7 +1083,11 @@ const detachedIds = new Set<string>();
  * push fires at window creation, before the page's iframes exist. */
 const detachedSuppliers = new Map<
   string,
-  { push: (show: boolean, includeSnapshot?: boolean) => void; pushTheme: (t: string) => void; onShow: () => void }
+  {
+    push: (show: boolean, includeSnapshot?: boolean) => void;
+    pushTheme: (t: string, pref: PluginColorMode) => void;
+    onShow: () => void;
+  }
 >();
 
 // ── 状态快照（P6.5）──
@@ -1089,14 +1124,46 @@ const directPosters = new Map<string, (type: string, payload?: unknown) => boole
 // The host owns the color mode, so it pushes it: `lume.on.theme = (mode) => …`
 // receives `"light" | "dark"` on the ready handshake and whenever the
 // launcher's `data-theme` flips (颜色模式 setting, or the OS in system mode).
+// Since ROADMAP #36 the payload is the PLUGIN's effective mode: an override
+// set through `lume.theme.set` pins it, so a pinned plugin's pushes stop
+// moving with the launcher (and the launcher never moves with the plugin).
 /** Per disk mode page: the closure that posts a theme value into its iframe
  * (no-op until the page's view is ready). */
 const themePosters = new Map<string, (t: string) => void>();
 
 function postThemeEverywhere() {
-  const t = currentThemeMode();
-  for (const post of themePosters.values()) post(t);
-  for (const s of detachedSuppliers.values()) s.pushTheme(t);
+  const host = currentThemeMode();
+  // Per plugin: the effective (override-aware) value, so a pinned plugin does
+  // not even receive a flip when the launcher's own mode changes.
+  for (const [id, post] of themePosters) post(pluginColorMode(id, host));
+  for (const [id, s] of detachedSuppliers) s.pushTheme(pluginColorMode(id, host), pluginColorPref(id));
+}
+
+/** Seed the preference mirror from a settings snapshot
+ * (`settings.plugins.color_modes`); called by the composition root at boot
+ * and on every `settings-applied`. After the mirror moves, every live surface
+ * is re-pushed — one code path, so a value changed outside `theme.set` (a
+ * hand-edited settings.toml, a plugin reload) still lands everywhere. */
+export function applyPluginColorPrefsFromSettings(src: unknown): void {
+  seedPluginColorPrefs(src);
+  postThemeEverywhere();
+}
+
+/** `lume.theme.set` (ROADMAP #36): the plugin pinned its own color mode. The
+ * caller has already persisted it; this records the mirror and re-derives the
+ * effective mode onto whichever surface shows the page — the launcher's
+ * iframe or the detached window. The launcher's own `data-theme` is not
+ * touched: the override is plugin-scoped by construction, since only this
+ * plugin's `theme` events and its own window carry it. */
+export function applyPluginColorMode(
+  id: string,
+  pref: PluginColorMode,
+  source: PluginColorSource = "main"
+): void {
+  setPluginColorPref(id, pref, source);
+  const mode = pluginColorMode(id, currentThemeMode());
+  themePosters.get(id)?.(mode);
+  detachedSuppliers.get(id)?.pushTheme(mode, pref);
 }
 
 // applyColorMode writes `data-theme` (and system mode rewrites it on OS

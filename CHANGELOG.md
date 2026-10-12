@@ -8,6 +8,21 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件自身颜色模式（`lume.theme.set`，ROADMAP #36）** — 插件可以把自己的
+  明暗定成浅/深（`"system"` 仍跟随启动器），**独立窗口与启动器内嵌两种形态
+  都生效，而启动器自身主题不动**。生效值覆盖该插件的全部表面：模式页画布
+  （注入的 `--lume-page-bg`）、`theme` 事件载荷、独立窗口的 chrome/窗口底色/
+  任务栏图标变体；值持久化在 `settings.plugins.color_modes`（静默轻写，不
+  触发 `settings-applied`），所以重启与独立窗口首帧就是它。权限免声明
+  （只改插件自己的表面）；`theme.get()` 回读 `{pref, mode, host}`。宿主侧
+  新增 `themePrefs.ts` 镜像 + `plugin-color-mode` 跨窗口回传事件；Rust 侧
+  `set_plugin_color_mode`（归属强制）+ 建窗/翻转时按插件生效模式取窗口底色
+  与图标变体。`docs/PLUGIN_API.md` §6B.1/§6C/§6D.6/§6G.4/§10、`docs/PLUGINS.md`、
+  `docs/ARCHITECTURE.md`、`docs/SETTINGS.md` 同步；示例 hello-mode 加了切换
+  按钮（并在搜索框里认 `theme:dark|light|system`，便于脚本驱动）。
+
+### Added
+
 - **`app.detach` 桥接接口 + `detach_button` 清单开关（P6）** —
   `lume.app.detach()` 把调用方的模式页分离为独立窗口（快照/建窗/回放与内置
   悬停按钮同一条链路；已在独立窗口内调用则聚焦本窗口）。内置的「在独立窗口
@@ -19,6 +34,22 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **分离窗口的 `emit_to` 广播串台 + 关一个窗口连带关另一个（ROADMAP #36）** —
+  Tauri 的 JS `listen()` 默认目标是 `EventTarget::Any`，而 `emit_to` 的过滤器
+  只看**监听器**目标（每个 webview 都会被遍历），于是每个 `plugin-*` 窗口都
+  收到了**所有**其它插件的 `plugin-state`/`plugin-window-*` 流量。此前载荷对
+  所有插件相同（`theme` = 宿主模式），所以一直没暴露；本次载荷带上插件私有
+  值后立刻显形：hello-mode 的独立窗口按 file-search 的 `themePref` 把自己刷成
+  了浅色。修法：分离窗口里插件私有的三个监听显式带
+  `{ target: getCurrentWindow().label }`（应用级的 `settings-applied` 保持全局）。
+  顺带修掉一个更严重的既有隐患：两个独立窗口并存时，任一窗口的关闭请求会被
+  另一个也收到，关一个连带关另一个。
+  验证：`scripts/cdp_plugin_theme_verify.mjs` **28/28**（修前 ⑥/⑦ 全红）、
+  `cdp_plugin_window_verify` **16/16** 无回归。
+- **`cdp_sandbox_verify` ③h 断言去硬编码**——它断言 iframe 里的 Tab「切回导航页」，
+  实际是**循环**切页，下一站取决于当前启用的插件集合：导航页后面排着磁盘 mode 时
+  `.plugin-frame` 仍在，检查恒红（ROADMAP #32.11 已记为既有失败）。改成断言「激活
+  模式变了」（契约本身），脚本 **14/14**。
 - **独立窗口标题栏槽位拖动兜底（ROADMAP #35，P6.9）** — translator 等插件的
   独立窗口只有「翻译」标题文字处能拖动：chrome 行中段整块被 titlebar 槽
   iframe 占满，插件把槽位当宿主形态判别器（纯空白页、无 JS），而老契约

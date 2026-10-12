@@ -1,8 +1,14 @@
 <!doctype html>
-<html>
+<html data-theme="dark">
 <head>
 <meta charset="utf-8">
 <style>
+  /* 明暗两套（镜像宿主 theme.css 的令牌）——宿主通过 lume.on.theme 推送本插件
+     **生效**的明暗，页面据此切换；不自绘背景时画布由宿主给的
+     --lume-page-bg 决定，这里只给文字上色，免得暗色画布上黑字看不见。 */
+  html { color-scheme: light dark; }
+  html[data-theme="dark"] { color: #f2f2f4; }
+  html[data-theme="light"] { color: #1c1c1e; }
   body { font: 14px "Segoe UI", sans-serif; margin: 0; padding: 18px 22px;
          background: transparent; color: inherit; }
   h1 { margin: 0 0 4px; font-size: 18px; }
@@ -36,6 +42,10 @@
     <button id="phReset">恢复默认占位文字</button>
   </div>
   <div class="row">
+    <button id="theme">切换本插件颜色模式（theme.set）</button>
+    <span>本插件颜色：<code id="themeView">…</code></span>
+  </div>
+  <div class="row">
     <button id="sub">接管搜索框（setSubInput）</button>
     <button id="subEnd">交还搜索框（removeSubInput）</button>
     <span>子输入收到：<code id="subView">（未接管）</code></span>
@@ -46,7 +56,15 @@
     var $ = function (id) { return document.getElementById(id); };
     var render = function () { $("countView").textContent = String(n); };
 
-    lume.on.query = function (q) { $("q").textContent = q || "（空）"; };
+    lume.on.query = function (q) {
+      $("q").textContent = q || "（空）";
+      // 脚本化驱动：搜索框里输入 theme:dark / theme:light / theme:system
+      // 与点上面那颗按钮等价（同一个 setTheme）。手动点按钮、脚本输入查询
+      // 走的是同一条 lume.theme.set 链路。
+      if (q === "theme:dark" || q === "theme:light" || q === "theme:system") {
+        setTheme(q.slice(6));
+      }
+    };
     lume.on.show = function () { /* 每次呼出 */ };
     // 接管搜索框后，宿主把每一次按键送到这里（不再触发常规搜索）。
     lume.on.subInput = function (text) { $("subView").textContent = text || "（空）"; };
@@ -54,6 +72,35 @@
     lume.on.enter = function (info) {
       $("enterView").textContent = info.code + " · " + info.type + " · " + info.payload;
     };
+
+    // ── 本插件颜色模式（lume.theme.set / .get）──
+    // 载荷是本插件**生效**的明暗：自己 pin 了 light/dark 就是那个值，否则
+    // 跟随宿主。宿主只推本插件的值——启动器自身的主题不受影响。
+    // pref 轮换 system → dark → light → system。
+    var themeState = { pref: "system", mode: "dark", host: "dark" };
+    function renderTheme() {
+      $("themeView").textContent = themeState.pref +
+        "（生效 " + themeState.mode + "，宿主 " + themeState.host + "）";
+    }
+    lume.on.theme = function (mode) {
+      document.documentElement.dataset.theme = mode === "light" ? "light" : "dark";
+      themeState.mode = mode;
+      renderTheme();
+    };
+    function setTheme(mode) {
+      lume.theme.set(mode).then(function () { return lume.theme.get(); }).then(function (s) {
+        themeState = s;
+        renderTheme();
+      }).catch(function (err) {
+        $("themeView").textContent = "失败：" + err;
+      });
+    }
+    $("theme").onclick = function () {
+      lume.theme.get().then(function (s) {
+        setTheme(s.pref === "system" ? "dark" : s.pref === "dark" ? "light" : "system");
+      });
+    };
+    lume.theme.get().then(function (s) { themeState = s; renderTheme(); });
 
     $("toast").onclick = function () { lume.app.toast("来自 hello-mode 的问候 👋"); };
     $("clip").onclick = function () { lume.clipboard.writeText("hello from hello-mode"); };

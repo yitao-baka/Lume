@@ -2550,3 +2550,75 @@ WebView2 会**丢掉后一个导航**：
   鼠标）、`__dragStarts` 均为 1（去重生效）。
 - 回归：translator / file-search / titlebar-demo 三槽页注入逐一对拍；
   hello-mode（无 titlebar）路径未触碰。
+
+## 36. 插件自身颜色模式（`lume.theme.set`，已实现）
+
+需求：插件能改自己的颜色模式，**独立窗口与启动器内嵌两种形态都生效**，且
+**只作用于插件本身、不连带启动器**。translor 早就自绘了自己的主题令牌与
+切换按钮，但那只在页内生效 —— 独立窗口的 chrome（标题栏 / 窗口底色 / 任务栏
+图标变体）与页面画布（宿主注入的 `--lume-page-bg`）仍然跟着启动器，深色插件
+叠在浅色窗口里。
+
+### 36.1 实现
+
+- **偏好与生效分离**：每个插件一份 `pref ∈ {system, light, dark}`（`system`
+  = 跟随启动器），生效模式 = `pref === "system" ? 启动器有效模式 : pref`。
+  只有**生效模式**会进入该插件的表面：`theme` 事件载荷、页面画布变量、独立
+  窗口自身的 document 主题（chrome）、窗口底色（`background_color`）与任务栏
+  图标变体。启动器自己的 `data-theme`、面板、其它插件页全程不动。
+- **桥接**：`lume.theme.set(mode)` / `get()`（`iframeBridge.tsx` 客户端 +
+  `rpc.ts` 路由 + `hostApi.ts` 的 `theme` 组）。输入校验在 hostApi 一处
+  （非法值 reject，两个宿主同一份错误）；免权限（§6D.6）。
+- **持久化**：`settings.plugins.color_modes`（`set_plugin_color_mode`，
+  与 `window_bounds` 同样的静默轻写，不发 `settings-applied`）。这样重启与
+  **独立窗口建窗的首帧**就对，不会先按启动器主题画一帧再翻。
+- **镜像与跨窗口收敛**：`src/plugins/themePrefs.ts` 是内存镜像（registry
+  推事件、`pluginWindow.tsx` 建窗首帧、`pluginLogic.tsx` 的 `ctx` 都读它）。
+  在独立窗口里改偏好时 Rust 回发 `plugin-color-mode` 到 main，启动器据此更新
+  镜像 —— 否则关窗回启动器后仍会推旧值。`plugin-state` 推送额外带 `themePref`
+  （只带生效值无法判断是 pin 还是跟随，`system` 还得跟系统）。
+- **Rust**：`Plugins::color_mode_for`（`settings.rs`，与前端
+  `pluginEffectiveColorMode` 同规则）、建窗时的 `panel_surface_rgb_for`
+  （窗口底色用插件生效色）、`appicon::apply` 逐窗口按各自插件的模式选图标
+  变体、`set_plugin_color_mode`（归属由窗口 label/令牌强制，只能改自己）。
+
+### 36.2 实测踩坑
+
+- **`emit_to` 的广播陷阱（重要）**：Tauri 的 JS `listen()` 默认目标
+  `EventTarget::Any`，而 `emit_to` 的过滤器**只看监听器目标**（每个 webview
+  都会被遍历）—— 不带 `target` 的监听器会收到**所有**其它插件的 `emit_to`
+  流量。此前载荷对所有插件都一样（`theme` = 宿主模式），所以从未暴露；一旦
+  载荷带插件私有值（`themePref`）就串台：hello-mode 的窗口按 file-search 的
+  `themePref` 把自己刷成了浅色。修法：分离窗口里所有插件私有事件的监听显式
+  `{ target: getCurrentWindow().label }`（`plugin-state` / `plugin-window-shown`
+  / `plugin-window-close-requested`）；顺带修掉一个更严重的既有隐患：两个
+  独立窗口并存时，关掉一个会连带关掉另一个（关闭请求也是广播的）。
+- **沙箱帧不可探测**：srcdoc 帧的 CDP execution context 对宿主 target 不可见，
+  `DOM.getDocument({pierce: true})` 也查不到它的节点（实测 `querySelector`
+  返回 0）—— 想验证「页面真的变深了」只能采样**渲染结果**：1×1
+  `Page.captureScreenshot` clip + node `zlib` 解 PNG 取像素。页面侧的动作则由
+  示例页的 `on.query` 钩子（`theme:dark|light|system`）驱动，与它那颗按钮
+  走同一条 `lume.theme.set`。
+- **启动器窗口不能 `cargo build` 直出**：`cargo build` 产出的 exe 走 dev 模式，
+  页面指 `http://localhost:1420`（无 vite 时白屏，CDP 找不到 `#search-input`）。
+  CDP 冒烟必须 `pnpm run tauri build --debug --no-bundle`。
+
+### 验证
+
+- 新增 `scripts/cdp_plugin_theme_verify.mjs` **28/28**：浅色基线 → 页面 pin
+  深色（画布像素转 `#1e1e20`，启动器面板仍 `#fbfbfd`、`data-theme` 仍 light、
+  `settings.plugins.color_modes` 落盘、`__pluginThemes`/`__themeLog` 有记录）
+  → 启动器切深色而插件 pin 浅色（画布浅、面板深）→ 分离窗口 chrome 与窗口内
+  画布都是插件色 → 窗口内改偏好（Rust 事件回传，`source="window"`）→ 启动器
+  翻转不影响已 pin 的窗口 → 关窗回启动器仍是 pin 的值。
+- 回归：`cdp_plugin_window_verify` **16/16**、`cdp_sandbox_verify` **14/14**
+  （顺带把 ③h 的硬编码断言改成「激活模式变了」——它一直假设 Tab 的下一站是
+  导航页，插件集合一变就红，见 #32.11 的同类记录）、`cdp_plugin_verify` OK、
+  `cdp_p3_verify` **36/9** 与既有基线逐项一致（本机 notes/p3store 默认停用，
+  启用夹具后即为基线值）。
+- 用户指定的测试载体 translator（`LumePlugins/translator`）同步接线：主题
+  按钮与设置页主题下拉经 `lume.theme.set` 上报（`1.2.0`），实机**真鼠标点击**
+  验证 15/15（`Input.dispatchMouseEvent` 打在它标签栏那颗对比度按钮上：页内
+  转深 / 启动器不变 / 偏好落盘 / 启动器翻转不影响 pin / 分离后窗口 chrome 跟
+  插件）。截图 `test/translator_theme_launcher_dark.png`（深色插件页嵌在浅色
+  启动器里）与 `test/translator_theme_window.png`（深色启动器下的浅色插件窗口）。

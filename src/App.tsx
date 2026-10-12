@@ -14,7 +14,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { Dynamic } from "solid-js/web";
 import { resolveLocale, setLocale, t, type Messages } from "./i18n";
-import { applyColorMode } from "./theme";
+import { applyColorMode, currentThemeMode, normalizePluginColorMode } from "./theme";
+import { pluginColorMode, pluginColorPref } from "./plugins/themePrefs";
 import type { SettingsData } from "./settings/types";
 import "./App.css";
 import type { ClipKind, MenuState } from "./launcher/types";
@@ -27,6 +28,8 @@ import { createKeyRouter } from "./launcher/keyboard";
 import { SearchBox, type SearchBoxPage } from "./shell/SearchBox";
 import {
   allPlugins,
+  applyPluginColorMode,
+  applyPluginColorPrefsFromSettings,
   applyPluginSettings,
   definePlugin,
   deliverFeature,
@@ -103,6 +106,10 @@ function App() {
   // Apply imperative config immediately (locale + theme are not signal-driven).
   setLocale(resolveLocale(_a?.language ?? "system"));
   applyColorMode(_a?.color_mode ?? "system");
+  // Per-plugin color-mode overrides (ROADMAP #36) before any page renders —
+  // the first push into a plugin page's iframe must already be its effective
+  // mode, not the launcher's.
+  applyPluginColorPrefsFromSettings(_cfg?.plugins?.color_modes);
   /** Measured column count of a bar grid — drives "one row" (collapsed slice)
    * and the 展开 button's visibility. */
   const [barCols, setBarCols] = createSignal(6);
@@ -281,6 +288,18 @@ function App() {
     },
     resetAndHide: () => void resetAndHide(),
     detachMode: (pluginId) => void detachMode(pluginId),
+    setPluginColorMode: async (pluginId, mode) => {
+      // ROADMAP #36 — the plugin pins its OWN color mode. Persist first (the
+      // write is the contract: a resolved promise means the value survives a
+      // restart), then move the live surfaces. Daemon errors reach the page
+      // through the bridge reply, so a failed write never looks applied.
+      await invoke("set_plugin_color_mode", { id: pluginId, mode });
+      applyPluginColorMode(pluginId, mode);
+    },
+    pluginColorState: (pluginId) => {
+      const host = currentThemeMode();
+      return { pref: pluginColorPref(pluginId), mode: pluginColorMode(pluginId, host), host };
+    },
     persistLastPage,
     scheduleResize: () => sizer.scheduleResize(),
     searchToken: () => requestSeq,
@@ -464,6 +483,11 @@ function App() {
       const s = await invoke<SettingsData>("get_settings");
       setLocale(resolveLocale(s.appearance.language));
       applyColorMode(s.appearance.color_mode);
+      // Per-plugin color modes ride every settings refresh: the settings
+      // window's 「恢复默认设置」, a hand-edited settings.toml and our own
+      // `theme.set` writes all land here, and a changed entry re-pushes the
+      // plugin's effective mode onto its live surfaces.
+      applyPluginColorPrefsFromSettings(s.plugins?.color_modes);
       document.documentElement.style.setProperty(
         "--entry-size",
         s.appearance.entry_size + "px"
@@ -679,6 +703,23 @@ function App() {
       if (!ok) showToast(t("pluginActionUnavailable", { id: pluginId }));
     });
     onCleanup(() => unlistenPwRedirect());
+    // `theme.set` from another window (a detached plugin window, or the
+    // plugin's logic iframe): the write is already durable in Rust, but this
+    // window owns the preference mirror every `theme` push derives from —
+    // without this the launcher would keep pushing the pre-change mode after
+    // the plugin comes back from its detached window (ROADMAP #36).
+    const unlistenPluginColorMode = await listen<{ id: string; mode: string }>(
+      "plugin-color-mode",
+      (e) => {
+        const pref = normalizePluginColorMode(e.payload?.mode);
+        if (!pref) {
+          console.error("[plugins] bad color mode from a plugin window:", e.payload?.mode);
+          return;
+        }
+        applyPluginColorMode(e.payload.id, pref, "window");
+      }
+    );
+    onCleanup(() => unlistenPluginColorMode());
 
     // Settings-pane plugin settings (plugin_store::plugin_settings_put →
     // "plugin-settings"): the values changed in the settings window, hand the

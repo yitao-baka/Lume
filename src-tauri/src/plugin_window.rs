@@ -43,6 +43,12 @@
 //! (rasterized by the launcher's webview and uploaded as a base64 PNG, since
 //! Rust has no SVG decoder); icon-less plugins keep the Lume theme icon.
 //! Both are applied before the first `show()`.
+//!
+//! Color mode (ROADMAP #36): everything this window paints on its own —
+//! the opaque canvas behind the page, the taskbar/alt-tab icon variant, and
+//! the document theme `pluginWindow.tsx` applies — keys off the **plugin's**
+//! effective color mode (`settings.plugins.color_modes`, `lume.theme.set`),
+//! never the launcher's. The launcher's own windows are untouched.
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -121,6 +127,11 @@ pub async fn plugin_window_open(
     let (width, height) = remembered
         .map(|b| (b.width, b.height))
         .unwrap_or((720.0, fallback_height));
+    // The window opens in the PLUGIN's color mode (its own `lume.theme.set`
+    // preference, else the launcher's) — the plugin's page is the only content
+    // here, and a window that opened in the launcher's mode would flash the
+    // wrong canvas before the page's first paint (ROADMAP #36).
+    let plugin_mode = snapshot.plugins.color_mode_for(&id, &snapshot.appearance.color_mode);
     // Theme before first paint, same as the main/settings windows.
     let config_json = serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".into());
     // Frameless like the launcher — the page draws its own titlebar
@@ -128,6 +139,14 @@ pub async fn plugin_window_open(
     // transparent): Win11 rounds the corners via DWM and tao keeps its native
     // invisible resize borders, which a transparent resizable window would
     // turn into a visible dead zone (see window.rs redock notes).
+    //
+    // The opaque canvas is the theme's surface color, same as the preview
+    // window: the plugin pages are cross-process (OOPIF) frames — with the
+    // default canvas their transparent pixels composite against WebView2's own
+    // dark background (#121212) instead of anything the host page paints. The
+    // color is the PLUGIN's effective surface, so a dark-pinned plugin on a
+    // light launcher does not open on a light canvas for a frame.
+    let (r, g, b) = crate::window::panel_surface_rgb_for(&app, plugin_mode);
     let mut builder = WebviewWindowBuilder::new(
         &app,
         &label,
@@ -139,11 +158,7 @@ pub async fn plugin_window_open(
     .resizable(true)
     .decorations(false)
     .shadow(true)
-    // Opaque canvas in the theme's surface color, same as the preview window:
-    // the plugin pages are cross-process (OOPIF) frames — with the default
-    // canvas their transparent pixels composite against WebView2's own dark
-    // background (#121212) instead of anything the host page paints.
-    .background_color(tauri::window::Color(30, 30, 32, 255))
+    .background_color(tauri::window::Color(r, g, b, 255))
     .visible(false)
     .initialization_script(&format!("window.__LUME_CONFIG__ = {config_json};"));
     builder = match remembered {
@@ -172,12 +187,14 @@ pub async fn plugin_window_open(
     }
     // Icon before the first paint: the plugin's own (uploaded at detach) or
     // — for icon-less plugins — the theme-matched Lume icon, which
-    // `appicon::apply` never covered (created after startup).
+    // `appicon::apply` never covered (created after startup). The variant
+    // follows the plugin's effective mode, not the launcher's: the taskbar
+    // entry belongs to this window.
     if let Some(b64) = icon_png.as_deref() {
         icons.remember(&id, b64);
     }
-    if !appicon::apply_plugin_window(&win, &icons, &id, &snapshot.appearance.color_mode) {
-        appicon::apply_window(&win, &snapshot.appearance.color_mode);
+    if !appicon::apply_plugin_window(&win, &icons, &id, plugin_mode) {
+        appicon::apply_window(&win, plugin_mode);
     }
     let app2 = app.clone();
     let id2 = id.clone();
@@ -222,6 +239,57 @@ pub async fn plugin_window_open(
     let _ = win.emit("plugin-window-shown", id.clone());
     let _ = app.emit_to("main", "plugin-window-shown", id.clone());
     Ok("opened".into())
+}
+
+/// `lume.theme.set` (ROADMAP #36): persist one plugin's color-mode preference
+/// and, when the call came from anywhere but the launcher window, tell the
+/// launcher — its in-memory mirror is what derives every later `theme` push, so
+/// a mode pinned inside a detached window must survive the window closing.
+///
+/// Plugin-scoped: `resolve_plugin_caller` fixes the id from the calling
+/// window's label (or the logic host's token), so a page can only restyle
+/// itself. No permission word — the value touches the plugin's own surfaces
+/// only, never the launcher's theme (docs/PLUGIN_API.md §6D.6).
+#[tauri::command]
+pub fn set_plugin_color_mode(
+    id: String,
+    mode: String,
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    perms: State<'_, crate::plugin_perm::PluginPermState>,
+    host_token: Option<String>,
+) -> Result<(), String> {
+    let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+        .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
+    if !matches!(mode.as_str(), "system" | "light" | "dark") {
+        return Err(format!(
+            "color mode must be \"system\", \"light\" or \"dark\" (got \"{mode}\")"
+        ));
+    }
+    settings::remember_plugin_color_mode(&app, &id, &mode)?;
+    if window.label() != "main" {
+        let _ = app.emit_to(
+            "main",
+            "plugin-color-mode",
+            serde_json::json!({ "id": id, "mode": mode }),
+        );
+    }
+    // The window itself follows at once: its opaque canvas and the taskbar /
+    // alt-tab icon variant key off the plugin's effective mode, and a plugin
+    // that pins its theme from inside its own window expects both to switch
+    // with the page. (`window.rs`'s theme-flip path covers the launcher-side
+    // case.)
+    if let Some(win) = app.get_webview_window(&window_label(&id)) {
+        let snapshot = app.state::<SettingsState>().current();
+        let effective = snapshot.plugins.color_mode_for(&id, &snapshot.appearance.color_mode);
+        let (r, g, b) = crate::window::panel_surface_rgb(&win, effective);
+        let _ = win.set_background_color(Some(tauri::window::Color(r, g, b, 255)));
+        let icons = app.state::<PluginIcons>();
+        if !appicon::apply_plugin_window(&win, &icons, &id, effective) {
+            appicon::apply_window(&win, effective);
+        }
+    }
+    Ok(())
 }
 
 /// The plugin window page announces its listeners are up → the main window's

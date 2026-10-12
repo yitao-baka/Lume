@@ -131,10 +131,17 @@ check("③f keydown forwarded → lume.on.key", Array.isArray(probe.keysAfterA) 
 const focusBack = await m.evalJs(`document.activeElement === document.getElementById("search-input")`);
 check("③g focus hand-off after iframe mousedown", focusBack === true);
 // Tab 由脚本经 query 事件遥控探针派发（iframe 不可从宿主触达）。
+// 断言「激活的模式变了」而不是「回到导航页」：Tab 是**循环**切页，下一站是
+// 谁取决于当前启用的插件集合（曾长期红着 —— 见 ROADMAP #32.11 的记录，
+// 当时导航页后面跟的是磁盘 mode，`.plugin-frame` 仍在）。契约是「iframe 里
+// 的 Tab 被宿主路由消费并切页」，与落点无关。
+const activePill = () => m.evalJs(`[...document.querySelectorAll(".mode-switch-item")].findIndex((b) => b.className.includes("active"))`);
+const pillBefore = await activePill();
 await type("tab");
 await sleep(1000);
-const tabSwitched = await m.evalJs(`!document.querySelector(".plugin-frame")`);
-check("③h Tab in iframe switches back to Navigate", tabSwitched === true);
+const pillAfter = await activePill();
+check("③h Tab in iframe is consumed by the host mode switcher",
+  pillBefore >= 0 && pillAfter >= 0 && pillAfter !== pillBefore, `${pillBefore} → ${pillAfter}`);
 
 // ④ Rust 命令侧白名单（主窗口直连 invoke，绕过前端守卫；拒绝以
 // promise rejection 出现，evalJs 里要先接住）

@@ -121,6 +121,22 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
 - **提权边界**：`lume.exe` 永远保持中完整性（`Nothing higher-integrity runs in the launcher
   process`）；唯一提权代码在 `lume-agent.exe`，能力只有「向指定前台窗口发一次配置好的热键」。
   `SendInput` 受 UIPI 限制且失败不可读——失败要如实上报 reason，不许假报成功。
+- **分离窗口的事件监听必须带 `target`**：Tauri 的 JS `listen()` 默认目标是
+  `EventTarget::Any`，而 `emit_to` 的过滤器只看**监听器**目标（每个 webview 都会被遍历）
+  —— 不带 `target` 的监听器会收到**所有**其它插件的 `emit_to` 流量。单窗口时看不出
+  （载荷相同），一旦载荷带插件私有值就串台（ROADMAP #36 实测：hello-mode 的窗口按
+  file-search 的 `themePref` 重刷了自己）；两个独立窗口并存时，关闭请求也是广播的，
+  会「关一个连带关另一个」。插件私有事件一律
+  `listen(ev, fn, { target: getCurrentWindow().label })`，应用级事件（`settings-applied`）
+  保持全局。
+- **沙箱帧探测不了，验证要看渲染结果**：srcdoc 视图帧的 CDP execution context 对宿主
+  target 不可见，`DOM.getDocument({pierce:true})` 也查不到它的节点（`querySelector`
+  返回 0），host→页面的 `postMessage` 也无法从探针伪造（`__lumeRpc` 是页面→宿主方向）。
+  要断言页面真的变样了，用 1×1 `Page.captureScreenshot` clip + `zlib` 解 PNG 采像素
+  （`scripts/cdp_plugin_theme_verify.mjs`），页面动作由示例页的 `on.query` 钩子驱动。
+- **CDP 冒烟必须用 `pnpm run tauri build --debug --no-bundle`**：直接 `cargo build`
+  出的是 dev 模式 exe（页面指 `http://localhost:1420`，无 vite 时白屏，探针找不到
+  `#search-input` 只会报「launcher window missing」）。
 - **CDP 调试**：对隐藏窗口（内存裁剪态）`evaluate` 可能挂起（先 `toggle_launcher` 再查）；
   多轮 kill/spawn 后的僵尸 `msedgewebview2.exe` 会造成「数据加载不出」假象，对比前先
   `taskkill /F /IM msedgewebview2.exe`。

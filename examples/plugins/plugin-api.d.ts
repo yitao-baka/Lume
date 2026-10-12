@@ -127,6 +127,8 @@ interface LumeEvents {
   show?(): void;
   hide?(): void;
   key?(e: KeyboardEvent): void;
+  /** 本插件**生效**的明暗（受 `lume.theme.set` 影响）：sandbox 后页面读不到
+   * 宿主文档，宿主在就绪握手重放并在变化时推送（§6C）。 */
   theme?(mode: "dark" | "light"): void;
   /** 独立窗口状态恢复：桥自动回放表单/滚动后调用（custom 层，见 §6C）。 */
   restore?(state: unknown): void;
@@ -134,8 +136,22 @@ interface LumeEvents {
   snapshot?(): unknown;
 }
 
+/** 本插件自己的颜色模式偏好：`system` = 跟随宿主，`light`/`dark` = 固定。 */
+type LumePluginColorMode = "system" | "light" | "dark";
+
+/** `lume.theme` —— 只作用于本插件（§6C）。 */
+interface LumeThemeApi {
+  /** 设定本插件的颜色模式（落盘，重启/独立窗口首帧均生效）。启动器自身
+   * 主题不受影响；未知取值 reject。无需声明权限。 */
+  set(mode: LumePluginColorMode): Promise<void>;
+  /** 当前状态：`pref` 本插件偏好，`mode` 生效值（也就 on.theme 的值），
+   * `host` 宿主当前生效值（`system` 跟随的就是它）。 */
+  get(): Promise<{ pref: LumePluginColorMode; mode: "dark" | "light"; host: "dark" | "light" }>;
+}
+
 /** 传给 `create(ctx)` 的宿主能力面（注入的 `window.lume`）。 */
 interface LumePluginCtx {
+  theme: LumeThemeApi;
   app: LumeAppApi;
   http: LumeHttpApi;
   clipboard: LumeClipboardApi;

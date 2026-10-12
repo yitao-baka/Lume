@@ -372,6 +372,12 @@ before adding a field:
   bridge keeps `--lume-page-bg` in step with theme flips (the `theme` event).
   A plugin that paints its own `html`/`body` background still wins (its rule
   comes later in the document).
+  Both the default and the pushed value are the **plugin's effective** mode:
+  since ROADMAP #36 a plugin can pin its own light/dark through
+  `lume.theme.set` (`settings.plugins.color_modes`), and then only that
+  plugin's canvas, `theme` events, detached-window chrome and taskbar icon
+  follow the override — the launcher keeps its own `data-theme`, and other
+  plugins' pages are untouched (`src/plugins/themePrefs.ts`).
 - `src/plugins/` — **every page below the search box is a plugin**
   implementing the `ModeInstance` page contract (`src/plugins/types.ts`):
   - `navigate/` — the built-in **home page** (id `"apps"`, `home: true`, the

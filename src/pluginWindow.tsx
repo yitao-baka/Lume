@@ -29,9 +29,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import { applyColorMode } from "./theme";
+import { applyPluginColorMode, normalizePluginColorMode, resolveColorMode } from "./theme";
+import { pluginColorMode, pluginColorPref, seedPluginColorPrefs, setPluginColorPref } from "./plugins/themePrefs";
 import { TitleBar } from "./components/TitleBar";
 import type { FeatureEnterInfo, PluginManifest, PluginServices } from "./plugins/types";
+import type { SettingsData } from "./settings/types";
 import { setPermissionSource } from "./plugins/permissions";
 import { createIframeView, injectBridge, injectTitlebarBridge } from "./plugins/iframeBridge";
 import { execHostRpc } from "./plugins/rpc";
@@ -40,13 +42,47 @@ import { plog } from "./plugins/log";
 import "./pluginWindow.css";
 
 const id = new URLSearchParams(location.search).get("plugin") ?? "";
+/** This window's own label (`plugin-<id>`) — the target every plugin-scoped
+ * event listener must be registered with. **Tauri's JS `listen()` defaults to
+ * `EventTarget::Any`, and `emit_to`'s filter only ever consults the *listener*
+ * target** (every webview is visited): an unscoped listener therefore receives
+ * every other plugin's `emit_to` traffic too. That was invisible while all
+ * payloads were identical — with per-plugin color modes (ROADMAP #36) the
+ * hello-mode window was applying file-search's `themePref` and repainting
+ * itself. Scope every plugin-scoped event; leave app-wide ones
+ * (`settings-applied`) unscoped. */
+const WINDOW_LABEL = getCurrentWindow().label;
+
+/** The launcher's `appearance.color_mode` — the fallback this window's theme
+ * follows when the plugin never pinned one. Mutable: `settings-applied`
+ * refreshes it while the window is open. */
+let hostColorSetting = "system";
+
+/** Paint this window in the PLUGIN's effective color mode (ROADMAP #36): the
+ * window's document IS the plugin's surface, so its chrome (`TitleBar`, the
+ * theme tokens) must not disagree with the page inside it — a dark-pinned
+ * plugin on a light launcher would otherwise show a light strip above a dark
+ * page. `applyPluginColorMode` keeps the launcher's own resolution (and its
+ * live OS following) for a `"system"` preference. */
+function applyWindowTheme(): void {
+  applyPluginColorMode(hostColorSetting, pluginColorPref(id));
+}
+
+/** The mode the plugin's page is told to render in (what `theme` events and
+ * `theme.get` report). */
+function effectiveMode(): "light" | "dark" {
+  return pluginColorMode(id, resolveColorMode(hostColorSetting));
+}
 
 function App() {
   // Theme before first paint (the Rust init script injected __LUME_CONFIG__,
-  // same as the main/settings windows).
-  const cfg = (window as unknown as { __LUME_CONFIG__?: { appearance?: { color_mode?: string } } })
-    .__LUME_CONFIG__;
-  applyColorMode(cfg?.appearance?.color_mode ?? "system");
+  // same as the main/settings windows) — including the plugin's own override,
+  // which the launcher persisted, so the window never opens in the launcher's
+  // mode and flips a frame later.
+  const cfg = (window as unknown as { __LUME_CONFIG__?: SettingsData }).__LUME_CONFIG__;
+  hostColorSetting = cfg?.appearance?.color_mode ?? "system";
+  seedPluginColorPrefs(cfg?.plugins?.color_modes);
+  applyWindowTheme();
 
   // Titlebar label — the manifest name once plugin_window_meta answers.
   const [pluginName, setPluginName] = createSignal(id);
@@ -101,6 +137,21 @@ function App() {
       // Already detached here: the caller IS the detached window — raise it.
       void getCurrentWindow().setFocus().catch((err) => plog.error(id, "focus failed:", err));
     },
+    setPluginColorMode: async (pluginId, mode) => {
+      // Same contract as the launcher's services (ROADMAP #36), but the
+      // reconvergence differs: here the durable write also updates THIS
+      // window's chrome, and the launcher learns about it over the Rust
+      // `plugin-color-mode` event (its mirror drives the next `theme` push).
+      await invoke("set_plugin_color_mode", { id: pluginId, mode });
+      setPluginColorPref(pluginId, mode, "window");
+      applyWindowTheme();
+      fan("theme", effectiveMode());
+    },
+    pluginColorState: (pluginId) => ({
+      pref: pluginColorPref(pluginId),
+      mode: effectiveMode(),
+      host: resolveColorMode(hostColorSetting),
+    }),
     persistLastPage: () => {},
     runSearch: async () => {
       plog.debug(id, "runSearch ignored in the detached window");
@@ -280,6 +331,7 @@ function App() {
       enter?: FeatureEnterInfo | null;
       settings?: Record<string, unknown> | null;
       theme?: string | null;
+      themePref?: string | null;
       snapshot?: unknown;
     }>("plugin-state", (e) => {
       const s = e.payload;
@@ -310,30 +362,50 @@ function App() {
         lastState.theme = s.theme;
         fan("theme", s.theme);
       }
+      // The plugin's own preference rides every theme push (ROADMAP #36): a
+      // `theme.set` from the launcher's side (the plugin's logic iframe, or a
+      // hand-edited settings.toml) must repaint THIS window's chrome too —
+      // and the prefs file may have moved under us.
+      const pref = normalizePluginColorMode(s.themePref);
+      if (pref && pref !== pluginColorPref(id)) {
+        setPluginColorPref(id, pref, "launcher");
+        applyWindowTheme();
+      }
       // Attach 快照（P6.5）：标准回放之后投递 —— 页面自身的状态最后落地，
       // 覆盖与宿主回放重叠的部分。
       if (s.snapshot) fan("restore", s.snapshot);
-    }).then((u) => (unlisteners.push(u), undefined));
+    }, { target: WINDOW_LABEL }).then((u) => (unlisteners.push(u), undefined));
 
     // Re-focus: replay `show` into the page (the window never unloads, so
     // this is all a re-summon needs).
     void listen<string>("plugin-window-shown", () => {
       lastState.show = true;
       fan("show");
-    }).then(
+    }, { target: WINDOW_LABEL }).then(
       (u) => (unlisteners.push(u), undefined)
     );
 
     // Rust 拦截的用户发起关闭（× / Esc / Alt+F4）：先快照再上报销毁（P6.5）。
+    // 必须带 target：不带的话别的插件窗口的关闭请求也会打进本窗口，
+    // 两个独立窗口并存时关一个会连带关掉另一个。
     void listen("plugin-window-close-requested", () => {
       closeWithSnapshot();
-    }).then((u) => (unlisteners.push(u), undefined));
+    }, { target: WINDOW_LABEL }).then((u) => (unlisteners.push(u), undefined));
 
-    // Theme follows the launcher's settings while the window is open; the
-    // permission source rides along (启用/权限清单可能在窗口存续期间变化).
+    // Theme follows the launcher's settings while the window is open — but
+    // only through the plugin's own preference, so a pinned plugin keeps its
+    // mode when the launcher's changes; the permission source rides along
+    // (启用/权限清单可能在窗口存续期间变化).
     void listen("settings-applied", () => {
-      void invoke<{ appearance?: { color_mode?: string } }>("get_settings")
-        .then((s) => applyColorMode(s.appearance?.color_mode ?? "system"))
+      void invoke<SettingsData>("get_settings")
+        .then((s) => {
+          hostColorSetting = s.appearance?.color_mode ?? "system";
+          // Re-seed: our own `theme.set` writes land in the same snapshot, so
+          // this window and the launcher cannot drift apart.
+          seedPluginColorPrefs(s.plugins?.color_modes);
+          applyWindowTheme();
+          fan("theme", effectiveMode());
+        })
         .catch(() => {});
       void invoke<PluginManifest[]>("get_plugins")
         .then((list) => setPermissionSource((pid) => list.find((x) => x.id === pid)))

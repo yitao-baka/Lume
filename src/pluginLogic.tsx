@@ -23,6 +23,24 @@ import { HOST_PLUGIN_API } from "./plugins/types";
 import { setPermissionSource } from "./plugins/permissions";
 import { execHostRpc } from "./plugins/rpc";
 import { plog } from "./plugins/log";
+import { resolveColorMode } from "./theme";
+import { pluginColorMode, pluginColorPref, seedPluginColorPrefs, setPluginColorPref } from "./plugins/themePrefs";
+import type { SettingsData } from "./settings/types";
+
+/** This hidden window's copy of the launcher's color-mode setting + the
+ * per-plugin preference mirror (same `__LUME_CONFIG__` snapshot every window
+ * gets) — `ctx.theme.get` answers from it and `ctx.theme.set` keeps it fresh
+ * (ROADMAP #36). This window draws nothing of its own, so the values only ever
+ * travel into the plugin frames' host-API answers; a preference changed
+ * elsewhere *after* this window was created is therefore up to one window
+ * lifetime stale here (the launcher's own mirror, not this one, drives every
+ * `theme` push). */
+const cfgHostColorSetting =
+  (window as unknown as { __LUME_CONFIG__?: SettingsData }).__LUME_CONFIG__?.appearance?.color_mode ??
+  "system";
+seedPluginColorPrefs(
+  (window as unknown as { __LUME_CONFIG__?: SettingsData }).__LUME_CONFIG__?.plugins?.color_modes
+);
 
 const SANDBOX = "allow-scripts allow-forms allow-popups allow-modals";
 
@@ -94,6 +112,20 @@ function makeServices(id: string, token: string): PluginServices {
       return true;
     },
     detachMode: () => action("detach"),
+    // `theme.set` / `theme.get` from the plugin's LOGIC (ROADMAP #36). The
+    // write goes to Rust like any other host call: this window's label
+    // (`plugin-logic-host`) is not `main`, so the command also emits
+    // `plugin-color-mode` and the launcher's mirror follows; the token keeps
+    // the id attribution honest. `get` answers from this window's copy of the
+    // same settings snapshot.
+    setPluginColorMode: async (pluginId, mode) => {
+      await invoke("set_plugin_color_mode", { id: pluginId, mode, hostToken: token });
+      setPluginColorPref(pluginId, mode, "window");
+    },
+    pluginColorState: (pluginId) => {
+      const host = resolveColorMode(cfgHostColorSetting);
+      return { pref: pluginColorPref(pluginId), mode: pluginColorMode(pluginId, host), host };
+    },
   };
 }
 

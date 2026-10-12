@@ -68,6 +68,29 @@ pub struct Plugins {
     /// the next `plugin_window_open`.
     #[serde(default)]
     pub window_bounds: HashMap<String, WindowBounds>,
+    /// Per-plugin color mode, id → `"system" | "light" | "dark"`
+    /// (`lume.theme.set`, ROADMAP #36). `"system"` = follow the launcher;
+    /// `"light"` / `"dark"` pin the plugin's own surfaces (its page canvas and
+    /// its detached window's chrome) without touching the launcher. Written
+    /// silently by `set_plugin_color_mode`; read back through `get_settings`,
+    /// at detached-window creation (window background + taskbar icon variant)
+    /// and on every theme flip (`appicon::apply`).
+    #[serde(default)]
+    pub color_modes: HashMap<String, String>,
+}
+
+impl Plugins {
+    /// The color mode a plugin's own surfaces render in: its pinned
+    /// preference, otherwise the launcher's setting (which may itself be
+    /// `"system"`, resolved by the caller). Mirrors
+    /// `pluginEffectiveColorMode` in src/theme.ts — the frontend and Rust must
+    /// agree on which mode a plugin window opens in.
+    pub fn color_mode_for<'a>(&'a self, id: &str, launcher_mode: &'a str) -> &'a str {
+        match self.color_modes.get(id).map(String::as_str) {
+            Some(pinned @ ("light" | "dark")) => pinned,
+            _ => launcher_mode,
+        }
+    }
 }
 
 /// One detached plugin window's remembered geometry (logical px).
@@ -90,6 +113,21 @@ pub fn remember_plugin_window_bounds(app: &AppHandle, id: &str, bounds: WindowBo
     if write_settings_light(&paths::base_dir(), &next).is_ok() {
         *guard = next;
     }
+}
+
+/// Remember one plugin's color mode (`lume.theme.set`, ROADMAP #36). Silent on
+/// purpose, like the geometry write: the plugin's own surfaces are repainted by
+/// whoever made the call, and a settings-applied round-trip would refresh every
+/// page in the launcher for a value none of them reads. `Ok(())` means durable
+/// — the caller's promise resolves on it.
+pub fn remember_plugin_color_mode(app: &AppHandle, id: &str, mode: &str) -> Result<(), String> {
+    let state = app.state::<SettingsState>();
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.color_modes.insert(id.to_string(), mode.to_string());
+    write_settings_light(&paths::base_dir(), &next).map_err(|e| e.to_string())?;
+    *guard = next;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -491,6 +529,7 @@ impl Default for Settings {
                 dev_mode: false,
                 trust_all: false,
                 window_bounds: HashMap::new(),
+                color_modes: HashMap::new(),
             },
             automation: Automation {
                 enabled: true,
@@ -961,6 +1000,43 @@ mod tests {
         let reloaded = read_settings(&base);
         assert!(reloaded.plugins.dev_mode);
         assert_eq!(reloaded.plugins.trusted, vec!["demo".to_string()]);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// Per-plugin color modes (`lume.theme.set`, ROADMAP #36): absent by
+    /// default, round-trip through a light write, and `color_mode_for` pins a
+    /// plugin to its own value while every other plugin (and an unknown one)
+    /// keeps following the launcher.
+    #[test]
+    fn plugin_color_modes_default_empty_and_resolve_per_plugin() {
+        let base = temp_base("color-modes");
+        ensure_settings_files(&base).unwrap();
+        assert!(read_settings(&base).plugins.color_modes.is_empty(), "default empty");
+        // The whole [plugins] table missing → still empty (serde default).
+        let text = toml::to_string_pretty(&Settings::default()).unwrap();
+        let without_plugins = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("color_modes"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), without_plugins).unwrap();
+        let mut s = read_settings(&base);
+        assert!(s.plugins.color_modes.is_empty());
+        s.plugins.color_modes.insert("pinned".into(), "dark".into());
+        s.plugins.color_modes.insert("junk".into(), "teal".into());
+        write_settings_light(&base, &s).unwrap();
+        let reloaded = read_settings(&base);
+        assert_eq!(
+            reloaded.plugins.color_modes.get("pinned").map(String::as_str),
+            Some("dark")
+        );
+        // Resolution: a pinned plugin ignores the launcher; everyone else
+        // (unknown id, non-mode value) inherits it.
+        let p = &reloaded.plugins;
+        assert_eq!(p.color_mode_for("pinned", "light"), "dark");
+        assert_eq!(p.color_mode_for("other", "light"), "light");
+        assert_eq!(p.color_mode_for("other", "system"), "system");
+        assert_eq!(p.color_mode_for("junk", "light"), "light");
         fs::remove_dir_all(&base).ok();
     }
 

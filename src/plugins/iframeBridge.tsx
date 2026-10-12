@@ -71,6 +71,14 @@ export const BRIDGE_SCRIPT = `
     return out;
   };
   window.lume = {
+    theme: {
+      // 本插件自己的颜色模式（§6C，2026-10-12 起）：system = 跟随启动器，
+      // light/dark = 固定本插件的明暗。只作用于本插件（页面画布
+      // --lume-page-bg + 独立窗口 chrome + 本页 on.theme 载荷），启动器
+      // 自身的主题不受影响；值随宿主落盘，重启/独立窗口首帧均生效。
+      set: function (mode) { return call("theme.set", { mode: mode }); },
+      get: function () { return call("theme.get"); },
+    },
     app: {
       hide: function () { return call("app.hide"); },
       toast: function (text, opts) { return call("app.toast", { text: text, opts: opts }); },
@@ -183,7 +191,10 @@ export const BRIDGE_SCRIPT = `
       // opts: legacy number = max, or { offset, max, sort, exts, folder }
       files: function (q, opts) { return call("search.files", { q: q, opts: opts }); },
     },
-    on: {}, // the page assigns: lume.on.query / .show / .hide / .key / .enter / .subInput / .settings / .theme = function(payload)
+    // the page assigns: lume.on.query / .show / .hide / .key / .enter / .subInput
+    // / .settings / .theme = function(payload) —— .theme 收到的是本插件**生效**
+    // 的明暗（受 lume.theme.set 影响）。
+    on: {},
     // 状态快照（P6.5，可选实现）：lume.on.snapshot = () => state — 宿主在
     // detach/关闭前向页面要一份状态（与桥自动捕获的表单/滚动合并后跨窗口
     // 传递）；lume.on.restore = (state) => {} — 宿主把快照的 custom 层交给

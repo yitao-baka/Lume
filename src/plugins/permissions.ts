@@ -27,10 +27,11 @@ import { plog } from "./log";
 import type { PluginHostApi, PluginManifest } from "./types";
 
 /** Method ("group.name") → the permission word the manifest must declare.
- * Methods absent here are free: launcher-UI actions (`app.*`), the plugin's
- * own data (`storage.*`, `db.*`, `settings.*`) and its own private directory
- * (`fs.writeText` / `readPrivate` / `listPrivate` / `privatePath` /
- * `removePrivate`). */
+ * Methods absent here are free: launcher-UI actions (`app.*`, `theme.*` —
+ * the plugin's own color mode included: it restyles nothing but the plugin's
+ * own surfaces), the plugin's own data (`storage.*`, `db.*`, `settings.*`)
+ * and its own private directory (`fs.writeText` / `readPrivate` /
+ * `listPrivate` / `privatePath` / `removePrivate`). */
 export const RPC_PERMISSION: Record<string, string> = {
   "app.notify": "notify",
   "app.trash": "trash",

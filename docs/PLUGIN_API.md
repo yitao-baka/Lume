@@ -456,6 +456,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 | 组 | 方法 | 说明 |
 |---|---|---|
 | `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` / `detach()` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（P1.2，§6D）；`setSubInput`/`removeSubInput` 接管/交还搜索框（P2.3，§6E.2）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（P2.5，§6E.4）；`detach()` 把本模式分离为独立窗口（P6，§6G）——`detachable` 插件自绘分离按钮（常驻/纯图标等形态自定）时调用它，快照/建窗/回放与宿主内置悬停按钮同一条路 |
+| `theme` | `set(mode)` / `get()` | **本插件自己的颜色模式**（ROADMAP #36，2026-10-12 起）：`"system"`（跟随启动器）/ `"light"` / `"dark"`。只作用于本插件 —— 本模式页画布、独立窗口的 chrome 与任务栏图标一起切，**启动器自身主题不受影响**；宿主落盘（`settings.plugins.color_modes`），重启与独立窗口首帧即生效。`get()` 返回 `{pref, mode, host}`。非法取值 reject。免权限（插件本地 UI，§6D.6）。细节见下文「插件自身颜色模式」 |
 | `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `readImage()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`readImage()` 返回 PNG data URI（无图 = null；`img` feature 的取数路径，§6E.1.1）；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（P1.3，§6D） |
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**（P1.1）——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated` |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框（P1.4）。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
@@ -476,7 +477,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 | `enter` | `{code, type, payload}` | 声明式进入规则命中本模式（P2.1）或别的插件 `app.redirect` 过来（P2.5）。`type` = `"regex" \| "over" \| "redirect"`，`payload` = 命中的查询文本（redirect 时为发送方给的 payload）。**页面在 `load` 之后才会收到状态重放**（见下） |
 | `subInput` | `string` | 本模式调 `app.setSubInput` 接管搜索框后，每一次按键（P2.3） |
 | `settings` | `Record<string, unknown>` | 用户在设置页改动了本插件的声明式设置（P3.4）；页面 `load` 后的握手会重放当前值 |
-| `theme` | `"light" \| "dark"` | 启动器颜色模式推送（2026-09-25 起）。沙箱后页面读不到宿主文档，宿主在就绪握手重放当前值，并在 `data-theme` 每次变更（设置页切换、system 跟随系统）时推给本模式页与分离窗口——深浅色跟随启动器的权威来源 |
+| `theme` | `"light" \| "dark"` | 颜色模式推送（2026-09-25 起）。沙箱后页面读不到宿主文档，宿主在就绪握手重放当前值，并在变化时推给本模式页与分离窗口。**载荷是本插件「生效」的明暗**：`theme.set` 定过 light/dark 就是它（此时启动器翻转不再影响本插件），否则＝启动器的有效模式（2026-10-12 起，ROADMAP #36）——页面按它切换自己的明暗即可 |
 | `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。转发链路（P5 沙箱化后）：页面内非可编辑目标、未被页面 `preventDefault` 的 keydown 由**桥接脚本**转发给宿主 → 宿主在其窗口重放该键（Esc 分层/Tab 切模式/箭头导航照旧）→ 根路由消费的键异步回执 `preventDefault`（迟滞消费——Tab 这类移动焦点的键，iframe 内默认动作可能已先发生；Esc 契约不受影响，页面在**自己 document** 上的冒泡监听里 `preventDefault` 即同步消费，被消费的按键不再转发）。焦点在插件 iframe 内时同样送达。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
 
 **状态重放（重要）**：桥接脚本在 `<head>`、页面自己的 `lume.on.*` 赋值在 `</body>`
@@ -504,6 +505,37 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 `lume.on.snapshot` 里自行剔除。`restore` 事件在标准状态重放（query/show/
 enter/settings/theme）**之后**投递：页面自身状态最后落地，覆盖与宿主回放
 重叠的部分。
+
+**插件自身颜色模式（`lume.theme.set`，ROADMAP #36，2026-10-12 起）**：插件可以让
+**自己的**明暗与启动器不同 —— 三个取值 `"system"`（跟随启动器）/ `"light"` /
+`"dark"`。语义边界（照抄实现，别自行推断）：
+
+1. **只作用于调用方自己**：宿主把该插件的「生效模式」送到它的页面画布（注入的
+   `--lume-page-bg`）、`theme` 事件、独立窗口的 chrome（标题栏/窗口底色/任务栏
+   图标变体）。**启动器自身不移动**——`data-theme`、面板与其它插件页都不受影响。
+2. **持久化**：值写进 `settings.plugins.color_modes`，所以下次启动、以及独立窗口
+   的**首帧**就已经是它（不会先按启动器的主题画一帧再翻）。
+3. **`"system"` 是默认**，含义是「跟随启动器」（启动器自己可能正跟随系统）。
+4. **谁来切换本页的明暗**：宿主只推 `theme` 事件，页面自己设 `data-theme` /
+   自己的 CSS 变量（沙箱里页面读不到宿主调色板，镜像令牌是插件自己的事，
+   §6B.1）。`theme.set` 不会替页面改 DOM。
+5. **回读**：`lume.theme.get()` → `{pref, mode, host}`（本插件偏好 / 生效明暗 /
+   宿主明暗）。`mode` 就是上面 `theme` 事件的载荷。
+6. **权限**：无需声明（它只改插件自己的表面，碰不到启动器与其它插件；§6D.6）。
+7. **失败要当心**：非法取值 reject（宿主与 Rust 两侧都校验），桥接层照例把
+   reject 记到控制台并返回 `undefined` —— 见下方「每条 RPC 都要判空」。
+
+```js
+// 三态轮换（标签栏那颗对比度按钮的形态）
+const { pref } = await lume.theme.get();
+const next = pref === "system" ? "dark" : pref === "dark" ? "light" : "system";
+await lume.theme.set(next);          // 本插件专属；启动器不动
+```
+
+示例：`examples/plugins/hello-mode/`（页面上的「切换本插件颜色模式」按钮，
+另外在搜索框输入 `theme:dark` / `theme:light` / `theme:system` 等价 —— 便于脚本
+驱动）；实装参考 translator 1.2.0（标签栏主题按钮 + 设置页主题下拉都同步给宿主）。
+验收脚本 `scripts/cdp_plugin_theme_verify.mjs`。
 
 **沙箱边界（P5 起）**：iframe 是 opaque origin——`window.localStorage`/
 `document.cookie` 访问会**抛错**（插件数据请用 `ctx.storage`/`ctx.db`）；
@@ -611,7 +643,9 @@ mode（id `"apps"`，`home: true`），它的 pill 即最左侧「导航」。
    因此在 `injectBridge` 注入默认画布
    `html{background:var(--lume-page-bg,<主题 --surface>)}`，桥接在 `theme` 事件
    到来时切换该变量（主题翻转即时跟随）。该默认值就是启动器面板自身的颜色
-   （暗 #1e1e20 / 浅 #fbfbfd），所以默认画布与面板在拼接处完全同色。**插件
+   （暗 #1e1e20 / 浅 #fbfbfd），所以默认画布与面板在拼接处完全同色。插件用
+   `theme.set` 定过自己的明暗时，这个变量与事件都取**本插件生效的**那一侧
+   （页面上就不再与面板同色 —— 那时页面的底色由插件自己负责，见 §6C）。**插件
    自己写 `html`/`body` 背景即覆盖该默认**（文档更靠后，优先级更高）；自绘
    背景时请与 `lume.on.theme` 给出的明暗保持一致，否则拼接处会出现色阶
    （此时页面已不等于面板色）。
@@ -791,6 +825,7 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 | 回收站删除 | `app.trash` / `trash_to_recycle` | `trash` |
 | 前台窗口信息与 Explorer 当前文件夹 | `app.foreground` / `plugin_foreground_context` | `window`（P4，§6H.2） |
 | 插件私有 KV / 文档库 / 设置 | `storage.*`、`db.*`、`settings.*` | 无（插件自有数据） |
+| 本插件自己的颜色模式 | `theme.set` / `theme.get` | 无（只改本插件的表面，启动器不受影响；ROADMAP #36） |
 
 > **现状（P3.2 起）**：本表就是**强制层**的输入——表里每一行未声明即被拒绝
 > （fail-closed，文案带缺失的能力词），实现在 `src/plugins/permissions.ts`
@@ -1188,6 +1223,19 @@ detachable = true     # 允许分离为独立窗口
 - **主题推送**：窗口页自己会应用颜色模式，但 iframe 读不到——registry
   监听本窗口 `data-theme` 变更，向模式页 `postEv("theme", mode)`、向分离
   窗口经 `plugin_window_push_state` 携带/推送 `theme`（§6C 事件表）。
+  **推送值是本插件生效的明暗**（`theme.set` 覆盖，ROADMAP #36），并额外带
+  `themePref`（本插件偏好）—— 独立窗口的**窗口自身**（chrome/标题栏/窗口底色/
+  任务栏图标）按「偏好 ⊕ 启动器设置」判明暗：只在 `theme` 上做不够，因为
+  `"system"` 还得跟随系统（`applyPluginColorMode`，src/theme.ts）。
+- **静默推送的窗口过滤（实测坑）**：Tauri 的 JS `listen()` 默认目标是
+  `EventTarget::Any`，而 `emit_to` 只按**监听器目标**过滤（每个 webview 都会被
+  走一遍）—— 不显式带 `target` 的监听器**会收到所有其它插件的 `emit_to`
+  流量**。单窗口时看不出来（载荷相同），一旦载荷带插件私有值（`themePref`）
+  就会串台：hello-mode 的窗口曾照 file-search 的 `themePref` 重刷自己的
+  chrome。分离窗口里所有**插件私有**事件的监听（`plugin-state`、
+  `plugin-window-shown`、`plugin-window-close-requested`）都必须
+  `listen(ev, fn, { target: getCurrentWindow().label })`；应用级事件
+  （`settings-applied`）保持全局（全局 `emit` 不经过该过滤器）。
 
 ### 6G.5 标题栏页（清单 `titlebar`，2026-09-25 补）
 
@@ -1577,6 +1625,12 @@ pluginBuiltin`。
   - `scripts/cdp_p2b_verify.mjs` — P2 余项 + P4 `file_type`：files 拖入 /
     img 剪贴板图片 / template="list" 列表模板 / 磁贴指针重排 /
     folder·image·extensions 类别匹配（20 项）
+  - `scripts/cdp_plugin_theme_verify.mjs` — 插件自身颜色模式（ROADMAP #36）：
+    启动器浅色基线 → 页面声明 pin → 画布转深而启动器不动 → 反向（插件 pin 浅、
+    启动器深）→ 分离窗口 chrome/画布都是插件色 → 窗口内改偏好回传启动器 →
+    回启动器后仍是 pin 的值（28 项；1×1 `Page.captureScreenshot` + zlib 解 PNG
+    直接采样画布像素 —— 沙箱帧的 CDP DOM/execution context 对宿主不可见，
+    这是唯一能断言的「渲染结果」）
   - `scripts/cdp_plugin_verify.mjs` — provider 行 + 沙箱化 mode 页 +
     插件面板截图
   - `scripts/cdp_settings_smoke.mjs` — 8 分区设置冒烟
@@ -1603,6 +1657,13 @@ pluginBuiltin`。
     query, delivered}`。
   - `window.__rpcLog` / `__logicEntries`（逻辑宿主）：帧 rpc 结局摘要与
     每插件帧状态（`loaded`/`calls`）。
+  - `window.__pluginThemes`（各窗口，ROADMAP #36）：本插件的颜色模式偏好写入
+    记录 `[{id, pref, source}]`（`source` = main/window/settings/launcher）——
+    沙箱页面不可达、分离窗口的 `data-theme` 只反映当前值，探针靠它读**意图**
+    与**来源**；`window.__themeLog`（main）是每次下发给模式页的 `theme` 载荷
+    `[{id, mode}]`（`postEv` 收口）；`window.__pwPush`（main）是每次跨窗口
+    `plugin-state` 推送的 `{id, theme, themePref}`（含发给别的插件的 —— 用来
+    验证推送归属）。
   - `__lumeFrameBoot`（桥 → 宿主，P6.7）：视图页文档真正提交、桥脚本开始
     执行时的第一个信号。宿主用它把**"帧活着、只是慢"**与**"导航被丢了"**
     区分开（后者靠 `__lumeReady` 永远等不到：那要等页面 load）——装载看门狗

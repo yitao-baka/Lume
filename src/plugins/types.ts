@@ -83,8 +83,13 @@ export interface PluginManifest {
    * draw their own detach affordance (via `app.detach`) set it false to free
    * the page's top-right corner. */
   detachButton: boolean;
-  /** Mode plugins: pill icon (relative to the plugin dir; resolved to a
-   * URL by the registry). Empty = no pill image. */
+  /** Mode plugins: keep this mode out of the mode switch bar (pills) and the
+   * switch-key cycle (manifest `hidden`, default false). Its only entries are
+   * the Navigate search rows (keywords / `[[features]]`) and redirects. */
+  hidden: boolean;
+  /** Mode plugins: icon, relative to the plugin dir (resolved to a URL by
+   * the registry). Empty = no pill image. Doubles as the default
+   * Navigate-result icon for every row this plugin contributes. */
   icon: string;
   /** Development flag (manifest `development`): the registry reloads the
    * plugin from disk on every refresh (settings-applied) — code edits take
@@ -817,8 +822,12 @@ export interface LauncherPlugin {
   /** Declarative entry rules (P2.1) — consumed by `featureMatches`. */
   features?: PluginFeature[];
   /** Absolute plugin directory (disk plugins) — used to resolve relative
-   * feature icons. */
+   * result icons (provider results, feature rules). */
   dir?: string;
+  /** The plugin's own icon, resolved to a URL by the registry (manifest
+   * `icon`). It is the default icon for every Navigate row this plugin
+   * contributes that does not carry an explicit per-row `icon`. */
+  icon?: string;
   pluginName?: string;
   /** Headless lifecycle hooks (disk service plugins). */
   lifecycle?: ServiceHooks;

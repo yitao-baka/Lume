@@ -13,7 +13,8 @@
 interface LumeProviderResult {
   name: string;
   description?: string;
-  /** 图标：`data:`/`asset:`/`http(s):` URI 或相对插件目录的文件路径。 */
+  /** 图标：`data:`/`asset:`/`http(s):` URI 或相对插件目录的文件路径；
+   * 省略 = 用插件清单 `icon`（都没有才走 path 的常规图标管线）。 */
   icon?: string;
   /** 条目路径（打开/去重键；可省）。 */
   path?: string;

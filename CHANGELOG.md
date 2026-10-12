@@ -8,6 +8,21 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **模式切换栏隐藏 + 导航结果行图标（ROADMAP #37）** — mode 插件可以声明
+  `hidden = true`：不渲染模式 pill、Tab 循环也跳过（激活时从导航页
+  重新开始），唯一入口是导航页搜索结果（关键字 / feature 行 /
+  插件互跳）；设置 → 插件 卡片显示「仅搜索进入」徽标。同步统一导航
+  结果行图标优先级：**行显式 `icon` → 插件清单 `icon`（默认）→ `path`
+  常规图标管线** —— provider 结果的相对路径 `icon` 现在真的相对插件目录
+  解析（此前只有 URI 生效，与文档不符），feature / 关键字行缺省时用
+  插件自己的图标。示例 `examples/plugins/hidden-mode/`；`docs/PLUGIN_API.md`
+  §3/§5.1–5.2/§5.7/§6B.1/§6E.1、`docs/PLUGINS.md`、`docs/ARCHITECTURE.md`、
+  `docs/TESTING.md` 同步。验证：`scripts/cdp_plugin_mode_bar_verify.mjs`
+  **15/15**（真机 debug exe：pill 缺席 / 两类结果行图标 / 点行进入 / Tab
+  回导航 / provider 显式与默认图标），`cargo test` 202、
+  `tsc --noEmit` 与 `pnpm run build` 干净，回归 `cdp_plugin_verify` OK、
+  `cdp_clipboard_smoke` 正常。
+
 - **插件自身颜色模式（`lume.theme.set`，ROADMAP #36）** — 插件可以把自己的
   明暗定成浅/深（`"system"` 仍跟随启动器），**独立窗口与启动器内嵌两种形态
   都生效，而启动器自身主题不动**。生效值覆盖该插件的全部表面：模式页画布

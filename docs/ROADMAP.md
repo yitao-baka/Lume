@@ -4,7 +4,7 @@ Planned features for Lume, in priority order. Items are added here before
 implementation; each becomes a scoped iteration when started. See
 `CHANGELOG.md` for what shipped.
 
-> **当前快照（2026-10-12，Pre-26.10）**：路线已推进到 #36。插件系统、
+> **当前快照（2026-10-12，Pre-26.10）**：路线已推进到 #37。插件系统、
 > `.lupx` 安装/签名、三层权限与逻辑宿主隔离、独立插件窗口、文件秒搜、
 > 自动动作和提权代理均已落地；本文较早章节保留当时的设计与验收记录，
 > 当前 API/行为以 `docs/PLUGIN_API.md`、`docs/PLUGINS.md`、
@@ -2636,3 +2636,50 @@ WebView2 会**丢掉后一个导航**：
   转深 / 启动器不变 / 偏好落盘 / 启动器翻转不影响 pin / 分离后窗口 chrome 跟
   插件）。截图 `test/translator_theme_launcher_dark.png`（深色插件页嵌在浅色
   启动器里）与 `test/translator_theme_window.png`（深色启动器下的浅色插件窗口）。
+
+## 37. 插件模式切换栏隐藏 + 导航结果行图标（已实现）
+
+需求：贡献 mode 的插件可以**不在模式切换栏显示按钮**（唯一入口是导航页搜索结果）；
+插件能为导航搜索结果行自定义图标，**没有自定义时默认用插件自己的图标**。
+
+### 37.1 实现
+
+- **清单 `hidden = true`（mode 专属，默认 false）** — `PluginManifest`/
+  `PluginInfo` 双侧透传；前端 `modePlugins()` 带上 `hidden`，壳的
+  `pages()`（pill 列表）与 `modeIds`（切换键循环）过滤掉它。
+  隐藏模式激活时无 pill 高亮，再按切换键从第一个可见页（导航页）
+  重新开始循环（`keyboard.ts` 对 idx<0 的处理）。关键字、feature 行、
+  `app.redirect` 与「记住上次页面」恢复都照常能进入（它们走
+  `modeById`/`requestMode`，不经过 pill 列表）。设置 → 插件 卡片加「仅搜索进入」
+  徽标；示例 `examples/plugins/hidden-mode/`。
+- **结果行图标优先级统一为「行显式 `icon` → 插件清单 `icon` → `path`
+  常规管线」**：
+  - registry 给每个磁盘插件的贡献体带上解析后的 `icon`
+    （`resolvePluginIcon(m.icon, m.dir)`），新增 `pluginRowIcon()` /
+    `pluginIcon()` 供合并层取默认行图标；
+  - provider 结果的显式 `icon` 现在真的按文档走文件路径解析——
+    **相对路径相对插件目录**、绝对路径走 asset 协议（此前只有
+    `data:`/`http(s):`/`asset:`/`blob:` URI 真的生效，相对路径会被当成
+    相对页面地址的死链，与文档不符）；
+  - feature 行（`[[features]].icon`）与关键字「进入 <name>」行同样吃这条
+    优先级（关键字行本来就是宿主生成的，现在带插件图标）；
+  - 插件没有 `icon` 也没有行显式图标时保持原行为（`path` 图标
+    管线 / 未知图标回退），不破坏现有插件。
+
+### 37.2 实测
+
+- 新增 `scripts/cdp_plugin_mode_bar_verify.mjs` **15/15**：真机 debug exe 下
+  断言 `get_plugins` 的 `hidden=true` 透传、切换栏无 Hidden Mode
+  pill、关键字行与 feature 行的默认图标 = 插件 `icon.svg`、
+  点行进入（无 pill 高亮）、再按切换键回到导航页，
+  以及 scratch provider 的两条行：显式相对路径 `icon` 解析、缺省图标
+  落到插件清单 `icon`。
+- 回归：`cdp_plugin_verify` OK；`cdp_clipboard_smoke` 正常（切换栏里
+  hidden-mode 无 pill，Tab 循环不变）。
+- `cargo test` 202 过（`hidden` 解析默认值 / `PluginInfo` 透传断言）；
+  `pnpm exec tsc --noEmit` / `pnpm run build` / `examples/tsconfig.json` 干净。
+- **已知既有问题（与本次无关，自 P6.5 起）**：`cdp_p2b_verify`
+  18/22 —— 失败项为 `clipboard.readImage` 在 `src/plugins/rpc.ts` 缺
+  case（`unknown lume rpc`）、逻辑帧 ctx 缺 `fs` 组
+  （`public/pluginLogicFrame.js`）与两条指向旧日志文本的断言；
+  均可在当前 HEAD 上直接重现，不是 #37 引入。

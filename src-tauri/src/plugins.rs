@@ -233,7 +233,15 @@ pub struct PluginManifest {
     /// free the top-right corner of the page.
     #[serde(default = "default_true")]
     pub detach_button: bool,
-    /// Mode plugins: pill icon, relative to the plugin dir.
+    /// Mode plugins: keep this mode out of the mode switch bar (pills) and
+    /// out of the switch-key cycle. Its only entries are the Navigate search
+    /// rows (keywords / `[[features]]`) and plugin-to-plugin redirects.
+    #[serde(default)]
+    pub hidden: bool,
+    /// Mode plugins: pill icon, relative to the plugin dir. Doubles as the
+    /// default Navigate-result icon for every row the plugin contributes
+    /// (keyword rows; provider results / feature rows without their own
+    /// explicit `icon`).
     #[serde(default)]
     pub icon: String,
     /// Declarative entry rules (any kind) — a matched query offers an
@@ -318,7 +326,11 @@ pub struct PluginInfo {
     /// their own detach affordance set it false to free the top-right corner.
     #[serde(rename = "detachButton")]
     pub detach_button: bool,
-    /// Mode plugins: pill icon (relative to the plugin dir).
+    /// Mode plugins: hidden from the mode switch bar / switch-key cycle
+    /// (manifest `hidden`); the Navigate search rows stay the entry.
+    pub hidden: bool,
+    /// Mode plugins: pill icon (relative to the plugin dir); also the
+    /// default Navigate-result icon for this plugin's rows.
     pub icon: String,
     /// Development flag (manifest `development`): the frontend reloads this
     /// plugin on every refresh so code edits take effect without a restart.
@@ -492,6 +504,7 @@ pub fn list_plugins(
             height: None,
             detachable: false,
             detach_button: true,
+            hidden: false,
             icon: String::new(),
             development: false,
             api: HOST_PLUGIN_API,
@@ -536,6 +549,7 @@ pub fn list_plugins(
             height: m.height,
             detachable: m.detachable,
             detach_button: m.detach_button,
+            hidden: m.hidden,
             icon: m.icon,
             development: m.development,
             api: m.api,
@@ -688,15 +702,20 @@ height = 560
         // button); plugins that self-render one set it to false.
         assert!(parse_manifest("id = \"m\"").unwrap().detach_button);
         assert!(!parse_manifest("id = \"m\"\ndetach_button = false").unwrap().detach_button);
+        // hidden is optional and defaults to false (the mode shows its pill);
+        // true keeps the mode out of the switch bar / Tab cycle — its entry
+        // is the Navigate search row.
+        assert!(!parse_manifest("id = \"m\"").unwrap().hidden);
+        assert!(parse_manifest("id = \"m\"\nhidden = true").unwrap().hidden);
     }
 
     #[test]
     fn list_merges_builtins_and_disk_with_disabled_set() {
         let root = std::env::temp_dir().join(format!("lume-plugins-list-{}", std::process::id()));
         let base = root.join("plugins");
-        let demo = base.join("demo");
-        fs::create_dir_all(&demo).unwrap();
-        fs::write(demo.join("plugin.toml"), "id = \"demo\"\nname = \"Demo\"\n").unwrap();
+        let demo_dir = base.join("demo");
+        fs::create_dir_all(&demo_dir).unwrap();
+        fs::write(demo_dir.join("plugin.toml"), "id = \"demo\"\nname = \"Demo\"\n").unwrap();
         let disabled = vec!["preview".to_string()];
         let all = list_plugins(&root, &disabled, &[], false);
         let ids: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
@@ -705,6 +724,16 @@ height = 560
         assert!(preview.builtin && !preview.enabled);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(!demo.builtin && demo.enabled && demo.name == "Demo");
+        assert!(!demo.hidden, "hidden defaults to false (pill visible)");
+        // The flag rides through to PluginInfo for the frontend registry.
+        fs::write(
+            demo_dir.join("plugin.toml"),
+            "id = \"demo\"\nhidden = true\n",
+        )
+        .unwrap();
+        let all = list_plugins(&root, &disabled, &[], false);
+        let demo = all.iter().find(|p| p.id == "demo").unwrap();
+        assert!(demo.hidden);
         fs::remove_dir_all(&root).ok();
     }
 

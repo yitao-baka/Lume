@@ -333,6 +333,7 @@
   "pluginsTrustAllOn": "已全部授權",
   "pluginsTrustAllOff": "已恢復依宣告授權",
   "pluginDetachable": "可分離",
+  "pluginHidden": "僅搜尋進入",
   "pluginDetach": "在獨立視窗開啟",
   "pluginWindowOpenFailed": "無法開啟獨立視窗：{id}"
 }

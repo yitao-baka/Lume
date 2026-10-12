@@ -407,7 +407,10 @@ function App() {
   const router = createKeyRouter({
     mode,
     switchKey,
-    modeIds: () => modePlugins().map((m) => m.id),
+    // Hidden modes (manifest `hidden`) are not part of the switch cycle —
+    // their entry is the Navigate search row. A hidden ACTIVE mode is not in
+    // this list; the router then starts the cycle from the home page.
+    modeIds: () => modePlugins().filter((m) => !m.hidden).map((m) => m.id),
     shiftEnterAdmin,
     menu,
     currentResults,
@@ -440,15 +443,20 @@ function App() {
 
   /** Page pills, in registry order (the home page registers first). Only the
    * active pill can be loading — the spinner belongs to the page being
-   * switched to, not to a page that merely hasn't been opened yet. */
+   * switched to, not to a page that merely hasn't been opened yet. Modes
+   * declared `hidden` in their manifest never render a pill (their entry is
+   * the Navigate search row); while such a mode is active no pill is
+   * highlighted. */
   const pages = (): SearchBoxPage[] =>
-    modePlugins().map((m) => ({
-      id: m.id,
-      label: m.modeMeta?.label ?? t((m.modeMeta?.labelKey ?? m.id) as keyof Messages),
-      icon: m.modeMeta?.icon,
-      active: mode() === m.id,
-      loading: mode() === m.id && pageLoading(),
-    }));
+    modePlugins()
+      .filter((m) => !m.hidden)
+      .map((m) => ({
+        id: m.id,
+        label: m.modeMeta?.label ?? t((m.modeMeta?.labelKey ?? m.id) as keyof Messages),
+        icon: m.modeMeta?.icon,
+        active: mode() === m.id,
+        loading: mode() === m.id && pageLoading(),
+      }));
 
   async function handleInput(text: string) {
     setQuery(text);

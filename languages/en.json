@@ -333,6 +333,7 @@
   "pluginsTrustAllOn": "All plugins trusted",
   "pluginsTrustAllOff": "Back to declared-only capabilities",
   "pluginDetachable": "Detachable",
+  "pluginHidden": "Search-only",
   "pluginDetach": "Open in window",
   "pluginWindowOpenFailed": "Failed to open the plugin window: {id}"
 }

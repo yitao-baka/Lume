@@ -19,6 +19,7 @@ import {
   imgFeatureMatches,
   modeKeywordMatches,
   providerPlugins,
+  resolvePluginIcon,
   windowFeatureMatches,
 } from "../registry";
 import type { NavigateStore } from "./store";
@@ -68,28 +69,31 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
 
   /** Convert one provider result into a grid entry — shared by the search
    * merge and by drilled levels (P2.4). `seq` only feeds the synthetic dedup
-   * key used for rows that open nothing. */
+   * key used for rows that open nothing. Icon rule: the result's explicit
+   * `icon` (a URI, or a path relative to the plugin dir) wins; a row without
+   * one shows the plugin's own icon (manifest `icon`); with neither, the
+   * regular path pipeline (unknown-icon fallback) applies. */
   function providerRowToEntry(
-    pluginId: string,
-    instance: ProviderInstance,
+    p: { id: string; instance: ProviderInstance; dir?: string; icon?: string },
     it: ProviderResult,
     seq: number
   ): AppEntry | null {
     if (!it?.name) return null;
-    const key = it.path || `lume-plugin://${pluginId}/${seq}`;
+    const key = it.path || `lume-plugin://${p.id}/${seq}`;
+    const icon = resolvePluginIcon(it.icon, p.dir) ?? p.icon;
     return {
       id: 0,
       name: it.name,
       path: key,
       ...(it.description ? { description: it.description } : {}),
-      ...(it.icon ? { icon: it.icon } : {}),
-      ...(it.enter ? { providerEnter: { pluginId, item: it } } : {}),
-      ...(it.drill && instance.select
+      ...(icon ? { icon } : {}),
+      ...(it.enter ? { providerEnter: { pluginId: p.id, item: it } } : {}),
+      ...(it.drill && p.instance.select
         ? {
             providerDrill: {
-              pluginId,
+              pluginId: p.id,
               item: it,
-              filterable: typeof instance.filter === "function",
+              filterable: typeof p.instance.filter === "function",
             },
           }
         : {}),
@@ -122,13 +126,12 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
 
   /** Provider rows → grid entries (drop malformed ones). */
   function rowsToEntries(
-    pluginId: string,
-    instance: ProviderInstance,
+    p: { id: string; instance: ProviderInstance; dir?: string; icon?: string },
     rows: ProviderResult[]
   ): AppEntry[] {
     const out: AppEntry[] = [];
     rows.forEach((r, i) => {
-      const e = providerRowToEntry(pluginId, instance, r, i);
+      const e = providerRowToEntry(p, r, i);
       if (e) out.push(e);
     });
     return out;
@@ -207,7 +210,12 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     const extra: AppEntry[] = [];
     const seen = new Set(res.map((r) => r.path));
     for (const kw of modeKeywordMatches(q)) {
-      extra.push({ id: -1, name: `进入 ${kw.name}`, path: `lume-mode://${kw.id}` });
+      extra.push({
+        id: -1,
+        name: `进入 ${kw.name}`,
+        path: `lume-mode://${kw.id}`,
+        ...(kw.icon ? { icon: kw.icon } : {}),
+      });
     }
     // 声明式进入（features，P2.1）：正则/任意文本命中 → 「<label>」行，
     // 激活把当前查询作为 payload 投递给插件（mode 先切页再 onEnter）。
@@ -239,7 +247,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
           if (res.length + extra.length >= 20) break;
           const key = it.path || `lume-plugin://${p.id}/${extra.length}`;
           if (seen.has(key)) continue;
-          const entry = providerRowToEntry(p.id, p.instance, it, extra.length);
+          const entry = providerRowToEntry(p, it, extra.length);
           if (!entry) continue;
           seen.add(key);
           extra.push(entry);
@@ -271,7 +279,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       try {
         const rows = await p?.instance.filter?.(d.item as never, q);
         if (token !== services.searchToken()) return;
-        setApps(rowsToEntries(d.pluginId, p!.instance, rows ?? []));
+        setApps(rowsToEntries(p!, rows ?? []));
         setSelected(0);
         services.scheduleResize();
       } catch (err) {
@@ -319,7 +327,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       void (async () => {
         try {
           const rows = await p.instance.select!(d.item as never);
-          setApps(rowsToEntries(d.pluginId, p.instance, rows ?? []));
+          setApps(rowsToEntries(p, rows ?? []));
           setDrill({ pluginId: d.pluginId, item: d.item, parent, filterable: d.filterable });
           if (d.filterable) services.setSubInput(d.pluginId, { placeholder: t("searchGeneric") });
           setSelected(0);

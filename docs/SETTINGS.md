@@ -197,7 +197,8 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   同规则）；无图标时按类型着色的首字母块（模式 = 蓝 / 服务 = 紫 /
   搜索提供 = 绿）。
 - 名称（粗体）+ 版本 + 徽章（「内置」accent 蓝 /「磁盘」中性 /
-  「开发」橙）；第二行描述（内置插件用本地化文案
+  「开发」橙；mode 清单声明 `detachable` / `hidden` 时另有「可分离」/
+  「仅搜索进入」徽章）；第二行描述（内置插件用本地化文案
   `pluginDescClipboard` / `pluginDescPreview`，磁盘插件用 manifest
   `description`）；第三行类型 + 关键词预览。
 - 右侧：重载按钮（仅磁盘插件，`reload_plugin`）+ 启停 toggle +

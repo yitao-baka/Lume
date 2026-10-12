@@ -95,11 +95,19 @@ export function allPlugins(): LauncherPlugin[] {
   return plugins;
 }
 
-/** Enabled provider instances (contributed by registered and disk plugins). */
-export function providerPlugins(): { id: string; instance: ProviderInstance }[] {
+/** Enabled provider instances (contributed by registered and disk plugins).
+ * `dir` / `icon` let the Navigate merge resolve a result's explicit `icon`
+ * (relative to the plugin dir) and the plugin-icon default for rows without
+ * one. */
+export function providerPlugins(): {
+  id: string;
+  instance: ProviderInstance;
+  dir?: string;
+  icon?: string;
+}[] {
   return plugins
     .filter((p) => p.provider && isEnabled(p.id))
-    .map((p) => ({ id: p.id, instance: p.provider! }));
+    .map((p) => ({ id: p.id, instance: p.provider!, dir: p.dir, icon: p.icon }));
 }
 
 // ── Third-party JS plugin loading (v2: provider / mode / service) ──
@@ -423,13 +431,32 @@ export function callHook(id: string, logic: Record<string, unknown>, name: strin
 /** data:/http(s):/asset:/blob: URIs pass through untouched; anything else in
  * an item's `icon` is a file path (absolute, or relative to `base` — a
  * manifest icon is relative to the plugin dir) → asset URL. */
-function resolvePluginIcon(icon: unknown, base?: string): string | undefined {
+export function resolvePluginIcon(icon: unknown, base?: string): string | undefined {
   if (typeof icon !== "string" || icon === "") return undefined;
   if (/^(data:|https?:|asset:|blob:)/i.test(icon)) return icon;
   if (base && !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(icon)) {
     return convertFileSrc(base + "\\" + icon);
   }
   return convertFileSrc(icon);
+}
+
+/** The plugin's own icon as a URL: the resolved manifest `icon` for disk
+ * plugins, the compiled-in `modeMeta.icon` for built-in modes. This is the
+ * default icon for every Navigate row the plugin contributes (keyword rows,
+ * provider results / feature rows without an explicit `icon`). */
+export function pluginIcon(id: string): string | undefined {
+  const p = plugins.find((x) => x.id === id);
+  return p?.icon || p?.modeMeta?.icon || undefined;
+}
+
+/** One Navigate row icon contributed by plugin `p`: an explicit per-row
+ * `icon` (URI, or path relative to the plugin dir) wins; otherwise the
+ * plugin's own icon (manifest `icon`) is the default; undefined when the
+ * plugin has neither (the caller falls back to the path/unknown pipeline). */
+export function pluginRowIcon(p: LauncherPlugin, explicit?: unknown): string | undefined {
+  const custom =
+    typeof explicit === "string" && explicit ? resolvePluginIcon(explicit, p.dir) : undefined;
+  return custom ?? p.icon ?? undefined;
 }
 
 /** Validate + normalize a plugin's `navBars()` return: prefix bar ids with
@@ -838,6 +865,7 @@ export async function loadDiskPlugins() {
         const navBars = navBarsContribution(m.id, proxy);
         definePlugin({
           id: m.id,
+          icon: resolvePluginIcon(m.icon, m.dir),
           features: m.features ?? [],
           dir: m.dir,
           provider: {
@@ -885,6 +913,7 @@ export async function loadDiskPlugins() {
         const instance = createListTemplateMode(m, logic, services!);
         definePlugin({
           id: m.id,
+          icon: resolvePluginIcon(m.icon, m.dir),
           modeMeta: {
             labelKey: "",
             placeholderKey: "",
@@ -913,6 +942,7 @@ export async function loadDiskPlugins() {
         const navBars = navBarsContribution(m.id, logic);
         definePlugin({
           id: m.id,
+          icon: resolvePluginIcon(m.icon, m.dir),
           modeMeta: {
             labelKey: "",
             placeholderKey: "",
@@ -940,6 +970,7 @@ export async function loadDiskPlugins() {
         const navBars = navBarsContribution(m.id, logicProxy(m.id));
         definePlugin({
           id: m.id,
+          icon: resolvePluginIcon(m.icon, m.dir),
           lifecycle: {
             onShow: () => void logicCall(m.id, "onShow", []).catch(() => {}),
             onHide: () => void logicCall(m.id, "onHide", []).catch(() => {}),
@@ -1007,10 +1038,10 @@ export async function applyPluginSettings(id: string): Promise<void> {
  * first: exact (case-insensitive) → prefix → pinyin initials prefix → full
  * pinyin prefix. Pinyin comes precomputed from the backend (`keywordsPinyin`)
  * — the frontend has no pinyin table of its own. */
-export function modeKeywordMatches(q: string): { id: ModeId; name: string }[] {
+export function modeKeywordMatches(q: string): { id: ModeId; name: string; icon?: string }[] {
   const needle = q.trim().toLowerCase();
   if (!needle) return [];
-  const hits: { id: ModeId; name: string; tier: number }[] = [];
+  const hits: { id: ModeId; name: string; tier: number; icon?: string }[] = [];
   for (const p of plugins) {
     if (!p.mode || !isEnabled(p.id)) continue;
     const kws = (p as { keywords?: string[] }).keywords ?? [];
@@ -1036,11 +1067,12 @@ export function modeKeywordMatches(q: string): { id: ModeId; name: string }[] {
         id: p.id,
         name: (p as { pluginName?: string }).pluginName ?? p.id,
         tier: best,
+        icon: pluginIcon(p.id),
       });
     }
   }
   hits.sort((a, b) => a.tier - b.tier);
-  return hits.map(({ id, name }) => ({ id, name }));
+  return hits.map(({ id, name, icon }) => ({ id, name, ...(icon ? { icon } : {}) }));
 }
 
 /** Enabled plugins contributing Navigate bars (栏目), in registration
@@ -1055,15 +1087,23 @@ export function navBarPlugins(): {
     .map((p) => ({ id: p.id, navBars: p.navBars! }));
 }
 
-/** Enabled mode plugins, in registration order (id + instance + pill meta). */
+/** Enabled mode plugins, in registration order (id + instance + pill meta).
+ * `hidden` mirrors the manifest flag: the mode stays out of the switch bar
+ * and the switch-key cycle — its entry is the Navigate search rows. */
 export function modePlugins(): {
   id: ModeId;
   instance: ModeInstance;
   modeMeta?: { labelKey: string; placeholderKey: string; icon: string; label?: string };
+  hidden: boolean;
 }[] {
   return plugins
     .filter((p) => p.mode && isEnabled(p.id))
-    .map((p) => ({ id: p.id, instance: p.mode!, modeMeta: p.modeMeta }));
+    .map((p) => ({
+      id: p.id,
+      instance: p.mode!,
+      modeMeta: p.modeMeta,
+      hidden: manifests().find((m) => m.id === p.id)?.hidden === true,
+    }));
 }
 
 // ── Detached plugin windows (P6) ──
@@ -1298,6 +1338,13 @@ export interface FeatureMatch extends FeatureEnterInfo {
   icon?: string;
 }
 
+/** One feature row's icon: the rule's explicit `icon` (relative to the
+ * plugin dir) or — when the rule has none — the plugin's own manifest icon
+ * (`pluginRowIcon`), so every plugin row shows its identity by default. */
+function featureIcon(p: LauncherPlugin, f: PluginFeature): string | undefined {
+  return pluginRowIcon(p, f.icon);
+}
+
 /** Entry rules of enabled plugins matching a query (empty query → none). */
 export function featureMatches(q: string): FeatureMatch[] {
   const query = q.trim();
@@ -1322,13 +1369,14 @@ export function featureMatches(q: string): FeatureMatch[] {
       } else if (!f.over) {
         return; // a rule with neither regex nor over never matches
       }
+      const icon = featureIcon(p, f);
       out.push({
         pluginId: p.id,
         code: f.code,
         type,
         payload: query,
         label: f.label || (p as { pluginName?: string }).pluginName || p.id,
-        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+        ...(icon ? { icon } : {}),
       });
     });
   }
@@ -1390,6 +1438,7 @@ export function fileFeatureMatches(paths: string[], kinds: string[]): FeatureMat
       if (matched.length === 0) return;
       if (f.minLength != null && matched.length < f.minLength) return;
       if (f.maxLength != null && matched.length > f.maxLength) return;
+      const icon = featureIcon(p, f);
       out.push({
         pluginId: p.id,
         code: f.code,
@@ -1397,7 +1446,7 @@ export function fileFeatureMatches(paths: string[], kinds: string[]): FeatureMat
         payload: "",
         paths: matched,
         label: f.label || (p as { pluginName?: string }).pluginName || p.id,
-        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+        ...(icon ? { icon } : {}),
       });
     });
   }
@@ -1415,13 +1464,14 @@ export function imgFeatureMatches(): FeatureMatch[] {
     const feats = (p as { features?: PluginFeature[] }).features ?? [];
     feats.forEach((f) => {
       if (!f?.code || f.type !== "img") return;
+      const icon = featureIcon(p, f);
       out.push({
         pluginId: p.id,
         code: f.code,
         type: "img",
         payload: "",
         label: f.label || (p as { pluginName?: string }).pluginName || p.id,
-        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+        ...(icon ? { icon } : {}),
       });
     });
   }
@@ -1453,6 +1503,7 @@ export function windowFeatureMatches(fg: ForegroundInfo | null): FeatureMatch[] 
       if (procs.length > 0 && !procs.some((v) => v === process || v === processStem)) return;
       if (classes.length > 0 && !classes.includes(className)) return;
       if (titles.length > 0 && !titles.some((v) => titleValueMatches(p.id, idx, v, fg.title))) return;
+      const icon = featureIcon(p, f);
       out.push({
         pluginId: p.id,
         code: f.code,
@@ -1460,7 +1511,7 @@ export function windowFeatureMatches(fg: ForegroundInfo | null): FeatureMatch[] 
         payload: "",
         window: fg,
         label: f.label || (p as { pluginName?: string }).pluginName || p.id,
-        ...(f.icon ? { icon: resolvePluginIcon(f.icon, (p as { dir?: string }).dir) } : {}),
+        ...(icon ? { icon } : {}),
       });
     });
   }

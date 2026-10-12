@@ -30,7 +30,9 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   与 `examples/plugins/actions/`）
 - `mode` — 整页模式：`view` HTML 自由 UI（沙箱 iframe）+ 可选 `entry`
   逻辑钩子 + `keywords` 全局关键字进入 + 可选 `height` 窗口高度 +
-  可选 `icon` pill 图标 + `detachable = true` 允许分离为独立窗口（P6，
+  可选 `icon` pill 图标（也是搜索结果行的默认图标）+ `hidden = true` 不进
+  模式切换栏（只能从导航页搜索结果进入，示例 `examples/plugins/hidden-mode/`）
+  + `detachable = true` 允许分离为独立窗口（P6，
   见 `docs/PLUGIN_API.md` §6G；示例 `examples/plugins/hello-mode/`；
   基于宿主 `search.files` 能力的完整文件搜索模式见
   `examples/plugins/file-search/`；`template = "list"` 免 HTML 列表模式见
@@ -76,7 +78,8 @@ export default {
 
 - **返回条目** `{ name, path }` — 与原生结果同构：追加在原生索引结果之后
   （按 path 去重，总数封顶 20），激活时经 `launch_app` 打开（文件路径与
-  URL 都可以），图标走既有管线（取不到 → 未知图标回退）。
+  URL 都可以）。**图标**：条目的显式 `icon`（URI 或相对插件目录的路径）
+  → 清单 `icon`（默认行图标）→ `path` 常规管线（取不到 → 未知图标回退）。
 - **调用时机**：Navigate 模式每次非空搜索（空查询的主菜单不触发）。
 - **异常隔离**：单个 provider 抛错只会在控制台记录，不影响原生搜索；
   加载失败（文件缺失/非 ES Module/缺少 search）同样只记录并跳过。

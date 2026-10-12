@@ -1,0 +1,29 @@
+# Hidden Mode — “不进模式切换栏”的 mode 示例（manifest `hidden = true`）。
+#
+# 贡献 mode 的插件默认在搜索行的模式切换栏里有一颗 pill（也会进入 Tab
+# 循环）。声明 `hidden = true` 后：
+#   · 不渲染 pill，Tab 循环也跳过本模式；
+#   · 唯一入口是导航页搜索结果 —— 关键字「进入 Hidden Mode」
+#     行（keywords）与声明式规则行（[[features]]）；
+#   · 行图标默认取插件自己的 `icon`（本例 icon.svg）。
+#
+# 安装：把整个 hidden-mode/ 目录拷进 <base>/plugins/，重启 Lume（或触发
+# 一次设置变更）。用法：搜索引擎输入「hush」/「潜水」或「hush:任意文字」，
+# 点结果行进入本模式；下次调用 Lume 时切换栏仍然没有它。
+id = "hidden-mode"
+name = "Hidden Mode"
+version = "1.0.0"
+kind = "mode"
+description = "示例：hidden = true —— 不进模式切换栏，只能从导航页搜索结果进入"
+keywords = ["hush", "潜水"]
+icon = "icon.svg"      # pill / 搜索结果行等缺省图标的默认来源
+view = "view.html"     # 桥接 iframe 页 — 本插件不需要 entry 逻辑钩子
+height = 420
+hidden = true          # 不在模式切换栏/切换键循环里出现；入口 = 导航搜索行
+
+# 声明式进入（P2.1）：输入 "hush:xxx" 出「hush:…」行；该行同样默认用本插件 icon。
+# 注意这里没有 entry 逻辑，宿主会直接投递给页面的 lume.on.enter。
+[[features]]
+code = "note"
+label = "Hidden Mode：进入并带这段文字"
+regex = "^hush:"

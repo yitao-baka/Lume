@@ -408,7 +408,12 @@ before adding a field:
     for on-disk plugins); the Rust side discovers manifests
     (`<base>/plugins/<id>/plugin.toml`) in `plugins.rs` and carries the
     enabled set in `settings.plugins.disabled`. Adding a launcher page no
-    longer touches the shell.
+    longer touches the shell. The registry also owns the mode-pill data:
+    a manifest `hidden = true` mode is filtered out of the pill bar and the
+    switch-key cycle (its entry is the Navigate search row), and every
+    Navigate row a plugin contributes defaults to the plugin's own manifest
+    `icon` when the row carries no explicit `icon` (provider results, feature
+    rows, keyword-entry rows).
 - `src/launcher/` shared modules:
   - `types.ts` — shared types + pure constants (mode/entry types, key sets,
     sizing constants, category tables).

@@ -301,13 +301,19 @@ dev URL instead.
    close, geometry memory and the empty-`srcdoc` navigation watchdog.
 5. **Theme override** — `node scripts/cdp_plugin_theme_verify.mjs`; inspect the
    rendered canvas with the 1x1 screenshot sampler, not the sandbox DOM.
-6. **`.lupx` packages** — `node scripts/cdp_lupx_verify.mjs`; cover inspect,
+6. **Mode-bar hiding and result icons** — `node
+   scripts/cdp_plugin_mode_bar_verify.mjs`; a `hidden = true` mode renders no
+   pill and the switch key skips it (the cycle restarts at home), while its
+   Navigate rows (keyword / feature) and provider results without their own
+   `icon` default to the plugin's manifest icon, and provider icons given as
+   plugin-relative paths resolve through the asset protocol.
+7. **`.lupx` packages** — `node scripts/cdp_lupx_verify.mjs`; cover inspect,
    install, overwrite relation (`upgrade` / `reinstall` / `downgrade`),
    uninstall and private-file preservation.
-7. **HTTP and slow requests** — `node scripts/cdp_http_probe_verify.mjs`
+8. **HTTP and slow requests** — `node scripts/cdp_http_probe_verify.mjs`
    (offline local echo server) covers status/headers/text/json, non-2xx,
    request timeout and post-timeout bridge health.
-8. **Manual item** — real OS file drag into the launcher, real UAC prompts,
+9. **Manual item** — real OS file drag into the launcher, real UAC prompts,
    service/agent registration, taskbar AUMID pinning and actual drag of a
    detached-window titlebar cannot be fully automated; use the sections above
    plus `docs/PLUGIN_API.md` §10.

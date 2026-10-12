@@ -12,7 +12,8 @@ export interface KeyDeps {
   mode: () => Mode;
   /** Key that switches modes (settings → 快捷键). */
   switchKey: () => string;
-  /** All enabled mode ids in cycle order (home page first, then plugin modes). */
+  /** Visible mode ids in cycle order (home page first, then plugin modes) —
+   * modes declared `hidden` are excluded. */
   modeIds: () => ModeId[];
   shiftEnterAdmin: () => boolean;
   menu: () => MenuState;
@@ -66,10 +67,13 @@ export function createKeyRouter(deps: KeyDeps) {
       }
     } else if (matchesSwitchKey(e, deps.switchKey())) {
       e.preventDefault();
-      // Cycle through every enabled page (home first, then plugin modes).
+      // Cycle through every visible page (home first, then plugin modes).
+      // Hidden modes (manifest `hidden`) are not in this list; when one is
+      // active the cycle restarts from the first page (the home page).
       const modes = deps.modeIds();
+      if (modes.length === 0) return;
       const idx = modes.indexOf(deps.mode());
-      void deps.switchMode(modes[(Math.max(idx, 0) + 1) % modes.length]);
+      void deps.switchMode(idx < 0 ? modes[0] : modes[(idx + 1) % modes.length]);
     } else {
       // Page-owned keys first (grid arrows + bar navigation, category
       // switching, multi-select, delete), then the shared bindings (↑/↓ move,

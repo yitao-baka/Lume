@@ -1328,7 +1328,11 @@ registry 不再 `import()` 任何第三方代码：`loadDiskPlugins` 注册**代
 目录内，越界即拒），相对导入改写为**帧内** blob URL 后 `import()`；模块缓存
 随帧生命周期（reload = 换帧 = 全新缓存）。逻辑工厂 `create(ctx)` 的
 `ctx` 就是帧内的 `window.lume`（与视图页同面，`db`/`http`/`fs`/… 每次
-调用带令牌走 supervisor → invoke → Rust 门控）。
+调用带令牌走 supervisor → invoke → Rust 门控）。**面一致性是硬契约**
+（2026-10-12，ROADMAP #38 修复了两处 P6.5 起的漂移：`clipboard.readImage`
+缺 rpc case、逻辑帧缺 `fs`/`theme`/`app.detach`）；新增 ctx 方法必须同时
+改 `iframeBridge.tsx` 客户端、`public/pluginLogicFrame.js` 与 `rpc.ts`，
+`cdp_p2b_verify` 有静态断言钉住。
 
 **生命周期**：`plugin_logic_host_ensure` 幂等建窗（隐藏 1×1、skip-taskbar、
 恒定低水位内存修剪）；supervisor 就绪后通告 `plugin-logic-host-ready`，

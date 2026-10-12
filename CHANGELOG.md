@@ -49,6 +49,18 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **插件宿主链路回归：`clipboard.readImage` 路由与逻辑帧 ctx 面（ROADMAP #38）** —
+  两个「接口在、路没通」的既有问题（自 P6.5 逻辑宿主隔离起）：① 视图桥与
+  逻辑帧的 ctx 都调 `clipboard.readImage`，`src/plugins/rpc.ts` 的 switch
+  却缺 case，调用落到 `unknown lume rpc`；② 逻辑帧 ctx
+  （`public/pluginLogicFrame.js`）缺 `fs` 组（12 方法）、`theme.set/get`
+  与 `app.detach`，`ctx.fs.*` 为 undefined。修复后两个 ctx 面对齐为同一
+  52 方法集合；`cdp_p2b_verify` 新增静态面一致性断言（逻辑帧 ctx ≡ 视图桥，
+  且每个方法都有 rpc case）钉住这类漂移。验证：p2b 的 img `readImage` 与
+  files `fs.readText` 两条功能性断言由 FAIL 转 PASS、面一致性 2/2
+  （该脚本其余 2 项失败为陈旧日志断言，见 ROADMAP #39）；`tsc` 干净、
+  debug exe 重建实测。
+
 - **分离窗口的 `emit_to` 广播串台 + 关一个窗口连带关另一个（ROADMAP #36）** —
   Tauri 的 JS `listen()` 默认目标是 `EventTarget::Any`，而 `emit_to` 的过滤器
   只看**监听器**目标（每个 webview 都会被遍历），于是每个 `plugin-*` 窗口都

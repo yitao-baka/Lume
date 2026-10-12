@@ -60,7 +60,15 @@
   }
 
   // ── ctx：与视图桥 window.lume 同面（工厂 create(ctx) 收到的就是它）──
+  // 新增/移除 ctx 方法时三处同步：本文件、iframeBridge.tsx 的视图桥客户端、
+  // rpc.ts 的 switch（cdp_p2b_verify 有一条静态对齐断言钉住这件事，ROADMAP #38）。
   window.lume = {
+    theme: {
+      // 本插件自己的颜色模式（§6C）：system 跟随启动器，light/dark 固定
+      // 本插件的明暗。与视图桥同一条 theme.set/get 路由。
+      set: function (mode) { return call("theme.set", { mode: mode }); },
+      get: function () { return call("theme.get"); },
+    },
     app: {
       hide: function () { return call("app.hide"); },
       toast: function (text, opts) { return call("app.toast", { text: text, opts: opts }); },
@@ -78,6 +86,21 @@
         return call("app.redirect", { pluginId: targetId, code: opts && opts.code, payload: opts && opts.payload });
       },
       foreground: function () { return call("app.foreground"); },
+      detach: function () { return call("app.detach"); },
+    },
+    fs: {
+      readText: function (p) { return call("fs.readText", { path: p }); },
+      bytes: function (p) { return call("fs.bytes", { path: p }); },
+      thumb: function (p) { return call("fs.thumb", { path: p }); },
+      videoPoster: function (p) { return call("fs.videoPoster", { path: p }); },
+      icon: function (paths) { return call("fs.icon", { paths: paths }); },
+      writeText: function (name, text) { return call("fs.writeText", { name: name, text: text }); },
+      writeBytes: function (name, data) { return call("fs.writeBytes", { name: name, data: data }); },
+      readPrivate: function (name) { return call("fs.readPrivate", { name: name }); },
+      listPrivate: function () { return call("fs.listPrivate"); },
+      privatePath: function (name) { return call("fs.privatePath", { name: name }); },
+      removePrivate: function (name) { return call("fs.removePrivate", { name: name }); },
+      writeFile: function (p, text) { return call("fs.writeFile", { path: p, text: text }); },
     },
     clipboard: {
       readText: function () { return call("clipboard.readText"); },

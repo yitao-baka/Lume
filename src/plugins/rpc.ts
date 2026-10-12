@@ -1,6 +1,11 @@
 //! The host RPC router — one `switch` mapping a bridge method name
 //! ("app.hide" / "storage.get" / …) to the host API call.
 //!
+//! Keep the two ctx surfaces in step with this switch: the view bridge
+//! (`iframeBridge.tsx` client) and the logic frame (`public/pluginLogicFrame.js`)
+//! each expose every method here; `cdp_p2b_verify` asserts the parity so a
+//! method can no longer exist on one surface but route nowhere (ROADMAP #38).
+//!
 //! Shared by two hosts of a plugin page: the **launcher window** (mode page
 //! inside the results area, `registry.ts`) and a **detached plugin window**
 //! (`pluginWindow.tsx`). Both build the same `PluginHostApi` for the plugin
@@ -71,6 +76,8 @@ export async function execHostRpc(
       return api.clipboard.writeFiles(args.paths as string[]);
     case "clipboard.readFiles":
       return api.clipboard.readFiles();
+    case "clipboard.readImage":
+      return api.clipboard.readImage();
     case "clipboard.paste":
       return api.clipboard.paste({
         text: args.text as string | undefined,

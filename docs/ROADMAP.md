@@ -4,7 +4,7 @@ Planned features for Lume, in priority order. Items are added here before
 implementation; each becomes a scoped iteration when started. See
 `CHANGELOG.md` for what shipped.
 
-> **当前快照（2026-10-12，Pre-26.10）**：路线已推进到 #37。插件系统、
+> **当前快照（2026-10-12，Pre-26.10）**：路线已推进到 #38。插件系统、
 > `.lupx` 安装/签名、三层权限与逻辑宿主隔离、独立插件窗口、文件秒搜、
 > 自动动作和提权代理均已落地；本文较早章节保留当时的设计与验收记录，
 > 当前 API/行为以 `docs/PLUGIN_API.md`、`docs/PLUGINS.md`、
@@ -2683,3 +2683,35 @@ WebView2 会**丢掉后一个导航**：
   case（`unknown lume rpc`）、逻辑帧 ctx 缺 `fs` 组
   （`public/pluginLogicFrame.js`）与两条指向旧日志文本的断言；
   均可在当前 HEAD 上直接重现，不是 #37 引入。
+
+## 38. 插件宿主链路修复：`clipboard.readImage` 路由 + 逻辑帧 ctx 面补齐（已实现）
+
+来源：#37 回归时发现的既有问题（均自 P6.5 逻辑宿主隔离起，与 #37 无关）。
+两处都是「接口写了、路没通」的漂移：
+
+- **`clipboard.readImage` 没有 rpc case**：视图桥与逻辑帧的 ctx 都暴露
+  `lume.clipboard.readImage()`、`permissions.ts` 台账（`clipboard`）与
+  Rust 命令 `plugin_clipboard_read_image` 也都在，但 `src/plugins/rpc.ts`
+  的 switch 缺这一 case —— 任何插件（页面或逻辑）调用都得到
+  `unknown lume rpc: clipboard.readImage`。修复：补 case，权限照旧走
+  `RPC_PERMISSION` 的声明校验（页面与逻辑两条路径同一条路由）。
+- **逻辑帧 ctx 缺组**：`public/pluginLogicFrame.js` 的 ctx 注释自称
+  「与视图桥同面」，实际缺 `fs`（12 个方法）、`theme.set/get` 与
+  `app.detach` —— files-img-demo 的 `ctx.fs.readText` 直接是 undefined
+  （报 TypeError），调 `theme`/`detach` 同样不可用。修复：按视图桥逐方法
+  补齐，两面 52 个方法完全一致。
+
+**防漂移**：`scripts/cdp_p2b_verify.mjs` 新增两条静态断言 —— 两个 ctx 面
+（`iframeBridge.tsx` 客户端、`public/pluginLogicFrame.js`）的方法集合必须
+相等，且每个方法都要在 `rpc.ts` 的 switch 里有 case（正则扫描源文件，不
+依赖 exe 状态）；`rpc.ts` 与 `pluginLogicFrame.js` 里也留了「新增方法三处
+同步」的注释。
+
+### 38.1 实测
+
+- `cdp_p2b_verify`（先临时启用 files-img-demo / list-demo 两个夹具）：
+  img 行的 `clipboard.readImage`（逻辑路径）与 files 行的 `ctx.fs.readText`
+  由 FAIL 转 PASS，新增的面一致性断言 2/2；**22/24**，余 2 项是脚本自身
+  指向旧日志文本的陈旧断言（`loaded provider (entry=` 等），见 #39。
+- `tsc --noEmit` 干净；`pnpm run build` + `pnpm run tauri build --debug
+  --no-bundle` 重建后实测（逻辑帧是 `public/` 静态文件，必须重建 exe）。

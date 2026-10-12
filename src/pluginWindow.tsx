@@ -97,6 +97,10 @@ function App() {
     // `app.hide()` hides THIS window (the plugin decides when it should go
     // away); re-open via the launcher's pill/keyword focuses it again.
     resetAndHide: () => void getCurrentWindow().hide().catch((err) => plog.error(id, "hide failed:", err)),
+    detachMode: () => {
+      // Already detached here: the caller IS the detached window — raise it.
+      void getCurrentWindow().setFocus().catch((err) => plog.error(id, "focus failed:", err));
+    },
     persistLastPage: () => {},
     runSearch: async () => {
       plog.debug(id, "runSearch ignored in the detached window");

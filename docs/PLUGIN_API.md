@@ -105,7 +105,8 @@ export default {
 | `settings` | array of table | `[]` | **声明式设置**（P3.4，§6F.3）——`[[settings]]` 子表：`key`、`label`、`type`（`toggle`/`select`/`text`）、`default`、`[[settings.options]]`（`value`/`label`）。设置 → 插件 自动渲染，值存插件 `__settings` 文档，插件经 `ctx.settings.get/all` 读、`onSettings` 感知变更。 |
 | `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入，含 `file_type` 类别，§6E.1.1）、`"img"`（剪贴板图片）与 `"window"`（活动窗口匹配，§6H.4）规则见对应小节。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。分离窗口的默认高度同样取它（§6G）。 |
-| `detachable` | bool | `false` | **mode 专属**（P6，§6G）— 页面可以分离为独立窗口：设置页显示「可分离」chip，激活该模式时页面右上角悬停出现「在独立窗口打开」按钮。依赖启动器搜索框交互（`setSubInput`/`setQuery` 驱动）的模式不要声明。 |
+| `detachable` | bool | `false` | **mode 专属**（P6，§6G）— 页面可以分离为独立窗口：设置页显示「可分离」chip，激活该模式时页面右上角悬停出现「在独立窗口打开」按钮（插件也可经 `lume.app.detach()` 自绘按钮触发，§6C）。依赖启动器搜索框交互（`setSubInput`/`setQuery` 驱动）的模式不要声明。 |
+| `detach_button` | bool | `true` | **mode 专属 + `detachable` 配套**（P6，§6G）— 宿主是否在模式页右上角渲染内置的悬停「在独立窗口打开」按钮。插件自绘分离按钮（常驻、纯图标…）时设 `false` 把右上角完全让给页面，分离走 `lume.app.detach()`（§6C）。 |
 | `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。分离窗口（§6G）的任务栏图标同源：分离时宿主把该文件光栅化后设为窗口图标（省略 = 独立窗回退 Lume 主题图标）。 |
 
 **解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
@@ -454,7 +455,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 
 | 组 | 方法 | 说明 |
 |---|---|---|
-| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（P1.2，§6D）；`setSubInput`/`removeSubInput` 接管/交还搜索框（P2.3，§6E.2）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（P2.5，§6E.4） |
+| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` / `detach()` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（P1.2，§6D）；`setSubInput`/`removeSubInput` 接管/交还搜索框（P2.3，§6E.2）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（P2.5，§6E.4）；`detach()` 把本模式分离为独立窗口（P6，§6G）——`detachable` 插件自绘分离按钮（常驻/纯图标等形态自定）时调用它，快照/建窗/回放与宿主内置悬停按钮同一条路 |
 | `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `readImage()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`readImage()` 返回 PNG data URI（无图 = null；`img` feature 的取数路径，§6E.1.1）；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（P1.3，§6D） |
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**（P1.1）——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated` |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框（P1.4）。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
@@ -1069,7 +1070,7 @@ permissions = ["network", "clipboard", "fs.write"]
   `screen.*→screen`、`search.files→search.files`、`fs.readText/bytes/thumb/
   videoPoster/icon→fs.read`、`fs.writeFile→fs.write`。
 - **无需声明**：基础动作（`app.hide/toast/setQuery/setPlaceholder/openPath/
-  revealPath/resize/setSubInput/redirect`）、插件自有数据（`storage.*`、`db.*`、
+  revealPath/resize/setSubInput/redirect/detach`）、插件自有数据（`storage.*`、`db.*`、
   `settings.*`）、私有目录（`fs.writeText` 等）。
 - **校验点**：宿主构建插件 API 时逐方法包一层（`guardHostApi`），所以插件
   **逻辑**（跑在启动器窗口、直接持有 API 的那份）与 **mode 页的桥接** 两条路径
@@ -1110,7 +1111,10 @@ permissions = ["network", "clipboard", "fs.write"]
 清单声明 `detachable = true` 的磁盘 mode 插件可以把页面**分离为独立窗口**：
 激活该模式时，页面右上角悬停出现「在独立窗口打开」按钮（⧉）——点击后启动器
 隐藏、插件窗口打开；关闭窗口（× 或 Esc）即销毁，模式回到启动器内页形态。
-设置 → 插件 的卡片上会显示「可分离」chip。
+设置 → 插件 的卡片上会显示「可分离」chip。按钮形态要自定义（常驻、纯图标…）
+的插件有两条路：① 保留内置按钮，自绘按钮并调 `lume.app.detach()`（§6C）；
+② 声明 `detach_button = false` 关掉内置按钮（连它的悬停占位一起去掉），右上角
+完全归插件页面，分离只走自绘按钮 + `app.detach`。
 
 ```toml
 kind = "mode"
@@ -1141,6 +1145,7 @@ detachable = true     # 允许分离为独立窗口
 | `app.hide()` | 隐藏启动器 | 隐藏**插件窗口**（再激活 = 重新聚焦） |
 | `app.resize({w,h})` | 改启动器窗口高度 | 改**插件窗口**尺寸（宽高独立，最小 360×240） |
 | `app.dragWindow()` | 拖动启动器窗口 | 拖动**插件窗口**（标题栏页的空白区约定，见 §6G.5） |
+| `app.detach()` | 分离本模式为独立窗口（快照/建窗/回放与内置按钮同路） | 已分离 —— 聚焦本窗口（升到前台） |
 | `app.toast(text)` | 启动器底部 toast | 窗口内浮动 toast |
 | `app.setQuery(q)` | 覆写启动器搜索框查询 | **生效** — 查询住在本窗口的 iframe 里：把 `query` 事件扇出到视图页与标题栏页（调用方也会收到回声）。标题栏搜索框驱动视图就靠它 |
 | `app.setPlaceholder` / `setSubInput` / `removeSubInput` | 生效 | **不可用**（没有共享搜索框，调用被忽略并记 debug 日志） |

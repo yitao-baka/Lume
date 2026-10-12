@@ -227,6 +227,12 @@ pub struct PluginManifest {
     /// opt in).
     #[serde(default)]
     pub detachable: bool,
+    /// Mode plugins: whether the host renders its built-in hover detach
+    /// button on the mode page (default true). Plugins that draw their own
+    /// detach affordance (via `app.detach`) set `detach_button = false` to
+    /// free the top-right corner of the page.
+    #[serde(default = "default_true")]
+    pub detach_button: bool,
     /// Mode plugins: pill icon, relative to the plugin dir.
     #[serde(default)]
     pub icon: String,
@@ -270,6 +276,10 @@ fn default_kind() -> String {
     "mode".into()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// A plugin as reported to the frontend: manifest merged with runtime state.
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginInfo {
@@ -303,6 +313,11 @@ pub struct PluginInfo {
     pub height: Option<u32>,
     /// Mode plugins: the page may be detached into its own window.
     pub detachable: bool,
+    /// Mode plugins: render the host's built-in hover detach button on the
+    /// mode page (manifest `detach_button`, default true). Plugins that draw
+    /// their own detach affordance set it false to free the top-right corner.
+    #[serde(rename = "detachButton")]
+    pub detach_button: bool,
     /// Mode plugins: pill icon (relative to the plugin dir).
     pub icon: String,
     /// Development flag (manifest `development`): the frontend reloads this
@@ -476,6 +491,7 @@ pub fn list_plugins(
             keywords: Vec::new(),
             height: None,
             detachable: false,
+            detach_button: true,
             icon: String::new(),
             development: false,
             api: HOST_PLUGIN_API,
@@ -519,6 +535,7 @@ pub fn list_plugins(
             keywords: m.keywords,
             height: m.height,
             detachable: m.detachable,
+            detach_button: m.detach_button,
             icon: m.icon,
             development: m.development,
             api: m.api,
@@ -667,6 +684,10 @@ height = 560
         // the detach affordance.
         assert!(!parse_manifest("id = \"m\"").unwrap().detachable);
         assert!(parse_manifest("id = \"m\"\ndetachable = true").unwrap().detachable);
+        // detach_button is optional and defaults to true (the built-in hover
+        // button); plugins that self-render one set it to false.
+        assert!(parse_manifest("id = \"m\"").unwrap().detach_button);
+        assert!(!parse_manifest("id = \"m\"\ndetach_button = false").unwrap().detach_button);
     }
 
     #[test]

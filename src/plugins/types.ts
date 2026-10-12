@@ -66,6 +66,11 @@ export interface PluginManifest {
    * detach affordance (mode-page button + pill) only shows for plugins that
    * declare this. */
   detachable: boolean;
+  /** Mode plugins: whether the host renders its built-in hover detach button
+   * on the mode page (manifest `detach_button`, default true). Plugins that
+   * draw their own detach affordance (via `app.detach`) set it false to free
+   * the page's top-right corner. */
+  detachButton: boolean;
   /** Mode plugins: pill icon (relative to the plugin dir; resolved to a
    * URL by the registry). Empty = no pill image. */
   icon: string;
@@ -235,6 +240,9 @@ export interface PluginHostApi {
      * `enter` with `type: "redirect"`; providers/services get
      * `onFeature(info)`. Unknown ids are reported with a toast. */
     redirect(pluginId: string, opts?: { code?: string; payload?: string }): void;
+    /** Detach this mode into its own window (P6, §6G). Only meaningful for
+     * `detachable` mode pages; in a detached window it refocuses it. */
+    detach(): void;
     /** The window that had focus before the launcher appeared (P4, ROADMAP
      * #28): process name, window class, title and — when it was an Explorer
      * folder view — the folder path. `null` when no foreground window was
@@ -544,6 +552,10 @@ export interface PluginServices {
    * (P2.1 features + P2.5 redirect). Returns false when the target is
    * unknown or unloaded. */
   enterPlugin(pluginId: string, info: FeatureEnterInfo): boolean;
+  /** `app.detach` bridge RPC — detach the caller's mode into its own
+   * window (P6, §6G). In a detached window this raises/focuses it (the
+   * mode is already detached there). */
+  detachMode(pluginId: string): void;
 }
 
 /** Structural subset of the shared MenuState (avoids a launcher import). */

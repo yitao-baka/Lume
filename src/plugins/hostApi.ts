@@ -162,6 +162,12 @@ export function createHostApi(
         // Rust side gates the call on the `window` capability.
         return inv<ForegroundInfo | null>("plugin_foreground_context", { pluginId: id });
       },
+      detach: () => {
+        plog.debug(id, "app.detach");
+        // P6 自助分离：插件自绘按钮的落点 —— 页面形态由插件自己决定，
+        // 宿主只负责 detach 本身（快照/建窗/回放与内置按钮同一条路）。
+        services.detachMode(id);
+      },
     },
     clipboard: {
       readText: () => inv<string | null>("get_clipboard_text"),

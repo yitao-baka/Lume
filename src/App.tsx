@@ -33,7 +33,7 @@ import {
   deliverSubInput,
   detachedPluginIds,
   isPluginDetached,
-  isPluginDetachable,
+  showsBuiltinDetachButton,
   modeById,
   modePlugins,
   onPluginWindowClosed,
@@ -280,6 +280,7 @@ function App() {
       entryOpened = true;
     },
     resetAndHide: () => void resetAndHide(),
+    detachMode: (pluginId) => void detachMode(pluginId),
     persistLastPage,
     scheduleResize: () => sizer.scheduleResize(),
     searchToken: () => requestSeq,
@@ -755,8 +756,10 @@ function App() {
       />
       <div class="results" classList={{ "results-loading": pageLoading() }}>
         <Dynamic component={activeMode()?.View} />
-        {/* 分离为独立窗口（P6）— detachable 磁盘 mode 的悬停显现按钮。 */}
-        <Show when={isPluginDetachable(mode())}>
+        {/* 分离为独立窗口（P6）— detachable 磁盘 mode 的悬停显现按钮。
+            自绘按钮形态的插件（清单 `detach_button = false`，如 translator）
+            不渲染它：右上角让给插件页面，分离走 `app.detach` 桥接接口。 */}
+        <Show when={showsBuiltinDetachButton(mode())}>
           <button
             class="detach-btn"
             title={t("pluginDetach")}

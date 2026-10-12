@@ -58,6 +58,8 @@ export async function execHostRpc(
       });
     case "app.foreground":
       return api.app.foreground();
+    case "app.detach":
+      return api.app.detach();
     case "clipboard.writeImage":
       return api.clipboard.writeImage(a.data);
     case "clipboard.writeFiles":

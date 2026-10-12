@@ -93,6 +93,7 @@ function makeServices(id: string, token: string): PluginServices {
       action("redirect", { pluginId, code: info.code, payload: info.payload });
       return true;
     },
+    detachMode: () => action("detach"),
   };
 }
 

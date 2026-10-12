@@ -94,6 +94,7 @@ export const BRIDGE_SCRIPT = `
         });
       },
       foreground: function () { return call("app.foreground"); },
+      detach: function () { return call("app.detach"); },
     },
     fs: {
       readText: function (p) { return call("fs.readText", { path: p }); },

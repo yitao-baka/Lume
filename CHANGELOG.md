@@ -6,6 +6,17 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+
+- **`app.detach` 桥接接口 + `detach_button` 清单开关（P6）** —
+  `lume.app.detach()` 把调用方的模式页分离为独立窗口（快照/建窗/回放与内置
+  悬停按钮同一条链路；已在独立窗口内调用则聚焦本窗口）。内置的「在独立窗口
+  打开」悬停按钮**默认保持原样**（兼顾既有插件页面的空间预留）；插件自绘分
+  离按钮（常驻、纯图标…）时可声明 `detach_button = false` 关掉内置按钮，右上
+  角完全让给插件页面。权限免声明（基础动作，§6D.6）；`docs/PLUGIN_API.md`
+  §3/§6C/§6D.6/§6G 同步。首个采用者：translator 1.1.1（标签栏右侧常驻图标
+  按钮，不受悬停影响）。
+
 ### Fixed
 
 - **独立窗口标题栏槽位拖动兜底（ROADMAP #35，P6.9）** — translator 等插件的

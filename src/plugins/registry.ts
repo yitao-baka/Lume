@@ -309,6 +309,9 @@ function handleLogicAction(id: string, action: string, args: Record<string, unkn
         payload: String(args.payload ?? ""),
       });
       break;
+    case "detach":
+      services.detachMode(id);
+      break;
     case "logic-loaded":
       // 逻辑帧就绪：解除"未就绪"快速失败 + 补投 load 前积压的声明式设置
       // （applyPluginSettings 的首投可能早于逻辑就绪而落空）。
@@ -1124,6 +1127,16 @@ export function detachedPluginIds(): string[] {
  * detach button read this). */
 export function isPluginDetachable(id: string): boolean {
   return manifests().find((x) => x.id === id)?.detachable ?? false;
+}
+
+/** Whether the HOST should render its built-in hover detach button for this
+ * mode: detachable and not opted out (`detach_button = false`). Plugins that
+ * draw their own affordance (translator's persistent icon button) opt out so
+ * the page's top-right corner is theirs; `app.detach` (§6C) is then the only
+ * detach path. */
+export function showsBuiltinDetachButton(id: string): boolean {
+  const m = manifests().find((x) => x.id === id);
+  return !!m && m.detachable && m.detachButton;
 }
 
 /** `plugin-window-ready` — the detached page's bridge is live; push the

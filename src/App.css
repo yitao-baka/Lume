@@ -110,7 +110,8 @@ body,
 
 /* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。
    面板自身是 `--surface`（不透明）后，按钮填充必须用抬升面 `--surface-raised`
-   才读得出来（原先靠半透明面板与 --surface 的色差）。 */
+   才读得出来（原先靠半透明面板与 --surface 的色差）。插件想自定义按钮形态
+   （常驻/纯图标等）时不依赖它：自绘按钮 + `app.detach` 桥接接口。 */
 .detach-btn {
   position: absolute;
   top: 8px;

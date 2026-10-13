@@ -414,8 +414,8 @@ before adding a field:
   implementing the `ModeInstance` page contract (`src/plugins/types.ts`):
   - `navigate/` — the built-in **home page** (id `"apps"`, `home: true`, the
     only `heightPolicy: "fit"` page): `store.ts` (the bars 栏目 registry —
-    最近使用 / 已固定 / plugin bars / Explorer — plus app actions and the
-    continuous bar-grid navigation + pinned drag reorder), `search.ts` (the
+    最近使用 / 已固定 / 推荐使用 / plugin bars / Explorer — plus app actions
+    and the continuous bar-grid navigation + pinned drag reorder), `search.ts` (the
     merged search pipeline: native index → 全局关键字 rows → declarative
     feature rows → file-search hits → plugin providers; provider drill-down;
     the summon-scoped file-drop / clipboard-image / foreground-window feature
@@ -466,11 +466,15 @@ before adding a field:
 - Each keystroke invokes the active page's search command and drops stale
   responses via a monotonic request id (`searchToken` / `nextSearchToken`).
 - **Navigate (home)** — empty query shows the bars (最近使用 above 已固定
-  above plugin bars above the Explorer bar), each a titled, expandable grid
-  of app boxes sized like the results grid; typing shows the merged
-  search-results grid. ↑/↓ cycle the bars on the empty main menu, ←/→ move
-  within the active bar; mouse hover selects, click launches. Context menus
-  offer pin / launch / open location / (recent: remove-from-recent) / admin.
+  above the 推荐使用 plugin-context section above plugin bars above the
+  Explorer bar), each a titled, expandable grid
+  of app boxes sized like the results grid; typing shows the results grid
+  with plugin-appended rows (mode keywords / features / providers) split
+  below the normal results under a 推荐使用 divider (#43). ↑/↓ cycle the
+  bars on the empty main menu, ←/→ move within the active bar; on a query
+  the arrows walk the one linear grid across the divider; mouse hover
+  selects, click launches. Context menus offer pin / launch / open location
+  / (recent: remove-from-recent) / admin.
 - **Clipboard** renders a virtualized list (fixed row height, ~30 DOM rows)
   with category tabs, multi-select merge paste and delete-with-undo.
 - All pages support hover-select and click-activate; the search input is

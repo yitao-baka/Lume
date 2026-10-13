@@ -1,7 +1,9 @@
 // 活动窗口匹配验证（P4，ROADMAP #29 / [[features]] type="window"）：
 //   ① 匹配      真实前台窗口（PowerShell AppActivate 激活编辑器 → toggle_launcher
-//               呼出时 Rust 侧捕获 FocusState）→ 空查询主菜单出现「窗口工具」行；
-//               process 维度（exe 名/stem OR）与 process+title AND 维度
+//               呼出时 Rust 侧捕获 FocusState）→ 空查询主菜单出现「窗口工具」行
+//               （#43 起落在「推荐使用」栏，最近使用/已固定栏保持渲染，不再以
+//               网格替代栏目条）；process 维度（exe 名/stem OR）与
+//               process+title AND 维度
 //   ② 负例      标题不含「验证用」的编辑器 → AND 规则不出行
 //   ③ 激活      点行 → onFeature 收到 info.window（process/className/title）
 //   ④ 一次性    前台换成非编辑器后行消失（summon-scoped）
@@ -167,6 +169,10 @@ await m.evalJs(`(() => {
   return "hooked";
 })()`);
 
+// #43：先固定一个应用，让「已固定栏与推荐使用栏并存」的断言真实成立
+// （cmd.exe 不启动，只写 pins；文末撤销）。
+await invoke("pin_app", { path: "C:\Windows\System32\cmd.exe", name: "cmd" });
+
 // ── 预热：启动编辑器 A，首次呼出让清单/插件/前台管线就绪 ──
 startNotepad(FIX_A);
 await sleep(2500);
@@ -198,6 +204,18 @@ check("editor foreground: process 规则出行",
   names.some((n) => n.includes("窗口工具：编辑器（process）")), JSON.stringify(names.filter((n) => n.includes("窗口"))));
 check("AND 规则负例：标题无「验证用」不出行",
   !names.some((n) => n.includes("窗口工具：编辑器（验证用）")), JSON.stringify(names.filter((n) => n.includes("窗口"))));
+
+// #43：window 行落在「推荐使用」栏，不再以网格顶掉最近的栏目条。
+const barIds = await m.evalJs(`Array.from(document.querySelectorAll(".bar-grid")).map((g) => g.dataset.barId)`);
+check("window row lands in the 推荐使用 section", barIds.includes("recommended"), JSON.stringify(barIds));
+check("bars stay visible (no forced grid) beside 推荐使用",
+  !(await m.evalJs(`!!document.querySelector(".result-grid")`)), JSON.stringify(barIds));
+if (((await invoke("get_recent_apps")) ?? []).length > 0) {
+  check("最近使用 bar still rendered", barIds.includes("recent"), JSON.stringify(barIds));
+}
+if (((await invoke("get_pinned_apps")) ?? []).length > 0) {
+  check("已固定 bar still rendered", barIds.includes("pinned"), JSON.stringify(barIds));
+}
 
 // ── ③ 激活：onFeature 收到窗口信息 ──
 const editorRow = names.find((n) => n.includes("窗口工具：编辑器（process）"));
@@ -253,6 +271,7 @@ check("未知插件 fail-closed", ghost.err && ghost.err.includes("permission de
 await m.shot("window_feature_rows.png");
 
 // 清场
+await invoke("unpin_app", { path: "C:\Windows\System32\cmd.exe" });
 rmSync(TEST_PLUGIN, { recursive: true, force: true });
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

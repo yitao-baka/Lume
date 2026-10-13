@@ -1,9 +1,9 @@
 //! Navigate plugin — the built-in **home page** (mode contribution, id
 //! "apps"). This is the launcher's own page below the search box, registered
 //! through the same registry path as every plugin mode (固有组件插件化):
-//! bars (最近使用 / 已固定 / plugin bars / Explorer), the merged search grid
-//! and the page's own key handling. The id "apps" is persisted in
-//! `appearance.last_page` and must never change.
+//! bars (最近使用 / 已固定 / 推荐使用 / plugin bars / Explorer), the merged
+//! search grid and the page's own key handling. The id "apps" is persisted
+//! in `appearance.last_page` and must never change.
 
 import { createSignal } from "solid-js";
 import { t } from "../../i18n";
@@ -105,10 +105,10 @@ export function createNavigatePlugin(
     await nav.refreshFolderCtx();
     search.fetchFgContext();
     // Auto-select the first entry of the empty-query main menu: the first
-    // section in the registry (最近使用 when visible, else 已固定, else a
-    // plugin bar, else the explorer bar). (The bars' highlight requires
-    // `zoneActive`, so a resting zone of "grid" would leave nothing selected
-    // on summon.)
+    // section in the registry (最近使用 when visible, else 已固定, else
+    // 推荐使用, else a plugin bar, else the explorer bar). (The bars'
+    // highlight requires `zoneActive`, so a resting zone of "grid" would
+    // leave nothing selected on summon.)
     if (search.appsQuery() === "" && nav.zone() === GRID_ZONE) {
       const first = nav.sections()[0];
       if (first) nav.setZone(first.id);
@@ -119,9 +119,9 @@ export function createNavigatePlugin(
    * continuous section-grid navigation on the empty main menu. Enter and the
    * shared ↑/↓ fall through to the shell's generic bindings. */
   function onKey(e: KeyboardEvent, ctx: ModeKeyContext): boolean {
-    // P2.2: a file drop / clipboard-image row set replaces the bars even on
-    // an empty query — the grid keys (and selection) apply.
-    const empty = search.appsQuery() === "" && !search.forceGrid();
+    // Empty query = the bar menu (plugin context rows live in the
+    // 「推荐使用」 section, not a grid); any query = the results grid.
+    const empty = search.appsQuery() === "";
     if (!empty) {
       // Grid navigation always wins when there is a query, regardless of
       // `zone` — the zone signal belongs to the bar view and may carry a
@@ -184,6 +184,7 @@ export function createNavigatePlugin(
     nav.resetSelections();
     nav.setRecentExpanded(false); // don't persist the expanded state across shows
     nav.setPinnedExpanded(expandPinned());
+    nav.setRecommendedExpanded(false); // summon-scoped rows, summon-scoped expand
     nav.setNavHidden(false); // fresh show always starts with the nav box visible
   }
 
@@ -231,6 +232,7 @@ export function createNavigatePlugin(
         appsQuery={search.appsQuery}
         selected={search.selected}
         nav={nav as NavigateStore}
+        pluginStart={search.pluginStart}
         barCols={host.barCols}
         iconFor={host.icons.iconFor}
         activate={() => search.activate()}
@@ -239,7 +241,6 @@ export function createNavigatePlugin(
           if (m) services.openMenu(m);
         }}
         setSelected={search.setSelected}
-        forceGrid={search.forceGrid}
       />
     ),
   };

@@ -1,9 +1,9 @@
 //! Navigate home-page search — the merge pipeline behind the home page's grid
 //! (native index → 全局关键字 rows → declarative feature rows → file-search
 //! hits → plugin providers), the summon-scoped feature-row state (OS file
-//! drops, the clipboard image, the captured foreground window) and the
-//! provider drill-down. Lived in the composition root until the navigate page
-//! became a built-in plugin.
+//! drops, the clipboard image, the captured foreground window) that feeds the
+//! empty-query 「推荐使用」 section, and the provider drill-down. Lived in the
+//! composition root until the navigate page became a built-in plugin.
 
 import { createEffect, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
@@ -37,6 +37,9 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
 
   const [appsQuery, setAppsQuery] = createSignal("");
   const [apps, setApps] = createSignal<AppEntry[]>([]);
+  /** Boundary in `apps`: rows from this index on are plugin-appended and
+   * render in the 「推荐使用」 block below the normal results (#43). */
+  const [pluginStart, setPluginStart] = createSignal(0);
   const [selected, setSelected] = createSignal(0);
   // P2.2 — plugin entry rows for OS file drops (paths arrive via the Tauri
   // drag-drop handler) and for the clipboard image. Cleared on hide/summon.
@@ -56,17 +59,10 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     pluginId: string;
     item: unknown;
     parent: AppEntry[];
+    /** The parent level's normal/plugin boundary (restored on Esc). */
+    parentPluginStart: number;
     filterable: boolean;
   } | null>(null);
-
-  /** P4: the empty-query menu switches to the grid when any plugin rows are
-   * on offer — dropped files, a **matched** window rule, or the clipboard
-   * image (a captured foreground context alone doesn't force the grid). */
-  const forceGrid = () =>
-    droppedFiles().length > 0 ||
-    windowFeatureMatches(fgContext()).length > 0 ||
-    (clipboardImgOk() && imgFeatureMatches().length > 0);
-
   /** Convert one provider result into a grid entry — shared by the search
    * merge and by drilled levels (P2.4). `seq` only feeds the synthetic dedup
    * key used for rows that open nothing. Icon rule: the result's explicit
@@ -144,6 +140,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     if (!d) return false;
     setDrill(null);
     setApps(d.parent);
+    setPluginStart(d.parentPluginStart);
     if (services.subInputOwner() === d.pluginId) services.setSubInput(d.pluginId, null);
     setSelected(0);
     services.scheduleResize();
@@ -154,17 +151,37 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
    * the root's search token (the shell bumps it before every dispatch). */
   async function search(q: string) {
     nav.setNavHidden(false); // typing reveals the first entry's highlight
-    nav.setZone("grid");
     if (drill()) setDrill(null); // a fresh search leaves the drilled level
     const token = services.searchToken();
     if (q.trim() === "") {
-      // Empty query shows the two bars (最近使用 / 已固定), not a browse grid —
-      // unless P2.2 plugin rows are on offer: a fresh file drop and/or the
-      // clipboard holding an image with an img feature declared. Then the
-      // grid shows exactly those rows (uTools-style drop menu; NavigateView
-      // and the key router both leave the bar zone while forceGrid is true).
+      // Keep the zone: the empty menu re-runs this search for its async
+      // feature refreshes (foreground context / clipboard probe) and must not
+      // drop the bar highlight the summon auto-selected.
+      // Empty query shows the main-menu bars (最近使用 / 已固定 / 推荐使用 /
+      // plugin bars / Explorer), never a browse grid. Plugin rows for the
+      // current context — a fresh file drop, the clipboard holding an image
+      // with an img rule declared, a matched foreground-window rule — land in
+      // the 「推荐使用」 section (#43), so they no longer replace the bars.
       const rebuildEmpty = (feats: FeatureMatch[]) => {
-        setApps(feats.map(featureRowToEntry));
+        const entries = feats.map(featureRowToEntry);
+        setApps([]);
+        setPluginStart(0);
+        nav.setRecommended(
+          entries.length > 0
+            ? {
+                items: entries.map((e) => ({
+                  id: e.id,
+                  name: e.name,
+                  path: e.path,
+                  ...(e.icon ? { icon: e.icon } : {}),
+                })),
+                activate: (idx) => {
+                  const item = entries[idx];
+                  if (item) activateEntry(item, false);
+                },
+              }
+            : null
+        );
         services.scheduleResize();
       };
       const feats = () => [
@@ -194,6 +211,12 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       }
       return;
     }
+    // A query owns the selection: the grid, not a bar — and it hides the
+    // empty-menu section. Plugin-appended rows (全局关键字 / feature /
+    // file-drop / providers) collect below the normal results in the
+    // 「推荐使用」 block, split at `pluginStart` (#43).
+    nav.setZone("grid");
+    nav.setRecommended(null);
     // Native index and the unified file-search backend race in parallel;
     // both are stale-guarded by the same request token below.
     const [res, files] = (await Promise.all([
@@ -204,13 +227,15 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       }),
     ])) as [AppEntry[], FileSearchOut | null];
     if (token !== services.searchToken()) return;
-    // Merge order: native index → 全局关键字 rows (never crowded out) →
-    // file-search hits (Everything or the LumeSVC engine) → plugin
-    // providers — deduped by path, capped to keep the grid sane.
-    const extra: AppEntry[] = [];
+    // Merge into two blocks: the normal results (native index → file-search
+    // hits; deduped by path, capped to keep the grid sane) and the plugin-
+    // appended rows (全局关键字 → feature rows → file-drop rows → providers,
+    // never crowded out) rendered under the 「推荐使用」 divider.
+    const normal: AppEntry[] = [...res];
+    const plugin: AppEntry[] = [];
     const seen = new Set(res.map((r) => r.path));
     for (const kw of modeKeywordMatches(q)) {
-      extra.push({
+      plugin.push({
         id: -1,
         name: `进入 ${kw.name}`,
         path: `lume-mode://${kw.id}`,
@@ -219,9 +244,8 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     }
     // 声明式进入（features，P2.1）：正则/任意文本命中 → 「<label>」行，
     // 激活把当前查询作为 payload 投递给插件（mode 先切页再 onEnter）。
-    // 与关键字行同级：都在文件命中与 provider 之前，不被挤掉。
     for (const f of featureMatches(q)) {
-      extra.push({
+      plugin.push({
         id: -1,
         name: f.label,
         path: `lume-feature://${f.pluginId}/${f.code}`,
@@ -231,33 +255,34 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     }
     // P2.2: a file dropped while a query is up also offers its rows.
     for (const f of fileFeatureMatches(droppedFiles(), droppedFileKinds())) {
-      extra.push(featureRowToEntry(f));
+      plugin.push(featureRowToEntry(f));
     }
     for (const f of files?.entries ?? []) {
-      if (res.length + extra.length >= 20) break;
+      if (normal.length + plugin.length >= 20) break;
       if (!f?.name || !f?.path || seen.has(f.path)) continue;
       seen.add(f.path);
-      extra.push(f);
+      normal.push(f);
     }
     for (const p of providerPlugins()) {
       try {
         const items = await p.instance.search(q);
         if (token !== services.searchToken()) return;
         for (const it of items ?? []) {
-          if (res.length + extra.length >= 20) break;
-          const key = it.path || `lume-plugin://${p.id}/${extra.length}`;
+          if (normal.length + plugin.length >= 20) break;
+          const key = it.path || `lume-plugin://${p.id}/${plugin.length}`;
           if (seen.has(key)) continue;
-          const entry = providerRowToEntry(p, it, extra.length);
+          const entry = providerRowToEntry(p, it, plugin.length);
           if (!entry) continue;
           seen.add(key);
-          extra.push(entry);
+          plugin.push(entry);
         }
       } catch (err) {
         console.error("provider search failed:", p.id, err);
       }
     }
-    const merged = [...res, ...extra];
+    const merged = [...normal, ...plugin];
     setApps(merged);
+    setPluginStart(normal.length);
     // Rows with an explicit icon or a plugin-enter action don't go through
     // the icon pipeline (icon is already resolved / path is synthetic).
     void deps.icons.loadIcons(
@@ -280,6 +305,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         const rows = await p?.instance.filter?.(d.item as never, q);
         if (token !== services.searchToken()) return;
         setApps(rowsToEntries(p!, rows ?? []));
+        setPluginStart(0); // filtered level = the whole grid
         setSelected(0);
         services.scheduleResize();
       } catch (err) {
@@ -289,21 +315,10 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     return true;
   }
 
-  /** Activate the selected entry: a bar tile, a feature/keyword row, a
-   * provider action/drill row, or a plain launch. */
-  function activate(opts?: { elevated?: boolean }): void {
-    services.markEntryOpened(); // Enter/点击打开条目 → 清空搜索记忆
-    const elevated = opts?.elevated ?? false;
-    // Bar zone: the owning section activates its selected item — a plain app
-    // launch (recent/pinned/plugin bars), an explorer action tile, or
-    // anything else a section contract defines.
-    const sec = nav.activeSection();
-    if (sec) {
-      sec.activate(sec.selected(), elevated);
-      return;
-    }
-    const item = apps()[selected()];
-    if (!item) return;
+  /** Activate one entry: a feature/keyword row, a provider action/drill row,
+   * or a plain launch. Shared by the results grid and the 「推荐使用」 section
+   * (the section contract calls it back with its own index). */
+  function activateEntry(item: AppEntry, elevated: boolean): void {
     // 声明式进入行（features/P2.1）：把查询作为 payload 投递给插件。
     // mode 目标先切页再 onEnter；provider/service 直接 onFeature。
     if (item.featureEnter) {
@@ -324,11 +339,19 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       const p = providerPlugins().find((x) => x.id === d.pluginId);
       if (!p?.instance.select) return;
       const parent = apps();
+      const parentPluginStart = pluginStart();
       void (async () => {
         try {
           const rows = await p.instance.select!(d.item as never);
           setApps(rowsToEntries(p, rows ?? []));
-          setDrill({ pluginId: d.pluginId, item: d.item, parent, filterable: d.filterable });
+          setPluginStart(0); // a drilled level replaces the whole grid
+          setDrill({
+            pluginId: d.pluginId,
+            item: d.item,
+            parent,
+            parentPluginStart,
+            filterable: d.filterable,
+          });
           if (d.filterable) services.setSubInput(d.pluginId, { placeholder: t("searchGeneric") });
           setSelected(0);
           services.scheduleResize();
@@ -360,6 +383,24 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     void services.resetAndHide();
   }
 
+  /** Activate the selected entry — a bar/section tile (section contract) or
+   * the grid row at `selected()`. */
+  function activate(opts?: { elevated?: boolean }): void {
+    services.markEntryOpened(); // Enter/点击打开条目 → 清空搜索记忆
+    const elevated = opts?.elevated ?? false;
+    // Bar zone: the owning section activates its selected item — a plain app
+    // launch (recent/pinned/plugin bars), a 推荐使用 feature row, an explorer
+    // action tile, or anything else a section contract defines.
+    const sec = nav.activeSection();
+    if (sec) {
+      sec.activate(sec.selected(), elevated);
+      return;
+    }
+    const item = apps()[selected()];
+    if (!item) return;
+    activateEntry(item, elevated);
+  }
+
   /** OS file drop (P2.2): record the paths for the feature rows. The kinds
    * query and the follow-up search only run while this page is active (the
    * old root behavior: a drop elsewhere still records the paths). */
@@ -376,7 +417,13 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       })
       .catch(() => setDroppedFileKinds(paths.map(() => "file")))
       .finally(() => {
-        if (services.mode() === deps.id) void services.runSearch(appsQuery());
+        if (services.mode() !== deps.id) return;
+        const focusRows = appsQuery() === "";
+        void services.runSearch(appsQuery()).then(() => {
+          // The drop's rows are the primary action of this menu — focus the
+          // fresh 「推荐使用」 section (no-op when nothing matched).
+          if (focusRows) nav.focusRecommended();
+        });
       });
   }
 
@@ -425,6 +472,8 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     setFgContext(null);
     setClipboardImgOk(false);
     setApps([]);
+    setPluginStart(0);
+    nav.setRecommended(null);
     setSelected(0);
   }
 
@@ -442,11 +491,11 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
 
   return {
     apps,
+    pluginStart,
     appsQuery,
     setAppsQuery,
     selected,
     setSelected,
-    forceGrid,
     search,
     handleQuery,
     activate,

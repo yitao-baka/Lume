@@ -57,7 +57,8 @@ dev URL instead.
    event, but the OLE drop target itself (where the real paths come from) can
    only be exercised by hand: drag a `.md` file from Explorer onto the launcher
    (summon it with the hotkey while holding the drag) — a
-   「文件处理器：处理 N 个文件」 row should appear (`files-img-demo` installed).
+   「文件处理器：处理 N 个文件」 row should appear in the 「推荐使用」 bar
+   (`files-img-demo` installed), with 最近使用 / 已固定 still rendered beside it.
 2. **Pin reorder still works** — press a pinned box, move past ~6px, drop on
    another slot: the order persists (`reorder_pins`). With the Tauri drag-drop
    handler now enabled, in-page HTML5 drag is unavailable — reordering is
@@ -73,11 +74,14 @@ dev URL instead.
    the search input focused; it should feel instant (< 50ms target).
 3. **Auto-hide** — click any other window: the launcher dismisses itself.
 4. **Navigate menu** — on show, the empty query renders the
-   最近使用 / 已固定 / plugin / Explorer bars, not an all-apps browse grid.
+   最近使用 / 已固定 / 推荐使用 (plugin context rows, when offered) / plugin /
+   Explorer bars, not an all-apps browse grid.
    Type to switch to the results grid. Icons load progressively; keyboard and
    mouse selection both launch on click / `Enter`.
 5. **Search** — type a fragment (e.g. `code`, `fire`, `note`); matching apps
-   stay in the grid, best-ranked first.
+   stay in the grid, best-ranked first. Plugin-appended rows (mode keywords /
+   features / providers) collect under the 推荐使用 divider below the normal
+   results; ↑/↓/Enter walk both blocks as one linear grid.
 6. **Pinned bar** — right-click a selected app and choose 「固定」to pin it to
    the bar above the grid (a letter tile appears first, then its icon);
    「取消固定」unpins. `↑` from the grid's first row enters the bar,

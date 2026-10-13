@@ -6,6 +6,25 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Changed
+
+- **导航页「推荐使用」栏（ROADMAP #43）** — 插件结果与正常结果全面隔离：
+  空查询主菜单里插件追加的行（文件拖入 / 剪贴板图片 / 命中活动窗口的
+  `[[features]]`）不再以「网格替代栏目条」顶掉最近使用与已固定栏，而是进入
+  独立栏目「推荐使用」（最近使用 → 已固定 → 推荐使用 → 插件栏目 →
+  资源管理器，explorer 仍结构性最底）；**非空查询同样分块**——正常结果
+  （原生索引 + 文件搜索）网格在上，网格内以「推荐使用」标题分隔行隔出插件行
+  （全局关键字 / feature / provider；下钻与过滤仍是整栏替换）。拖入文件自动
+  聚焦该栏首行（Enter 直接激活）；剪贴板/窗口行随呼出出现与消失，不再夺走
+  召唤时自动选中的栏目。`docs/PLUGIN_API.md` §5.2/§5A/§6E.1/§6E.1.1/§6H.4、
+  `docs/ARCHITECTURE.md`、`docs/TESTING.md`、`docs/ROADMAP.md` #43 同步。
+  验证：`cdp_p2b_verify` **29 项全过**（空查询并存断言 + 非空分块
+  `{normal:1, plugin:4}` / 拖入聚焦首行 + Enter 激活）、
+  `cdp_window_feature_verify` **14 项全过**；`cdp_p2_verify` 17/21 与既有
+  4 项 `iframe.contentDocument` 陈旧探针基线一致；`tsc --noEmit` /
+  `pnpm run build` / `cargo check` / `cargo test`（202 passed / 9 ignored）
+  干净。
+
 ### Added
 
 - **`lume.env.form` 宿主形态常量（ROADMAP #42）** — 注入桥为每个插件帧钉死

@@ -1,8 +1,9 @@
 //! Navigate home-page store — the empty-query main menu's bars (栏目). The
-//! three native bars (最近使用 / 已固定 / Windows 资源管理器) and
-//! plugin-contributed bars share one section contract: `sections()` is the
-//! single ordered registry (recent → pinned → plugin bars → explorer, which
-//! is pinned last), NavigateView renders every section uniformly, and the
+//! three native bars (最近使用 / 已固定 / Windows 资源管理器), the dynamic
+//! 「推荐使用」 section (plugin context rows) and plugin-contributed bars
+//! share one section contract: `sections()` is the single ordered registry
+//! (recent → pinned → recommended → plugin bars → explorer, which is pinned
+//! last), NavigateView renders every section uniformly, and the
 //! continuous section-grid keyboard navigation walks them top to bottom. Also
 //! owns data refresh, app actions (launch / reveal / pin / remove-from-recent)
 //! and the pinned-bar drag-reorder listeners.
@@ -91,8 +92,21 @@ export interface ContributedBar {
   items: { name: string; path: string; icon?: string }[];
 }
 
+/** The empty-query 「推荐使用」 section: plugin-offered rows for the current
+ * context (file drop / clipboard image / matched foreground window). Owned
+ * by `search.ts`; the store wraps it into a standard bar section with its own
+ * selection/expansion state, so it never replaces the other bars. */
+export interface RecommendedContribution {
+  items: NavItem[];
+  /** Activate a row — hands the row back to its plugin (feature dispatch). */
+  activate(idx: number, elevated: boolean): void;
+}
+
 /** The grid zone — no bar owns the selection (search results, or nothing). */
 export const GRID_ZONE = "grid";
+
+/** Section id of the empty-query 「推荐使用」 bar (plugin context rows). */
+export const RECOMMENDED_SECTION_ID = "recommended";
 
 export function createNavigateStore(deps: NavigateDeps) {
   const [pinnedApps, setPinnedApps] = createSignal<AppEntry[]>([]);
@@ -113,6 +127,10 @@ export function createNavigateStore(deps: NavigateDeps) {
   });
   const [recentExpanded, setRecentExpanded] = createSignal(false);
   const [pinnedExpanded, setPinnedExpanded] = createSignal(false);
+  /** The empty-query 「推荐使用」 section content (null = nothing offered). */
+  const [recommended, setRecommendedSig] = createSignal<RecommendedContribution | null>(null);
+  const [recommendedSelected, setRecommendedSelected] = createSignal(0);
+  const [recommendedExpanded, setRecommendedExpanded] = createSignal(false);
   /** Plugin-contributed bars (normalized by the registry) + their per-bar
    * selection / expansion state, keyed by the prefixed bar id. */
   const [pluginBars, setPluginBarsSig] = createSignal<NavSection[]>([]);
@@ -126,9 +144,10 @@ export function createNavigateStore(deps: NavigateDeps) {
   const [navHidden, setNavHidden] = createSignal(false);
 
   // ── Section registry ────────────────────────────────────────────────────
-  // Order on the empty-query main menu: 最近使用 → 已固定 → plugin bars (in
-  // registration order) → the explorer bar, which is structurally pinned to
-  // the bottom. Empty bars (nothing to show / toggled off) drop out.
+  // Order on the empty-query main menu: 最近使用 → 已固定 → 推荐使用 (plugin
+  // context rows, when offered) → plugin bars (in registration order) → the
+  // explorer bar, which is structurally pinned to the bottom. Empty bars
+  // (nothing to show / toggled off) drop out.
 
   const launchSectionItem = (items: NavItem[], idx: number, elevated: boolean) => {
     const item = items[idx];
@@ -201,6 +220,38 @@ export function createNavigateStore(deps: NavigateDeps) {
           void commitPinnedReorder(fromIndex, overIndex),
       });
     }
+    // 推荐使用: plugin rows for the current context (file drop / clipboard
+    // image / matched foreground window) — a standard section, so the other
+    // bars stay visible (until #43 these rows replaced the whole menu).
+    const rec = recommended();
+    if (rec && rec.items.length > 0) {
+      list.push({
+        id: RECOMMENDED_SECTION_ID,
+        title: t("recommended"),
+        items: rec.items,
+        expandable: true,
+        expanded: recommendedExpanded,
+        toggleExpanded: () => {
+          setRecommendedExpanded(!recommendedExpanded());
+          deps.invalidateWorkArea();
+        },
+        selected: recommendedSelected,
+        setSelected: setRecommendedSelected,
+        activate: (idx, elevated) => recommended()?.activate(idx, elevated),
+        onContext: (e, idx) => {
+          setZone(RECOMMENDED_SECTION_ID);
+          setRecommendedSelected(idx);
+          const item = recommended()?.items[idx];
+          if (item)
+            deps.openMenu({
+              kind: "app",
+              x: e.clientX,
+              y: e.clientY,
+              app: { id: item.id, name: item.name, path: item.path },
+            });
+        },
+      });
+    }
     list.push(...pluginBars());
     // The explorer bar is structurally last — plugins can never push it up.
     if (folderCtx() && deps.showExplorerBar()) {
@@ -244,6 +295,7 @@ export function createNavigateStore(deps: NavigateDeps) {
   function resetSelections() {
     setRecentSelected(0);
     setPinnedSelected(0);
+    setRecommendedSelected(0);
     setFolderSelected(0);
     setPluginSel({});
   }
@@ -256,6 +308,27 @@ export function createNavigateStore(deps: NavigateDeps) {
     if (!sections().some((s) => s.id === z)) {
       setZone(sections()[0]?.id ?? GRID_ZONE);
     }
+  }
+
+  // ── 推荐使用 section (plugin context rows) ──────────────────────────────
+
+  /** Replace the 「推荐使用」 rows (search.ts owns them; summon-scoped). */
+  function setRecommended(contrib: RecommendedContribution | null) {
+    const value = contrib && contrib.items.length > 0 ? contrib : null;
+    setRecommendedSig(value);
+    if (!value || recommendedSelected() >= value.items.length) setRecommendedSelected(0);
+    reconcileZone();
+    deps.scheduleResize();
+  }
+
+  /** Move the bar selection to the fresh 推荐使用 rows (file drop: these rows
+   * are what the user just asked for). No-op when the section is absent. */
+  function focusRecommended() {
+    const rec = recommended();
+    if (!rec || rec.items.length === 0) return;
+    setZone(RECOMMENDED_SECTION_ID);
+    setRecommendedSelected(0);
+    setNavHidden(false);
   }
 
   // ── Plugin bars ─────────────────────────────────────────────────────────
@@ -731,6 +804,8 @@ export function createNavigateStore(deps: NavigateDeps) {
     setRecentExpanded,
     pinnedExpanded,
     setPinnedExpanded,
+    recommendedExpanded,
+    setRecommendedExpanded,
     navHidden,
     setNavHidden,
     // section registry
@@ -740,6 +815,8 @@ export function createNavigateStore(deps: NavigateDeps) {
     anyExpanded,
     resetSelections,
     setPluginBars,
+    setRecommended,
+    focusRecommended,
     // actions
     refreshPins,
     refreshRecent,

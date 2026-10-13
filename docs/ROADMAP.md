@@ -1874,7 +1874,8 @@ P2.5b，API 文档 `docs/PLUGIN_API.md` §6E.1.1 / §6E.5。示例
   （quick-add 这类改行源的钩子立即反映到列表）。
 - **配套**：mode feature 投递后重跑搜索（上面第三条）；空查询下拖拽/img 行
   替代栏目条 —— `NavigateView` 与 keyRouter 增加 `forceGrid` 通道，键盘方向键
-  在行集上导航而不是栏目区。
+  在行集上导航而不是栏目区。**#43 更新**：拖拽/img 行改为独立「推荐使用」栏
+  （不再替代栏目条），键盘导航回到统一栏目网格。
 
 **验证**：cargo test **169**（+1：files/img/template 解析与 JSON 形状）、
 tsc/vite build/cargo build 干净、`scripts/cdp_p2b_verify.mjs` **17 项全过**
@@ -2021,7 +2022,8 @@ API 文档见 `docs/PLUGIN_API.md` §6H.4。
   与 files 行一致）。
 - **forceGrid 接线**：空查询主菜单在「有 window 匹配行」时切到网格
   （与 files/img 行同语义）——**注意条件必须是「匹配行数 > 0」而不是
-  「快照非空」**，否则呼出永远顶掉栏目条（实机抓出过）。
+  「快照非空」**，否则呼出永远顶掉栏目条（实机抓出过）。**#43 更新**：
+  window 行改为落在「推荐使用」栏，栏目条不再被顶掉。
 - **权限语义**：匹配是宿主侧行为不需要权限，行 payload 只携带命中插件
   自己的窗口信息；主动读取（`app.foreground`）才声明 `window`（#28）。
 - **超时加固（顺带的真实 bug）**：`resolve_explorer_path` 的 STA COM
@@ -2941,3 +2943,64 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
   view/titlebar 两帧 `form=window`、分离按钮隐藏、提示「Esc 关闭窗口」。
 - `pnpm run build` / `pnpm exec tsc --noEmit` / `cargo check` / `cargo test`
   干净。
+
+## 43. 导航页「推荐使用」栏：插件结果与正常结果的隔离（已实现）
+
+**状态：已实现（2026-10-13）。** 用户报告的体验问题：空查询主菜单里，插件
+追加的行（文件拖入 / 剪贴板图片 / 命中活动窗口的 `[[features]]`）按 #27/#29
+的 forceGrid 语义**顶掉整个栏目区**（网格替代栏目条）——最近使用与已固定栏
+不可见。修复把它们收进独立栏目「推荐使用」：其余栏目照常渲染，资源管理器栏
+结构性保持最底。**同日用户补充**：「推荐使用」的设计目的就是把插件结果与
+正常查询结果**隔离开、方便寻找**——非空查询同样分块（正常结果网格在上，
+「推荐使用」分隔行 + 插件行在下）。
+
+### 43.1 实现
+
+- **`store.ts`**：新增动态栏目 `recommended`，注册表顺序 = 最近使用 → 已固定
+  → **推荐使用** → plugin bars → explorer（仍结构性最底）。`setRecommended`
+  接收 search.ts 的 `{items, activate}`（行激活回投插件），`focusRecommended`
+  供拖入后聚焦首行；栏目带独立选中/展开态，为空即整栏退场。右键沿用共享
+  app 菜单（与结果网格一致）。
+- **`search.ts`**：删除 `forceGrid`；空查询把 feature 行转成 `NavItem[]` 投给
+  该栏，非空查询仍把 feature/文件行并入结果网格（合并管线不变）；`activate`
+  抽出 `activateEntry(item, elevated)` 供网格与推荐栏共用。空查询重跑
+  （前台快照 / 剪贴板探测落地）不再重置 zone——召唤时自动选中的栏目高亮保留。
+- **`index.tsx` / `NavigateView.tsx`**：键路由与视图统一按「空查询 = 栏目菜单、
+  非空 = 结果网格」判定（forceGrid 通道删除）。
+- **非空查询分块（同日补充）**：`search.ts` 把合并结果拆成
+  `normal`（原生索引 + 文件搜索命中；去重/20 条封顶不变）与 `plugin`
+  （全局关键字 → feature 行 → 拖入行 → provider 行；关键字/feature 不被
+  挤掉）两块，`apps = [...normal, ...plugin]` 并暴露 `pluginStart` 边界；
+  选中索引仍是**一条线性序列**（键鼠/Enter/滚动语义不变）。`NavigateView`
+  在网格内以全宽 `.result-split` 分隔行（标题「推荐使用」）隔开两块，正常
+  结果为空时不画分隔线（`first`）。下钻/过滤是整栏替换（`pluginStart=0`），
+  Esc 回父层时连同边界一起恢复。
+- **i18n**：三语新增 `recommended`（推荐使用 / 推薦使用 / Recommended）。
+
+### 43.2 行为不变式
+
+- 拖入文件：出「推荐使用」栏并聚焦首行（Enter 直接激活），最近使用/已固定栏
+  保持可见；行仍随隐藏/呼出清空（summon-scoped）。
+- 剪贴板图片 / 窗口命中：行随探测出现/消失，不夺走召唤时自动选中的栏目
+  （首个栏目仍是最近使用，Enter 默认启动最近项）。
+- 非空查询：正常结果（应用/文件）在上、插件行在下，二者以「推荐使用」标题
+  分隔；↑/↓ 跨分隔行走同一条线性网格，下钻/过滤整栏替换、Esc 恢复父层。
+- plugin navBars、explorer 栏行为不变。
+
+### 43.3 验证
+
+- `scripts/cdp_p2b_verify.mjs` **29 项全过**（新增：img/drop 行落在推荐栏 +
+  已固定栏并存 + 无 `.result-grid`；拖入自动聚焦首行，Enter 激活走完 payload
+  子集 + 真实读文件断言；隐藏/呼出后推荐栏随行清空；非空查询 `non-empty
+  query shows the 推荐使用 block` 与 `plugin rows sit below the normal
+  results` —— 实测 `{normal:1, plugin:4}`。脚本预置一条 pin 让并存断言非
+  空洞——顺带修掉其「首次 toggle 在启动可见时实为 hide」的假呼出）。
+- `scripts/cdp_window_feature_verify.mjs` **14 项全过**（新增：window 行落在
+  推荐栏、无 forced grid、已固定栏仍在；非空分块改动的空查询回归）。
+- 回归：`scripts/cdp_p2_verify.mjs` **17/21**——余 4 项即 #30 记录的
+  `iframe.contentDocument` 陈旧探针（沙箱后恒为 null），与本次改动无关；
+  脚本依赖 `text-tools` 启用（本机测试设置为禁用，验证时临时启用后已还原）。
+- `pnpm exec tsc --noEmit` / `pnpm run build` / `cargo check` / `cargo test`
+  （202 passed / 9 ignored）干净。
+- 截图：`test/p2b_files.png`（空查询：已固定 + 推荐使用并存）、
+  `test/p43_nonempty_split.png`（非空查询：正常结果 + 推荐使用分隔行）。

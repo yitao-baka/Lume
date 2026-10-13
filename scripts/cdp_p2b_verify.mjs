@@ -1,13 +1,16 @@
 // P2b 验证（P2 余项）：files 拖入、img 剪贴板图片进入、template="list" 列表模板、
 // 磁贴重排改指针事件后的基本行为。
 //   ① files   拖入事件（Tauri drag-drop → tauri://drag-drop）携带真实路径 →
-//            files 规则出行（文案带命中数，只含扩展名命中的子集）→ 激活
-//            onFeature 收 paths → fs.readText 真实读取第一个文件
+//            files 规则出行（文案带命中数，只含扩展名命中的子集；#43 起落在
+//            「推荐使用」栏，最近使用/已固定栏保持可见，拖入自动聚焦首行，
+//            Enter 直接激活）→ onFeature 收 paths → fs.readText 真实读取
 //   ② img     剪贴板有图（Set-Clipboard -Image）→ 空查询出「图片处理器」行 →
 //            激活后 clipboard.readImage() 真读到 PNG data URI；剪贴板换文本
 //            后该行消失（每次空查询渲染都探测）
 //   ③ list    list-demo（kind=mode + template="list"，零 HTML）：关键字进入 →
-//            内置列表渲染两行演示数据 → onFeature 快速添加 → Enter 复制行名
+//            内置列表渲染两行演示数据 → onFeature 快速添加 → Enter 复制行名；
+//            顺带断言非空查询的分块（#43：正常结果在上、「推荐使用」分隔行
+//            下方是插件行——关键字/feature/provider）
 //   ④ 重排    磁贴重排（pointer events 版）：pointerdown+move+up 交换两个
 //            已固定条目并持久化（reorder_pins）。
 //   ⑤ ctx 面一致（静态，ROADMAP #38）：逻辑帧 ctx 必须与视图桥同面，
@@ -109,8 +112,17 @@ for (const id of ["files-img-demo", "list-demo"]) {
 }
 const type = (q) => m.evalJs(`(() => { const i = document.getElementById("search-input"); i.focus(); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
 const rowNames = () => m.evalJs(`Array.from(document.querySelectorAll(".result-box-name")).map((n) => n.textContent)`);
+const barIds = () => m.evalJs(`Array.from(document.querySelectorAll(".bar-grid")).map((g) => g.dataset.barId)`);
 const clickRow = (name) => m.evalJs(`(() => { const b = Array.from(document.querySelectorAll(".result-box")).find((x) => x.querySelector(".result-box-name")?.textContent === ${JSON.stringify(name)}); if (!b) return "missing"; b.click(); return "clicked"; })()`);
 const toastText = () => m.evalJs(`document.querySelector(".toast-text")?.textContent ?? ""`);
+const waitToastGone = async (timeoutMs = 4000) => {
+  for (let waited = 0; waited < timeoutMs; waited += 200) {
+    if (!(await toastText())) return true;
+    await sleep(200);
+  }
+  return false;
+};
+const pressEnter = () => m.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))`);
 async function clickAndToast(name, timeoutMs = 5000) {
   const clicked = await clickRow(name);
   let text = "";
@@ -143,6 +155,14 @@ await m.evalJs(`(() => {
 let pass = 0, fail = 0;
 const check = (name, ok, extra = "") => { console.log((ok ? "PASS" : "FAIL") + " " + name + (extra ? " — " + extra : "")); ok ? pass++ : fail++; };
 
+// #43：先固定一个应用，「推荐使用」与标准栏目条并存的断言才是真实断言
+// （cmd.exe 不启动，只写 pins；重排段/文末的 unpin 会撤销）。
+await invoke("pin_app", { path: "C:\Windows\System32\cmd.exe", name: "cmd" });
+
+// 保证一次真正的 show：debug exe 启动时窗口已可见，第一次 toggle 会变成
+// hide；launcher-shown 的 onShow 才会刷新栏目，刚写入的 pin 才会渲染。
+await invoke("hide_launcher");
+await sleep(500);
 await invoke("toggle_launcher");
 await sleep(1800);
 
@@ -165,6 +185,17 @@ await sleep(1200);
 names = await rowNames();
 check("clipboard image offers the img row",
   names.some((n) => n.includes("图片处理器")), JSON.stringify(names));
+// #43：插件行落在「推荐使用」栏里，标准栏目条不再被整个顶掉。
+const settings0 = await invoke("get_settings");
+const recentExpected = ((await invoke("get_recent_apps")) ?? []).length > 0
+  && (settings0?.appearance?.show_recent ?? true);
+const pinnedExpected = ((await invoke("get_pinned_apps")) ?? []).length > 0;
+const imgBarIds = await barIds();
+check("img row lands in the 推荐使用 section (bars stay, no forced grid)",
+  imgBarIds.includes("recommended") && !(await m.evalJs(`!!document.querySelector(".result-grid")`))
+    && (!recentExpected || imgBarIds.includes("recent"))
+    && (!pinnedExpected || imgBarIds.includes("pinned")),
+  JSON.stringify({ imgBarIds, recentExpected, pinnedExpected }));
 if (names.some((n) => n.includes("图片处理器"))) {
   const { clicked, text } = await clickAndToast(names.find((n) => n.includes("图片处理器")));
   check("img row clicked", clicked === "clicked", text);
@@ -183,11 +214,26 @@ check("files row appears with the matched count",
   names.some((n) => n.includes("文件处理器：处理文本文件（2 个文件）")), JSON.stringify(names));
 check("stale img row dropped once the clipboard holds text",
   !names.some((n) => n.includes("图片处理器")), JSON.stringify(names));
+const dropBarIds = await barIds();
+check("drop rows land in the 推荐使用 section (bars stay, no forced grid)",
+  dropBarIds.includes("recommended") && !(await m.evalJs(`!!document.querySelector(".result-grid")`))
+    && (!recentExpected || dropBarIds.includes("recent"))
+    && (!pinnedExpected || dropBarIds.includes("pinned")),
+  JSON.stringify({ dropBarIds, recentExpected, pinnedExpected }));
 if (names.some((n) => n.includes("文件处理器"))) {
-  const { clicked, text } = await clickAndToast(names.find((n) => n.includes("文件处理器")));
-  check("files row clicked", clicked === "clicked", text);
+  // #43：拖入把选中焦点放到「推荐使用」的首行（Enter 直接可用）。
+  const focused = await m.evalJs(`(() => {
+    const sel = document.querySelector(".bar-grid[data-bar-id=recommended] .result-box.result-selected");
+    return sel?.querySelector(".result-box-name")?.textContent ?? null;
+  })()`);
+  check("drop focuses the 推荐使用 section's first row",
+    focused === "文件处理器：处理文本文件（2 个文件）", JSON.stringify(focused));
+  await waitToastGone();
+  await pressEnter();
+  let text = "";
+  for (let waited = 0; waited < 5000 && !text; waited += 150) { await sleep(150); text = await toastText(); }
   // 一支 toast 同时断言路径子集（只命中 .md/.txt，png 被过滤）与真实读取。
-  check("onFeature got the subset and really read the file",
+  check("Enter on the focused row activates the plugin (subset + real read)",
     text.includes("收到 2 个文件") && text.includes("hello from p2b"), text);
 }
 
@@ -199,6 +245,9 @@ await sleep(1500);
 names = await rowNames();
 check("drop rows clear after hide + re-summon",
   !names.some((n) => n.includes("文件处理器")), JSON.stringify(names.slice(0, 4)));
+const summonBarIds = await barIds();
+check("推荐使用 section drops with the summon-scoped rows",
+  !summonBarIds.includes("recommended"), JSON.stringify(summonBarIds));
 
 // ── ①b fileType（P4, ROADMAP #28）：folder / image 类别规则 ──
 // 一次拖入 文件夹 + .png + .md：extensions 规则只报 .md（文件夹不再冒充
@@ -231,6 +280,19 @@ await sleep(1200);
 names = await rowNames();
 const enterRow = names.find((n) => n.startsWith("进入") && n.includes("清单"));
 check("list-demo keyword row offered", !!enterRow, JSON.stringify(names));
+// #43：非空查询也分块 —— 正常结果（原生索引 + 文件搜索）在上，插件行在
+// 「推荐使用」分隔行之下。
+const split = await m.evalJs(`(() => {
+  const el = document.querySelector(".result-grid .result-split");
+  if (!el) return null;
+  const boxes = Array.from(document.querySelectorAll(".result-grid .result-box"));
+  const firstPlugin = boxes.findIndex((b) => (el.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+  return { title: el.textContent ?? "", normal: firstPlugin, plugin: boxes.length - firstPlugin };
+})()`);
+check("non-empty query shows the 推荐使用 block",
+  !!split && split.title.includes("推荐使用"), JSON.stringify(split));
+check("plugin rows sit below the normal results",
+  !!split && split.normal > 0 && split.plugin > 0, JSON.stringify(split));
 if (enterRow) {
   await clickRow(enterRow);
   await sleep(1800);
@@ -340,6 +402,9 @@ const missingInLogic = [...bridgeCalls].filter((x) => !logicCalls.has(x));
 const missingRpc = [...logicCalls].filter((x) => !rpcCases.has(x));
 check("logic-frame ctx mirrors the view bridge", missingInLogic.length === 0, JSON.stringify(missingInLogic));
 check("every ctx method has an rpc.ts case", missingRpc.length === 0, JSON.stringify(missingRpc));
+
+// 收尾：撤销 #43 预置的 pin（重排段通常已撤销；重复 unpin 幂等）。
+await invoke("unpin_app", { path: "C:\Windows\System32\cmd.exe" });
 
 console.log(`\\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

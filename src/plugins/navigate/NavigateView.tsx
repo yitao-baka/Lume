@@ -1,8 +1,8 @@
 //! Navigate home-page view — the empty-query main menu (one section per bar:
-//! 最近使用 / 已固定 / plugin bars / the Explorer-folder bar) and the search
-//! results grid. Pure rendering: state comes in as accessors + the navigate
-//! store's section registry; interactions go back out through the section
-//! contract and callbacks.
+//! 最近使用 / 已固定 / 推荐使用 / plugin bars / the Explorer-folder bar) and
+//! the search results grid. Pure rendering: state comes in as accessors + the
+//! navigate store's section registry; interactions go back out through the
+//! section contract and callbacks.
 
 import { For, Show } from "solid-js";
 import { t } from "../../i18n";
@@ -12,6 +12,9 @@ import type { NavSection, NavigateStore } from "./store";
 
 export interface NavigateViewProps {
   apps: () => AppEntry[];
+  /** Boundary in `apps`: rows from this index on are plugin-appended and
+   * render under the 「推荐使用」 divider (#43). */
+  pluginStart: () => number;
   appsQuery: () => string;
   selected: () => number;
   nav: NavigateStore;
@@ -22,9 +25,6 @@ export interface NavigateViewProps {
   markMouse: () => void;
   openMenu: (m: MenuState) => void;
   setSelected: (i: number) => void;
-  /** P2.2: render the grid even on an empty query (file-drop / clipboard-
-   * image plugin rows replace the bars until the next hide/summon). */
-  forceGrid?: () => boolean;
 }
 
 /** A single box in a bar or the results grid, with icon resolution: an
@@ -150,10 +150,37 @@ function SectionView(props: NavigateViewProps, section: NavSection) {
 
 export function NavigateView(props: NavigateViewProps) {
   const nav = props.nav;
+  /** Normal/plugin boundary, clamped so a stale value can never split out of
+   * range (`apps()[pluginStart..]` = the 「推荐使用」 rows). */
+  const pluginStart = () =>
+    Math.min(Math.max(props.pluginStart(), 0), props.apps().length);
+
+  /** One results-grid row — normal results and 「推荐使用」 rows share the same
+   * click/hover/context behavior and one linear selection index. */
+  const resultRow = (app: AppEntry, i: number) =>
+    itemBox(props, app, {}, () => i === props.selected(), {
+      onActivate: () => {
+        props.markMouse();
+        props.setSelected(i);
+        props.activate();
+      },
+      onSelect: () => {
+        // Mouse movement over an entry always takes over selection (no
+        // keyboard-precedence gate that could leave hover stalled; a stray
+        // position won't fire without movement).
+        props.markMouse();
+        props.setSelected(i);
+      },
+      onContext: (e) => {
+        props.setSelected(i);
+        nav.setZone("grid");
+        props.openMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
+      },
+    });
 
   return (
     <Show
-      when={props.appsQuery() === "" && !props.forceGrid?.()}
+      when={props.appsQuery() === ""}
       fallback={
         <Show
           when={props.apps().length > 0}
@@ -166,27 +193,21 @@ export function NavigateView(props: NavigateViewProps) {
           }
         >
           <div class="result-grid" role="grid">
-            {props.apps().map((app, i) =>
-              itemBox(props, app, {}, () => i === props.selected(), {
-                onActivate: () => {
-                  props.markMouse();
-                  props.setSelected(i);
-                  props.activate();
-                },
-                onSelect: () => {
-                  // Mouse movement over an entry always takes over selection
-                  // (no keyboard-precedence gate that could leave hover
-                  // stalled; a stray position won't fire without movement).
-                  props.markMouse();
-                  props.setSelected(i);
-                },
-                onContext: (e) => {
-                  props.setSelected(i);
-                  nav.setZone("grid");
-                  props.openMenu({ kind: "app", x: e.clientX, y: e.clientY, app });
-                },
-              })
-            )}
+            {props.apps().slice(0, pluginStart()).map((app, i) => resultRow(app, i))}
+            <Show when={pluginStart() < props.apps().length}>
+              {/* #43: plugin-appended rows sit below a titled divider — normal
+                  search results and plugin offers never interleave. */}
+              <div
+                class="result-split"
+                classList={{ first: pluginStart() === 0 }}
+                role="presentation"
+              >
+                <span class="bar-title">{t("recommended")}</span>
+              </div>
+            </Show>
+            {props.apps()
+              .slice(pluginStart())
+              .map((app, j) => resultRow(app, pluginStart() + j))}
           </div>
         </Show>
       }

@@ -237,12 +237,15 @@ export default function create(ctx) {
 - **只在 Navigate 模式的非空查询时调用**（空查询的主菜单不触发 provider）。
 - 每次按键搜索都会调用——`search` 应当快速返回（异步网络请求请自行加
   防抖/缓存；慢响应会被 stale-token 机制丢弃结果，见下）。
-- 合并规则（组合根 `runSearch` apps 分支）：
-  1. 先取原生索引结果（`search_apps`，System32/桌面/开始菜单/用户索引）；
-  2. 依次调用每个**已启用** provider，把返回条目**追加在原生结果之后**；
+- 合并规则（导航页 apps 分支，`src/plugins/navigate/search.ts`）：
+  1. 原生索引结果（`search_apps`）与文件搜索命中构成**正常结果网格**
+     （文件命中按 `path` 与原生结果去重，合计封顶 **20**）；
+  2. 每个**已启用** provider 的返回条目落在网格下方的**「推荐使用」块**
+     ——与 `lume-mode://` 关键字行、feature 行同块，以标题分隔行与正常
+     结果隔开（#43）；关键字/feature 行不被 20 条封顶挤掉，provider 与
+     文件命中共享该预算；
   3. 按 `path` 全局去重（与原生结果、与其它 provider 之间都去重）；
-  4. 总条数封顶 **20**（原生 + provider 合计）；
-  5. 整个过程用根搜索令牌（`searchToken`）守卫——期间有新按键搜索，
+  4. 整个过程用根搜索令牌（`searchToken`）守卫——期间有新按键搜索，
      迟到的结果被丢弃。
 - **激活路径**：普通条目与原生条目完全一致 — 点击/Enter → `launch_app`
   （URL 走默认浏览器，文件走 ShellExecute）。**图标优先级**：条目的
@@ -366,9 +369,9 @@ export default function create(ctx) {
 | `title` | string | ✅ | 栏目标题，原样渲染。 |
 | `items` | `{ name, path, icon? }[]` | ✅ | 每栏封顶 50 条；name/path 必填，坏条目丢弃并记控制台日志。 |
 
-- **渲染位置**：「已固定」之后、「Windows 资源管理器」之前，多个栏目按
-  插件注册序排列；**explorer 栏始终位于最下层**（结构性固定，插件栏不可
-  越过）。
+- **渲染位置**：「已固定」之后（内建的「推荐使用」栏之后）、「Windows
+  资源管理器」之前，多个栏目按插件注册序排列；**explorer 栏始终位于最下层**
+  （结构性固定，插件栏不可越过）。
 - **条目激活**：与原生栏条目完全一致 — 点击/Enter → `launch_app`（文件与
   URL 都可以）→ 启动器隐藏；右键 → 共享 app 菜单（固定/启动/打开位置/管理
   员启动）。
@@ -886,8 +889,9 @@ label = "文本工具：打开这个网址"
 regex = "^https?://"    # 正则匹配输入（与 over 二选一；两者都有时 regex 优先）
 ```
 
-- **匹配时机**：导航模式（apps）每次非空查询；命中即在结果里追加「<label>」行，
-  位置与「进入 <插件>」关键字行同级（原生结果之后、文件命中与 provider 之前）。
+- **匹配时机**：导航模式（apps）每次非空查询；命中即在结果页的「推荐使用」块
+  追加「<label>」行（与「进入 <插件>」关键字行、provider 结果同块；正常查询
+  结果留在上方网格，两者以标题分隔行隔开，#43）。
 - **正则语义**：大小写不敏感，**在前端编译**（按插件+规则缓存）。**匹配空串的
   正则被忽略**（`.*`、`a?` 等——否则每次按键都出一行，uTools 同样忽略）；非法
   正则会记 error 并跳过该条规则。`over` 与 `regex` 都没声明的规则永不命中。
@@ -920,15 +924,17 @@ type = "img"
 
 - **files**：把文件从资源管理器**拖到启动器窗口**（Tauri drag-drop handler 提供
   真实路径；WebView2 的 HTML5 drop 拿不到路径）即出现「<label>（N 个文件）」行
-  ——拖入时主菜单在则立即出行，不在（启动器隐藏）则先拖住文件再按热键呼出。
+  ——拖入时主菜单在则立即出行（空查询下落在「推荐使用」栏，最近使用/已固定
+  栏保持可见，且该栏首行自动聚焦，Enter 直接激活），不在（启动器隐藏）则先
+  拖住文件再按热键呼出。
   **激活**把命中的路径**子集**投递给 `onFeature({code, type: "files", payload: "",
   paths})`（mode 收 `onEnter`）——只匹配了 `extensions` 的文件在 `paths` 里。
-  行在下一次隐藏/呼出后消失。查询非空时拖入也会把行追加进结果。
+  行在下一次隐藏/呼出后消失。查询非空时拖入也会把行追加进「推荐使用」块。
   *P4 更新*：`file_type` 类别（image/video/audio/document/text/folder/others）
   与文件夹匹配已支持——见 §6H.3；`extensions` 规则下文件夹不再命中（行为
   收窄）。
 - **img**：剪贴板持有可解码图片（CF_DIB/DIBV5、截图工具的自定义 PNG、CF_BITMAP）
-  时，**空查询主菜单**出现「<label>」行（激活 = `onFeature({code,
+  时，**空查询主菜单的「推荐使用」栏**出现「<label>」行（激活 = `onFeature({code,
   type: "img", payload: ""})`）。像素由插件自己读：
   `ctx.clipboard.readImage()` → `data:image/png;base64,…`（null = 无图），
   需要清单声明 `clipboard` 权限。
@@ -1485,7 +1491,8 @@ file_type = "image"      # 图片扩展名类别表（png/jpg/gif/webp/…）
 
 ### 6H.4 活动窗口匹配（`[[features]] type = "window"`，ROADMAP #29）
 
-按**呼出启动器前的前台窗口**触发：呼出时空查询主菜单出现「<label>」行，
+按**呼出启动器前的前台窗口**触发：呼出时空查询主菜单的「推荐使用」栏出现
+「<label>」行，
 激活把窗口信息投递给 `onFeature`/`onEnter`（`info.window`）。典型用途：
 用户正在某应用里 → 呼出 → 插件针对「用户此刻在哪」出动作行。
 
@@ -1516,9 +1523,11 @@ title = ["验证用"]                       # 大小写不敏感子串；"/…/"
 `process` 用前台进程的 exe 文件名（`app.foreground` 同源），`class`/`title`
 用 `GetClassNameW`/`GetWindowTextW`。
 
-**触发与生命周期**：仅空查询主菜单出现（非空查询不出现，uTools 同）；每次
+**触发与生命周期**：仅空查询主菜单的「推荐使用」栏出现（非空查询不出现，
+uTools 同）；每次
 呼出按新前台重算，隐藏后清空（summon-scoped，与 files 行一致）；有 window
-行时网格替代栏目条（与 files/img 行同语义）。
+行时落在「推荐使用」栏（与 files/img 行同语义；#43 起不再以网格顶掉其它
+栏目条）。
 
 **权限语义**：匹配是宿主侧行为——只看清单声明，**不需要权限**；行 payload
 只携带该插件自己命中的窗口信息。插件要**主动**读窗口信息（`app.foreground`

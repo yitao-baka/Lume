@@ -840,6 +840,24 @@ body,
   align-content: start;
 }
 
+/* Non-empty query: the 「推荐使用」 divider inside the results grid. Plugin-
+   appended rows (global keywords / features / providers) are separated from
+   the normal results above (#43); the divider spans the full grid width and
+   scrolls with the rows. */
+.result-split {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+  padding: 8px 4px 0;
+  border-top: 1px solid var(--border);
+}
+.result-split.first {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
 /* Scrollbars are removed entirely: containers scroll on wheel/trackpad with
    no visible bar, and content fills the full width (no right gap). */
 .result-grid::-webkit-scrollbar,

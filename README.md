@@ -18,8 +18,9 @@ The goal is:
 (current)
 
 - ✅ Global shortcut — Alt+Space preferred, auto-fallback to a free combo
-- ✅ Main menu — 最近使用 + 已固定 bars (expandable), pinyin search, arrow/mouse
-  navigation, real icons, Explorer-folder context bar
+- ✅ Main menu — 最近使用 + 已固定 + 推荐使用 (plugin context rows) bars
+  (expandable), pinyin search, arrow/mouse navigation, real icons,
+  Explorer-folder context bar
 - ✅ Clipboard manager — text / image / file / audio history, category tabs
   (全部/文本/图片/音乐/视频/收藏), source-app tracking, virtualized list, pin /
   per-entry delete with undo, clear with keep-pinned confirm, search + copy

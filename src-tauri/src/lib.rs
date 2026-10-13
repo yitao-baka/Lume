@@ -494,16 +494,9 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running Lume")
-        .run(|app, event| {
-            // 记住上次所在页面: clearing the bookmark when Lume closes means the
-            // next launch starts on the initial page — the memory is in-session
-            // only (hide/show keeps it; a full exit resets it). Both the tray
-            // Exit and Restart fire ExitRequested. Safe from the single-instance
-            // duplicate process (it returns before the Tauri app is built).
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                if let Some(state) = app.try_state::<settings::SettingsState>() {
-                    let _ = settings::clear_last_page(&state);
-                }
-            }
-        });
+        // 记住上次所在页面 (ROADMAP #40): no app-exit hook — the bookmark now
+        // survives restarts. It is only written while the toggle is on, and the
+        // frontend restores it under the same toggle; search words and page
+        // snapshots stay memory-only either way.
+        .run(|_app, _event| {});
 }

@@ -300,9 +300,14 @@ dev URL instead.
    scripts/cdp_circuit_verify.mjs`; verify three consecutive hook failures mark
    only that plugin offline, while pure-view modes never accumulate false
    timeouts.
-4. **Detached windows** — `node scripts/cdp_plugin_window_verify.mjs` and
-   `node scripts/cdp_plugin_blank_verify.mjs`; cover open/focus/state restore/
-   close, geometry memory and the empty-`srcdoc` navigation watchdog.
+4. **Detached windows & session continuity** — `node scripts/cdp_plugin_window_verify.mjs`,
+   `node scripts/cdp_plugin_blank_verify.mjs` and `node scripts/cdp_plugin_state_verify.mjs`
+   (fixture `examples/plugins/state-probe`): cover open/focus/state restore/close,
+   geometry memory, the empty-`srcdoc` navigation watchdog, keep-alive across
+   hide/show and mode switches, detach inheritance incl. the custom snapshot
+   layer and a 600ms-late DOM node, enter fan-out to view+titlebar frames,
+   user-close re-dock restore and the titlebar frame round-trip. The P6.5
+   file-search chain is `node test/_snapshot_probe.mjs`.
 5. **Theme override** — `node scripts/cdp_plugin_theme_verify.mjs`; inspect the
    rendered canvas with the 1x1 screenshot sampler, not the sandbox DOM.
 6. **Mode-bar hiding and result icons** — `node

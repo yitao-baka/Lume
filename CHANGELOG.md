@@ -8,6 +8,24 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件会话续存 + 分离窗口状态同步泛化（ROADMAP #40）** — 同一会话内
+  hide/show、模式切换与分离回流都保持上次页面、查询与页面状态（对标
+  uTools/zTools 的 WebContentsView 保活）：已访问页面挂载后只隐藏不卸载
+  （keep-alive 主机栈，LRU 8 + 淘汰快照），打开条目后仅首页清空查询；
+  分离窗口成为单一权威（启动器不留活副本），用户关闭窗口后自动回流到
+  该插件页并恢复状态。跨窗口快照升级为 v2：键控表单字段（含 multiple/
+  checkbox/radio、open shadow root）、contenteditable、滚动容器与焦点，
+  每字段只应用一次 + 仅迟到 DOM 重试/结束前一次受保护校正（修掉恢复循环回滚 3.2s 后正常
+  `enter` 状态的实测坑）；titlebar 帧在标准重放前静默恢复（修掉标题栏
+  输入回灌 `app.setQuery` 冲掉当前查询的实测坑）。`remember_last_page`
+  升级为重启恢复模式+分类（不再退出清页）；查询/快照仍不落盘。验证：
+  `scripts/cdp_plugin_state_verify.mjs`（新夹具 state-probe）**50/50**、
+  `test/_snapshot_probe.mjs` 全过，`cdp_plugin_window_verify` 16/16、
+  `cdp_plugin_theme_verify` 28/28、`cdp_sandbox_verify` 14/14、
+  `cdp_p2b_verify` 24/24、`cdp_plugin_mode_bar_verify` 15/15、
+  `cdp_plugin_verify` OK、`cdp_plugin_frame_load_verify` 5/5、
+  `cargo test` 200、`tsc --noEmit` / `pnpm run build` 干净。
+
 - **模式切换栏隐藏 + 导航结果行图标（ROADMAP #37）** — mode 插件可以声明
   `hidden = true`：不渲染模式 pill、Tab 循环也跳过（激活时从导航页
   重新开始），唯一入口是导航页搜索结果（关键字 / feature 行 /

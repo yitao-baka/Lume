@@ -228,6 +228,9 @@ export const BRIDGE_SCRIPT = `
     }
     if (d.__lumeEvent) {
       var ev = d.__lumeEvent;
+      // 恢复窗口期内的宿主事件 = 页面正在被驱动：放弃「最终校正」
+      // （否则会把 enter/query 等正常状态再拉回旧快照）。
+      if (restoreState && ev.type !== "restore") restoreState.interrupted = true;
       // 宿主拼接面：插件页画布默认取主题的实体面板色（--surface），随主题事件
       // 实时跟随。插件自己的 html/body 背景规则文档更靠后，写了自己的底色就
       // 覆盖本默认（契约见 PLUGIN_API.md §6B.2）。
@@ -256,26 +259,144 @@ export const BRIDGE_SCRIPT = `
       }
     }
   });
-  // ── 状态快照（P6.5）──
+  // ── 状态快照（P6.5 / 会话快照 v2，ROADMAP #40）──
   // detach / 关闭独立窗口前，宿主通过 __lumeCall{type:"snapshot"} 向页面要
-  // 一份状态。桥自动捕获两层：表单控件值（input/textarea/select，按 DOM 顺序
-  // 成组，恢复时按同一顺序回放）与 document 滚动位置。页面可选实现
-  // lume.on.snapshot 提供 custom 层（任意可 JSON 化对象）；恢复时 auto 层由
-  // 桥自动回放，custom 层交给 lume.on.restore。快照仅内存流转，不落盘。
-  function captureSnapshot() {
-    var nodes = document.querySelectorAll("input, textarea, select");
-    var fields = [];
-    for (var i = 0; i < nodes.length; i++) {
-      var el = nodes[i];
-      if (el.type === "file") continue; // FileList 不可序列化
-      fields.push({ v: el.value == null ? "" : String(el.value), c: !!el.checked });
+  // 一份状态（帧域快照 v2）。auto 层由桥自动捕获/回放：输入控件按**稳定键**
+  // （id → name → nth-of-type 路径，含 open shadow root）寻址，另有
+  // contenteditable、document/滚动容器位置与焦点——不再依赖 DOM 顺序。
+  // 页面可用 lume.on.snapshot 提供 custom 层（任意可 JSON 化对象），恢复时
+  // 交给 lume.on.restore。恢复带重试：load 之后才异步建 DOM 的页面也能接住
+  // 快照；用户先动过的字段不覆盖。快照仅内存流转，不落盘。
+  var RESTORE_MS = 4000;
+  var SNAP_FIELD_MAX = 200;
+  var SNAP_SCROLL_MAX = 40;
+  var SNAP_VALUE_MAX = 65536;
+  var applying = false;
+  // 标题栏槽位帧的恢复是「静默」的：输入值是宿主 query 的视图，派发
+  // input/change 会被页面当成新输入（app.setQuery 回路）把当前 query 冲掉。
+  // 标题栏仍可自定义 lume.on.restore 处理自身状态。
+  var silentRestore = window.name === "titlebar";
+
+  function clipValue(v) {
+    v = v == null ? "" : String(v);
+    return v.length > SNAP_VALUE_MAX ? v.slice(0, SNAP_VALUE_MAX) : v;
+  }
+  /** Stable element key — identical on capture and restore of one document. */
+  function nodeKey(el) {
+    try {
+      if (el.id) return "#" + el.id;
+      var tag = el.tagName ? el.tagName.toLowerCase() : "";
+      if (el.name && (tag === "input" || tag === "textarea" || tag === "select")) {
+        var ty = (el.type || "").toLowerCase();
+        if (ty === "radio" || ty === "checkbox") {
+          return "@" + tag + ":" + el.name + ":" + clipValue(el.value);
+        }
+        return "@" + tag + ":" + el.name;
+      }
+      var parts = [];
+      var n = el;
+      for (var d = 0; n && n.nodeType === 1 && d < 40; d++) {
+        var t = n.tagName.toLowerCase();
+        var idx = 1;
+        var sib = n;
+        while ((sib = sib.previousElementSibling)) {
+          if (sib.tagName === n.tagName) idx++;
+        }
+        parts.unshift(t + ":" + idx);
+        var root = n.getRootNode ? n.getRootNode() : null;
+        if (root && root !== document && root.host) {
+          n = root.host;
+          parts.unshift(">>");
+        } else {
+          n = n.parentElement;
+        }
+      }
+      return parts.join("/");
+    } catch (err) {
+      return "";
     }
-    var snap = {
-      auto: {
-        fields: fields,
-        scroll: { x: window.scrollX || 0, y: window.scrollY || 0 },
-      },
-    };
+  }
+  /** State-bearing nodes (inputs + contenteditable), open shadow roots included. */
+  function collectNodes(root, out) {
+    try {
+      var list = root.querySelectorAll("input, textarea, select, [contenteditable]");
+      for (var i = 0; i < list.length && out.length < 600; i++) out.push(list[i]);
+      var all = root.querySelectorAll("*");
+      for (var j = 0; j < all.length && out.length < 600; j++) {
+        var sr = all[j].shadowRoot;
+        if (sr) collectNodes(sr, out);
+      }
+    } catch (err) {}
+  }
+  function keyMap(nodes) {
+    var m = {};
+    for (var i = 0; i < nodes.length; i++) {
+      var k = nodeKey(nodes[i]);
+      if (k && !(k in m)) m[k] = nodes[i];
+    }
+    return m;
+  }
+  function captureSnapshot() {
+    var nodes = [];
+    collectNodes(document, nodes);
+    var fields = [];
+    var editables = [];
+    for (var i = 0; i < nodes.length && fields.length < SNAP_FIELD_MAX; i++) {
+      var el = nodes[i];
+      try {
+        var tag = el.tagName ? el.tagName.toLowerCase() : "";
+        if (tag === "input") {
+          var ty = (el.type || "text").toLowerCase();
+          if (ty === "file") continue; // FileList 不可序列化
+          if (ty === "checkbox" || ty === "radio") {
+            fields.push({ k: nodeKey(el), t: ty, c: !!el.checked });
+          } else {
+            fields.push({ k: nodeKey(el), t: "input", v: clipValue(el.value) });
+          }
+        } else if (tag === "textarea") {
+          fields.push({ k: nodeKey(el), t: "textarea", v: clipValue(el.value) });
+        } else if (tag === "select") {
+          if (el.multiple) {
+            var vals = [];
+            for (var oi = 0; oi < el.options.length; oi++) {
+              if (el.options[oi].selected) vals.push(String(el.options[oi].value));
+            }
+            fields.push({ k: nodeKey(el), t: "multi", vals: vals });
+          } else {
+            fields.push({ k: nodeKey(el), t: "select", v: clipValue(el.value) });
+          }
+        } else if (el.isContentEditable) {
+          editables.push({ k: nodeKey(el), text: clipValue(el.innerText) });
+        }
+      } catch (err) {}
+    }
+    var scroll = [];
+    try {
+      var se = document.scrollingElement || document.documentElement;
+      scroll.push({ k: "", x: se.scrollLeft || 0, y: se.scrollTop || 0 });
+    } catch (err) {}
+    for (var si = 0; si < nodes.length && scroll.length < SNAP_SCROLL_MAX; si++) {
+      var sn = nodes[si];
+      try {
+        if (sn.scrollHeight > sn.clientHeight + 4 || sn.scrollWidth > sn.clientWidth + 4) {
+          scroll.push({ k: nodeKey(sn), x: sn.scrollLeft || 0, y: sn.scrollTop || 0 });
+        }
+      } catch (err) {}
+    }
+    var focus = null;
+    try {
+      var ae = document.activeElement;
+      if (ae && ae.tagName && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) {
+        focus = { k: nodeKey(ae) };
+        if (typeof ae.selectionStart === "number") {
+          focus.start = ae.selectionStart;
+          focus.end = ae.selectionEnd;
+        }
+      }
+    } catch (err) {}
+    var snap = { v: 2, auto: { fields: fields, scroll: scroll } };
+    if (editables.length) snap.auto.editables = editables;
+    if (focus) snap.auto.focus = focus;
     var h = window.lume.on.snapshot;
     if (typeof h !== "function") return snap;
     return Promise.resolve()
@@ -283,31 +404,251 @@ export const BRIDGE_SCRIPT = `
       .then(function (custom) {
         if (custom !== undefined && custom !== null) snap.custom = custom;
         return snap;
+      })
+      .catch(function () {
+        return snap; // custom 层异常不拖垮 auto 层
       });
   }
-  function applySnapshot(snap) {
-    if (!snap || typeof snap !== "object") return;
-    var auto = snap.auto || {};
+  // 恢复：立即 + 观察 DOM + 250ms 轮询，持续 RESTORE_MS；按稳定键应用，
+  // 用户先动过的字段/滚动不再覆盖。v1（P6.5 按 DOM 顺序的 fields 数组）兼容。
+  var restoreState = null;
+  function stopRestore() {
+    var st = restoreState;
+    if (!st) return;
+    restoreState = null;
+    try { window.clearInterval(st.interval); } catch (err) {}
+    try { if (st.moTimer) window.clearTimeout(st.moTimer); } catch (err) {}
+    try { if (st.observer) st.observer.disconnect(); } catch (err) {}
     try {
-      var nodes = document.querySelectorAll("input, textarea, select");
-      var fields = auto.fields || [];
-      for (var i = 0, j = 0; i < nodes.length && j < fields.length; i++) {
-        var el = nodes[i];
-        if (el.type === "file") continue;
-        var f = fields[j++];
-        if (f && f.v != null) {
-          el.value = f.v;
-          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch (err) {}
-        }
-        if (f && "c" in f) el.checked = !!f.c;
+      document.removeEventListener("input", st.onUser, true);
+      document.removeEventListener("change", st.onUser, true);
+      document.removeEventListener("keydown", st.onInteract, true);
+      document.removeEventListener("mousedown", st.onInteract, true);
+      document.removeEventListener("scroll", st.onScroll, true);
+    } catch (err) {}
+  }
+  function normalizeFrame(snap) {
+    if (!snap || typeof snap !== "object") return null;
+    if (snap.v === 2 && snap.auto) return snap;
+    if (snap.auto && Object.prototype.toString.call(snap.auto.fields) === "[object Array]") {
+      var fields = [];
+      for (var i = 0; i < snap.auto.fields.length; i++) {
+        var f = snap.auto.fields[i] || {};
+        fields.push({ k: ":legacy:" + i, t: "legacy", v: f.v, c: f.c });
       }
-    } catch (err) {}
-    try {
-      window.scrollTo((auto.scroll && auto.scroll.x) || 0, (auto.scroll && auto.scroll.y) || 0);
-    } catch (err) {}
-    if (snap.custom !== undefined && typeof window.lume.on.restore === "function") {
-      try { window.lume.on.restore(snap.custom); } catch (err) {}
+      var scroll = [];
+      if (snap.auto.scroll) {
+        scroll.push({ k: "", x: snap.auto.scroll.x || 0, y: snap.auto.scroll.y || 0 });
+      }
+      return { v: 2, auto: { fields: fields, scroll: scroll, legacy: true }, custom: snap.custom };
     }
+    return null;
+  }
+  function findLegacyNode(nodes, idx) {
+    var seen = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      var tag = nodes[i].tagName ? nodes[i].tagName.toLowerCase() : "";
+      if (tag !== "input" && tag !== "textarea" && tag !== "select") continue;
+      if (nodes[i].type === "file") continue;
+      seen++;
+      if (seen === idx) return nodes[i];
+    }
+    return null;
+  }
+  function setFieldValue(el, f) {
+    applying = true;
+    try {
+      if (f.t === "checkbox" || f.t === "radio") {
+        el.checked = !!f.c;
+        if (!silentRestore) el.dispatchEvent(new Event("change", { bubbles: true }));
+      } else if (f.t === "multi") {
+        var want = f.vals || [];
+        for (var i = 0; i < el.options.length; i++) {
+          el.options[i].selected = want.indexOf(String(el.options[i].value)) !== -1;
+        }
+        if (!silentRestore) el.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        el.value = f.v == null ? "" : String(f.v);
+        if (!silentRestore) el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    } catch (err) {} finally {
+      applying = false;
+    }
+  }
+  function setEditableValue(el, text) {
+    applying = true;
+    try {
+      el.innerText = text == null ? "" : String(text);
+      if (!silentRestore) el.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch (err) {} finally {
+      applying = false;
+    }
+  }
+  function tryRestore() {
+    var st = restoreState;
+    if (!st) return;
+    // 最终校正（deadline 的那次 pass）：页面若没有后续宿主事件、用户也没动过，
+    // 把异步初始化覆盖掉的字段再拉回一次（每个字段一生最多两次写入）。
+    var finalPass = Date.now() >= st.deadline && !st.interrupted;
+    var frame = st.frame;
+    var auto = frame.auto || {};
+    var fields = auto.fields || [];
+    var editables = auto.editables || [];
+    var scroll = auto.scroll || [];
+    var nodes = null;
+    var map = null;
+    if (fields.length || editables.length || scroll.length || auto.focus) {
+      nodes = [];
+      collectNodes(document, nodes);
+      map = keyMap(nodes);
+    }
+    // 应用语义（#40 修正）：每个字段**只应用一次**；只有「还没找到」（迟到
+    // DOM）或「应用过的节点被替换」（isConnected=false）时才重试。这样恢复
+    // 窗口期内页面自己的状态变化（宿主 enter/query 驱动的写入、异步初始化
+    // 之后的重渲染）不会被恢复循环反复回滚——异步初始化覆盖表单值这类页面
+    // 应由 lume.on.snapshot/restore 自定义层负责（契约见 PLUGIN_API §6C）。
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (!f || !f.k || st.touched[f.k]) continue;
+      if (st.applied[f.k]) {
+        var prev = st.appliedEl[f.k];
+        if (!prev || prev.isConnected) {
+          if (!finalPass) continue; // 已应用过：非最终校正不再写
+        }
+        delete st.applied[f.k]; // 节点被替换 / 最终校正：允许再写一次
+      }
+      var el = f.el && f.el.isConnected ? f.el : (auto.legacy ? findLegacyNode(nodes, i) : map[f.k]);
+      if (!el) continue;
+      f.el = el;
+      if (f.t === "multi") {
+        var haveMul = [];
+        if (el.selectedOptions) {
+          for (var so = 0; so < el.selectedOptions.length; so++) {
+            haveMul.push(String(el.selectedOptions[so].value));
+          }
+        }
+        var wantMul = f.vals || [];
+        var a = haveMul.slice().sort().join("\\n");
+        var b = wantMul.slice().sort().join("\\n");
+        if (a !== b) setFieldValue(el, f);
+      } else {
+        var want = f.t === "checkbox" || f.t === "radio" ? !!f.c : (f.v == null ? "" : String(f.v));
+        var have = f.t === "checkbox" || f.t === "radio" ? !!el.checked : (el.value == null ? "" : String(el.value));
+        if (have !== want) setFieldValue(el, f);
+      }
+      st.applied[f.k] = 1;
+      st.appliedEl[f.k] = el;
+    }
+    for (var e2 = 0; e2 < editables.length; e2++) {
+      var ed = editables[e2];
+      if (!ed || !ed.k || st.touched[ed.k]) continue;
+      if (st.applied[ed.k]) {
+        var prevEd = st.appliedEl[ed.k];
+        if (!prevEd || prevEd.isConnected) {
+          if (!finalPass) continue;
+        }
+        delete st.applied[ed.k];
+      }
+      var ee = ed.el && ed.el.isConnected ? ed.el : map[ed.k];
+      if (!ee) continue;
+      ed.el = ee;
+      if ((ee.innerText == null ? "" : String(ee.innerText)) !== (ed.text || "")) {
+        setEditableValue(ee, ed.text || "");
+      }
+      st.applied[ed.k] = 1;
+      st.appliedEl[ed.k] = ee;
+    }
+    for (var s2 = 0; s2 < scroll.length; s2++) {
+      var sc = scroll[s2];
+      if (!sc || sc.k == null || st.scrollDone[sc.k] || st.touched[sc.k]) continue;
+      var se = sc.k === "" ? (document.scrollingElement || document.documentElement) : map[sc.k];
+      if (!se) continue;
+      applying = true;
+      try {
+        if (typeof se.scrollTo === "function") se.scrollTo(sc.x || 0, sc.y || 0);
+        else { se.scrollLeft = sc.x || 0; se.scrollTop = sc.y || 0; }
+      } catch (err) {
+        try { se.scrollLeft = sc.x || 0; se.scrollTop = sc.y || 0; } catch (e3) {}
+      } finally {
+        applying = false;
+      }
+      st.scrollDone[sc.k] = 1;
+    }
+    // custom 层只投一次；页面若异步初始化需自行缓存（契约见 PLUGIN_API §6C）。
+    if (!st.customDone) {
+      st.customDone = true;
+      if (frame.custom !== undefined && typeof window.lume.on.restore === "function") {
+        try { window.lume.on.restore(frame.custom); } catch (err) {}
+      }
+    }
+    // focus：用户没动过才还焦点与选区（首个能命中元素的 pass 生效）。
+    var fo = auto.focus;
+    if (fo && !st.focusDone && !st.interacted) {
+      var fe = fo.el && fo.el.isConnected ? fo.el : map ? map[fo.k] : null;
+      if (fe) {
+        fo.el = fe;
+        st.focusDone = true;
+        applying = true;
+        try {
+          fe.focus({ preventScroll: true });
+          if (typeof fo.start === "number" && fe.setSelectionRange) {
+            fe.setSelectionRange(fo.start, fo.end == null ? fo.start : fo.end);
+          }
+        } catch (err) {} finally {
+          applying = false;
+        }
+      }
+    }
+    if (Date.now() >= st.deadline) stopRestore();
+  }
+  function applySnapshot(snap) {
+    var frame = normalizeFrame(snap);
+    if (!frame) return;
+    stopRestore();
+    var st = {
+      frame: frame,
+      deadline: Date.now() + RESTORE_MS,
+      touched: {},
+      applied: {},
+      interrupted: false,
+      appliedEl: {},
+      scrollDone: {},
+      customDone: false,
+      focusDone: false,
+      interacted: false,
+      observer: null,
+      moTimer: 0,
+      interval: 0,
+    };
+    st.onUser = function (e) {
+      if (applying) return;
+      var t = e.target;
+      if (!t || !t.tagName) return;
+      var k = nodeKey(t);
+      if (k) st.touched[k] = 1;
+    };
+    st.onInteract = function () { st.interacted = true; };
+    st.onScroll = function (e) {
+      if (applying) return;
+      var t = e.target;
+      var k = t === document ? "" : (t && t.nodeName ? nodeKey(t) : "");
+      st.scrollDone[k] = 1;
+    };
+    document.addEventListener("input", st.onUser, true);
+    document.addEventListener("change", st.onUser, true);
+    document.addEventListener("keydown", st.onInteract, true);
+    document.addEventListener("mousedown", st.onInteract, true);
+    document.addEventListener("scroll", st.onScroll, true);
+    try {
+      st.observer = new MutationObserver(function () {
+        if (st.moTimer) return;
+        st.moTimer = window.setTimeout(function () { st.moTimer = 0; tryRestore(); }, 80);
+      });
+      st.observer.observe(document.documentElement || document, { childList: true, subtree: true });
+    } catch (err) {}
+    restoreState = st;
+    tryRestore();
+    st.interval = window.setInterval(tryRestore, 250);
     reportState("restored");
   }
   // ── 状态上报（诊断用）──
@@ -318,14 +659,22 @@ export const BRIDGE_SCRIPT = `
   function reportState(reason) {
     try {
       var values = [];
-      var nodes = document.querySelectorAll("input, textarea, select");
+      var nodes = document.querySelectorAll("input, textarea, select, [contenteditable]");
       for (var i = 0; i < nodes.length && values.length < 24; i++) {
         var el = nodes[i];
         if (el.type === "file") continue;
+        var v;
+        if (el.isContentEditable) v = el.innerText;
+        else if (el.tagName === "SELECT" && el.multiple) {
+          var sel = [];
+          for (var o = 0; o < el.selectedOptions.length; o++) sel.push(el.selectedOptions[o].value);
+          v = sel.join(",");
+        } else v = el.value;
         values.push({
           id: el.id || "",
           name: el.name || "",
-          value: el.value == null ? "" : String(el.value),
+          value: v == null ? "" : String(v),
+          checked: !!el.checked,
         });
       }
       parent.postMessage(
@@ -334,6 +683,8 @@ export const BRIDGE_SCRIPT = `
             name: window.name || "",
             reason: reason,
             ready: document.readyState,
+            // 诊断（probes）：恢复是否仍在「迟到 DOM」重试窗口内。
+            restoring: !!restoreState,
             values: values,
           },
         },
@@ -552,9 +903,10 @@ export function createIframeView(
 ): {
   View: Component & { setHtml(html: string): void };
   post: (type: string, payload?: unknown) => void;
-  /** Ask the page for its state snapshot (P6.5). Resolves null when the page
-   * isn't live, doesn't answer within `timeoutMs`, or errors — a dead or
-   * hostile page must never block a detach/close. */
+  /** Ask the page for its state snapshot (P6.5; frame snapshot v2 since
+   * ROADMAP #40). Resolves null when the page isn't live, doesn't answer
+   * within `timeoutMs`, or errors — a dead or hostile page must never block
+   * a detach/close. */
   snapshot: (timeoutMs?: number) => Promise<unknown | null>;
   /** Whether the *current* document's bridge is live (it announced
    * `__lumeReady`). False while a fresh document is still loading — reset on

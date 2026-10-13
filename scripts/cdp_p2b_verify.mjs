@@ -242,11 +242,10 @@ if (enterRow) {
     JSON.stringify(listNames));
   await m.shot("p2b_list.png");
 
-  // onFeature（声明式进入 quick-add）：先回导航页，输入「买 咖啡」出行并激活。
-  await invoke("toggle_launcher");
-  await sleep(600);
-  await invoke("toggle_launcher");
-  await sleep(1200);
+  // onFeature（声明式进入 quick-add）：显式点回导航 pill（#40 起呼出不再
+  // 自动回导航页——会话续存），输入「买 咖啡」出行并激活。
+  await m.evalJs(`document.querySelector(".mode-switch-item")?.click()`);
+  await sleep(900);
   await type("买 咖啡");
   await sleep(1200);
   names = await rowNames();

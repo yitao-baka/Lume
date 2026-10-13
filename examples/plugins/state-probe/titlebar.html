@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>State Probe TB</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  #tb { width: 220px; height: 20px; margin: 5px 0 0 10px; }
+</style>
+</head>
+<body>
+<input id="tb" type="text" placeholder="titlebar probe">
+<script>
+  var tb = document.getElementById("tb");
+  // enter 扇出到两帧：view 收 payload，titlebar 收 payload + "-TB" —— 用于
+  // 在测试里区分「标题栏帧自己的状态」与视图帧状态。
+  lume.on.enter = function (info) {
+    if (info && info.payload != null) tb.value = String(info.payload) + "-TB";
+  };
+</script>
+</body>
+</html>

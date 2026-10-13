@@ -195,8 +195,15 @@ await invoke("set_plugin_enabled", { id: "hello-mode", enabled: true });
 //    断言——srcdoc 属性可读，沙箱文档内容不可达），视图页仍只注入桥。
 await invoke("plugin_window_open", { id: "titlebar-demo" });
 const tbWin = await pluginWindowTarget("titlebar-demo");
-check("⑥a titlebar-demo window created with slot iframe",
-  !!tbWin && (await tbWin.conn.evalJs(`!!document.querySelector("iframe.titlebar-frame")`)));
+// 目标一出现页面可能还在 interactive（Solid 首帧还没落地）——轮询等 slot iframe。
+let slotPresent = false;
+if (tbWin) {
+  for (let i = 0; i < 20 && !slotPresent; i++) {
+    slotPresent = await tbWin.conn.evalJs(`!!document.querySelector("iframe.titlebar-frame")`);
+    if (!slotPresent) await sleep(200);
+  }
+}
+check("⑥a titlebar-demo window created with slot iframe", !!tbWin && slotPresent);
 // 槽页/视图页的 srcdoc 是窗口起来后异步 fetch + 注入的，轮询等待落地。
 const waitForSrcdoc = async (frameSel, needle) => {
   if (!tbWin) return false;

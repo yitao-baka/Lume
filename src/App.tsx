@@ -47,8 +47,8 @@ import {
   reloadDiskPlugin,
   setPluginDetached,
   setPluginServices,
-  storePendingSnapshot,
 } from "./plugins/registry";
+import { createHostStack, dropSessionFrame, putSessionFrame } from "./launcher/session";
 import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
 import { createClipboardPlugin } from "./plugins/clipboard";
 import { createPreviewPlugin } from "./plugins/preview";
@@ -122,6 +122,54 @@ function App() {
     activeMode()?.setQuery(q);
   };
 
+  // Keep-alive host stack (ROADMAP #40): every visited page stays mounted
+  // (hidden) so its DOM/JS state survives mode switches and hides; over the
+  // cap the LRU page is snapshotted and unmounted, remount restores it.
+  const hostStack = createHostStack({
+    mode,
+    instance: (id) => modeById(id),
+    evictable: (id) => !(modeById(id)?.home ?? false),
+    maxLive: 8,
+  });
+  const ensureHost = (id: ModeId) => hostStack.ensure(id);
+
+  /** Retire hosts whose instance was replaced/removed (plugin reload or
+   * disable), then make sure the active page still has a live host. */
+  function pruneHosts() {
+    hostStack.prune((id, inst) => modeById(id) === inst && !isPluginDetached(id));
+    if (!isPluginDetached(mode()) && modeById(mode())) ensureHost(mode());
+  }
+
+  /** D2 (#40): a user-closed detached window re-docks to that page — state
+   * comes back through the session frames on the ready handshake. Runs even
+   * while the launcher is hidden, so the next summon lands right there. */
+  async function redockMode(id: ModeId) {
+    if (!modeById(id) || isPluginDetached(id)) return;
+    ensureHost(id);
+    setMode(id);
+    setSubInput(null);
+    sizer.invalidate();
+    await runSearch(query());
+  }
+
+  /** D3 (#40): with 记住上次所在页面 on, restore the persisted page across
+   * restarts too (the exit-time bookmark clear is gone). Disk mode ids only
+   * resolve after the first refreshPlugins() lands, hence the boot hook. */
+  let bootRestored = false;
+  function restoreLastPageOnBoot() {
+    if (bootRestored) return;
+    bootRestored = true;
+    if (!rememberLastPage()) return;
+    const m = lastPageMode();
+    if (!m || m === NAVIGATE_MODE_ID || !modeById(m) || isPluginDetached(m)) return;
+    ensureHost(m);
+    setMode(m);
+    modeById(m)?.restorePage(lastPageKind());
+    activeMode()?.reset?.();
+    void runSearch(query());
+    sizer.invalidate();
+  }
+
   const [menu, setMenu] = createSignal<MenuState>(null);
   // ── Shared launcher state ──
   // The toast is shared with every plugin action; pages own their
@@ -145,70 +193,57 @@ function App() {
    * home page) are always ready. */
   const pageLoading = (): boolean => !(activeMode()?.ready?.() ?? true);
 
-  // 搜索状态记忆: 一次「未打开条目」的搜索会保留到下次呼出 (热键重呼出恢复);
-  // 但 5 分钟未再次呼出, 或打开过条目, 则清空查询。记住上次所在页面 (page/kind)
-  // 不受 TTL 限制, 只在「打开条目」时被强制覆盖为导航页。查询仅内存, 重启即空。
-  const SEARCH_RECALL_MS = 5 * 60 * 1000; // 5 分钟
-  let searchRecallAt = 0; // 上次「决定搜索状态」的时间戳 (锚点, 供下呼出算 TTL)
-  let entryOpened = false; // 本所示期内是否打开过条目 (打开即清空搜索记忆)
+  // ── 会话续存（ROADMAP #40）──
+  // hide/show、模式切换与分离回流都不再重置页面：已访问页面保活（隐藏而非
+  // 卸载），超上限按 LRU 淘汰并先抓快照；只有显式动作（禁用/重载、首页打开
+  // 条目后的查询清空）会动状态。查询与页面状态仅内存，重启不保留。
+  let entryOpened = false; // 最近一次条目是否从首页打开（只有首页下次清查询）
 
-  /** Every page except the home page starts from its default page ("all"). */
-  function resetNonHomePages() {
-    for (const p of modePlugins()) {
-      if (!p.instance.home) p.instance.restorePage("all");
-    }
+  function markEntryOpened() {
+    entryOpened = true;
   }
 
-  function clearSearch() {
-    const now = Date.now();
-    const opened = entryOpened;
-    const fresh = now - searchRecallAt <= SEARCH_RECALL_MS;
-    entryOpened = false;
-    searchRecallAt = now; // 锚定 TTL, 供下次呼出计算 5 分钟间隔
-    // 用恢复前的 mode 判定本页面是否有活跃搜索 (决定是否保留查询)。
-    const recall = !opened && fresh && query().trim() !== "";
-
-    if (!recall) {
-      // 未保留搜索 (打开过条目 / 超过 5 分钟 / 无活跃搜索) → 重置页面与查询。
-      if (opened) {
-        // 打开条目 → 回到导航页 (空查询)。记住上次所在页面在此被覆盖。
-        setMode(NAVIGATE_MODE_ID);
-        resetNonHomePages();
-      } else if (rememberLastPage()) {
-        // 记住上次所在页面 → 恢复它记住的 page/kind (页面偏好, 不受 TTL 限制)。
-        let next: ModeId = lastPageMode();
-        if (next !== NAVIGATE_MODE_ID && !modeById(next)) next = NAVIGATE_MODE_ID;
-        setMode(next);
-        if (next !== NAVIGATE_MODE_ID) modeById(next)?.restorePage(lastPageKind());
-      } else {
-        // 未记住页面 → 导航页。
-        setMode(NAVIGATE_MODE_ID);
-        resetNonHomePages();
-      }
-      // 查询一律清空, 落在该页面的默认空态。
-      for (const p of allPlugins()) p.mode?.setQuery("");
-    }
-    // recall: 保留当前 mode/kind/query 不动, 热键重呼出即恢复这次搜索结果。
-
-    activeMode()?.setSelected(0);
-    for (const p of allPlugins()) p.mode?.reset();
+  /** Hide-time bookkeeping — summon-scoped state only; pages keep everything. */
+  function endSummon() {
+    activeMode()?.onHide?.();
+    for (const p of allPlugins()) p.lifecycle?.onHide?.();
     setMenu(null);
-    // 子输入框是「本次呼出」级状态：新的一次召唤由宿主拥有搜索框。
     setSubInput(null);
-    sizer.invalidate(); // force a re-measure on the next show (mode may have changed)
   }
 
-  /** 记住上次所在页面: debounce-persist the current page (page id + kind).
-   * Only fires when the toggle is on; a light settings write that never
-   * touches backup.toml. */
+  /** Show-time restore (D1): a home-page entry clears the home query only;
+   * plugin pages keep query + page state. Invalid active modes fall home. */
+  function beginSummon() {
+    if (!modeById(mode())) {
+      ensureHost(NAVIGATE_MODE_ID);
+      setMode(NAVIGATE_MODE_ID);
+    }
+    if (entryOpened && mode() === NAVIGATE_MODE_ID) {
+      const home = modeById(NAVIGATE_MODE_ID);
+      if (home && home.query() !== "") {
+        home.setQuery("");
+        home.reset?.();
+      }
+    }
+    entryOpened = false;
+    setMenu(null);
+    setSubInput(null);
+    activeMode()?.setSelected(0);
+    activeMode()?.reset?.(); // page-level show (posts `show`; clears enter payload)
+    sizer.invalidate();
+  }
+  /** 记住上次所在页面: debounce-persist the current page (page id + kind)
+   * for the NEXT BOOT (in-session continuation is always on, #40). Only
+   * fires when the toggle is on; a light settings write that never touches
+   * backup.toml. */
   let lastPageTimer: number | undefined;
   function persistLastPage() {
     if (!rememberLastPage()) return;
     const m = mode();
     const kind = activeMode()?.pageKind() ?? "all";
-    // Update frontend signals so clearSearch() reads the correct values on the
-    // next launcher show (the Rust backend writes to file + in-memory, but
-    // does not emit settings-applied — so the signals would stay stale).
+    // Update frontend signals alongside the write (the Rust backend writes to
+    // file + in-memory, but does not emit settings-applied — the signals
+    // would stay stale for the current process).
     setLastPageMode(m);
     setLastPageKind(kind as ClipKind);
     window.clearTimeout(lastPageTimer);
@@ -240,6 +275,8 @@ function App() {
     barCols,
     setBarCols,
     measureModeViewport: () => activeMode()?.measureViewport(),
+    // Page measurements are scoped to the active keep-alive host (#40).
+    activeHost: () => document.querySelector<HTMLElement>(".mode-host.active"),
   });
 
   function markKeyboard() {
@@ -273,19 +310,15 @@ function App() {
   }
 
   async function resetAndHide() {
-    // Lifecycle: the active mode + disk services learn about the hide first.
-    activeMode()?.onHide?.();
-    for (const p of allPlugins()) p.lifecycle?.onHide?.();
-    clearSearch();
+    // Lifecycle first, then hide — no mode/query/page reset (session keep).
+    endSummon();
     await invoke("hide_launcher");
   }
 
   // The services every plugin receives — late-bound like the sizer deps.
   const services: PluginServices = {
     showToast,
-    markEntryOpened: () => {
-      entryOpened = true;
-    },
+    markEntryOpened: () => markEntryOpened(),
     resetAndHide: () => void resetAndHide(),
     detachMode: (pluginId) => void detachMode(pluginId),
     setPluginColorMode: async (pluginId, mode) => {
@@ -402,7 +435,10 @@ function App() {
   definePlugin(navigatePlugin);
   definePlugin(clipboardPlugin);
   definePlugin(preview);
-  void refreshPlugins().then(() => void navigatePlugin.refreshBars());
+  void refreshPlugins().then(() => {
+    void navigatePlugin.refreshBars();
+    restoreLastPageOnBoot();
+  });
 
   const router = createKeyRouter({
     mode,
@@ -521,7 +557,9 @@ function App() {
             void invoke("plugin_window_close", { id }).catch(() => {});
           }
         }
+        pruneHosts();
         if (!modeById(mode())) {
+          ensureHost(NAVIGATE_MODE_ID);
           setMode(NAVIGATE_MODE_ID);
           activeMode()?.setQuery("");
           void runSearch("");
@@ -535,13 +573,10 @@ function App() {
     }
   }
 
-  /** Detach the current mode page into its own window (P6): open (or focus)
-   * the `plugin-<id>` window, mark the registry, and hide the launcher —
-   * the detached window becomes the mode's home until it is closed.
-   * P6.5: the launcher's page is the state source — snapshot it (the iframe
-   * is guaranteed mounted at click time) BEFORE the new window exists, so
-   * the detached page inherits it on its ready push. A dead page yields
-   * null and the detach degrades to the pre-snapshot behaviour. */
+  /** Detach the current mode page into its own window (P6 / #40): snapshot
+   * the launcher page BEFORE the window exists, hand the frames to the
+   * window on its ready push, then retire the launcher host — single
+   * authority: from here on the window owns the page until it closes. */
   /** Rasterized taskbar icon for a detached plugin window (P6.8): the mode's
    * manifest `icon`, or undefined when it has none / cannot be read — the
    * window then keeps the Lume theme icon. */
@@ -551,21 +586,28 @@ function App() {
   }
 
   async function detachMode(m: ModeId) {
+    let stored = false;
     try {
       let snapshot: unknown = null;
       try {
         snapshot = (await modeById(m)?.snapshot?.()) ?? null;
       } catch {
-        // 页面快照失败不阻塞 detach —— 退化为既有行为（仅回放宿主状态）。
+        // 页面快照失败不阻塞 detach —— 退化为仅回放宿主状态。
       }
+      // Store BEFORE opening: the window's ready handshake may consume it
+      // the moment the page is up (the old order raced that handshake).
+      if (snapshot != null) stored = putSessionFrame(m, "view", snapshot);
       await invoke("plugin_window_open", { id: m, iconPng: await pluginWindowIcon(m) });
-      if (snapshot) storePendingSnapshot(m, snapshot);
-      setPluginDetached(m, true);
-      services.resetAndHide();
     } catch (err) {
+      if (stored) dropSessionFrame(m, "view"); // the live page stays authoritative
       console.error("plugin_window_open failed:", err);
       showToast(t("pluginWindowOpenFailed", { id: m }));
+      return;
     }
+    setPluginDetached(m, true);
+    hostStack.retire(m); // single authority: the window owns the page now
+    if (mode() === m) setMode(NAVIGATE_MODE_ID); // launcher stays on a valid page
+    services.resetAndHide();
   }
 
   async function switchMode(m: ModeId) {
@@ -576,17 +618,12 @@ function App() {
       await detachMode(m);
       return;
     }
+    ensureHost(m); // keep-alive: mount lazily, then leave it mounted
     setMode(m);
     // 搜索框所有权属于上一个页面：切模式即交还宿主（P2.3）。
     setSubInput(null);
-    // Non-home pages always start from a clean page (All category, no
-    // multi-select) with their own (independent) query. The home page keeps
-    // its session state — search recall depends on it (`home: true`).
-    const inst = modeById(m);
-    if (inst && !inst.home) {
-      inst.restorePage("all");
-      inst.reset();
-    }
+    // #40: the target page keeps its session state (query, category, scroll,
+    // page JS state) — only explicit resets (reload/disable/home entry) move it.
     sizer.invalidate(); // the height model differs per page — force a resize
     persistLastPage();
     // Re-search the target page with its own (independent) query.
@@ -595,7 +632,7 @@ function App() {
 
   /** Activate the selected entry via the active page (Shift+Enter = admin). */
   function activate(opts?: { elevated?: boolean }) {
-    entryOpened = true; // Enter/点击打开条目 (启动或粘贴) → 清空搜索记忆
+    markEntryOpened(); // D1: 只有首页会在下次呼出清空自己的查询
     activeMode()?.activate(opts);
   }
 
@@ -643,7 +680,8 @@ function App() {
     // Initial config is already in the signals (window.__LUME_CONFIG__).
     // Runtime settings changes (from the settings window) arrive via the
     // "settings-applied" event and `applyRuntimeSettings`.
-    clearSearch();
+    ensureHost(mode());
+    activeMode()?.reset?.();
     void runSearch(query());
     // Warm summon-scoped data at mount too (the window starts hidden and the
     // first show may restore a remembered page).
@@ -665,7 +703,10 @@ function App() {
         setPluginDetached(e.payload, false);
         void invoke("plugin_window_close", { id: e.payload }).catch(() => {});
       }
-      void reloadDiskPlugin(e.payload).then(() => navigatePlugin.refreshBars());
+      void reloadDiskPlugin(e.payload).then(() => {
+        void navigatePlugin.refreshBars();
+        pruneHosts();
+      });
     });
     onCleanup(() => unlistenPluginReload());
 
@@ -674,7 +715,10 @@ function App() {
     // reloads exactly the manifests flagged `development` — the same path as
     // the settings-pane button, minus per-plugin targeting.
     const unlistenDevChanged = await listen("plugin-dev-changed", () => {
-      void refreshPlugins().then(() => navigatePlugin.refreshBars());
+      void refreshPlugins().then(() => {
+        void navigatePlugin.refreshBars();
+        pruneHosts();
+      });
     });
     onCleanup(() => unlistenDevChanged());
 
@@ -689,12 +733,15 @@ function App() {
       onPluginWindowShown(e.payload);
     });
     onCleanup(() => unlistenPwShown());
-    const unlistenPwClosed = await listen<{ id: string; snapshot?: unknown; query?: string | null }>(
-      "plugin-window-closed",
-      (e) => {
-        onPluginWindowClosed(e.payload);
-      }
-    );
+    const unlistenPwClosed = await listen<{
+      id: string;
+      snapshot?: unknown;
+      query?: string | null;
+      user?: boolean;
+    }>("plugin-window-closed", (e) => {
+      const resumed = onPluginWindowClosed(e.payload);
+      if (resumed) void redockMode(resumed); // D2: user close re-docks
+    });
     onCleanup(() => unlistenPwClosed());
     // `app.redirect` from a detached page: route it like any feature entry.
     const unlistenPwRedirect = await listen<{
@@ -750,16 +797,15 @@ function App() {
     onCleanup(() => unlistenDrag());
 
     // The launcher stays hidden between toggles. On every fresh show (hotkey /
-    // tray toggle) reset to the home page, re-focus the input, and repopulate
-    // the grid. This listens to the Rust `launcher-shown` event, not
-    // `onFocusChanged`: dragging the frameless window briefly deactivates and
-    // refocuses it (Rust `is_mid_drag` suppresses the hide on that side), and
-    // a reset there would wipe the current mode/search mid-drag.
+    // tray toggle) the session RESUMES (ROADMAP #40): the last page, its
+    // query and its page state stay; only summon-scoped bits are re-armed.
+    // This listens to the Rust `launcher-shown` event, not `onFocusChanged`:
+    // dragging the frameless window briefly deactivates and refocuses it
+    // (Rust `is_mid_drag` suppresses the hide on that side), and a reset
+    // there would wipe the current page mid-drag.
     const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
       for (const p of allPlugins()) p.lifecycle?.onShow?.();
-      clearSearch();
-      // 记住上次所在页面: a restored Clipboard page must load its history; an
-      // apps page re-runs its (session) query or shows the bars.
+      beginSummon();
       await runSearch(query());
       // Summon-scoped page refresh (bars, folder context, feature rows) and
       // the empty-menu auto-select land after the summon search.
@@ -804,7 +850,15 @@ function App() {
         onOpenSettings={() => void openSettings()}
       />
       <div class="results" classList={{ "results-loading": pageLoading() }}>
-        <Dynamic component={activeMode()?.View} />
+        {/* Keep-alive pages (#40): every visited mode stays mounted; only the
+            active host is laid out (display:contents), the rest are hidden. */}
+        <For each={hostStack.hosts()}>
+          {(h) => (
+            <div class="mode-host" classList={{ active: h.id === mode() }} data-mode={h.id}>
+              <Dynamic component={h.inst.View} />
+            </div>
+          )}
+        </For>
         {/* 分离为独立窗口（P6）— detachable 磁盘 mode 的悬停显现按钮。
             自绘按钮形态的插件（清单 `detach_button = false`，如 translator）
             不渲染它：右上角让给插件页面，分离走 `app.detach` 桥接接口。 */}

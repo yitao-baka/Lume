@@ -4,7 +4,7 @@ Planned features for Lume, in priority order. Items are added here before
 implementation; each becomes a scoped iteration when started. See
 `CHANGELOG.md` for what shipped.
 
-> **当前快照（2026-10-12，Pre-26.10）**：路线已推进到 #39。插件系统、
+> **当前快照（2026-10-13）**：路线已推进到 #40。插件系统、
 > `.lupx` 安装/签名、三层权限与逻辑宿主隔离、独立插件窗口、文件秒搜、
 > 自动动作和提权代理均已落地；本文较早章节保留当时的设计与验收记录，
 > 当前 API/行为以 `docs/PLUGIN_API.md`、`docs/PLUGINS.md`、
@@ -2739,3 +2739,84 @@ WebView2 会**丢掉后一个导航**：
 - `cdp_p2b_verify` **24/24**（含 #38 新增的两条 ctx 面断言；夹具初始为
   禁用态，脚本自行启用后全过）。
 - `cdp_plugins_pane_verify` **ALL PASS**（9/9）。
+
+## 40. 插件会话续存与分离窗口状态同步（泛化，已实现）
+
+需求（2026-10-13 用户报告）：① 插件分离为独立窗口时状态不能同步；② 主窗口
+隐藏/关闭后状态被重置，再呼出回到导航页——此前两处都只覆盖「file-search
+形状」的特定场景（查询在宿主搜索框里）。要求泛化到所有插件与场景（对标
+uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
+
+### 40.1 根因（探索结论）
+
+- 会话重置：`clearSearch`（App.tsx）按「5 分钟搜索召回 + remember_last_page」
+  启发式决定保留还是 `setMode(导航页)`；不满足条件即 `Dynamic` 换页 → iframe
+  整体卸载，页面 JS/DOM 状态不可恢复。file-search 的查询住在宿主搜索框、恰好
+  命中召回；translator 这类输入在页内的插件必然丢状态。
+- P6.5 分离快照的三个缺口：只 auto 捕获表单值 + window 滚动（按 DOM 顺序）；
+  只采集 view 帧（titlebar 不采集却向两帧 fan restore）；恢复时机绑 ready、无
+  迟到 DOM 重试；关闭时「活 iframe 直投 / 否则静默暂存」，启动器若已回导航页
+  则快照永远等不到消费。
+- 模式切换本身也卸载页面（Dynamic 单挂载）；分离期间启动器在 recall 命中时
+  还留着一份活的旧副本，与窗口双份分叉——单一权威不成立。
+
+### 40.2 目标语义（已按用户拍板执行）
+
+- 同一会话内：hide/show、模式切换、分离回流都保持「上次页面 + 查询 + 页面
+  状态」；打开条目后**首页**清空自己的查询（插件页查询/状态保留）。
+- 分离：单一权威——开窗后启动器不留活副本；窗口就绪继承宿主态 + view 帧
+  快照；用户关闭窗口 → 全帧快照回存、启动器回到该插件页并恢复。
+- 重启：`remember_last_page` 升级为「重启恢复模式 + 分类」（不再退出清页）；
+  查询与页面快照仍仅内存，不落盘。
+- 跨窗口保真边界：宿主态 + auto 层（键控表单 / contenteditable / 滚动 / 焦点）
+  自动完成；页面自有 JS 状态由 `lume.on.snapshot/restore` 自定义层负责。
+  Tauri 不能搬 webview，这是与 zTools 的等价策略（文档明示）。
+
+### 40.3 实现
+
+- **keep-alive 主机栈**（新 `src/launcher/session.ts`）：已访问页面挂载后只
+  隐藏不卸载（`.mode-host` / `display:contents`），LRU 上限 8、淘汰前抓 view
+  帧快照、重挂载经 ready 握手消费。`clearSearch` 拆成 `endSummon`（只做
+  summon 级清理）与 `beginSummon`（首页条目清查询；不再动 mode/query）。
+  `sizing.ts` 的页面测量全部改在激活宿主内查询（DOM 里现在并存多个保活页面）。
+- **会话帧存储**：`sessionFrames`（id → {view?, titlebar?}，消费即删）取代
+  pendingSnapshots/attachSnapshots/directPosters；用户关闭窗口的 payload 带
+  `user:true`（close_report 与看门狗），前端据此把状态收进会话并**回流**到
+  该插件页；程序化关窗（禁用/重载）不带 user，状态直接丢弃。
+- **快照 v2**（iframeBridge）：`{v:2, auto:{fields(键控 id→name→路径),
+  editables, scroll[], focus}, custom}`；恢复「每字段只应用一次 + 仅迟到/被
+  替换节点重试（≤4s）+ 结束前无宿主事件/无用户输入时做一次最终校正（拉回
+  异步初始化覆盖的首屏值）」——实测坑：无节制的持续重试会把 3.2s 后到达的
+  正常 `enter` 状态回滚。titlebar 帧在标准重放**之前静默恢复**（不派发 input/
+  change）：实测坑——file-search 标题栏输入被恢复派发的 input 触发
+  `app.setQuery(旧值)`，把视图当前查询冲掉。
+- **Rust**：`plugin_window_close_report` / 3s 看门狗带 `user:true`；删除退出
+  清页（`clear_last_page`）——`remember_last_page` 现在跨重启生效。
+- i18n：`rememberLastPageHint` 三语改为「重启恢复 + 会话内始终续存」。
+
+### 40.4 验证
+
+- 新增夹具 `examples/plugins/state-probe`（可分离 + titlebar + 迟到 600ms 的
+  `#late` + custom 快照 + 事件探针）与 `scripts/cdp_plugin_state_verify.mjs`
+  **50/50**：hide/show 保活（iframe 元素身份不变）、模式切走回来不重建、
+  detach 继承（键控 auto + custom + 迟到 DOM 重试填上）、分离中 enter 扇出
+  view+titlebar 两帧、关闭回流（user:true + 启动器回到该页恢复全部状态 +
+  query 写回）、再分离 titlebar 帧还原。
+- 回归：`test/_snapshot_probe.mjs`（file-search P6.5 全链）**全过**、
+  `cdp_plugin_window_verify` **16/16**、`cdp_plugin_theme_verify` **28/28**、
+  `cdp_sandbox_verify` **14/14**、`cdp_p2b_verify` **24/24**、
+  `cdp_plugin_mode_bar_verify` **15/15**、`cdp_plugin_verify` OK、
+  `cdp_plugin_frame_load_verify` **5/5**、`cdp_clipboard_smoke` 正常。
+  两处脚本随语义更新：p2b 的 quick-add 段改为显式回导航 pill（旧脚本依赖
+  「呼出自动回导航」）；mode-bar ③d 改断言「宿主不再是 active」（iframe
+  现在按设计保活）；window ⑥a 增加 slot iframe 就绪轮询（页面 interactive
+  时目标已出现）。
+- `pnpm exec tsc --noEmit` / `pnpm run build` / `cargo check` / `cargo test`
+  **200** 干净。
+
+### 40.5 已知边界
+
+- 页面自有 JS 状态（非 DOM 表达）跨窗口/淘汰恢复必须实现
+  `lume.on.snapshot/restore`（宿主只保证 auto 层 + 宿主态），文档已明示。
+- 跨重启不恢复查询与页面快照（仅模式 + 分类；隐私取舍）；插件持久化仍走
+  `lume.storage` / `db`。

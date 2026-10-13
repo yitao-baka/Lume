@@ -14,7 +14,8 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginColorMode, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { HOST_PLUGIN_API } from "./types";
-import { capSnapshot, createIframeView, injectBridge } from "./iframeBridge";
+import { createIframeView, injectBridge } from "./iframeBridge";
+import { dropSessionFrames, putSessionFrame, takeSessionFrames } from "../launcher/session";
 import { createListTemplateMode } from "./listTemplate";
 import { fetchDiskFile } from "./disk";
 import { execHostRpc as execHostRpcShared } from "./rpc";
@@ -565,15 +566,10 @@ function createDiskModeInstance(
   // Rust `plugin-window` event channel instead of postMessage.
   detachedSuppliers.set(m.id, {
     push: (show, includeSnapshot = false) => {
-      // Detach 快照（P6.5）：detachMode 在开窗前从本页取走的状态，只在
-      // ready 握手的那次推送里带过去（取出即删）。shown 事件的推送发生在
-      // 建窗瞬间（页面尚未加载），绝不能消费快照 —— 否则独立窗口永远收
-      // 不到它。
-      let pending: { view?: unknown } | undefined;
-      if (includeSnapshot) {
-        pending = pendingSnapshots.get(m.id);
-        pendingSnapshots.delete(m.id);
-      }
+      // 会话快照（P6.5 → #40）：detach 前在启动器侧抓的帧快照只在 ready
+      // 握手那次推送里带过去（view + titlebar 一起，取出即删）。shown 事件
+      // 的推送发生在建窗瞬间（页面尚未加载），绝不能消费快照。
+      const frames = includeSnapshot ? takeSessionFrames(m.id, ["view", "titlebar"]) : null;
       void invoke("plugin_window_push_state", {
         id: m.id,
         state: {
@@ -587,7 +583,7 @@ function createDiskModeInstance(
           // effective mode above cannot say whether an override is in play,
           // and `"system"` must keep following the OS live.
           themePref: pluginColorPref(m.id),
-          ...(pending?.view ? { snapshot: pending.view } : {}),
+          ...(frames ? { snapshot: { v: 2, frames } } : {}),
         },
       }).catch((err) => plog.error(m.id, "detached state push failed:", err));
     },
@@ -616,16 +612,6 @@ function createDiskModeInstance(
   themePosters.set(m.id, (t) => {
     if (viewReady) postEv("theme", t);
   });
-  // 状态快照（P6.5）：独立窗口关闭时页面可能仍挂载（搜索记忆保留住了 mode），
-  // 此时 restore 直接投进活 iframe；否则存入 attachSnapshots，由下一次 ready
-  // 握手消费。判定用 live()（当前文档的桥是否活着）而不是 viewReady（那只
-  // 表示 view HTML 已取回、一次性为 true）——页面未挂载时 poster 返回 false，
-  // 调用方据此落到 ready 握手路径。
-  directPosters.set(m.id, (type, payload) => {
-    if (!viewLive()) return false;
-    postEv(type, payload);
-    return true;
-  });
   const { View, post, snapshot: viewSnapshot, live: viewLive } = createIframeView(
     (method, args) => execHostRpc(m.id, method, args),
     () => {
@@ -637,18 +623,10 @@ function createDiskModeInstance(
       postEv("theme", pluginColorMode(m.id, currentThemeMode()));
       if (enterPayload) postEv("enter", enterPayload);
       if (settingsValues) postEv("settings", settingsValues);
-      // Attach-back restore (P6.5): the detached window's final page state,
-      // consumed once on the first ready after its close.
-      const att = attachSnapshots.get(m.id);
-      if (att) {
-        attachSnapshots.delete(m.id);
-        // CDP verify tap
-        ((window as unknown as { __snapConsume?: unknown[] }).__snapConsume ??= []).push({
-          id: m.id,
-          hadView: !!att.view,
-        });
-        if (att.view) postEv("restore", att.view);
-      }
+      // 会话快照（P6.5 → #40）：启动器侧只消费 view 帧（titlebar 帧留给
+      // 下一次 detach 带给独立窗口）；取出即删，重挂载的页面自己恢复。
+      const ses = takeSessionFrames(m.id, ["view"]);
+      if (ses?.view !== undefined) postEv("restore", ses.view);
     },
     { id: m.id }
   );
@@ -798,9 +776,7 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   pendingLogicSettings.delete(id);
   detachedSuppliers.delete(id);
   themePosters.delete(id);
-  pendingSnapshots.delete(id);
-  attachSnapshots.delete(id);
-  directPosters.delete(id);
+  dropSessionFrames(id); // 代码即将重载：会话快照不跨代
   return true;
 }
 
@@ -1130,32 +1106,11 @@ const detachedSuppliers = new Map<
   }
 >();
 
-// ── 状态快照（P6.5）──
-//
-// detach 方向：detachMode 在 `plugin_window_open` 之前从启动器内的活 iframe
-// 取快照（此刻页面必然挂载），暂存在这里，随独立窗口 ready 后的那次
-// push_state 一次性带过去（取出即删）。
-const pendingSnapshots = new Map<string, { view?: unknown }>();
-/** App.tsx 的 detachMode 在开窗前调用：页面无响应/未就绪传 null，不暂存。 */
-export function storePendingSnapshot(id: string, snapshot: unknown | null): void {
-  const capped = capSnapshot(snapshot, id);
-  // CDP verify tap（同 pluginWindow 的 __pluginStates 模式）；fields 是快照
-  // 内容摘录，供 probe 不依赖帧内 DOM 也能校验捕获到的值。
-  const auto = (capped as { auto?: { fields?: unknown[] } } | null)?.auto;
-  ((window as unknown as { __snapPending?: unknown[] }).__snapPending ??= []).push({
-    id,
-    stored: capped != null,
-    fields: auto?.fields ?? null,
-  });
-  if (capped) pendingSnapshots.set(id, { view: capped });
-}
-// attach 方向：独立窗口关闭时上报的最终状态。启动器内的 iframe 若还活着
-// （搜索记忆留住了 mode）则直接投递；否则等下一次 ready 握手消费。
-const attachSnapshots = new Map<string, { view?: unknown }>();
-/** Per disk mode: a post-into-the-live-iframe guard — returns whether the
- * event actually went into a mounted page (the closed-window restore uses
- * it to decide between direct delivery and the ready-handshake path). */
-const directPosters = new Map<string, (type: string, payload?: unknown) => boolean>();
+// ── 会话帧快照（P6.5 → ROADMAP #40）──
+// 页面状态跨边界（detach / 关闭回灌 / keep-alive 淘汰）只走 launcher/session
+// 的帧存储：detach 前抓 view 帧随 ready 推给窗口；关闭时窗口回传全帧，
+// 启动器消费 view、保留 titlebar 给下一次 detach。没有“直投活 iframe”的
+// 旁路 —— 单一权威：任意时刻页面只有一个活副本（启动器或窗口）。
 
 // ── Theme push (P5 sandbox follow-up) ──
 //
@@ -1271,37 +1226,52 @@ export function onPluginWindowShown(id: string): void {
 }
 
 /** `plugin-window-closed` — the window is gone; the mode returns to the
- * normal in-launcher behaviour. The payload (P6.5) carries the detached
- * page's final snapshot + query so the state can travel back into the
- * launcher: the query lands in the mode's signal immediately (the next
- * summon's replay carries it), the snapshot either posts straight into a
- * still-mounted iframe or waits for the next ready handshake. */
+ * normal in-launcher behaviour. For a USER-initiated close the payload carries
+ * the detached page's final frame snapshot + query (P6.5; v2 envelope since
+ * #40): frames are stored consume-once, the query lands in the mode's signal,
+ * and the returned id tells the shell to re-dock (switch back to that page).
+ * Programmatic closes (disable / reload / watchdog-without-user) return null —
+ * their code is being replaced or their state is not a resumable session. */
 export function onPluginWindowClosed(
-  payload: string | { id: string; snapshot?: unknown; query?: string | null }
-): void {
+  payload:
+    | string
+    | { id: string; snapshot?: unknown; query?: string | null; user?: boolean }
+): string | null {
   const id = typeof payload === "string" ? payload : payload.id;
   detachedIds.delete(id);
-  if (typeof payload === "string") return; // pre-P6.5 emitter (no snapshot)
-  const view = capSnapshot(payload.snapshot, id);
+  if (typeof payload === "string") return null; // pre-P6.5 emitter
+  // close_report / watchdog 带 user:true；程序化 `plugin_window_close` 只有 id。
+  // `"snapshot" in payload` 兜底旧版 close_report（那时没有 user 字段）。
+  const userInitiated = payload.user === true || "snapshot" in payload;
+  let stored = 0;
+  const env = payload.snapshot as
+    | { v?: number; frames?: Record<string, unknown> }
+    | null
+    | undefined;
+  if (env && typeof env === "object" && env.v === 2 && env.frames) {
+    if (env.frames.view !== undefined && putSessionFrame(id, "view", env.frames.view)) stored++;
+    if (env.frames.titlebar !== undefined && putSessionFrame(id, "titlebar", env.frames.titlebar)) {
+      stored++;
+    }
+  } else if (payload.snapshot != null) {
+    if (putSessionFrame(id, "view", payload.snapshot)) stored++; // legacy flat snapshot
+  }
   // The final query becomes the mode's query: the in-launcher replay (and
   // the search box) pick it up on the next activation. **"" is a real
   // value** — the user may have cleared the text inside the detached window;
   // only null/undefined means "no query info" (keep the current signal).
-  // Skipping "" here would resurrect pre-detach text into the search box.
   if (typeof payload.query === "string") {
     plugins.find((x) => x.id === id)?.mode?.setQuery(payload.query);
   }
-  const delivered = view == null ? false : directPosters.get(id)?.("restore", view) ?? false;
   // CDP verify tap（无快照的关闭也记录——query 清空语义同样需要可观测）
   ((window as unknown as { __pwClosed?: unknown[] }).__pwClosed ??= []).push({
     id,
-    hasSnapshot: view != null,
+    hasSnapshot: stored > 0,
     query: payload.query ?? null,
-    delivered,
+    user: userInitiated,
   });
-  if (view != null && !delivered) attachSnapshots.set(id, { view });
+  return userInitiated ? id : null;
 }
-
 // ── Declarative entry rules (P2.1: `[[features]]` in the manifest) ──
 //
 // A feature matches the query text and offers an 「<label>」 row whose

@@ -534,6 +534,21 @@ export interface DiskModeLogic {
   onHide?(): void;
 }
 
+/** Session snapshot frames (ROADMAP #40): one mode's page state captured
+ * from its iframe(s). The launcher contributes/takes `view`; a detached
+ * window takes both `view` and `titlebar`. Values are opaque JSON produced
+ * by the bridge's frame snapshot v2 — memory-only, never persisted. */
+export interface SessionFrames {
+  view?: unknown;
+  titlebar?: unknown;
+}
+
+/** v2 snapshot envelope crossing the launcher ↔ detached-window boundary. */
+export interface SnapshotEnvelopeV2 {
+  v: 2;
+  frames: SessionFrames;
+}
+
 /** Services the composition root provides to every plugin. */
 export interface PluginServices {
   showToast(text: string, opts?: { undo?: () => void; duration?: number }): void;
@@ -701,9 +716,10 @@ export interface ModeInstance {
   /** OS files were dropped on the launcher window (P2.2) — one-shot rows
    * until the next hide/summon. */
   onFilesDropped?(paths: string[]): void;
-  /** Ask the page for its state snapshot (P6.5 detach/attach hand-off).
-   * Resolves null when the page isn't live or didn't answer in time — a
-   * dead page must never block a detach/close. */
+  /** Ask the page for its state snapshot (P6.5; frame snapshot v2 since
+   * ROADMAP #40 — detach/attach hand-off and keep-alive eviction). Resolves
+   * null when the page isn't live or didn't answer in time — a dead page
+   * must never block a detach/close/eviction. */
   snapshot?(): Promise<unknown | null>;
   /** The full-page view. */
   View: Component;

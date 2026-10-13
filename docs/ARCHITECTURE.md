@@ -346,11 +346,19 @@ before adding a field:
 
 - The launcher frontend is modular. `src/App.tsx` is the **shell /
   composition root** (2026-09-27 主窗口部件化, ROADMAP #30): it owns the
-  session lifecycle (search recall, mode switching, mount-time listeners),
+  session lifecycle (session continuation + keep-alive host stack, mode
+  switching, mount-time listeners),
   wires the `PluginServices` every page receives via a late-bound deps
   object, and composes the uTools-style surface — the `SearchBox` widget on
   top and the active page widget (`ModeInstance.View`) spliced below it,
   plus the shared overlays (toast, context menu).
+- **Session continuation / keep-alive（ROADMAP #40）**：已访问页面挂载后只
+  隐藏不卸载（`src/launcher/session.ts` 的主机栈，LRU 8 + 淘汰前 view 帧
+  快照）；hide/show 与模式切换不重置 mode/query/页面状态。跨窗口（分离/
+  回流）走 `sessionFrames` 帧存储 + 快照 v2（键控 auto 层 + custom 钩子），
+  分离期间启动器不留活副本（单一权威），用户关窗（payload `user:true`）
+  回流到该插件页恢复。对标 zTools 的 WebContentsView 保活/搬移；Tauri 不能
+  搬 webview，页面自有 JS 状态需 `lume.on.snapshot/restore`（§6C）。
 - `src/shell/SearchBox.tsx` — the search-row widget (magnifier + query input
   + page pills + settings gear). Controlled/pure: the shell owns query
   routing (page `handleQuery` interception → `subInput` ownership → search)

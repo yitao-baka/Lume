@@ -488,25 +488,39 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 `enter`（若有）。含义：① 页面脚本请同步赋值 `lume.on.*`（异步赋值会错过首播）；
 ② 重复收到同一 `show`/`query` 是正常的，处理器应幂等。
 
-**状态快照（P6.5，可选实现）**：宿主在 detach / 关闭独立窗口前，经
+**状态快照（P6.5；帧快照 v2，ROADMAP #40，2026-10-13 起）**：宿主在
+detach / 关闭独立窗口 / keep-alive LRU 淘汰前，经
 `__lumeCall{type:"snapshot"}`（宿主→页面的带响应调用，1.5s 超时兜底）向页面
-要一份状态，跨窗口传递后以 `restore` 事件回放。快照分两层：
+要一份状态，跨窗口/重挂载后以 `restore` 事件回放。快照分两层：
 
-- **auto 层（桥自动捕获，无需插件参与）**：`input`/`textarea`/`select` 的
-  值（按 DOM 顺序成组，恢复时按同一顺序回放；`type=file` 跳过）与 document
-  滚动位置。恢复由桥自动完成，并对每个被赋值的控件补发 `input` 事件（页面
-  自己的监听照常触发）。
+- **auto 层（桥自动捕获，无需插件参与）**：`input`/`textarea`/`select`
+  （含 `multiple`/checkbox/radio）按**稳定键**寻址（`id` → `name` →
+  nth-of-type 路径，含 open shadow root），加纯文本 `contenteditable`、
+  document 与可滚动容器位置、焦点与选区。恢复时 auto 层由桥自动应用，并
+  对每个被赋值的控件补发 `input`/`change` 事件（titlebar 槽位帧除外，见下）。
 - **custom 层（页面可选）**：赋值 `lume.on.snapshot = () => state`（可返回
   Promise）提供任意可 JSON 化对象；恢复时桥把 `custom` 交给
-  `lume.on.restore = (state) => {}`。未实现时这两层自动缺席，行为与
-  P6.5 之前一致。
+  `lume.on.restore = (state) => {}`。**页面自有 JS 状态（选中行、内部
+  模型、异步初始化后才渲染的视图）只有 custom 层能跨窗口/淘汰恢复**——
+  auto 层是尽力而为。
 
-快照结构 `{auto: {fields, scroll}, custom?}`，上限 1MB（超限先丢 `custom`
-再整体放弃）；**仅内存流转，不落盘**；`password` 输入框的值会进快照（同一
-插件的页面间传递，宿主不持久化）——不希望密码被快照的页面请在
-`lume.on.snapshot` 里自行剔除。`restore` 事件在标准状态重放（query/show/
-enter/settings/theme）**之后**投递：页面自身状态最后落地，覆盖与宿主回放
-重叠的部分。
+**恢复语义（v2 实测固化）**：每个字段正常只应用一次；补写只有三种受限
+情形——「DOM 还不存在」（load 后异步插入的控件，≤4s 重试窗口）、「应用过
+的节点被替换」，以及**结束前的最终校正**（页面在此期间没有收到任何宿主
+事件、用户也没动过该字段时，把异步初始化覆盖掉的首屏值再拉回一次）。
+恢复循环不会反复回滚页面自己的状态变化（实测坑：无节制的重试会把 3.2s
+后到达的正常 `enter` 状态回滚）。用户输入过的字段永不覆盖。`restore`
+事件在标准状态重放（query/show/
+enter/settings/theme）**之后**投递。**titlebar 槽位帧**在标准重放**之前**
+**静默**恢复（不派发 input/change）：它的输入通常是宿主 query 的视图，
+派发事件会被页面当成新输入经 `app.setQuery` 回灌、把当前 query 冲掉。
+
+快照结构 `{v:2, auto:{fields, editables?, scroll[], focus?}, custom?}`（宿主
+组装为 `{v:2, frames:{view, titlebar?}}` 跨窗口传递），上限 1MB（超限先丢
+`custom` 再整体放弃）；**仅内存流转，不落盘**；`password` 输入框的值会进
+快照（同一插件的页面间传递，宿主不持久化）——不希望密码被快照的页面请在
+`lume.on.snapshot` 里自行剔除。旧版按 DOM 顺序的 v1 快照仍可被应用
+（兼容，新代码不再产生）。
 
 **插件自身颜色模式（`lume.theme.set`，ROADMAP #36，2026-10-12 起）**：插件可以让
 **自己的**明暗与启动器不同 —— 三个取值 `"system"`（跟随启动器）/ `"light"` /
@@ -1172,9 +1186,9 @@ detachable = true     # 允许分离为独立窗口
 | 分离（按钮） | `plugin_window_open` 创建（或聚焦既有）窗口 `plugin-<id>`，加载 `plugin.html?plugin=<id>`；启动器隐藏 |
 | 任务栏图标 / 身份 | 分离时按 manifest `icon` 光栅化为窗口图标（无 `icon` 回退 Lume 主题图标）：任务栏按钮与 Alt+Tab 都是插件图标，深色主题按 `--icon-filter` 约定反相（跟随应用主题），主题切换/重开自动重绘；窗口携带独立 AppUserModelID `Lume.Plugin.<id>`，任务栏独立成项（可单独钉住，不与其他 Lume 窗口合并） |
 | 再次激活 | pill 点击 / Tab 循环 / 关键字 / redirect 进入一个已分离的模式 → 聚焦其窗口（不切启动器页面），启动器隐藏 |
-| 就绪握手 | 窗口页监听器就绪后调 `plugin_window_ready` → 启动器注册表推送 `{show, query, enter, settings, snapshot?}`（`plugin-state` 事件）——跨窗口版的 `__lumeReady` 状态重放。`snapshot` 是 detach 时从启动器内页面取走的状态快照（P6.5，§6C），在标准回放之后以 `restore` 事件投给页面 |
+| 就绪握手 | 窗口页监听器就绪后调 `plugin_window_ready` → 启动器注册表推送 `{show, query, enter, settings, snapshot?}`（`plugin-state` 事件）——跨窗口版的 `__lumeReady` 状态重放。`snapshot` 是 detach 时从启动器内页面取走的**帧快照 v2**（`{v:2, frames:{view, titlebar?}}`，§6C）：view 帧在标准回放之后投递；titlebar 帧在标准回放之前**静默**恢复（不派发 input/change，避免把标题栏输入经 `app.setQuery` 回灌冲掉当前 query） |
 | 显隐 | 窗口获得焦点/重新打开 → `show` 事件重放 + `onShow` 钩子；窗口隐藏不留事件（shown 推送发生在建窗瞬间、页面尚未加载，**不携带快照**） |
-| 关闭 | × 按钮 / Esc / Alt+F4 → Rust 拦截一次 `CloseRequested`，页面先经 `__lumeCall` 出一份状态快照、连同最终 query 经 `plugin_window_close_report` 上报后销毁（**双向快照**，P6.5）；快照回到启动器：iframe 仍挂载（搜索记忆留住本模式）则直投 `restore`，否则暂存、下次在本模式 ready 握手时 `restore`（消费即删）；最终 query 写回模式查询信号，下次激活经既有回放带回搜索框。插件卡死时 3s 看门狗强制销毁（无快照）。禁用/重载走的 `plugin_window_close` 是**立即**路径（代码即将被替换，不快照）。宿主记忆窗口几何（`settings.plugins.window_bounds`），下次分离原位打开 |
+| 关闭 | × 按钮 / Esc / Alt+F4 → Rust 拦截一次 `CloseRequested`，页面先向每个活帧要状态快照（view + titlebar）、连同最终 query 与 `user:true` 经 `plugin_window_close_report` 上报后销毁；启动器把帧存入会话（消费即删）、query 写回模式查询信号，并**回流**到该插件页（挂在隐藏的启动器里立即切换 + ready 握手恢复；启动器再呼出即原样呈现，D2）。插件卡死时 3s 看门狗强制销毁并同样带 `user:true`（无快照，回到初始态）。禁用/重载走的 `plugin_window_close` 是**立即**路径（不带 `user`：代码即将被替换，状态丢弃）。宿主记忆窗口几何（`settings.plugins.window_bounds`），下次分离原位打开 |
 | 禁用/重载 | settings-applied 后插件被禁用/移除、或 设置 → 插件 点「↻ 重载」→ 独立窗口自动关闭 |
 | 装载看门狗（P6.7） | 视图/槽位两个沙箱帧都会在装载时被观察：桥在文档提交后立即上报 `__lumeFrameBoot`，宿主 700/1500/2800ms 没等到就重新触发该帧的导航（WebView2 会丢掉「两个沙箱帧几十毫秒内先后换进程」时的后一个导航，帧会永久停在空文档上——这正是修复前的整页空白），三次仍失败才放弃并 `plog.error` 留痕（ROADMAP #33）。插件侧无需任何配合，页面脚本不会因此被重复执行（只有未提交的导航才会被重放） |
 
@@ -1206,9 +1220,11 @@ detachable = true     # 允许分离为独立窗口
 - 插件的**逻辑钩子**（`entry` 的 `onShow`/`onQuery`/…）跑在共享逻辑宿主窗口
   的沙箱 iframe 里（P6.5，见 §6I），与视图解耦——独立窗口只是视图；
   `onQuery` 在窗口内不会到来（没有共享搜索框）。
-- **状态快照/恢复**（P6.5）只作用在视图侧（沙箱 iframe 的 DOM/页内状态）；
-  逻辑侧的注册表信号（query/enter/settings）本就跨窗口存活。快照链路的
-  端到端脚本见 `test/_snapshot_probe.mjs`（12 项断言，两条恢复路径全覆盖）。
+- **状态快照/恢复**（P6.5；v2 见 §6C）只作用在视图侧（沙箱 iframe 的
+  DOM/页内状态）；逻辑侧的注册表信号（query/enter/settings）本就跨窗口
+  存活。分离期间启动器**不留活副本**（单一权威），关闭回流的端到端脚本见
+  `scripts/cdp_plugin_state_verify.mjs`（50 项：保活 / detach 继承 / enter
+  扇出 / 关闭回流 / 再分离），file-search 全链见 `test/_snapshot_probe.mjs`。
 - `detachable = true` 声明的窗口是**运行时创建**的（lume 首例）——主窗口/
   设置/预览仍是启动时创建。按插件复用窗口（重复 open = 聚焦）。
 - 依赖启动器搜索框的模式（子输入框、query 驱动）**不要**声明 `detachable`；
@@ -1664,9 +1680,13 @@ pluginBuiltin`。
     1s 心跳），`values[{id,name,value}]`。
   - `window.__logicCircuit`（main）：熔断状态（`failCounts`/`offline`）与
     失败原因环形缓冲 `log`。
-  - `window.__snapPending`（main）：快照暂存记录（`stored` + 捕获到的
-    `fields`）；`window.__pwClosed`（main）：关闭回传的 `{hasSnapshot,
-    query, delivered}`。
+  - `window.__sessionFrames`（main）：会话帧存取记录（`{op: put/take/
+    evict/drop, id, frame, frames}`）；`window.__snapPending`（main）：最近
+    一次帧入库的字段摘要（`{id, frame, stored, fields}`，`k=v` 前 12 条）；
+    `window.__pwClosed`（main）：关闭回传的 `{hasSnapshot, query, user}`
+    （`user:true` 才触发回流到该插件页）。`__frameStates` 的帧上报新增
+    `restoring`（迟到 DOM 重试窗口是否仍在活动）——状态「回弹」类问题的
+    判据。
   - `window.__rpcLog` / `__logicEntries`（逻辑宿主）：帧 rpc 结局摘要与
     每插件帧状态（`loaded`/`calls`）。
   - `window.__pluginThemes`（各窗口，ROADMAP #36）：本插件的颜色模式偏好写入

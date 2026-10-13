@@ -98,13 +98,35 @@ function App() {
     enter?: FeatureEnterInfo | null;
     settings?: Record<string, unknown> | null;
     theme?: string | null;
+    /** Titlebar frame of the last v2 snapshot push — replayed when the
+     * slot mounts after the push (it loads asynchronously). */
+    snapshotTitlebar?: unknown;
   } = {};
 
   let slotPost: ((type: string, payload?: unknown) => void) | undefined;
+  let slotSnapshot: ((timeoutMs?: number) => Promise<unknown | null>) | undefined;
   /** Fan an event out to every mounted iframe (view + titlebar slot). */
   const fan = (type: string, payload?: unknown) => {
     post(type, payload);
     slotPost?.(type, payload);
+  };
+  /** Frame-scoped restore routing (#40): a v2 envelope carries {view,
+   * titlebar}. `early` delivers the titlebar frame (silent restore, before
+   * the standard replay); `late` delivers the view frame (after it).
+   * Anything else is a legacy flat snapshot of the view page. */
+  const routeSnapshot = (snap: unknown, phase: "early" | "late") => {
+    const env = snap as { v?: number; frames?: Record<string, unknown> } | null;
+    if (env && typeof env === "object" && env.v === 2 && env.frames) {
+      if (phase === "early" && env.frames.titlebar !== undefined) {
+        lastState.snapshotTitlebar = env.frames.titlebar;
+        slotPost?.("restore", env.frames.titlebar);
+      }
+      if (phase === "late" && env.frames.view !== undefined) {
+        post("restore", env.frames.view);
+      }
+      return;
+    }
+    if (phase === "late" && snap) post("restore", snap);
   };
 
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -235,19 +257,29 @@ function App() {
       if (lastState.enter) slotPost?.("enter", lastState.enter);
       if (lastState.settings) slotPost?.("settings", lastState.settings);
       if (lastState.theme) slotPost?.("theme", lastState.theme);
+      // 会话快照（#40）：标题栏帧随插件状态推送一起到达；槽位晚挂载时在
+      // 这里补投（view 帧由 registry 的就绪握手消费，不重放）。
+      if (lastState.snapshotTitlebar !== undefined) slotPost?.("restore", lastState.snapshotTitlebar);
     },
     { class: "titlebar-frame", name: "titlebar", id }
   );
   slotPost = slotView.post;
+  slotSnapshot = slotView.snapshot;
 
-  // ── 关闭与快照（P6.5）──
-  // 用户发起的关闭（× / Esc / Rust 的 close-requested 应答）先向页面要状态
-  // 快照再上报销毁：启动器侧在下一次打开时恢复。快照失败/超时也必须能关掉
-  // —— close_report 失败时兜底走立即关闭。titlebar 槽的状态 ≈ query（它的
-  // 搜索框经 app.setQuery 驱动视图），不需要单独快照。
+  // ── 关闭与快照（P6.5 / v2，ROADMAP #40）──
+  // 用户发起的关闭（× / Esc / Rust 的 close-requested 应答）先向每个活帧要
+  // 状态快照再上报销毁：启动器侧按帧入库，重新进入本模式时恢复。快照失败/
+  // 超时也必须能关掉 —— close_report 失败时兜底走立即关闭。
   const closeWithSnapshot = () => {
     void (async () => {
-      const snapshot = await viewSnapshot();
+      const [view, slot] = await Promise.all([
+        viewSnapshot(),
+        slotSnapshot ? slotSnapshot() : Promise.resolve(null),
+      ]);
+      const frames: Record<string, unknown> = {};
+      if (view != null) frames.view = view;
+      if (slot != null) frames.titlebar = slot;
+      const snapshot = { v: 2, frames };
       try {
         await invoke("plugin_window_close_report", {
           id,
@@ -340,6 +372,11 @@ function App() {
       // append-only history, since pushes interleave (shown vs enter).
       const w = window as unknown as { __pluginStates?: unknown[] };
       (w.__pluginStates ??= []).push(s);
+      // 会话快照（P6.5 → #40）：titlebar 帧在标准回放**之前**静默恢复
+      // （它的输入通常是宿主 query 的视图，恢复值若派发 input 会被页面
+      // 当成新输入经 app.setQuery 回灌、把当前 query 冲掉——实测坑）；
+      // 标准重放随后把宿主驱动值写回。view 帧在标准回放**之后**投递。
+      if (s.snapshot) routeSnapshot(s.snapshot, "early");
       // Fan out to every mounted iframe (view + titlebar slot) and cache for
       // the slot's ready replay.
       if (s.show) {
@@ -371,9 +408,9 @@ function App() {
         setPluginColorPref(id, pref, "launcher");
         applyWindowTheme();
       }
-      // Attach 快照（P6.5）：标准回放之后投递 —— 页面自身的状态最后落地，
-      // 覆盖与宿主回放重叠的部分。
-      if (s.snapshot) fan("restore", s.snapshot);
+      // 会话快照（P6.5 → #40）：view 帧在标准回放**之后**投递 —— 页面自身
+      // 状态最后落地，覆盖与宿主回放重叠的部分（titlebar 帧见上方 early）。
+      if (s.snapshot) routeSnapshot(s.snapshot, "late");
     }, { target: WINDOW_LABEL }).then((u) => (unlisteners.push(u), undefined));
 
     // Re-focus: replay `show` into the page (the window never unloads, so

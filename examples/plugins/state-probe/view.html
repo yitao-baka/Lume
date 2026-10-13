@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>State Probe</title>
+<style>
+  body { font: 13px "Segoe UI", sans-serif; margin: 0; padding: 14px; }
+  .row { margin: 8px 0; }
+  input[type="text"] { width: 320px; }
+  #note { border: 1px dashed rgba(128,128,128,.5); padding: 6px; min-height: 20px; }
+  #scroller { height: 90px; overflow: auto; border: 1px solid rgba(128,128,128,.4); padding: 6px; }
+  #scrollmirror { width: 90px; }
+</style>
+</head>
+<body>
+  <div class="row"><input id="src" type="text" placeholder="src"></div>
+  <div class="row"><label><input id="flag" type="checkbox"> flag</label></div>
+  <div class="row">
+    <select id="multi" multiple size="3">
+      <option value="a">a</option>
+      <option value="b">b</option>
+      <option value="c">c</option>
+    </select>
+  </div>
+  <div class="row"><div id="note" contenteditable="true">note…</div></div>
+  <div class="row"><input id="jsn" type="text" readonly placeholder="js counter"> <input id="scrollmirror" type="text" readonly placeholder="scrollTop"></div>
+  <div class="row"><input id="evt" type="text" readonly placeholder="last event" style="width:320px"></div>
+  <div id="scroller"><div style="height:600px">scrollable content</div></div>
+  <script>
+    var n = 0;
+    var src = document.getElementById("src");
+    var flag = document.getElementById("flag");
+    var multi = document.getElementById("multi");
+    var note = document.getElementById("note");
+    var scroller = document.getElementById("scroller");
+    var mirror = document.getElementById("scrollmirror");
+    var late = null;
+
+    function setN(v) {
+      n = v;
+      document.getElementById("jsn").value = String(n);
+    }
+    scroller.addEventListener("scroll", function () {
+      mirror.value = String(scroller.scrollTop);
+    });
+
+    // 「迟到 DOM」（ROADMAP #40 验证）：load 后 600ms 才插入。宿主恢复若在
+    // ready 时立刻应用会错过它——必须靠恢复重试在插入后补上。
+    setTimeout(function () {
+      if (document.getElementById("late")) return;
+      late = document.createElement("input");
+      late.id = "late";
+      late.type = "text";
+      late.placeholder = "late";
+      late.style.width = "220px";
+      document.body.appendChild(late);
+    }, 600);
+
+    var evt = document.getElementById("evt");
+    function mark(v) { if (evt) evt.value = String(v).slice(0, 60); }
+    lume.on.query = function (q) {
+      var t = String(q == null ? "" : q);
+      mark("q:" + t);
+      var m;
+      if ((m = /^src:(.*)$/.exec(t))) src.value = m[1];
+      else if (t === "flag:on") flag.checked = true;
+      else if (t === "flag:off") flag.checked = false;
+      else if ((m = /^multi:(.*)$/.exec(t))) {
+        var want = m[1].split(",");
+        for (var i = 0; i < multi.options.length; i++) {
+          multi.options[i].selected = want.indexOf(multi.options[i].value) !== -1;
+        }
+      }
+      else if ((m = /^note:(.*)$/.exec(t))) note.innerText = m[1];
+      else if ((m = /^js:(\d+)$/.exec(t))) setN(Number(m[1]));
+      else if ((m = /^scroll:(\d+)$/.exec(t))) scroller.scrollTop = Number(m[1]);
+      else if ((m = /^late:(.*)$/.exec(t)) && late) late.value = m[1];
+      // late 不存在时刻意不缓存：这条路径要留给「宿主恢复重试」验证。
+    };
+    lume.on.enter = function (info) {
+      mark("enter:" + (info && info.payload));
+      if (info && info.payload != null) src.value = String(info.payload);
+    };
+    lume.on.snapshot = function () { return { n: n }; };
+    lume.on.restore = function (s) {
+      if (s && typeof s.n === "number") setN(s.n);
+    };
+  </script>
+</body>
+</html>

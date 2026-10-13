@@ -233,7 +233,7 @@
   "clipNoFilesChecked": "No files selected",
   "copyFailed": "Copy failed",
   "rememberLastPage": "Remember last page",
-  "rememberLastPageHint": "Reopen on the last page (mode + category); the search text is remembered for this session only",
+  "rememberLastPageHint": "Reopen on the last page (mode + category) after a restart too; within a session the launcher always resumes the last page and its on-screen state. Search text is never written to disk",
   "navAppearance": "Appearance",
   "navLauncher": "Navigation",
   "navHotkeys": "Hotkeys",

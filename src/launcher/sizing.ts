@@ -33,17 +33,25 @@ export interface SizerDeps {
   setBarCols: (v: number) => void;
   /** Plugin modes measure their own viewport (the sizer only triggers it). */
   measureModeViewport: () => void;
+  /** The active keep-alive host element (ROADMAP #40). Page-content queries
+   * are scoped to it: hidden pages stay mounted, so a document-wide query
+   * could measure the wrong (invisible) page. */
+  activeHost: () => HTMLElement | null;
 }
 
 export function createWindowSizer(deps: SizerDeps) {
   /** Last height we set — avoids resize/center loops. */
   let lastWindowH = 0;
+  /** Query page content inside the ACTIVE host (fallback: document, for the
+   * first frames before the host mounts). The search row stays global. */
+  const pageQuery = <T extends Element>(sel: string): T | null =>
+    ((deps.activeHost() ?? document).querySelector(sel) as T | null);
 
   /** Measure the bar grid's column count (drives the collapsed one-row slice
    * and the 展开 button's visibility). auto-fill tracks reflect the container
    * width regardless of how many items are rendered, so this is stable. */
   function measureBarCols() {
-    const barGrid = document.querySelector(".bar-grid") as HTMLElement | null;
+    const barGrid = pageQuery<HTMLElement>(".bar-grid");
     if (!barGrid) return;
     const cols = getComputedStyle(barGrid)
       .gridTemplateColumns.split(" ")
@@ -58,7 +66,7 @@ export function createWindowSizer(deps: SizerDeps) {
 
   /** Current column count of the app grid (driven by 条目框大小). */
   function gridCols(): number {
-    const grid = document.querySelector(".result-grid") as HTMLElement | null;
+    const grid = pageQuery<HTMLElement>(".result-grid");
     if (!grid) return 6;
     const count = getComputedStyle(grid)
       .gridTemplateColumns.split(" ")
@@ -118,10 +126,10 @@ export function createWindowSizer(deps: SizerDeps) {
     }
     const search = document.querySelector(".search") as HTMLElement | null;
     const container =
-      (document.querySelector(".result-grid") as HTMLElement | null) ??
-      (document.querySelector(".result-list") as HTMLElement | null) ??
-      (document.querySelector(".bar-list") as HTMLElement | null) ??
-      (document.querySelector(".page-hint") as HTMLElement | null);
+      pageQuery<HTMLElement>(".result-grid") ??
+      pageQuery<HTMLElement>(".result-list") ??
+      pageQuery<HTMLElement>(".bar-list") ??
+      pageQuery<HTMLElement>(".page-hint");
     if (!container) return;
 
     measureBarCols();

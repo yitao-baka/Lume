@@ -225,7 +225,7 @@ pub async fn plugin_window_open(
                         let _ = app3.emit_to(
                             "main",
                             "plugin-window-closed",
-                            serde_json::json!({ "id": id3 }),
+                            serde_json::json!({ "id": id3, "user": true }),
                         );
                         closing3.insert(&id3);
                         let _ = win3.destroy();
@@ -408,7 +408,9 @@ pub fn plugin_window_close_report(
         let _ = app.emit_to(
             "main",
             "plugin-window-closed",
-            serde_json::json!({ "id": id, "snapshot": snapshot, "query": query }),
+            // `user: true`（ROADMAP #40）：前端据此把状态收进会话并回流到
+            // 该插件页；程序化关闭（禁用/重载）不带它，状态直接丢弃。
+            serde_json::json!({ "id": id, "snapshot": snapshot, "query": query, "user": true }),
         );
         let _ = win.destroy();
     }

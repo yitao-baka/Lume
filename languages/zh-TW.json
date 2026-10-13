@@ -233,7 +233,7 @@
   "clipNoFilesChecked": "未勾選任何檔案",
   "copyFailed": "複製失敗",
   "rememberLastPage": "記住上次所在頁面",
-  "rememberLastPageHint": "開啟後再次呼出停留在上次的模式與分類（搜尋詞僅本次會話記住）",
+  "rememberLastPageHint": "開啟後重啟也回到上次的模式與分類；同一次執行內呼出始終續存上次頁面與頁面狀態。搜尋詞不落盤。",
   "navAppearance": "外觀",
   "navLauncher": "導航頁",
   "navHotkeys": "快捷鍵",

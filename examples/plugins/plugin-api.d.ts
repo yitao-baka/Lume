@@ -131,9 +131,12 @@ interface LumeEvents {
   /** 本插件**生效**的明暗（受 `lume.theme.set` 影响）：sandbox 后页面读不到
    * 宿主文档，宿主在就绪握手重放并在变化时推送（§6C）。 */
   theme?(mode: "dark" | "light"): void;
-  /** 独立窗口状态恢复：桥自动回放表单/滚动后调用（custom 层，见 §6C）。 */
+  /** 帧快照 v2 的 custom 层回放（§6C）：auto 层（键控表单/
+   * contenteditable/滚动/焦点）由桥自动应用后调用；页面自有 JS 状态
+   * （选中行、内部模型、异步初始化后的视图）必须在这里恢复。 */
   restore?(state: unknown): void;
-  /** 快照的 custom 层来源（返回可 JSON 化对象）。 */
+  /** 帧快照 v2 的 custom 层来源（返回可 JSON 化对象；detach/关闭/淘汰
+   * 前宿主会来取）。未实现时只有 auto 层。 */
   snapshot?(): unknown;
 }
 

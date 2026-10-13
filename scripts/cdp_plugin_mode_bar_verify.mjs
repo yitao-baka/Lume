@@ -173,11 +173,13 @@ const key = parts[parts.length - 1];
 const mods = parts.slice(0, -1).map((x) => x.toLowerCase());
 await m.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(key)}, ctrlKey: ${mods.includes("ctrl")}, altKey: ${mods.includes("alt")}, shiftKey: ${mods.includes("shift")}, metaKey: ${mods.includes("super")}, bubbles: true })); "ok"`);
 await sleep(600);
+// #40 起页面保活：离开断言用「hidden-mode 宿主不再是 active」而不是 iframe
+// 被卸载（iframe 会以隐藏状态保留，这正是会话续存的目标）。
 const backHome = await m.evalJs(`(() => ({
-  frame: !!document.querySelector('iframe[srcdoc*="hidden-mode-view"]'),
+  hostActive: !!document.querySelector('.mode-host[data-mode="hidden-mode"].active'),
   active: [...document.querySelectorAll(".mode-switch-item.active")].map((el) => el.textContent.trim()),
 }))()`);
-check("③d switch key leaves the hidden mode (cycle restarts at home)", backHome.frame === false && backHome.active.length === 1, JSON.stringify(backHome));
+check("③d switch key leaves the hidden mode (cycle restarts at home)", backHome.hostActive === false && backHome.active.length === 1, JSON.stringify(backHome));
 
 // ── ④ provider result icons ──────────────────────────────────────────────
 await typeQuery("iconprobe");

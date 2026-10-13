@@ -84,7 +84,9 @@
 `shift_enter_admin`（均为 toggle）；最近使用条数 `recent_count`
 （10/20/30/50）；应用 / 剪贴板占位符 `search_placeholder_apps` /
 `search_placeholder_clipboard`（220px 输入框）；记住上次所在页面
-`remember_last_page`（+ hint）。
+`remember_last_page`（+ hint）。**#40 起语义（2026-10-13）**：会话内
+续存（hide/show、模式切换、分离回流）始终开启、与该开关无关；开关只控
+「重启后恢复上次模式 + 分类」，查询与页面快照从不落盘。
 
 组「条目框」：条目框大小 `entry_size`（70 / 110 / 150）。
 

@@ -67,6 +67,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **主窗口位置不再被重置（ROADMAP #41）** — 「窗口位置」设置改为**只在本次
+  运行窗口首次出现时**生效：此后每次呼出继承上次关闭时的位置，内容高度变化
+  只维持原锚点（居中/角落的对称伸缩），用户手动拖过窗口后连锚点也不再套用
+  ——修掉「拖走 → 关闭 → 下次呼出跳回预设」与「拖走后输入内容被拉回居中」
+  两个实测重置。跟随鼠标仍是例外（每次呼出重新定位到光标）；显式改「窗口
+  位置」保存时立即生效并重新接管，保存无关设置不再把拖走的窗口拉回。实现：
+  `window.rs` 新增会话级 `PlacementState`（首次出现 / 程序化锚点 / 手动摆放
+  sticky 标志 + 位置配置变更检测）；窗口完全离开所有显示器时回退预设一次。
+  验证：新脚本 `scripts/cdp_window_position_verify.mjs`（真 HWND
+  `MoveWindow` 模拟拖拽）**12/12**（修前同脚本 **3 FAIL**：apply_position
+  拉回 / hide-show 重置 / 无关保存重置）；回归 `cdp_feature_smoke` ALL PASS、
+  `cdp_settings_smoke` ALL PASS；`cargo test` **202**（新增 rect 相交 2 项）、
+  `pnpm exec tsc --noEmit` 与 `pnpm run build` 干净。
+
 - **插件回归脚本修复（ROADMAP #39）** — `cdp_p2b_verify` 的两条日志断言
   仍指向 P6.5 前的旧文案（`loaded provider (entry=` / `loaded mode
   (template=list, entry=`），改为现行的 `registered provider proxy (entry=`

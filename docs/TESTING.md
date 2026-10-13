@@ -96,9 +96,17 @@ dev URL instead.
     Enter, Esc, Del) are unaffected.
 11. **Auto-sizing** — the window height fits the results: the full app grid
     caps at 520px (scrolls internally), a few results shrink it (e.g. "no" →
-    ~300px), and it stays centered; the clipboard list sizes to its items.
+    ~300px), and it stays anchored (centered / cornered per the preset until
+    you drag it — see 13); the clipboard list sizes to its items.
 12. **Fresh state** — re-showing the launcher clears the previous query and
     returns to the Navigate grid.
+13. **Position memory** — drag the launcher somewhere, then Esc + summon
+    again: it reopens at the dragged spot instead of jumping back to the
+    窗口位置 preset, and typing / clearing the query (content resizes) does
+    not move it either. Picking another preset in 设置 → 导航页 positions it
+    immediately and takes over again; 跟随鼠标 re-centers on the cursor on
+    EVERY summon. Automated:
+    `node scripts/cdp_window_position_verify.mjs`.
 
 ### Clipboard mode
 

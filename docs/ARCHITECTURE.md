@@ -62,8 +62,13 @@ medium integrity), `lume-svc.exe` (the SYSTEM file-index service) and
 
 ### `window.rs`
 Owns the single frameless transparent webview window (label `main`, see
-`tauri.conf.json`). `show()` centers the window on the current work area
-before showing, so the popup always appears on the display under the cursor.
+`tauri.conf.json`). `show()` applies the configured width and placement
+policy: the 窗口位置 setting (center / corners / follow-mouse / custom)
+only positions the window on its FIRST appearance in a run — later shows
+inherit the spot the launcher was last closed at, and a manual drag stops
+automatic anchoring altogether (session-scoped `PlacementState`,
+ROADMAP #41); `follow-mouse` is the exception and re-centers on the cursor
+on every show.
 Called by the frontend (Esc) and by `hotkey.rs`. The launcher also **auto-hides
 on focus loss**: `lib.rs` registers a `WindowEvent::Focused(false)` handler
 that hides the window, so clicking elsewhere dismisses it.

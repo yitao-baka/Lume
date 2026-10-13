@@ -52,6 +52,63 @@ impl Default for FocusState {
     }
 }
 
+/// Session-scoped placement bookkeeping for the launcher (ROADMAP #41).
+///
+/// The 窗口位置 setting is an *initial* position only: it applies when the
+/// window first appears in a run (or when the setting itself changes); later
+/// shows inherit the spot the launcher was last closed at. `follow-mouse` is
+/// the exception and re-positions on every show. `anchor` records the last
+/// position we applied programmatically — a read-back mismatch means the user
+/// dragged the window by hand, which is sticky for the session so the
+/// automatic anchor (content-height changes) never fights the chosen spot.
+#[derive(Default)]
+pub struct PlacementState {
+    inner: Mutex<PlacementInner>,
+}
+
+#[derive(Default)]
+struct PlacementInner {
+    /// The window has appeared at least once since this process started.
+    shown_once: bool,
+    /// The user moved the window by hand (sticky for the session).
+    user_placed: bool,
+    /// Physical top-left of the last position we applied programmatically.
+    anchor: Option<(i32, i32)>,
+    /// `(window_position, remember_position)` the placement policy last ran
+    /// with — a change re-applies the initial position (Save / Apply / import).
+    cfg: Option<(String, bool)>,
+}
+
+impl PlacementState {
+    /// Note that the launcher has appeared; true only for the run's first show.
+    fn mark_shown(&self) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let first = !inner.shown_once;
+        inner.shown_once = true;
+        first
+    }
+
+    /// Record the effective 窗口位置 config; true when it differs from the
+    /// config the placement policy last ran with (first call included), so the
+    /// initial position should be applied.
+    fn record_cfg(&self, appearance: &crate::settings::Appearance) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let cfg = (
+            appearance.window_position.clone(),
+            appearance.remember_position,
+        );
+        let changed = inner.cfg.as_ref() != Some(&cfg);
+        inner.cfg = Some(cfg);
+        changed
+    }
+
+    /// Drop the manual-placement memory — an explicit position-setting change
+    /// / first appearance re-arms the preset anchor.
+    fn clear_user_placed(&self) {
+        self.inner.lock().unwrap().user_placed = false;
+    }
+}
+
 /// Arm the blur-hide suppression for `for_ms` (keeps the launcher visible
 /// after a paste when 粘贴后关闭 is disabled).
 pub fn suppress_hide(focus: &FocusState, for_ms: u64) {
@@ -160,8 +217,12 @@ pub fn trim_main_when_idle(app: &AppHandle) {
     });
 }
 
-/// Apply the configured width and (unless 记住位置) the chosen initial
-/// position to the launcher. Called on every show.
+/// Apply the configured width and the window's placement policy on every show.
+///
+/// The 窗口位置 setting is an initial position: it applies on the window's
+/// first appearance in a run (or when the setting itself changed); later shows
+/// inherit the spot the launcher was last closed at, so a manual move is never
+/// reset. `follow-mouse` is the exception and re-positions on every show.
 fn apply_geometry(window: &WebviewWindow) -> tauri::Result<()> {
     let app = window.app_handle();
     let appearance = app
@@ -175,7 +236,20 @@ fn apply_geometry(window: &WebviewWindow) -> tauri::Result<()> {
     let sf = window.scale_factor()?;
     let cur = window.inner_size()?.to_logical::<f64>(sf);
     window.set_size(LogicalSize::new(appearance.window_width as f64, cur.height))?;
-    if !appearance.remember_position {
+
+    let state = app.state::<PlacementState>();
+    let first_show = state.mark_shown();
+    let cfg_changed = state.record_cfg(&appearance);
+    let follow_mouse = appearance.window_position == "follow-mouse";
+    // 记住位置 (自定义) opts out of automatic placement entirely, as before.
+    // Presets place the window on its first appearance / a config change and
+    // once recover a stale spot that fell off every monitor; otherwise the
+    // last close position wins (ROADMAP #41).
+    let recovered = !appearance.remember_position && off_all_monitors(window);
+    if !appearance.remember_position && (first_show || cfg_changed || follow_mouse || recovered) {
+        if first_show || cfg_changed || recovered {
+            state.clear_user_placed();
+        }
         apply_initial_position(window, &appearance)?;
     }
     Ok(())
@@ -211,10 +285,20 @@ fn cursor_is_over(window: &WebviewWindow) -> bool {
     x >= pos.x && x < pos.x + size.width as i32 && y >= pos.y && y < pos.y + size.height as i32
 }
 
-/// Place the launcher at the chosen initial position: centered, flush to a
-/// monitor corner, or centered at the mouse cursor. Only called when 记住位置
-/// is off.
+/// Place the launcher at the chosen initial position (centered, flush to a
+/// monitor corner, or centered at the mouse cursor) and record where it landed
+/// as the automatic anchor.
 fn apply_initial_position(
+    window: &WebviewWindow,
+    appearance: &crate::settings::Appearance,
+) -> tauri::Result<()> {
+    place_initial_position(window, appearance)?;
+    record_anchor(window);
+    Ok(())
+}
+
+/// The raw placement (no anchor bookkeeping) — see `apply_initial_position`.
+fn place_initial_position(
     window: &WebviewWindow,
     appearance: &crate::settings::Appearance,
 ) -> tauri::Result<()> {
@@ -242,6 +326,78 @@ fn apply_initial_position(
     };
     window.set_position(PhysicalPosition::new(origin.x + x, origin.y + y))?;
     Ok(())
+}
+
+/// Read back the window's outer top-left (physical px) — the same coordinate
+/// space as `set_position` / `outer_position`.
+fn outer_pos(window: &WebviewWindow) -> Option<(i32, i32)> {
+    window.outer_position().ok().map(|p| (p.x, p.y))
+}
+
+/// Remember the position we just applied, read back from the OS so a later
+/// mismatch is a reliable "the user moved it by hand" signal.
+fn record_anchor(window: &WebviewWindow) {
+    if let Some(pos) = outer_pos(window) {
+        window
+            .app_handle()
+            .state::<PlacementState>()
+            .inner
+            .lock()
+            .unwrap()
+            .anchor = Some(pos);
+    }
+}
+
+/// True when the launcher must keep its current spot instead of the preset
+/// anchor: either the user moved it earlier this session, or it no longer sits
+/// at the last position we applied — a sticky manual placement (ROADMAP #41).
+fn user_moved(window: &WebviewWindow, state: &PlacementState) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if inner.user_placed {
+        return true;
+    }
+    if let (Some(anchor), Some(pos)) = (inner.anchor, outer_pos(window)) {
+        if anchor != pos {
+            inner.user_placed = true;
+            return true;
+        }
+    }
+    false
+}
+
+/// True when the window's outer rect intersects no monitor at all — a
+/// remembered spot gone stale (display unplugged / resolution changed) that
+/// would leave the launcher invisible. Partially off-screen placements are
+/// respected, and a missing/empty monitor list never counts as "off".
+fn off_all_monitors(window: &WebviewWindow) -> bool {
+    let (Ok(pos), Ok(size), Ok(monitors)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.available_monitors(),
+    ) else {
+        return false;
+    };
+    if monitors.is_empty() {
+        return false;
+    }
+    !monitors.iter().any(|m| {
+        let mp = m.position();
+        let ms = m.size();
+        rect_intersects(
+            (pos.x, pos.y),
+            (size.width, size.height),
+            (mp.x, mp.y),
+            (ms.width, ms.height),
+        )
+    })
+}
+
+/// Half-open physical-px rect intersection (shared by `off_all_monitors`).
+fn rect_intersects(a: (i32, i32), a_size: (u32, u32), b: (i32, i32), b_size: (u32, u32)) -> bool {
+    a.0 < b.0 + b_size.0 as i32
+        && a.0 + a_size.0 as i32 > b.0
+        && a.1 < b.1 + b_size.1 as i32
+        && a.1 + a_size.1 as i32 > b.1
 }
 
 /// Position the launcher so its center is at the current mouse cursor,
@@ -277,8 +433,8 @@ fn position_at_mouse(window: &WebviewWindow) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Show and focus the launcher, applying its geometry per settings
-/// (width + position, see `docs/SETTINGS.md`).
+/// Show and focus the launcher, applying its geometry per settings (width +
+/// the first-appearance position policy, see `docs/SETTINGS.md`).
 fn show(window: &WebviewWindow) -> tauri::Result<()> {
     // Restore Normal BEFORE the show so the browser can swap the page memory
     // back while the window is still hidden (the hotkey frame isn't stalled).
@@ -296,7 +452,7 @@ fn show(window: &WebviewWindow) -> tauri::Result<()> {
 
 /// Toggle the launcher window.
 ///
-/// Hidden → shown (centered + focused); shown → hidden.
+/// Hidden → shown (geometry applied + focused); shown → hidden.
 /// When about to show, records the current foreground window for
 /// clipboard auto-paste.
 #[tauri::command]
@@ -399,9 +555,10 @@ pub fn window_toggle_pin(window: WebviewWindow) -> Result<bool, String> {
 }
 
 /// Apply the window-geometry settings to the launcher immediately (used by
-/// Save / Apply). Width applies now; the chosen initial position applies now
-/// too when 记住位置 is off (so picking a corner gives instant feedback), and
-/// on the next show regardless.
+/// Save / Apply). Width applies now. An explicit 窗口位置 change re-applies the
+/// preset now (instant feedback; it also forgets a manual spot), while an
+/// unrelated save never pulls a dragged window back (ROADMAP #41) — it only
+/// keeps a never-moved window anchored while its width changes.
 pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> Result<(), String> {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
         return Ok(());
@@ -420,16 +577,26 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
     set_panel_frame_border(&window, &settings.appearance.color_mode);
     // Same mode drives the theme-matched app icon (taskbar + tray).
     crate::appicon::apply(app, &settings.appearance.color_mode);
+    let state = app.state::<PlacementState>();
+    let cfg_changed = state.record_cfg(&settings.appearance);
     if !settings.appearance.remember_position {
-        apply_initial_position(&window, &settings.appearance).map_err(|e| e.to_string())?;
+        if cfg_changed {
+            state.clear_user_placed();
+            apply_initial_position(&window, &settings.appearance).map_err(|e| e.to_string())?;
+        } else if !user_moved(&window, &state) {
+            // Unrelated save: keep a never-moved window on its preset anchor
+            // (the width may have changed); a manual spot stays put.
+            apply_initial_position(&window, &settings.appearance).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
 
-/// Re-apply the launcher's position after the frontend resized its height
-/// (kept anchored to the center / chosen corner). No-op when 记住位置 is on,
-/// or when the position is "follow-mouse" (the window stays at its initial
-/// cursor-triggered spot, unaffected by content-height changes).
+/// Re-apply the launcher's position after the frontend resized its height —
+/// kept anchored to the center / chosen corner while the window still sits
+/// exactly where we put it. No-op for 记住位置 and follow-mouse, or once the
+/// user moved the window by hand: from then on its spot is theirs (ROADMAP
+/// #41).
 #[tauri::command]
 pub fn apply_position(app: AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
@@ -440,6 +607,10 @@ pub fn apply_position(app: AppHandle) -> Result<(), String> {
         .current()
         .appearance;
     if appearance.window_position == "follow-mouse" || appearance.remember_position {
+        return Ok(());
+    }
+    let state = app.state::<PlacementState>();
+    if user_moved(&window, &state) {
         return Ok(());
     }
     apply_initial_position(&window, &appearance).map_err(|e| e.to_string())?;
@@ -961,5 +1132,30 @@ mod tests {
             &wa, // left = 200-320 = -120 < work_area.x = 100 → no room
         );
         assert_eq!(pos, None);
+    }
+
+    #[test]
+    fn rect_intersects_is_half_open() {
+        // A window whose right edge exactly touches a monitor's left edge
+        // shares no pixel with it.
+        assert!(!rect_intersects((100, 0), (50, 50), (150, 0), (100, 100)));
+        assert!(rect_intersects((149, 0), (50, 50), (150, 0), (100, 100)));
+    }
+
+    #[test]
+    fn rect_intersects_handles_negative_monitor_origins() {
+        // Secondary monitors can sit left of / above the primary one.
+        assert!(rect_intersects(
+            (-1920, -100),
+            (100, 100),
+            (-1920, -1080),
+            (1920, 1080)
+        ));
+        assert!(!rect_intersects(
+            (-2000, 0),
+            (50, 100),
+            (-1920, -1080),
+            (1920, 1080)
+        ));
     }
 }

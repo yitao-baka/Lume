@@ -2820,3 +2820,58 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
   `lume.on.snapshot/restore`（宿主只保证 auto 层 + 宿主态），文档已明示。
 - 跨重启不恢复查询与页面快照（仅模式 + 分类；隐私取舍）；插件持久化仍走
   `lume.storage` / `db`。
+
+## 41. 主窗口位置记忆：设置只决定「首次出现」（已实现）
+
+需求（2026-10-13 用户报告）：移动主窗口后关闭再呼出，位置被重置回设置的
+预设（居中/角落）。期望：窗口位置设置只在**窗口首次出现**时生效（跟随鼠标
+除外），之后每次呼出继承上一次关窗时的位置。
+
+### 41.1 根因
+
+- `apply_geometry`（每次 show 调用）在 `remember_position=false` 时无条件
+  重放预设：呼出即回锚点。
+- `apply_position`（前端每次内容高度变化后调用）同样无条件重放预设：拖走
+  窗口后输入/清空查询也会把它拉回去。
+- `apply_settings`（每次保存）在 `remember_position=false` 时重放预设：
+  保存任何无关设置都会把手动摆放的窗口拉回。
+
+### 41.2 目标语义（用户拍板）
+
+- 预设（居中/四角）与「自定义」是**初始位置**：只在本次运行窗口第一次出现
+  （或该设置显式变更）时套用；此后呼出继承上次关闭位置，内容高度变化只维持
+  原锚点（居中↔对称伸缩、角落↔贴角），用户手动拖过后锚点也不再套用。
+- 「跟随鼠标」例外：每次呼出都按光标重新定位。
+- 显式改「窗口位置」保存立即生效（即时反馈），并重新接管锚点；保存无关设置
+  不重置。
+- 位置不落盘：重启后按设置重新「首次出现」（settings.toml 与 Flutter 版
+  互通格式不动）。
+
+### 41.3 实现
+
+- `window.rs` 新增会话级 `PlacementState`（`lib.rs` manage）：`shown_once`
+  （首次出现）/ `anchor`（最后一次程序化设置的外框物理坐标，向 OS 回读记录）/
+  `user_placed`（位置 ≠ anchor 即 sticky 手动摆放，`apply_position` 直接
+  no-op）/ `cfg`（`(window_position, remember_position)`，变更即重放）。
+- `apply_geometry`：首帧 / 配置变更 / follow-mouse 才定位；否则原样继承。
+- `apply_position`：`user_moved` 后不再重锚（拖过的窗口内容自适应只向下长）。
+- `apply_settings`：配置变更 → 清 user_placed + 立即定位；否则未拖过才维持
+  锚点（宽度变化仍保持居中/贴角），拖过则不动。
+- 健壮性：窗口完全离开所有显示器（拔屏/改分辨率）时，下次呼出回退预设一次；
+  纯函数 `rect_intersects` 有单测（半开区间 + 负坐标显示器）。
+- 踩坑（脚本）：CDP `Browser.setWindowBounds` 在 WebView2 里只改一个「虚拟
+  窗口」，真 HWND 纹丝不动（`getWindowBounds`/`window.screenX` 会跟着假值
+  变）——自动化必须用 PowerShell 真 `MoveWindow` + `GetWindowRect`
+  （新 `scripts/ps_lume_main_rect.ps1`；该窗口对 `SetWindowPos(SWP_NOSIZE)`
+  静默忽略，实测）。
+
+### 41.4 验证
+
+- 新脚本 `scripts/cdp_window_position_verify.mjs` **12/12**（真机 debug exe：
+  真 HWND MoveWindow 模拟拖拽 → apply_position 不拉回 / hide-show 继承 /
+  无关保存不动 / 显式改预设立即生效并沿用 / 跟随鼠标两次呼出都跟随 / 设置
+  还原）；**修前同脚本 3 FAIL**（apply_position 拉回、hide-show 重置、无关
+  保存重置）。
+- 回归：`cargo test` **202**（新增 rect 相交 2 项）、`pnpm exec tsc --noEmit`
+  与 `pnpm run build` 干净、`cdp_feature_smoke` ALL PASS、
+  `cdp_settings_smoke` ALL PASS。

@@ -60,7 +60,7 @@ export default function LauncherPane(props: {
                 />
               )}
             </For>
-            {/* 自定义 = 记住位置开：窗口停在用户手动拖到的位置。 */}
+            {/* 自定义 = 首次出现也不套用预设：窗口停在当前/上次的位置。 */}
             <Chip
               label={t("settingsCustom")}
               active={a().remember_position}

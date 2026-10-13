@@ -154,7 +154,8 @@ pub struct Appearance {
     pub window_height: u32,
     /// `"center"` | `"follow-mouse"` | `"top-left"` | `"top-right"` | `"bottom-left"` | `"bottom-right"`.
     pub window_position: String,
-    /// Remember the manually-moved window position across shows.
+    /// 自定义: never apply an automatic position (not even on the first
+    /// appearance) — the window keeps the spot it is at.
     pub remember_position: bool,
     /// Show the 「最近使用」 bar on the main menu (display-only — recording
     /// always continues, so re-enabling shows the history).

@@ -91,6 +91,7 @@ pub fn run() {
         .manage(hotkey::ActiveHotkey::default())
         .manage(automation::AutomationState::default())
         .manage(window::FocusState::default())
+        .manage(window::PlacementState::default())
         .manage(dirwatch::DirWatchState::default())
         .manage(plugin_devwatch::DevWatchState::default())
         .manage(window::PreviewState::default())

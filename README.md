@@ -164,9 +164,12 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
   in a separate non-activating window docked to the launcher's right edge (the
   main renderer never holds decoded bitmaps / media buffers); PDF preview via
   PDF.js
-- Window position presets — center / follow-mouse / four corners / custom
-- Auto-sizing window — height fits the results, stays centered (fixed height
-  in clipboard mode); 展开 fills the monitor work area
+- Window position presets — center / follow-mouse / four corners / custom;
+  the preset positions the window's first appearance in a run, later summons
+  keep the last position (follow-mouse re-centers on the cursor every time)
+- Auto-sizing window — height fits the results, anchored to the preset until
+  the user drags the window (fixed height in clipboard mode); 展开 fills the
+  monitor work area
 - WebView2 idle-memory trimming — hidden windows' renderers swap their memory
   out (`SetMemoryUsageTargetLevel(Low)`), then restore before showing
 - i18n — Simplified Chinese / Traditional Chinese / English

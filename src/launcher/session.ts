@@ -150,19 +150,43 @@ export function createHostStack(deps: {
     e.evicting = false;
     if (!entries.has(id)) return;
     // Became (or stayed) the active page while the snapshot was in flight.
-    if (deps.mode() === id) return;
+    if (deps.mode() === id) {
+      // The abort spent its slot without freeing anything — pass the budget
+      // to the next LRU victim so the cap still converges.
+      if (entries.size > maxLive) runEvictionPass();
+      return;
+    }
     if (snap != null) putSessionFrame(id, "view", snap);
     retireEntry(e);
     tap({ op: "evict", id });
+    // An ensure() during the snapshot round-trip can add fresh overflow;
+    // top up so the cap always converges to <= maxLive.
+    if (entries.size > maxLive) runEvictionPass();
   }
 
-  function runEvictionPass() {
+  /** `protect`: the page `ensure()` is about to activate — never a victim. */
+  function runEvictionPass(protect?: ModeId) {
     if (entries.size <= maxLive) return;
     const candidates = [...entries.values()]
-      .filter((e) => e.id !== deps.mode() && (deps.evictable?.(e.id) ?? true))
+      .filter(
+        (e) =>
+          e.id !== deps.mode() &&
+          e.id !== protect &&
+          (deps.evictable?.(e.id) ?? true)
+      )
       .sort((a, b) => a.lastUsed - b.lastUsed);
+    // `evict` retires the entry only after its async snapshot round-trip, so
+    // entries.size does NOT drop while this synchronous pass runs. Counting
+    // the evictions already in flight keeps ONE overflow down to one victim;
+    // the old `entries.size <= maxLive` break started an eviction for every
+    // candidate — the first overflow nuked the whole stack minus the active
+    // page (ROADMAP #42).
+    let toStart =
+      entries.size - maxLive - candidates.filter((e) => e.evicting).length;
     for (const e of candidates) {
-      if (entries.size <= maxLive) break;
+      if (toStart <= 0) break;
+      if (e.evicting) continue;
+      toStart--;
       void evict(e.id);
     }
   }
@@ -179,7 +203,7 @@ export function createHostStack(deps: {
     const e: HostEntry = { id, inst, lastUsed: Date.now() };
     entries.set(id, e);
     setHosts((prev) => [...prev, e]);
-    runEvictionPass();
+    runEvictionPass(id);
   }
 
   function prune(alive: (id: ModeId, inst: ModeInstance) => boolean) {

@@ -8,6 +8,39 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **`lume.env.form` 宿主形态常量（ROADMAP #42）** — 注入桥为每个插件帧钉死
+  同步常量 `"launcher"`（启动器主窗口内嵌）/ `"window"`（独立窗口的 view /
+  titlebar 帧），页面脚本运行前即可读；逻辑帧（§6I）恒为 `"launcher"`；
+  `__lumeFrameState` 诊断上报同时带 `form`。这是「启动器内 / 独立窗口」的
+  唯一可靠判别 —— #40 的 keep-alive 让启动器同时挂着多个已访问模式页，
+  「父文档 iframe 数」必然误判（translator 因此丢分离按钮、提示变
+  「Esc 关闭窗口」；ROADMAP #35 记录过旧手法）。`docs/PLUGIN_API.md`
+  §6C/§6G.3/§6G.5/§10 同步；translator 1.4.0 改为优先读该常量（旧宿主
+  回退帧间握手）。验证：`cdp_plugin_state_verify` **54/54**（新增 4 条
+  form 断言：启动器 launcher / 窗口 view+titlebar window / 回流重挂载）。
+
+### Fixed
+
+- **#40 副效应：陈旧会话帧覆盖新 enter + LRU 一次溢出整批清栈（ROADMAP #42）**
+  — ① 模式页被 LRU 淘汰后立刻用**新文本**重进时，ready 握手回放的旧快照
+  （auto + custom，含结束前终校正）会覆盖刚投递的 enter 载荷（实测 `#src`
+  从 `sp:new-lru` 回退成 `pre-lru`、custom 计数回填 7）—— 现在 `onEnter`
+  直接作废该插件尚在等待重放的会话帧（淘汰 / detach / 关闭回流遗留），
+  新进入优先，已消费的帧不受影响；② `runEvictionPass` 的同步循环看不见
+  `evict()` 异步快照期间的 `entries.size` 下降，一次溢出把全部候选都标记
+  淘汰（实测一次溢出 8 个挂载点掉到 3 个）—— 现在把在飞行中的淘汰计入
+  预算并支持 `protect`，一次溢出只淘汰应淘汰的页数。验证：新增
+  `scripts/cdp_plugin_lru_verify.mjs` **22/22**（脚本自造 7 个填充 mode +
+  state-probe：淘汰数 = 1、victim 唯一且存了快照、新 enter 胜出、陈旧帧
+  被 `drop-all` 且无 `take`）；回归 `cdp_plugin_state_verify` 54/54、
+  `cdp_plugin_window_verify` 16/16、`cdp_p2b_verify` 24/24、
+  `cdp_sandbox_verify` 14/14、`test/_snapshot_probe.mjs` 全过；实机
+  translator 1.4.0 双形态：启动器内分离按钮在 + 「Esc 隐藏启动器」，
+  独立窗口内按钮隐藏 + 「Esc 关闭窗口」、两帧 `form=window`。
+
+### Added
+
+
 - **插件会话续存 + 分离窗口状态同步泛化（ROADMAP #40）** — 同一会话内
   hide/show、模式切换与分离回流都保持上次页面、查询与页面状态（对标
   uTools/zTools 的 WebContentsView 保活）：已访问页面挂载后只隐藏不卸载

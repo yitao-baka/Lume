@@ -653,7 +653,7 @@ function createDiskModeInstance(
     .then((html) => {
       plog.info(m.id, "mode view ready (html", html.length, "bytes)");
       viewReady = true;
-      View.setHtml(injectBridge(html));
+      View.setHtml(injectBridge(html, "launcher"));
       // query/show are NOT posted here: setting the srcdoc only starts the
       // document load, so the bridge has no listener yet. The ready handshake
       // (see the onReady callback above) delivers the page state once live.
@@ -730,6 +730,11 @@ function createDiskModeInstance(
     },
     onEnter: (info) => {
       enterPayload = info;
+      // 新 enter = 新用户意图：LRU 淘汰 / detach / 关闭回流遗留、还在等
+      // 重放的会话帧必须作废 —— ready 握手把 view 帧放在标准重放
+      // （query/show/enter）**之后**，旧快照会把刚投递的 payload 覆盖回
+      // 上一个会话（ROADMAP #42）。已经消费掉的帧（页面活着）不受影响。
+      dropSessionFrames(m.id);
       if (detachedIds.has(m.id)) {
         // The page lives in its own window — the payload travels over the
         // event channel (the in-launcher iframe is not mounted).

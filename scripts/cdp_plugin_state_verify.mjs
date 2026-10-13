@@ -130,6 +130,13 @@ const readField = (conn, frame, id) => conn.evalJs(`(() => {
   }
   return null;
 })()`);
+// The bridge's diagnostic frame state (`__frameStates`) also carries the
+// hosting form — `lume.env.form`, ROADMAP #42. Read it off the latest state
+// that reported a known field id (identifies the frame without CDP).
+const readFrameForm = (conn, id) => conn.evalJs(`(() => {
+  const st = (window.__frameStates || []).filter((s) => (s.values || []).some((x) => x.id === ${JSON.stringify(id)}));
+  return st.length ? (st[st.length - 1].form ?? null) : null;
+})()`);
 const expectField = async (conn, frame, id, want, tries = 24) => {
   for (let i = 0; i < tries; i++) {
     const v = await readField(conn, frame, id);
@@ -159,6 +166,8 @@ await sleep(1500);
 check("A: enter state-probe via pill", await clickPillAny(["State Probe"]));
 await sleep(2500);
 check("A: view frame is live", !!(await readField(m, "", "src")), "no #src report yet");
+const formA = await readFrameForm(m, "src");
+check("A: view frame reports lume.env.form = launcher", formA === "launcher", String(formA));
 
 await type("src:hello-A"); await sleep(400);
 await type("js:7"); await sleep(400);
@@ -226,6 +235,10 @@ for (const [id, want] of [["src", "hello-A"], ["jsn", "7"], ["multi", "a,c"], ["
 }
 const flagB = await expectField(wB, "", "flag", "on", 8);
 check("B: window inherited #flag checked", !!flagB && flagB.checked === true, JSON.stringify(flagB));
+const formBView = await readFrameForm(wB, "src");
+check("B: window view frame reports form = window", formBView === "window", String(formBView));
+const formBTb = await readFrameForm(wB, "tb");
+check("B: window titlebar frame reports form = window", formBTb === "window", String(formBTb));
 
 // ═══ C. 分离中 enter：payload 进窗口的 view + titlebar 两帧 ═══
 await invoke("toggle_launcher");
@@ -255,6 +268,8 @@ for (const [id, want] of [["src", "sp:window-B"], ["jsn", "7"], ["late", "late-A
 }
 const flagD = await expectField(m, "", "flag", "on", 8);
 check("D: launcher restored #flag checked", !!flagD && flagD.checked === true, JSON.stringify(flagD));
+const formD = await readFrameForm(m, "src");
+check("D: re-docked frame reports form = launcher", formD === "launcher", String(formD));
 
 // ═══ E. 再分离：titlebar 帧（关闭时存的）进入新窗口 ═══
 await m.evalJs(`document.querySelector(".detach-btn")?.click()`);

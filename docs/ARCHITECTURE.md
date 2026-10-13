@@ -357,13 +357,22 @@ before adding a field:
   object, and composes the uTools-style surface — the `SearchBox` widget on
   top and the active page widget (`ModeInstance.View`) spliced below it,
   plus the shared overlays (toast, context menu).
-- **Session continuation / keep-alive（ROADMAP #40）**：已访问页面挂载后只
+- **Session continuation / keep-alive（ROADMAP #40/#42）**：已访问页面挂载后只
   隐藏不卸载（`src/launcher/session.ts` 的主机栈，LRU 8 + 淘汰前 view 帧
-  快照）；hide/show 与模式切换不重置 mode/query/页面状态。跨窗口（分离/
-  回流）走 `sessionFrames` 帧存储 + 快照 v2（键控 auto 层 + custom 钩子），
-  分离期间启动器不留活副本（单一权威），用户关窗（payload `user:true`）
-  回流到该插件页恢复。对标 zTools 的 WebContentsView 保活/搬移；Tauri 不能
-  搬 webview，页面自有 JS 状态需 `lume.on.snapshot/restore`（§6C）。
+  快照，一次溢出只淘汰应淘汰的页数）；hide/show 与模式切换不重置
+  mode/query/页面状态。跨窗口（分离/回流）走 `sessionFrames` 帧存储 + 快照
+  v2（键控 auto 层 + custom 钩子），分离期间启动器不留活副本（单一权威），
+  用户关窗（payload `user:true`）回流到该插件页恢复。收到**新的 `enter`**
+  时该插件尚在等待重放的会话帧直接作废（新进入优先于旧快照，#42）。对标
+  zTools 的 WebContentsView 保活/搬移；Tauri 不能搬 webview，页面自有 JS
+  状态需 `lume.on.snapshot/restore`（§6C）。
+- **Bridge host-form constant（ROADMAP #42）**：`injectBridge` /
+  `injectTitlebarBridge` pin a synchronous `lume.env.form` on every plugin
+  frame — `"launcher"` (inside the launcher window) or `"window"` (a
+  detached plugin window; logic frames are always `"launcher"`). Pages must
+  use it instead of counting parent-document iframes: keep-alive (#40) keeps
+  several mode pages mounted at once, so frame counting misjudges the form
+  (translator lost its detach button this way). §6C/§6G.3.
 - `src/shell/SearchBox.tsx` — the search-row widget (magnifier + query input
   + page pills + settings gear). Controlled/pure: the shell owns query
   routing (page `handleQuery` interception → `subInput` ownership → search)

@@ -63,6 +63,10 @@
   // 新增/移除 ctx 方法时三处同步：本文件、iframeBridge.tsx 的视图桥客户端、
   // rpc.ts 的 switch（cdp_p2b_verify 有一条静态对齐断言钉住这件事，ROADMAP #38）。
   window.lume = {
+    // 宿主形态常量（§6C/Roadmap #42）：逻辑帧永远跑在启动器侧的共享逻辑
+    // 宿主里（独立窗口只有 view/titlebar 帧），所以恒为 "launcher"——与视图
+    // 桥同面，插件在逻辑里读 `lume.env.form` 不会炸。
+    env: { form: "launcher" },
     theme: {
       // 本插件自己的颜色模式（§6C）：system 跟随启动器，light/dark 固定
       // 本插件的明暗。与视图桥同一条 theme.set/get 路由。

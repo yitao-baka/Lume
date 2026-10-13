@@ -338,7 +338,7 @@ function App() {
               // blank-area window drag (the slot iframe swallows pointer
               // events; a page without drag handling of its own would leave
               // the middle of the chrome row dead).
-              slotView.View.setHtml(injectTitlebarBridge(html));
+              slotView.View.setHtml(injectTitlebarBridge(html, "window"));
               setTitlebarHtml(html);
             })
             .catch((err) => plog.error(id, "titlebar load failed:", err));
@@ -346,7 +346,7 @@ function App() {
         return wirePerms.then(() => fetchDiskFile(dir + "\\" + view));
       })
       .then((html) => {
-        View.setHtml(injectBridge(html));
+        View.setHtml(injectBridge(html, "window"));
       })
       .catch((err) => {
         plog.error(id, "detached view load failed:", err);

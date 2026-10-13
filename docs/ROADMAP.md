@@ -4,7 +4,7 @@ Planned features for Lume, in priority order. Items are added here before
 implementation; each becomes a scoped iteration when started. See
 `CHANGELOG.md` for what shipped.
 
-> **当前快照（2026-10-13）**：路线已推进到 #40。插件系统、
+> **当前快照（2026-10-13）**：路线已推进到 #42。插件系统、
 > `.lupx` 安装/签名、三层权限与逻辑宿主隔离、独立插件窗口、文件秒搜、
 > 自动动作和提权代理均已落地；本文较早章节保留当时的设计与验收记录，
 > 当前 API/行为以 `docs/PLUGIN_API.md`、`docs/PLUGINS.md`、
@@ -2820,6 +2820,8 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
   `lume.on.snapshot/restore`（宿主只保证 auto 层 + 宿主态），文档已明示。
 - 跨重启不恢复查询与页面快照（仅模式 + 分类；隐私取舍）；插件持久化仍走
   `lume.storage` / `db`。
+- 淘汰数量 / 新 enter 与陈旧帧的先后 —— 已在 #42 修复（一次溢出只淘汰应
+  淘汰的页数；新的 enter 作废等待重放的会话帧）。
 
 ## 41. 主窗口位置记忆：设置只决定「首次出现」（已实现）
 
@@ -2875,3 +2877,67 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
 - 回归：`cargo test` **202**（新增 rect 相交 2 项）、`pnpm exec tsc --noEmit`
   与 `pnpm run build` 干净、`cdp_feature_smoke` ALL PASS、
   `cdp_settings_smoke` ALL PASS。
+
+## 42. #40 副效应修复：宿主形态常量 + 新 enter 作废陈旧会话帧（已实现）
+
+背景（2026-10-13，来自 translator 插件侧的两条报告）：
+
+1. **旧「帧数判别」在 keep-alive 下误判**：translator 曾用「父文档 iframe 数 =
+   2 ⇒ 独立窗口」判断形态（#35 记录过该手法）。#40 的 keep-alive 让启动器同时
+   挂着多个已访问模式页——实测 file-search + Hello Mode 已挂载后再加载
+   translator，父文档 `window.length = 3`，translator 误判为独立窗口：自绘
+   分离按钮消失、快捷键提示变成「Esc 关闭窗口」。（旧判别的 const 在页面加载
+   时求值，所以只有「插件页在 ≥2 个模式 iframe 之后新加载」才触发，切走再切回
+   不重算——复现必须按此顺序。）
+2. **陈旧会话帧覆盖新 enter**：页面被 LRU 淘汰后立刻用**新文本**重进，ready
+   握手先把新 enter 投递进新文档，随后回放淘汰前的 view 帧快照；快照的 auto +
+   custom 层（含结束前终校正）把刚进入的文本拉回旧值（实测 `#src` 从
+   `sp:new-lru` 回退成 `pre-lru`，custom 计数回填 7）。
+3. **调查中发现：一次溢出整批清栈**：`runEvictionPass` 的同步循环在 `evict()`
+   的异步快照 round-trip 之前逐项判断 `entries.size <= maxLive`——该值在飞行
+   期间不下降，循环于是把**全部候选**都标记淘汰。实测一次溢出（9 页）从 8 个
+   挂载点掉到 3 个（6 页被连带淘汰），与 #40.3 「淘汰最久未用的一页」不符。
+
+### 42.1 实现
+
+- **`lume.env.form` 宿主形态常量**（`iframeBridge.tsx`）：注入桥为每个帧钉死
+  同步常量 `"launcher"` / `"window"`（`injectBridge(html, form)` /
+  `injectTitlebarBridge(html, form)` 第二参数；逻辑帧 `pluginLogicFrame.js`
+  恒为 `"launcher"`），页面脚本运行前即可读；桥的 `__lumeFrameState` 诊断
+  上报同时带 `form`。文档 §6C/§10；translator 1.4.0 改为优先读它（旧宿主回退
+  其帧间握手）并重建 `view.html`。
+- **新 enter 作废旧会话帧**（`registry.ts` `createDiskModeInstance.onEnter`）：
+  收到进入载荷即 `dropSessionFrames(id)`——淘汰 / detach / 关闭回流遗留、还在
+  等待重放的帧不再回放；已经消费掉的帧（页面活着）不受影响。文档 §6C
+  「状态重放 / 状态快照」。
+- **LRU 一次溢出只淘汰应淘汰的数量**（`launcher/session.ts`）：
+  `runEvictionPass` 把在飞行中的淘汰计入待腾预算
+  （`entries.size - maxLive - evicting`），并支持 `protect`（正在 ensure 的
+  页面永不作 victim）；`evict` 完成后若仍超限再补一轮，保证收敛。
+
+### 42.2 实测踩坑
+
+- **旧判别只在页面加载那一刻误判**：`IN_WINDOW` 是加载时的 const——复现要让
+  插件页在多个模式 iframe 已挂载之后新加载（不是切走再切回）。
+- **覆盖新 enter 的是恢复器的「终校正」**：enter 处理器直接赋 `.value`、不经
+  input 事件，v2 恢复器把这种变化当成「页面异步初始化覆盖的首屏值」，在结束前
+  又拉回快照值（§6C「恢复语义」实测坑的同一机制）。修复必须在宿主侧作废帧。
+- **淘汰循环的同步盲区**：`void evict()` 的快照阶段不会减小 `entries.size`，
+  `for` 循环里的 `entries.size <= maxLive` 判据永远为真——必须把 in-flight
+  数量算进预算。
+
+### 42.3 验证
+
+- 新增 `scripts/cdp_plugin_lru_verify.mjs` **22/22**（自造 7 个填充 mode +
+  state-probe）：一次超限 = 恰好一次淘汰（victim=state-probe、put+evict 各一、
+  其余 7 页全部存活、挂载点 8）；随后用新 payload 重进 → `#src = sp:new-lru`、
+  custom 计数未被回填、会话帧 `drop-all` 且无 `take`。
+- `scripts/cdp_plugin_state_verify.mjs` **54/54**（新增 4 条 form 断言：启动器
+  内 launcher、独立窗口 view + titlebar 帧 window、关闭回流重挂载仍 launcher）。
+- 回归：`cdp_plugin_window_verify` 16/16、`cdp_p2b_verify` 24/24、
+  `cdp_sandbox_verify` 14/14、`test/_snapshot_probe.mjs` 全过。
+- 实机（debug exe + 重建后的 translator 1.4.0）：file-search + Hello Mode
+  挂载后加载 translator —— 分离按钮在、提示「Esc 隐藏启动器」；独立窗口内
+  view/titlebar 两帧 `form=window`、分离按钮隐藏、提示「Esc 关闭窗口」。
+- `pnpm run build` / `pnpm exec tsc --noEmit` / `cargo check` / `cargo test`
+  干净。

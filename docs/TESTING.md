@@ -314,8 +314,14 @@ dev URL instead.
    geometry memory, the empty-`srcdoc` navigation watchdog, keep-alive across
    hide/show and mode switches, detach inheritance incl. the custom snapshot
    layer and a 600ms-late DOM node, enter fan-out to view+titlebar frames,
-   user-close re-dock restore and the titlebar frame round-trip. The P6.5
-   file-search chain is `node test/_snapshot_probe.mjs`.
+   user-close re-dock restore, the titlebar frame round-trip and the
+   `lume.env.form` host-form constant in all three surfaces (launcher /
+   detached view / detached titlebar). The P6.5 file-search chain is
+   `node test/_snapshot_probe.mjs`; LRU eviction semantics and the
+   new-enter-beats-stale-snapshot rule (ROADMAP #42) are
+   `node scripts/cdp_plugin_lru_verify.mjs` (generates its own filler modes
+   and asserts one victim per overflow, a stored snapshot, and that the new
+   payload wins on remount).
 5. **Theme override** — `node scripts/cdp_plugin_theme_verify.mjs`; inspect the
    rendered canvas with the 1x1 screenshot sampler, not the sandbox DOM.
 6. **Mode-bar hiding and result icons** — `node

@@ -25,6 +25,12 @@ export const BRIDGE_SCRIPT = `
   try { parent.postMessage({ __lumeFrameBoot: { frame: window.name } }, "*"); } catch (err) {}
   var pending = new Map();
   var rpcId = 0;
+  // Host form (§6C, ROADMAP #42): the host pins every frame to "launcher"
+  // (inside the launcher window) or "window" (a detached plugin window) before
+  // any page script runs. This is the ONLY reliable way to tell the two apart —
+  // do NOT count parent-document iframes: keep-alive (#40) keeps several mode
+  // pages mounted at once, so the old "frame count" heuristic misfires.
+  var hostForm = window.__LUME_HOST_FORM__ === "window" ? "window" : "launcher";
   // Watchdog only — a net for a host that never answers, so it must not fire
   // before the call's own deadline. \`http.request\` carries its own timeoutMs
   // (the host clamps it to 1–60s, docs/PLUGIN_API.md §6D.1); the old flat 10s
@@ -71,6 +77,11 @@ export const BRIDGE_SCRIPT = `
     return out;
   };
   window.lume = {
+    // 宿主形态常量（§6C/Roadmap #42）："launcher" = 启动器主窗口内嵌页面，
+    // "window" = 插件独立窗口内的 view/titlebar 帧。同步可读——页面脚本和
+    // 模块初始化时即可分支（例如隐藏自绘的「分离窗口」按钮）。逻辑帧恒为
+    // "launcher"（逻辑宿主属于启动器侧）。
+    env: { form: hostForm },
     theme: {
       // 本插件自己的颜色模式（§6C，2026-10-12 起）：system = 跟随启动器，
       // light/dark = 固定本插件的明暗。只作用于本插件（页面画布
@@ -681,6 +692,7 @@ export const BRIDGE_SCRIPT = `
         {
           __lumeFrameState: {
             name: window.name || "",
+            form: hostForm,
             reason: reason,
             ready: document.readyState,
             // 诊断（probes）：恢复是否仍在「迟到 DOM」重试窗口内。
@@ -802,21 +814,25 @@ export const TITLEBAR_DRAG_SCRIPT = `
  * the splice; the bridge keeps it in step with `lume.on.theme` (theme flips),
  * and a plugin that paints its own `html`/`body` background still wins (its
  * rule comes later in the document). */
-export function injectBridge(html: string): string {
-  return injectAtHead(html, "");
+export function injectBridge(html: string, form: "launcher" | "window"): string {
+  return injectAtHead(html, "", form);
 }
 
 /** Titlebar slot pages (detached window chrome row, manifest `titlebar`):
  * the bridge plus the host's default window-drag for blank areas
  * (TITLEBAR_DRAG_SCRIPT). */
-export function injectTitlebarBridge(html: string): string {
-  return injectAtHead(html, `<script>${TITLEBAR_DRAG_SCRIPT}</script>`);
+export function injectTitlebarBridge(html: string, form: "launcher" | "window"): string {
+  return injectAtHead(html, `<script>${TITLEBAR_DRAG_SCRIPT}</script>`, form);
 }
 
-function injectAtHead(html: string, tail: string): string {
+function injectAtHead(html: string, tail: string, form: "launcher" | "window"): string {
   const injection =
     `<base target="_blank">` +
     `<style>html{background:var(--lume-page-bg,${PANEL_SURFACE_BG[currentThemeMode()]})}</style>` +
+    // `lume.env.form` (ROADMAP #42): the hosting surface this frame lives in.
+    // Injected BEFORE the bridge so `window.lume` exists synchronously with
+    // the right value, and the page cannot corrupt it by running first.
+    `<script>window.__LUME_HOST_FORM__=${JSON.stringify(form)};</script>` +
     `<script>${BRIDGE_SCRIPT}</script>` +
     tail;
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + injection);

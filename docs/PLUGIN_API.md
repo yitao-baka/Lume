@@ -457,6 +457,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 
 | 组 | 方法 | 说明 |
 |---|---|---|
+| `env` | `form: "launcher" \| "window"` | **宿主形态常量**（ROADMAP #42，2026-10-13 起）：同步字符串，注入桥在页面脚本运行前钉死——`"launcher"` = 启动器主窗口内嵌页，`"window"` = 独立窗口内的 view/titlebar 帧；逻辑帧（§6I）恒为 `"launcher"`。**判别宿主形态只用它**——不要数父文档 iframe 数：#40 的 keep-alive 让启动器同时挂着多个已访问模式页（iframe 数 ≥ 2 是常态），旧手法会误判（如把启动器内页面当成独立窗口，ROADMAP #35/#42） |
 | `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` / `detach()` | 同 §6B.0 的组合根能力；`setPlaceholder` 自定本模式搜索框占位文字（§5C）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（P1.2，§6D）；`setSubInput`/`removeSubInput` 接管/交还搜索框（P2.3，§6E.2）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（P2.5，§6E.4）；`detach()` 把本模式分离为独立窗口（P6，§6G）——`detachable` 插件自绘分离按钮（常驻/纯图标等形态自定）时调用它，快照/建窗/回放与宿主内置悬停按钮同一条路 |
 | `theme` | `set(mode)` / `get()` | **本插件自己的颜色模式**（ROADMAP #36，2026-10-12 起）：`"system"`（跟随启动器）/ `"light"` / `"dark"`。只作用于本插件 —— 本模式页画布、独立窗口的 chrome 与任务栏图标一起切，**启动器自身主题不受影响**；宿主落盘（`settings.plugins.color_modes`），重启与独立窗口首帧即生效。`get()` 返回 `{pref, mode, host}`。非法取值 reject。免权限（插件本地 UI，§6D.6）。细节见下文「插件自身颜色模式」 |
 | `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `readImage()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`readImage()` 返回 PNG data URI（无图 = null；`img` feature 的取数路径，§6E.1.1）；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（P1.3，§6D） |
@@ -486,7 +487,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 之前——所以宿主**不会**在 iframe 一挂载就推事件。页面 `load` 后桥接发
 `__lumeReady`，宿主随即重放当前状态：`query` → `show` → 本次进入载荷
 `enter`（若有）。含义：① 页面脚本请同步赋值 `lume.on.*`（异步赋值会错过首播）；
-② 重复收到同一 `show`/`query` 是正常的，处理器应幂等。
+② 重复收到同一 `show`/`query` 是正常的，处理器应幂等；③ **收到新的 `enter` 会作废该插件还在等待重放的陈旧会话帧**（LRU 淘汰 / detach / 关闭回流的遗留）——用户带着新载荷重进时 enter 优先，详见下「状态快照」。
 
 **状态快照（P6.5；帧快照 v2，ROADMAP #40，2026-10-13 起）**：宿主在
 detach / 关闭独立窗口 / keep-alive LRU 淘汰前，经
@@ -511,7 +512,10 @@ detach / 关闭独立窗口 / keep-alive LRU 淘汰前，经
 恢复循环不会反复回滚页面自己的状态变化（实测坑：无节制的重试会把 3.2s
 后到达的正常 `enter` 状态回滚）。用户输入过的字段永不覆盖。`restore`
 事件在标准状态重放（query/show/
-enter/settings/theme）**之后**投递。**titlebar 槽位帧**在标准重放**之前**
+enter/settings/theme）**之后**投递。**例外：新的进入优先**——模式收到新的
+`enter`（进入载荷）时，宿主先丢弃该插件尚在等待重放的会话帧（淘汰 / 分离 /
+关闭回流的遗留），因此「被 LRU 淘汰后立刻用新文本重进」不会被旧快照覆盖
+（ROADMAP #42）；已经消费掉的帧（页面活着）不受影响。**titlebar 槽位帧**在标准重放**之前**
 **静默**恢复（不派发 input/change）：它的输入通常是宿主 query 的视图，
 派发事件会被页面当成新输入经 `app.setQuery` 回灌、把当前 query 冲掉。
 
@@ -1230,8 +1234,9 @@ detachable = true     # 允许分离为独立窗口
 - 依赖启动器搜索框的模式（子输入框、query 驱动）**不要**声明 `detachable`；
   确要在分离后保留输入的模式应在页面里**自带搜索框**——首选清单 `titlebar`
   字段（§6G.5，输入经 `app.setQuery` 驱动视图，uTools 式），或页内自建输入框
-  （判别手法见 `plugins/file-search`：`app.setQuery` 仅在启动器回声，一次
-  探针即可分辨本页是否在宿主搜索框所在的窗口）。
+  （「宿主搜索框是否可达」的判别手法见 `plugins/file-search`：`app.setQuery`
+  仅在启动器回声；**「启动器内 / 独立窗口」形态判别一律用 `lume.env.form`**，
+  不要数父文档 iframe 数，§6C）。
 - 示例 `examples/plugins/hello-mode/`（`detachable = true`）；实机脚本
   `scripts/cdp_plugin_window_verify.mjs` + `plugins/file-search/scripts/
   verify-host.mjs`（24 项端到端：标题栏槽位/setQuery 扇出/按键中继/
@@ -1300,8 +1305,8 @@ getter（如 `slot={cond ? <View /> : undefined}`）会在依赖变化时重新�
   助手——**非交互元素的按下自动调 `app.dragWindow()`**，交互元素
   （`a/button/input/select/textarea/label/summary`、`contenteditable`、
   `tabindex`、`role`）保留自己的点击，`user-select: text` 的目标不拖
-  （让位文字选择），双击不拖。装饰性/空白槽页（如 translator 把槽位只当
-  宿主形态判别器）因此整条可拖，插件**无需**再自带拖动处理；自带处理的
+  （让位文字选择），双击不拖。装饰性/空白槽页（如 translator 的空白装饰槽位）
+  因此整条可拖，插件**无需**再自带拖动处理；自带处理的
   页面（titlebar-demo 的 grip、file-search 的 body 监听）照常工作——同一
   手势的重复调用被宿主去重（300ms 门，防两次 `start_dragging` 让窗口在
   松手后吸住鼠标）。整页退出：`<html data-lume-drag="off">`（任意祖先
@@ -1344,7 +1349,8 @@ registry 不再 `import()` 任何第三方代码：`loadDiskPlugins` 注册**代
 目录内，越界即拒），相对导入改写为**帧内** blob URL 后 `import()`；模块缓存
 随帧生命周期（reload = 换帧 = 全新缓存）。逻辑工厂 `create(ctx)` 的
 `ctx` 就是帧内的 `window.lume`（与视图页同面，`db`/`http`/`fs`/… 每次
-调用带令牌走 supervisor → invoke → Rust 门控）。**面一致性是硬契约**
+调用带令牌走 supervisor → invoke → Rust 门控；同步常量 `env.form` 恒为
+`"launcher"`——逻辑帧永远跑在启动器侧，#42）。**面一致性是硬契约**
 （2026-10-12，ROADMAP #38 修复了两处 P6.5 起的漂移：`clipboard.readImage`
 缺 rpc case、逻辑帧缺 `fs`/`theme`/`app.detach`）；新增 ctx 方法必须同时
 改 `iframeBridge.tsx` 客户端、`public/pluginLogicFrame.js` 与 `rpc.ts`，
@@ -1677,7 +1683,7 @@ pluginBuiltin`。
   WebView2 里不再暴露给宿主 target，探针改用宿主侧的环形缓冲：
   - `window.__frameStates`（宿主，含分离窗口/逻辑宿主的页面）：视图帧经
     `__lumeFrameState` 上报的控件值（桥的 `reportState`：就绪/恢复即时报 +
-    1s 心跳），`values[{id,name,value}]`。
+    1s 心跳），`values[{id,name,value}]` 与 `form`（宿主形态 `"launcher"`/`"window"`，ROADMAP #42）。
   - `window.__logicCircuit`（main）：熔断状态（`failCounts`/`offline`）与
     失败原因环形缓冲 `log`。
   - `window.__sessionFrames`（main）：会话帧存取记录（`{op: put/take/

@@ -331,8 +331,11 @@ pub fn run() {
                     }
                 });
             }
-            // Alt+Space toggles the launcher (docs/ARCHITECTURE.md).
-            hotkey::register(app);
+            // Register the configured toggle hotkey (设置 → 快捷键) — a
+            // single attempt with no silent fallback: a combo another app
+            // already owns stays a settings problem resolved there
+            // (docs/ARCHITECTURE.md).
+            hotkey::register(app, &current.hotkeys.toggle);
             // 自动动作 — send a configured hotkey when a configured program
             // takes the foreground with a fresh window (shell hook, event-driven).
             automation::init(app);

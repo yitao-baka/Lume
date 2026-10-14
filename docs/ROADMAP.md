@@ -3271,3 +3271,39 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
   `cdp_mode_bar_icons_verify` **22/22**；`cargo test` **211 passed / 9 ignored**
   （+1），`cargo check` / `pnpm exec tsc --noEmit` / `pnpm run build` / debug
   exe 干净。
+
+---
+
+## 49. 废弃呼出键自动回退（已实现）
+
+**状态：已实现（2026-10-14）。** 需求（2026-10-14 用户）：极早期为调试加的
+候选链「Alt+Space 被占用 → 自动退到 Ctrl+Space → Ctrl+Alt+Space」已无价值，
+予以废弃。废弃后呼出键只注册设置里的那一个组合（`hotkeys.toggle`，默认
+Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由用户在
+设置 → 快捷键 里解决（录制仍实时校验占用；托盘 → 设置 始终可达，Ctrl+Space
+等只作为可选预设，显式选择才注册）。
+
+### 49.1 实现
+
+- `hotkey.rs`：删除 `CANDIDATES` 与逐个尝试的循环；`register(app, combo)`
+  单次注册传入的组合，成功记入 `ActiveHotkey` 并打印
+  `[hotkey] registered <combo>`，失败打印 `[hotkey] <combo> unavailable: …`
+  + 指引行、`ActiveHotkey` 留空。`validate_hotkey` / `apply` / `get_hotkey`
+  不变。
+- `lib.rs`：setup 改为 `hotkey::register(app, &current.hotkeys.toggle)`，
+  启动即按生效设置注册——顺带修掉旧候选链的副作用：自定义呼出键在重启后被
+  Alt+Space 顶掉（旧 `register` 不读设置）。
+- 文档：`ARCHITECTURE.md` / `SETTINGS.md` / `TESTING.md` / `README.md`、
+  本节、`CHANGELOG.md`。
+
+### 49.2 验证
+
+- debug exe 实机（`src-tauri/target/debug/settings/settings.toml` 为现场）：
+  A 默认设置 → `[hotkey] registered Alt+Space`；B 外部进程先 `RegisterHotKey`
+  占住 Alt+Space 再启动 → `[hotkey] Alt+Space unavailable: HotKey already
+  registered …` + 指引行，日志无任何 `registered Ctrl+…`，占位进程随后注册
+  Ctrl+Space 成功（证明确无回退）；C 预置 `toggle = "Ctrl+Alt+F13"` 重启 →
+  `[hotkey] registered Ctrl+Alt+F13`（旧代码此处会被 Alt+Space 顶掉），结束
+  恢复现场。
+- `cargo check` / `cargo test`（**211 passed / 9 ignored**）干净；debug exe
+  构建（`pnpm run tauri build --debug --no-bundle`）干净。

@@ -66,10 +66,11 @@ dev URL instead.
 
 ### Launcher basics
 
-1. **Shortcut registers** — the console logs which combo won, e.g.
-   `[hotkey] registered Ctrl+Space`. If `Alt+Space` is preferred but taken by
-   another app (uTools, PowerToys Run), the fallback chain picks the next free
-   combo automatically.
+1. **Shortcut registers** — the console logs the configured combo, e.g.
+   `[hotkey] registered Alt+Space`. If another app already owns it (uTools,
+   PowerToys Run), nothing is registered and the log says
+   `[hotkey] Alt+Space unavailable: …` — no fallback: free the combo, or
+   record a free one in 设置 → 快捷键 (tray → 设置 opens it).
 2. **Toggle** — press the registered combo: the launcher appears centered with
    the search input focused; it should feel instant (< 50ms target).
 3. **Auto-hide** — click any other window: the launcher dismisses itself.
@@ -374,8 +375,10 @@ dev URL instead.
 
 ## Known hotkey conflicts
 
-- **uTools / PowerToys Run** both register `Alt+Space` by default. Lume skips
-  the combination if it cannot register it. To restore `Alt+Space` as the
-  Lume shortcut, change or disable the conflicting app's hotkey.
-- **Chinese IME** may use `Ctrl+Space` to toggle input method; Lume still
-  registers it at the OS level (RegisterHotKey), so both can coexist.
+- **uTools / PowerToys Run** both register `Alt+Space` by default. If Lume
+  cannot register its configured toggle combo it logs the failure and runs
+  without a keyboard shortcut (no silent fallback). Free the combo in the
+  other app, or record a free one in 设置 → 快捷键 (tray → 设置).
+- **Chinese IME** may use `Ctrl+Space` to toggle the input method. Choosing
+  it for Lume only works when the OS lets Lume register it — `validate_hotkey`
+  reports `taken` otherwise; pick another combo.

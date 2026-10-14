@@ -35,7 +35,7 @@ Rust Core (src-tauri/src/)
   ├─ recent.rs   — 最近使用 bar (SQLite `recent_apps`, WAL connection)
   ├─ settings.rs — settings.toml / default.toml / backup.toml three-file system
   ├─ tray.rs     — system tray icon, Restart/Exit menu, left-click toggle
-  ├─ hotkey.rs   — toggle shortcut: Alt+Space preferred, fallback chain
+  ├─ hotkey.rs   — toggle shortcut: the configured combo (default Alt+Space)
   ├─ svc.rs      — LumeSVC SYSTEM service (SCM + IPC pipe + index dormancy)
   ├─ agent.rs    — elevation-agent client, `\\.\pipe\LumeAgent` server, task
   ├─ input.rs    — synthetic keys (SendInput) + window/process/token probes
@@ -193,18 +193,19 @@ empty-query main menu, below 最近使用. Both bars are titled + expandable (on
 row collapsed, all rows on 展开).
 
 ### `hotkey.rs`
-Registers the toggle shortcut through `tauri-plugin-global-shortcut`. Other
-apps own some combinations by default (uTools and PowerToys Run both claim
-`Alt+Space`), so a candidate list is tried in order and the first one the OS
-accepts wins:
+Registers exactly one toggle shortcut through `tauri-plugin-global-shortcut`:
+the configured `hotkeys.toggle` combo (default `Alt+Space`). A conflict with
+another app (uTools and PowerToys Run both claim `Alt+Space` by default) is
+reported in the log and left as-is — there is no automatic switch to a
+different combo; the user frees the combo or records a free one in
+设置 → 快捷键, where `validate_hotkey` checks availability live (the tray's
+设置 item keeps that page reachable when no shortcut registered at all).
 
-`Alt+Space → Ctrl+Space → Ctrl+Alt+Space`
-
-The winner is stored in the `ActiveHotkey` state and surfaced to the UI via
-the `get_hotkey` command, so the hint line can tell the user what to press.
-The plugin handler filters `ShortcutState::Pressed` for the active combo and
-calls `window::toggle_launcher`. If no candidate registers, the failure is
-logged and the launcher stays keyboard-less until a key frees up.
+The active combo is stored in the `ActiveHotkey` state and surfaced to the UI
+via the `get_hotkey` command, so the hint line can tell the user what to
+press. The plugin handler filters `ShortcutState::Pressed` for the active
+combo and calls `window::toggle_launcher`; if the combo could not be
+registered, `ActiveHotkey` stays empty and nothing toggles.
 
 ### `envwatch.rs`
 Spawns one background thread (no polling) that keeps Lume's **own process
@@ -526,8 +527,8 @@ before adding a field:
   见上），设置「各模式使用独立搜索词」开启后恢复逐页独立。
 - `AppIndex` mirrors the `cache.rs` SQLite DBs; it is refreshed at startup and
   hourly (differential), so search reflects new files without a manual rescan.
-- `ActiveHotkey` is set once at startup from the first successful
-  registration and read by the frontend on mount.
+- `ActiveHotkey` is set at startup from registering the configured toggle
+  combo (empty when another app owns it) and read by the frontend on mount.
 - `ClipboardState` (SQLite connection + sequence tracking) is managed at
   startup; the listener thread shares it through `AppHandle`.
 

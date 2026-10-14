@@ -1,9 +1,10 @@
 //! Global hotkey: toggles the launcher window.
 //!
-//! A priority list of candidate shortcuts is tried in order — the first one
-//! the OS lets us register wins. This keeps the launcher usable even when
-//! the preferred combination is already owned by another process (e.g.
-//! Alt+Space by uTools or PowerToys Run).
+//! Exactly one shortcut is registered — the configured toggle combo from
+//! settings (`hotkeys.toggle`, default `Alt+Space`). A combo another process
+//! already owns (uTools, PowerToys Run, …) is reported as a conflict, never
+//! silently swapped for a different one: the user frees the combo or records
+//! a new one in 设置 → 快捷键, where `validate_hotkey` checks it live.
 //!
 //! The active shortcut is stored in [`ActiveHotkey`] and exposed to the
 //! frontend via the `get_hotkey` command so the UI can show what to press.
@@ -14,9 +15,6 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
-
-/// Candidate shortcuts, most preferred first.
-const CANDIDATES: &[&str] = &["Alt+Space", "Ctrl+Space", "Ctrl+Alt+Space"];
 
 /// State holding the shortcut currently registered, if any.
 pub struct ActiveHotkey(Mutex<Option<String>>);
@@ -47,24 +45,24 @@ pub fn build() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         .build()
 }
 
-/// Register the first available candidate shortcut. Skips candidates the OS
-/// rejects (already registered by another process) and logs each attempt so
-/// hotkey conflicts are diagnosable at a glance.
-pub fn register(app: &tauri::App) {
+/// Register the configured toggle shortcut — a single attempt, no fallback.
+/// If the OS rejects it (another process owns the combo) nothing is
+/// registered and the failure is logged; the user resolves the conflict in
+/// 设置 → 快捷键 (the tray keeps that page reachable).
+pub fn register(app: &tauri::App, combo: &str) {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let hotkey_state = app.state::<ActiveHotkey>();
     let mut active = hotkey_state.0.lock().unwrap();
-    for candidate in CANDIDATES {
-        match app.global_shortcut().register(*candidate) {
-            Ok(_) => {
-                *active = Some((*candidate).to_string());
-                eprintln!("[hotkey] registered {candidate}");
-                return;
-            }
-            Err(e) => eprintln!("[hotkey] {candidate} unavailable: {e}"),
+    match app.global_shortcut().register(combo) {
+        Ok(_) => {
+            *active = Some(combo.to_string());
+            eprintln!("[hotkey] registered {combo}");
+        }
+        Err(e) => {
+            eprintln!("[hotkey] {combo} unavailable: {e}");
+            eprintln!("[hotkey] no toggle shortcut — free the combo or change it in Settings");
         }
     }
-    eprintln!("[hotkey] no shortcut could be registered (tried {CANDIDATES:?})");
 }
 
 /// Return the active toggle shortcut string, e.g. "Alt+Space" ("" if none).

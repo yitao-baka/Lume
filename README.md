@@ -17,7 +17,8 @@ The goal is:
 **Pre-26.10 — plugin platform + whole-drive file search + system integration**
 (current)
 
-- ✅ Global shortcut — Alt+Space preferred, auto-fallback to a free combo
+- ✅ Global shortcut — configurable (default Alt+Space); conflicts reported,
+  never silently swapped
 - ✅ Main menu — 最近使用 + 已固定 + 推荐使用 (plugin context rows) bars
   (expandable), pinyin search, arrow/mouse navigation, real icons,
   Explorer-folder context bar
@@ -136,8 +137,9 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
 
 ## Current (Pre-26.10)
 
-- Launcher — hidden at startup, Alt+Space toggles (auto-fallback to a free
-  combo when Alt+Space is taken, e.g. by uTools); auto-hides on focus loss;
+- Launcher — hidden at startup, the configured toggle combo (default
+  Alt+Space) summons it; a combo owned by another app (uTools, PowerToys) is
+  reported instead of silently swapped; auto-hides on focus loss;
   single-instance mutex; auto-start at logon
 - Navigate main menu — 最近使用 + 已固定 bars (both titled + expandable),
   continuous grid navigation, arrow + mouse navigation, click to launch; typing

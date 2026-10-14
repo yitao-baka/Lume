@@ -6,6 +6,22 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Removed
+
+- **呼出键自动回退（ROADMAP #49）** — 废弃极早期的候选链「Alt+Space 被占用 →
+  Ctrl+Space → Ctrl+Alt+Space，取第一个系统允许的组合」：启动改为只注册设置里的
+  `hotkeys.toggle`（默认 Alt+Space）一次，冲突如实写日志
+  （`[hotkey] <combo> unavailable: …` + 指引行）并保持无呼出键，不再静默换键；改键走
+  设置 → 快捷键（录制仍实时校验占用；托盘 → 设置 始终可达）。顺带修掉旧候选
+  链的副作用：自定义呼出键重启后被 Alt+Space 顶掉（旧 `register` 不读设置）。
+  `docs/ARCHITECTURE.md` / `SETTINGS.md` / `TESTING.md` / `ROADMAP.md` #49、
+  `README.md` 同步。验证：debug exe 实机——A 默认设置日志
+  `[hotkey] registered Alt+Space`；B 外部进程先占 Alt+Space 再启动，日志
+  `[hotkey] Alt+Space unavailable: HotKey already registered …` + 无任何
+  `registered Ctrl+…`，占位进程随后注册 Ctrl+Space 成功（证明无回退）；
+  C 预置 `toggle = "Ctrl+Alt+F13"` 重启日志 `registered Ctrl+Alt+F13` 后恢复
+  现场；`cargo check` / `cargo test`（211 passed / 9 ignored）干净。
+
 ### Fixed
 
 - **搜索框删空收尾丢失（translator 1.4.1，插件侧修复）** — translator 模式页

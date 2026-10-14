@@ -236,6 +236,8 @@
   "copyFailed": "Copy failed",
   "rememberLastPage": "Remember last page",
   "rememberLastPageHint": "Reopen on the last page (mode + category) after a restart too; within a session the launcher always resumes the last page and its on-screen state. Search text is never written to disk",
+  "perModeQuery": "Independent search text per mode",
+  "perModeQueryHint": "Off: every mode shares one search-box value — the latest input wins (session only, never written to disk). On: each mode remembers its own search text like before.",
   "idleReset": "Idle reset",
   "idleResetMinutes": "Reset after",
   "idleResetHint": "When the launcher has been hidden longer than this, the next summon starts clean: home page, empty search, and a reset for every plugin page that is not exempt. Exempt plugin pages keep their query and state — set that per plugin in the Plugins page, or let the manifest declare it.",

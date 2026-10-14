@@ -177,6 +177,11 @@ pub struct Appearance {
     /// 开启后只显示图标（悬停 tooltip / 无障碍名给模式名）。
     #[serde(default)]
     pub mode_switch_icons_only: bool,
+    /// 各模式独立搜索词（ROADMAP #48）——默认关：搜索框内容全局共享、以
+    /// 最新输入为准；开启后每个模式分别记住自己的查询（仅会话内存，重启
+    /// 不保留；查询从不落盘）。
+    #[serde(default)]
+    pub per_mode_query: bool,
     /// Shift+Enter launches the selected app with administrator privileges.
     #[serde(default = "default_shift_enter_admin")]
     pub shift_enter_admin: bool,
@@ -516,6 +521,7 @@ impl Default for Settings {
                 show_explorer_bar: true,
                 expand_pinned: false,
                 mode_switch_icons_only: false,
+                per_mode_query: false,
                 shift_enter_admin: true,
                 recent_count: 20,
                 search_placeholder_apps: String::new(),
@@ -1137,6 +1143,7 @@ mod tests {
         assert_eq!(s.appearance.entry_size, 110);
         assert_eq!(s.appearance.window_height, 520);
         assert!(!s.appearance.mode_switch_icons_only, "图标开关默认关");
+        assert!(!s.appearance.per_mode_query, "各模式独立搜索词默认关");
         assert_eq!(s.hotkeys.toggle, "Alt+Space");
         assert!(s
             .index
@@ -1197,6 +1204,30 @@ mod tests {
         fs::write(settings_path(&base), stripped).unwrap();
         let s = read_settings(&base);
         assert!(!s.appearance.mode_switch_icons_only);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// 各模式独立搜索词（ROADMAP #48）：默认关（= 全局共享；旧 settings.toml
+    /// 缺键 → serde default），开启值走 light write 往返。
+    #[test]
+    fn per_mode_query_defaults_off_and_round_trips() {
+        let base = temp_base("per-mode-query");
+        ensure_settings_files(&base).unwrap();
+        assert!(!read_settings(&base).appearance.per_mode_query, "default off");
+        // Older settings.toml without the key → serde default false.
+        let text = fs::read_to_string(settings_path(&base)).unwrap();
+        let stripped = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("per_mode_query"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), stripped).unwrap();
+        assert!(!read_settings(&base).appearance.per_mode_query);
+        // Light write persists the on value.
+        let mut next = read_settings(&base);
+        next.appearance.per_mode_query = true;
+        write_settings_light(&base, &next).unwrap();
+        assert!(read_settings(&base).appearance.per_mode_query);
         fs::remove_dir_all(&base).ok();
     }
 

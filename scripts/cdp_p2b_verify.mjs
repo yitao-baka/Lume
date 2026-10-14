@@ -78,6 +78,23 @@ const ps = (cmd) => execSync(
   { encoding: "utf8" }
 ).trim();
 mkdirSync("test", { recursive: true });
+// 剪贴板写入重试：宿主（或其它常驻程序）读剪贴板的一瞬间会短暂占用它，
+// `Clipboard.SetText` 会直接抛 "operation did not succeed"。这是环境级的
+// 瞬时锁（在未改动的基线构建上同样复现过），用有界重试吸收，不掩盖应用
+// 行为断言。
+const setTextRetry = (text) => {
+  let lastErr = null;
+  for (let i = 0; i < 12; i++) {
+    try {
+      ps(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetText("${text}")`);
+      return true;
+    } catch (e) {
+      lastErr = e;
+      const t0 = Date.now(); while (Date.now() - t0 < 400) {}
+    }
+  }
+  throw lastErr;
+};
 
 async function findMain() {
   const pages = ((await getTargets()) ?? []).filter((t) => t.type === "page" && t.url.includes("tauri.localhost"));
@@ -167,7 +184,7 @@ await invoke("toggle_launcher");
 await sleep(1800);
 
 // ── ② 前置：剪贴板无图 → 空查询无 img 行 ──
-ps(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetText("plain text probe")`);
+setTextRetry("plain text probe");
 await type("clear");
 await sleep(600);
 await type("");
@@ -205,7 +222,7 @@ if (names.some((n) => n.includes("图片处理器"))) {
 await m.shot("p2b_files.png");
 
 // ── ① files：剪贴板先换回文本（探测消陈旧 img 行），再模拟拖入 ──
-ps(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetText("plain text probe")`);
+setTextRetry("plain text probe");
 const emit = await emitDrop([FIX_MD, FIX_TXT, FIX_PNG]);
 await sleep(1500);
 names = await rowNames();

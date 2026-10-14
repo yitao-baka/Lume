@@ -143,6 +143,13 @@ export default function LauncherPane(props: {
           />
         </Row>
         <span class="settings-hint">{t("rememberLastPageHint")}</span>
+        <Row label={t("perModeQuery")}>
+          <Toggle
+            checked={a().per_mode_query}
+            onChange={(v) => props.onChange({ per_mode_query: v })}
+          />
+        </Row>
+        <span class="settings-hint">{t("perModeQueryHint")}</span>
         <Row label={t("idleReset")}>
           <Toggle
             checked={a().idle_reset_enabled}

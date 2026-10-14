@@ -374,6 +374,13 @@ before adding a field:
   丢弃会话帧。豁免 = 清单 `keep_session` 或用户覆盖
   （`settings.plugins.keep_session_overrides`，用户值优先）；分离窗口不参与；
   `lastHiddenAt` 仅内存，跨重启恢复仍由 `remember_last_page` 决定。
+- **搜索框路由（ROADMAP #48）**：搜索框默认是**全局单值**（`App.tsx` 的
+  `sharedQuery`，以最新输入为准）——模式切换 / 切换键把该值推入目标页的
+  query 镜像并按其 `search`；插件 `app.setQuery`、输入框占用（subInput）回填
+  写同一份值；打开首页条目后的下次呼出、闲置重置清空它，分离窗口回流把窗口
+  最后查询并入。设置「各模式使用独立搜索词」`appearance.per_mode_query`
+  （默认关）开启后恢复 #48 之前的逐页独立 query（仍仅会话内存）。经关键字 /
+  feature 行**进入**某模式会消耗共享值——入口触发词不是目标页的过滤条件。
 - **Bridge host-form constant（ROADMAP #42）**：`injectBridge` /
   `injectTitlebarBridge` pin a synchronous `lume.env.form` on every plugin
   frame — `"launcher"` (inside the launcher window) or `"window"` (a
@@ -385,7 +392,9 @@ before adding a field:
   + page pills + settings gear). Controlled/pure: the shell owns query
   routing (page `handleQuery` interception → `subInput` ownership → search)
   and placeholder resolution (`subInput` → page `placeholder()` → plugin
-  `setPlaceholder` map). Pill presentation is setting-driven (#47): icon +
+  `setPlaceholder` map). The default route is the one shared query
+  (ROADMAP #48 — see above); `appearance.per_mode_query` restores per-page
+  queries. Pill presentation is setting-driven (#47): icon +
   name by default, icons-only with `appearance.mode_switch_icons_only` on
   (`title`/`aria-label` carry the name; a mode without an icon falls back to
   `res/icons/unknow_universal.svg`).
@@ -511,9 +520,10 @@ before adding a field:
 
 - Window starts hidden (`"visible": false`), first shown by the hotkey, and
   auto-hides on focus loss (`lib.rs` window-event handler).
-- The webview clears the query, results and mode on window-focus, then
-  repopulates the Navigate bars (最近使用 / 已固定) — each invocation starts
-  fresh (Spotlight-like), and the expanded-bar state is reset.
+- 会话续存（#40）：隐藏 / 呼出 / 模式切换都不再清 query / results / mode，
+  热键重呼出恢复上次页面与状态；只有「打开首页条目后的下次呼出」（#40 D1）
+  与闲置重置（#46）清空查询并回导航页。搜索框默认是一份全局共享值（#48，
+  见上），设置「各模式使用独立搜索词」开启后恢复逐页独立。
 - `AppIndex` mirrors the `cache.rs` SQLite DBs; it is refreshed at startup and
   hourly (differential), so search reflects new files without a manual rescan.
 - `ActiveHotkey` is set once at startup from the first successful

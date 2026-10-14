@@ -85,6 +85,9 @@ function App() {
   /** Settings-driven: 模式切换栏仅显示图标 (ROADMAP #47, default off —
    * pills keep icon + name). */
   const [modeIconsOnly, setModeIconsOnly] = createSignal(_a?.mode_switch_icons_only ?? false);
+  /** Settings-driven: 各模式使用独立搜索词 (ROADMAP #48, default off — every
+   * mode shares one search-box value and the latest input wins). */
+  const [perModeQuery, setPerModeQuery] = createSignal(_a?.per_mode_query ?? false);
   /** Settings-driven: Shift+Enter launches with administrator privileges. */
   const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(_a?.shift_enter_admin !== false);
   /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
@@ -127,13 +130,39 @@ function App() {
    * and the 展开 button's visibility. */
   const [barCols, setBarCols] = createSignal(6);
 
-  // Each page keeps its own query, so clearing one never resets the other.
-  // Pages live in the registry; the shell reads through the accessors.
+  // Search-box routing (#48): by default every mode shares ONE query — the
+  // latest input wins and is mirrored into the active page; the per-mode
+  // toggle keeps each page's own in-session query instead. Pages live in the
+  // registry; the shell reads through the accessors.
   const activeMode = () => modeById(mode());
-  const query = (): string => activeMode()?.query() ?? "";
-  const setQuery = (q: string) => {
-    activeMode()?.setQuery(q);
+  const [sharedQuery, setSharedQuery] = createSignal("");
+  /** CDP tap (scripts/cdp_mode_query_verify.mjs) — query routing is otherwise
+   * only observable through the final box text. */
+  const queryRoute = (entry: Record<string, unknown>) => {
+    const w = window as unknown as { __queryRoute?: unknown[] };
+    const tap = (w.__queryRoute ??= []);
+    tap.push({ at: Date.now(), mode: mode(), ...entry });
+    tap.splice(0, Math.max(0, tap.length - 80));
   };
+  const query = (): string => (perModeQuery() ? activeMode()?.query() ?? "" : sharedQuery());
+  const setQuery = (q: string) => {
+    if (!perModeQuery()) setSharedQuery(q);
+    activeMode()?.setQuery(q);
+    queryRoute({ ev: "set", q, perMode: perModeQuery() });
+  };
+  /** Clear the box: the shared value (default) plus the active page's mirror;
+   * other pages adopt whatever is current when they are activated. */
+  function clearActiveQuery(ev: "clear" | "consume" = "clear") {
+    if (!perModeQuery()) setSharedQuery("");
+    activeMode()?.setQuery("");
+    queryRoute({ ev });
+  }
+  /** #48: a row entry (keyword row / feature payload / mode jump) consumes the
+   * shared query — the text is the trigger for the action, not a filter for
+   * the page being entered. Per-mode mode keeps every page's own query. */
+  function consumeSharedQuery() {
+    if (!perModeQuery()) clearActiveQuery("consume");
+  }
 
   // Keep-alive host stack (ROADMAP #40): every visited page stays mounted
   // (hidden) so its DOM/JS state survives mode switches and hides; over the
@@ -161,6 +190,12 @@ function App() {
     ensureHost(id);
     setMode(id);
     setSubInput(null);
+    // #48: the closed window's final query is the latest input — it becomes
+    // the one shared value (the registry already restored the page mirror).
+    if (!perModeQuery()) {
+      setSharedQuery(modeById(id)?.query() ?? sharedQuery());
+      queryRoute({ ev: "adopt", q: sharedQuery() });
+    }
     sizer.invalidate();
     await runSearch(query());
   }
@@ -241,6 +276,9 @@ function App() {
   function applyIdleReset() {
     ensureHost(NAVIGATE_MODE_ID);
     setMode(NAVIGATE_MODE_ID);
+    // #48: the shared value is part of the reset — clear it up front so every
+    // page adopts the empty state when it is entered next.
+    if (!perModeQuery()) setSharedQuery("");
     const home = modeById(NAVIGATE_MODE_ID);
     home?.setQuery("");
     const reset: ModeId[] = [];
@@ -294,10 +332,11 @@ function App() {
       setMode(NAVIGATE_MODE_ID);
     }
     if (entryOpened && mode() === NAVIGATE_MODE_ID) {
-      const home = modeById(NAVIGATE_MODE_ID);
-      if (home && home.query() !== "") {
-        home.setQuery("");
-        home.reset?.();
+      // D1 (#40): a home entry consumed the query — clear it. #48: in shared
+      // mode this clears the one value every page adopts on activation.
+      if (query() !== "") {
+        clearActiveQuery();
+        activeMode()?.reset?.();
       }
     }
     entryOpened = false;
@@ -366,6 +405,7 @@ function App() {
   async function runSearch(q: string) {
     activeMode()?.setSelected(0);
     requestSeq++;
+    queryRoute({ ev: "search", q });
     await activeMode()?.search(q);
   }
 
@@ -416,7 +456,11 @@ function App() {
     markMouse,
     openMenu: setMenu,
     mode,
-    requestMode: (id) => void switchMode(id),
+    requestMode: (id) => {
+      // #48: entering a mode from a row consumes the query (see below).
+      consumeSharedQuery();
+      void switchMode(id);
+    },
     runSearch,
     setQuery,
     setModePlaceholder: (pluginId, text) => {
@@ -464,6 +508,9 @@ function App() {
       const kind = pluginKind(pluginId);
       if (!kind) return false;
       if (kind === "mode") {
+        // #48: a payload entry consumes the box — the target page must not be
+        // filtered by the entry trigger (matches the pre-#48 empty box).
+        consumeSharedQuery();
         // The mode is detached: deliver the payload into its window and
         // raise it — no page switch happens here (P6).
         if (isPluginDetached(pluginId)) {
@@ -482,8 +529,9 @@ function App() {
           deliverFeature(pluginId, info);
           // The payload may have changed the mode's row source (e.g. a list
           // template's quick-add); re-run its search so rows reflect it.
-          const inst = modeById(pluginId);
-          if (inst) void runSearch(inst.query());
+          // `query()` is the box text: the shared value (#48) or, in per-mode
+          // mode, the page's own query (active mode = pluginId here).
+          if (modeById(pluginId)) void runSearch(query());
         });
         return true;
       }
@@ -614,6 +662,21 @@ function App() {
       setEntrySize(s.appearance.entry_size);
       setShiftEnterAdmin(s.appearance.shift_enter_admin !== false);
       setModeIconsOnly(s.appearance.mode_switch_icons_only);
+      // #48: toggling 各模式独立搜索词 keeps the on-screen text stable.
+      // off→on: seed every loaded page with the current shared text (they
+      // diverge from there); on→off: the active page's text becomes the one
+      // shared value.
+      const nextPerMode = s.appearance.per_mode_query ?? false;
+      if (nextPerMode !== perModeQuery()) {
+        if (nextPerMode) {
+          const q = sharedQuery();
+          for (const mp of modePlugins()) mp.instance.setQuery(q);
+        } else {
+          setSharedQuery(activeMode()?.query() ?? "");
+        }
+        setPerModeQuery(nextPerMode);
+        queryRoute({ ev: "toggle", perMode: nextPerMode });
+      }
       setWindowHeight(s.appearance.window_height);
       setWindowWidth(s.appearance.window_width);
       setSwitchKey(s.hotkeys.switch_mode || "Tab");
@@ -637,8 +700,8 @@ function App() {
         if (!modeById(mode())) {
           ensureHost(NAVIGATE_MODE_ID);
           setMode(NAVIGATE_MODE_ID);
-          activeMode()?.setQuery("");
-          void runSearch("");
+          clearActiveQuery();
+          void runSearch(query());
         }
       });
       setRememberLastPage(s.appearance.remember_last_page ?? false);
@@ -722,11 +785,18 @@ function App() {
     setMode(m);
     // 搜索框所有权属于上一个页面：切模式即交还宿主（P2.3）。
     setSubInput(null);
+    // #48: in shared mode the incoming page adopts the one query — mirror it
+    // into the page before searching so its own query-driven logic (empty
+    // state, ←/→ keys) agrees with the box. Per-mode mode keeps its state.
+    if (!perModeQuery()) {
+      modeById(m)?.setQuery(sharedQuery());
+      queryRoute({ ev: "switch", to: m, q: sharedQuery(), mirror: modeById(m)?.query() ?? "" });
+    }
     // #40: the target page keeps its session state (query, category, scroll,
     // page JS state) — only explicit resets (reload/disable/home entry) move it.
     sizer.invalidate(); // the height model differs per page — force a resize
     persistLastPage();
-    // Re-search the target page with its own (independent) query.
+    // Re-search with the shared value (#48) or the page's own query.
     await runSearch(query());
   }
 

@@ -3207,3 +3207,67 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
 - 回归：`cdp_plugin_mode_bar_verify` **15/15**；`cargo test` **210 passed /
   9 ignored**（新增：默认值断言 + 旧 settings.toml 缺键回退）；`cargo check` /
   `pnpm exec tsc --noEmit` / `pnpm run build` / debug exe 构建干净。
+
+---
+
+## 48. 搜索框内容跨模式共享（默认；可切回逐模式独立，已实现）
+
+**状态：已实现（2026-10-14）。** 需求（2026-10-14 用户）：主窗口搜索框在
+不同模式下各自独立（导航页输 A，切到剪贴板为空；各模式内容被各自记住），应为
+「以用户输入的最新数据为准」（全局共享）；旧行为保留为设置项、默认关。
+用户拍板：重启后仍不保留搜索词（维持「查询从不落盘」）。
+
+### 48.1 语义（已按用户拍板执行）
+
+- **默认（`per_mode_query = false`）**：搜索框是一份全局共享值，以最新输入
+  为准——任何模式的输入、插件 `app.setQuery`、输入框占用（subInput）回填都
+  写这份值；模式切换/切换键把该值灌入目标页（query 镜像 + 按它 `search`），
+  所以切到剪贴板会看到同一段文字并按其过滤结果。
+- **设置开（`per_mode_query = true`）**：恢复 #48 之前的逐页独立 query
+  （仅会话内存，切换互不覆盖）。
+- **行进入消耗共享值**：经关键字行（`lume-mode://`）/ feature / redirect
+  打开一个模式属于「使用条目」——入口触发词不是目标页的过滤条件，宿主先清空
+  共享值再切入（与旧行为「目标页框本来就是空的」一致；否则「进入 清单」会
+  把清单过滤成空列表）。
+- **清理路径作用于共享值**：打开首页条目后的下次呼出清空、闲置重置（#46）
+  清空、分离窗口关闭回流把窗口最后查询并入（最新输入为准）。
+- 运行中切换设置项不跳字：关→开时把当前共享文字播种给所有已加载模式作各自
+  起点；开→关时以当前活动页文字为准。
+- 搜索词仍只存内存、从不落盘；共享模式下 `keep_session` 闲置豁免只保页面
+  状态，不保独立搜索词（全局只有一份）。
+
+### 48.2 实现
+
+- Rust：`Appearance.per_mode_query: bool`（`#[serde(default)]`，旧
+  settings.toml 缺键 → false）+ `Settings::default` + 默认/缺键/轻写回归测试。
+- 前端：`App.tsx` 新增 `sharedQuery` 信号与 `query()/setQuery()` 路由、
+  `switchMode` 对目标页的镜像推送、`applyRuntimeSettings` 的开关过渡与播种、
+  `beginSummon` / `applyIdleReset` / 分离回流 / 设置失效回退的共享清理、
+  `requestMode` 与 `enterPlugin`（mode 分支）的行进入消耗；CDP tap
+  `window.__queryRoute`（set / switch / search / clear / consume / adopt /
+  toggle）。`settings/types.ts` + LauncherPane 开关（导航栏组，挨着「记住上次
+  所在页面」）+ 三语文案。
+- 文档：SETTINGS / ARCHITECTURE / PLUGIN_API（ModeInstance 表、状态重放、
+  §6E.2）/ TESTING / 本节 / CHANGELOG。
+
+### 48.3 验证
+
+- 新增 `scripts/cdp_mode_query_verify.mjs`（debug exe）**47/47 全过**：
+  A 默认共享（导航输入 → 切剪贴板 → 切回，输入框同值，目标页 mirror / 搜索
+  都按该值，剪贴板按它过滤）；B 真实设置面板开启独立（落盘 + 实时，播种起点
+  = 当前共享文字，之后导航 / 剪贴板各自记忆互不覆盖）；C 运行中关回共享
+  （当前活动页文字成为共享值并传播）、再开启（再次播种）；D 闲置重置
+  （Date.now 偏移 +31min）清空共享值且切模式仍为空；F keyword 行进入消耗
+  共享值（fixture `q48-mode`：行点击后输入框清空、tap consume、切回导航仍为
+  空）；E 重启（`__LUME_CONFIG__.appearance.per_mode_query` 首帧注入为 true，
+  搜索词不落盘）。脚本结束恢复原设置并移除 fixture。
+- #46 回归语义随 #48 钉住：`cdp_idle_reset_verify.mjs` 现在先开「各模式独立
+  搜索词」再跑（其豁免「查询保留」断言以此为前提；共享模式下的重置清共享由
+  #48 脚本 D 覆盖），**48/48**。
+- `cdp_p2b_verify.mjs` **29/29**（keyword 进入 / quick-add 行进入消耗语义）；
+  其 PowerShell 写剪贴板补了有界重试——本机存在环境级瞬时占用（未改动的基线
+  构建同样复现），重试不掩盖应用断言。
+- 回归：`cdp_plugin_state_verify` **54/54**、`cdp_plugin_lru_verify` **22/22**、
+  `cdp_mode_bar_icons_verify` **22/22**；`cargo test` **211 passed / 9 ignored**
+  （+1），`cargo check` / `pnpm exec tsc --noEmit` / `pnpm run build` / debug
+  exe 干净。

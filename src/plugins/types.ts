@@ -596,7 +596,9 @@ export interface PluginServices {
   mode(): string;
   /** Request that the root switches to the given mode id. */
   requestMode(id: string): void;
-  /** Overwrite the launcher search-box query (the active mode's query). */
+  /** Overwrite the launcher search-box query. Default routing (#48) writes
+   * the one shared value every mode adopts; with 各模式独立搜索词 on it writes
+   * the active mode's own query. */
   setQuery(q: string): void;
   /** Set the search box placeholder for one plugin's mode page ("" =
    * default). The plugin id is the caller's own — `createHostApi` supplies
@@ -654,7 +656,9 @@ export interface ModeKeyContext {
  * page implement the same contract as disk mode pages; the shell renders
  * `View` under the search box and delegates keys/activation to it. */
 export interface ModeInstance {
-  /** This mode's own query — independent per mode, like apps. */
+  /** The page's query mirror. In the default shared mode (#48) every page
+   * mirrors the one shared value (the shell writes it on activation); with
+   * 各模式独立搜索词 on it is this page's own in-session query. */
   query: () => string;
   setQuery(q: string): void;
   /** Run this mode's search (results are the mode's own concern). */

@@ -16,6 +16,9 @@
 //
 // 时间通过 page 上下文覆写 Date.now 加偏移模拟（锚点比较用的是挂钟）；
 // 每次进入可见期都先把偏移归零，避免影响窗口内其它时间逻辑。
+// #48 起：豁免页「查询保留」断言以「各模式独立搜索词」为前提——脚本先开启
+// 该设置（结束恢复原值）；默认共享语义（含闲置重置清空共享值）由
+// scripts/cdp_mode_query_verify.mjs 覆盖。
 import { spawn, execSync } from "node:child_process";
 import { mkdirSync, rmSync, cpSync, openSync } from "node:fs";
 
@@ -140,6 +143,24 @@ async function restoreSettings() {
     s.plugins.keep_session_overrides = original.plugins.keep_session_overrides ?? {};
     await invoke("save_settings", { new: s });
   } catch (err) { console.log("restore settings failed:", String(err)); }
+}
+/** #48: put the user's per-mode-query choice back — the run needs it pinned
+ * true until the very end (G re-enters an exempt page's query). */
+async function restorePerModeQuery() {
+  try {
+    const s = await invoke("get_settings");
+    s.appearance.per_mode_query = original.appearance.per_mode_query;
+    await invoke("save_settings", { new: s });
+  } catch (err) { console.log("restore per_mode_query failed:", String(err)); }
+}
+
+// #48: this script's contract is #46 under independent per-mode queries —
+// pin it on for the run (restored above at the end).
+{
+  const s = await invoke("get_settings");
+  s.appearance.per_mode_query = true;
+  await invoke("save_settings", { new: s });
+  await sleep(800);
 }
 
 // Install the simulated clock once (module scope resolves Date.now at call time).
@@ -283,5 +304,6 @@ const valG = await searchVal();
 check("G: exempt query restored", valG === "disabled-hello", valG);
 
 await restoreSettings();
+await restorePerModeQuery();
 console.log(`\nIDLE-RESET-VERIFY ${fail === 0 ? "PASS" : "FAIL"} (${pass}/${pass + fail})`);
 process.exit(fail === 0 ? 0 : 1);

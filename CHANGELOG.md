@@ -39,6 +39,24 @@ All notable changes to Lume are documented here. Format based on
   `pnpm run build` / `cargo check` / `cargo test`（202 passed / 9 ignored）
   干净。
 
+- **搜索框内容跨模式共享（ROADMAP #48）** — 默认（设置「各模式使用独立
+  搜索词」关）所有模式共享同一份搜索框内容：在任一模式输入后切模式 / 按切换
+  键，目标页显示同一段文字并按其搜索；插件 `app.setQuery`、输入框占用
+  （subInput）回填写同一份值；打开首页条目后的下次呼出与闲置重置清空它，
+  分离窗口关闭回流把窗口最后查询并入。经关键字 / feature 行**进入**某模式
+  属于使用条目，会消耗该值（入口触发词不是目标页的过滤条件）。新增设置
+  `appearance.per_mode_query`（默认关；设置 → 导航页 →「导航栏」组，挨着
+  「记住上次所在页面」）可恢复逐页独立查询（#48 之前行为）；两种模式都仅
+  会话内存、查询从不落盘。`docs/SETTINGS.md` / `PLUGIN_API.md` /
+  `ARCHITECTURE.md` / `TESTING.md` / `ROADMAP.md` #48 同步。验证：
+  `cdp_mode_query_verify` **47/47**（默认共享 / 面板开关实时 + 播种 / 行进入
+  消耗 / 闲置重置清共享 / 重启注入与不落盘）；`cdp_idle_reset_verify`
+  **48/48**（脚本钉住独立搜索词前提；共享重置由 #48 脚本覆盖）、
+  `cdp_p2b_verify` **29/29**、`cdp_plugin_state_verify` **54/54**、
+  `cdp_plugin_lru_verify` **22/22**、`cdp_mode_bar_icons_verify` **22/22**；
+  `cargo test` 211 passed / 9 ignored、`cargo check` / `tsc --noEmit` /
+  `pnpm run build` / debug exe 干净。
+
 ### Added
 
 - **模式切换栏仅图标（ROADMAP #47）** — 设置 → 导航页新增「模式切换栏仅显示

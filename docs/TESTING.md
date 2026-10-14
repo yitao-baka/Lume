@@ -330,7 +330,14 @@ dev URL instead.
    new-enter-beats-stale-snapshot rule (ROADMAP #42) are
    `node scripts/cdp_plugin_lru_verify.mjs` (generates its own filler modes
    and asserts one victim per overflow, a stored snapshot, and that the new
-   payload wins on remount).
+   payload wins on remount). Search-box routing across modes (ROADMAP #48) is
+   `node scripts/cdp_mode_query_verify.mjs` (with its own keyword fixture):
+   the default one shared value follows every mode switch + search, the real
+   settings pane toggle restores independent per-mode queries (seeded at the
+   moment of the flip), idle reset clears the shared value, keyword-row entry
+   consumes it, and a restart proves both the `__LUME_CONFIG__` injection and
+   that queries are never persisted. It restores the setting and removes its
+   fixture on exit.
 5. **Theme override** — `node scripts/cdp_plugin_theme_verify.mjs`; inspect the
    rendered canvas with the 1x1 screenshot sampler, not the sandbox DOM.
 6. **Mode-bar hiding, icons-only and result icons** — `node

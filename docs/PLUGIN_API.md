@@ -511,6 +511,13 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（P5：iframe 
 `enter`（若有）。含义：① 页面脚本请同步赋值 `lume.on.*`（异步赋值会错过首播）；
 ② 重复收到同一 `show`/`query` 是正常的，处理器应幂等；③ **收到新的 `enter` 会作废该插件还在等待重放的陈旧会话帧**（LRU 淘汰 / detach / 关闭回流的遗留）——用户带着新载荷重进时 enter 优先，详见下「状态快照」。
 
+**搜索框的共享单值（2026-10-14，ROADMAP #48）**：默认（设置「各模式使用独立
+搜索词」关）所有模式共享一份搜索框内容——切模式 / 切换键会把最新值灌入目标页
+（`setQuery` 镜像 + `search`），插件 `app.setQuery` 写的也是这份值；就绪重放
+里的 `query` 因此可能是从别的模式带过来的文字（不是本页上次的内容）。开启该
+设置恢复逐页独立。经关键字 / feature 行**进入**模式属于「使用条目」：宿主先
+清掉共享值再切换，目标页不会被入口触发词过滤。
+
 **`query` 空串的判别（2026-10-14，translator 1.4.1 实测固化）**：`query` 事件在
 状态重放时会**原样再发一次当前查询（含空串）**，而用户把搜索框删空同样是
 空串——「空串 = 用户清空」只在**它紧跟插件自己应用过的非空值之后**成立。把
@@ -661,7 +668,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 
 | 成员 | 调用方 / 时机 |
 |---|---|
-| `query()` / `setQuery(q)` | 组合根读取/设置当前页面查询（呼出续存、搜索框输入回写、首页条目后清空）。每个页面一份独立 query；hide/show 与切模式都不清（#40 会话续存）。 |
+| `query()` / `setQuery(q)` | 组合根读取/设置当前页面查询。默认（#48）是**全局共享一份**：最新输入为准，切模式把该值灌入本页并按其搜索，`app.setQuery` 也写这份值；设置「各模式使用独立搜索词」开启后恢复逐页独立 query（#48 之前行为）。hide/show 都不清（#40 会话续存）；打开首页条目后的下次呼出 / 闲置重置会清空共享值。 |
 | `search(q)` | 根 `runSearch` 对**活动页**的统一分发（导航首页同样走此路径）。实现须：取 `services.searchToken()` 快照 → 异步取数 → 令牌不一致则丢弃 → 写自己的 rows → `setSelected(0)` + 复位滚动 → `services.scheduleResize()`。 |
 | `reset()` | 每次**呼出**（`launcher-shown` → `beginSummon`，仅活动页）、页面挂载与启动页恢复时调用；#40 起切模式**不**调用，也不负责清 query/页面状态。实现只清多选/对话框/动画态等**每呼出状态**；rows 清空后由随后的 `runSearch` 重填。 |
 | `selected()` / `setSelected(i)` | 根 `moveSelection`（↑↓/网格移动）、`runSearch` 复位、Enter 激活前的对齐。 |
@@ -994,7 +1001,8 @@ lume.app.removeSubInput();                                       // 交还
   只有拥有者自己有效。
 - **自动释放**：切模式、再次呼出、插件被重载/关闭都会把搜索框
   交还宿主（所有权是会话级状态，不持久化）。
-- 与「会话续存」的关系：接管期间输入的文字仍写入该模式的 query（宿主照常显示），
+- 与「会话续存」的关系：接管期间输入的文字仍写入搜索框的当前值（#48 起默认
+  即全局共享值；开启「各模式使用独立搜索词」后写本页 query；宿主照常显示），
   但不会触发 `search`。
 
 ### 6E.3 provider 二级下钻（`drill` + `select` + `filter`）
@@ -1744,6 +1752,11 @@ pluginBuiltin`。
   - `window.__idleReset`（main，ROADMAP #46）：每次闲置重置的决策
     `{at, reset:[ids], kept:[ids]}`（`kept` = 分离中或豁免、未被重置的模式），
     环形缓冲 40 条——`scripts/cdp_idle_reset_verify.mjs` 的判据。
+  - `window.__queryRoute`（main，ROADMAP #48）：搜索框路由环形缓冲 80 条
+    `{at, mode, ev, q?, to?, mirror?, perMode?}`（`ev` =
+    set/switch/search/clear/consume/adopt/toggle）——共享查询的搬运、行进入
+    消耗与开关过渡最终只落到框内文字，探针靠它断言 mirror 写入与 consume；
+    `scripts/cdp_mode_query_verify.mjs` 的判据。
   - `window.__rpcLog` / `__logicEntries`（逻辑宿主）：帧 rpc 结局摘要与
     每插件帧状态（`loaded`/`calls`）。
   - `window.__pluginThemes`（各窗口，ROADMAP #36）：本插件的颜色模式偏好写入

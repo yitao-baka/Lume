@@ -385,7 +385,10 @@ before adding a field:
   + page pills + settings gear). Controlled/pure: the shell owns query
   routing (page `handleQuery` interception → `subInput` ownership → search)
   and placeholder resolution (`subInput` → page `placeholder()` → plugin
-  `setPlaceholder` map).
+  `setPlaceholder` map). Pill presentation is setting-driven (#47): icon +
+  name by default, icons-only with `appearance.mode_switch_icons_only` on
+  (`title`/`aria-label` carry the name; a mode without an icon falls back to
+  `res/icons/unknow_universal.svg`).
 - **拼接几何 (the seam)**: the surface is one continuous panel — literally
   one color: the panel fill, the DWM frame strip and the default plugin-page
   canvas are all `--surface` (see Surface in docs/UI_GUIDELINES.md; do not

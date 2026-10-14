@@ -333,12 +333,19 @@ dev URL instead.
    payload wins on remount).
 5. **Theme override** — `node scripts/cdp_plugin_theme_verify.mjs`; inspect the
    rendered canvas with the 1x1 screenshot sampler, not the sandbox DOM.
-6. **Mode-bar hiding and result icons** — `node
+6. **Mode-bar hiding, icons-only and result icons** — `node
    scripts/cdp_plugin_mode_bar_verify.mjs`; a `hidden = true` mode renders no
    pill and the switch key skips it (the cycle restarts at home), while its
    Navigate rows (keyword / feature) and provider results without their own
    `icon` default to the plugin's manifest icon, and provider icons given as
-   plugin-relative paths resolve through the asset protocol.
+   plugin-relative paths resolve through the asset protocol. The 仅图标
+   setting (#47) is `node scripts/cdp_mode_bar_icons_verify.mjs`: default
+   icon + name, icons-only toggled through the real settings pane (live
+   apply + persistence), constant pill height with a narrower bar, the
+   `unknow_universal.svg` fallback for icon-less modes, click + switch-key
+   still working, and the first frame after a restart already icons-only
+   (`__LUME_CONFIG__` injection). It restores the setting and removes its
+   fixture on exit.
 7. **`.lupx` packages** — `node scripts/cdp_lupx_verify.mjs`; cover inspect,
    install, overwrite relation (`upgrade` / `reinstall` / `downgrade`),
    uninstall and private-file preservation.

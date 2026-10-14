@@ -90,6 +90,12 @@ export default function LauncherPane(props: {
             onChange={(v) => props.onChange({ expand_pinned: v })}
           />
         </Row>
+        <Row label={t("modeSwitchIconsOnly")}>
+          <Toggle
+            checked={a().mode_switch_icons_only}
+            onChange={(v) => props.onChange({ mode_switch_icons_only: v })}
+          />
+        </Row>
         <Row label={t("shiftEnterAdmin")}>
           <Toggle
             checked={a().shift_enter_admin}

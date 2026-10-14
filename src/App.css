@@ -1101,6 +1101,17 @@ body.reorder-dragging {
   color: var(--text);
 }
 
+/* 仅图标（ROADMAP #47，设置默认关）：名称藏起，悬停 tooltip 给名。
+   横向内边距 10 → 8 保住点击热区，纵向不变 → 胶囊高度与带名态一致，
+   切换开关时搜索行不跳动。 */
+.mode-switch.icons-only .mode-switch-item {
+  padding: 5px 8px;
+}
+
+.mode-switch.icons-only .mode-switch-label {
+  display: none;
+}
+
 /* Loading gate feedback (the page below is hidden until `ModeInstance.ready`):
    the mode being loaded tints to the accent and its icon carries a spinner. */
 .mode-switch-item.loading {

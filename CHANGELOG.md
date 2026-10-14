@@ -41,6 +41,17 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **模式切换栏仅图标（ROADMAP #47）** — 设置 → 导航页新增「模式切换栏仅显示
+  图标」`appearance.mode_switch_icons_only`（默认关，保持 图标 + 名称）。
+  开启后模式胶囊只显示图标，`title`/`aria-label`（悬停 tooltip）保名；两种
+  呈现胶囊高度一致（切换不跳行）；无图标模式回退
+  `res/icons/unknow_universal.svg`。`docs/SETTINGS.md` / `ARCHITECTURE.md` /
+  `UI_GUIDELINES.md` / `TESTING.md` / `ROADMAP.md` #47 同步。验证：
+  `cdp_mode_bar_icons_verify` **22/22**（默认关 / 实时开关 / 真实设置面板
+  保存并应用 / 重启首帧注入 / 无图标回退 / 点击与切换键交互），回归
+  `cdp_plugin_mode_bar_verify` 15/15；`cargo test` 210 passed / 9 ignored、
+  `cargo check` / `tsc --noEmit` / `pnpm run build` / debug exe 干净。
+
 - **闲置重置（ROADMAP #46）** — 启动器隐藏超过阈值后的下一次呼出从干净状态
   开始：回导航页、清空搜索，并**完整重置**未豁免的插件页（查询 + 页面状态
   + 保活宿主 + 会话帧；下次进入冷启动）。默认**开 + 30 分钟**，设置 → 导航页

@@ -166,6 +166,7 @@
   "showRecent": "显示最近使用",
   "showExplorerBar": "显示「Windows 资源管理器」栏",
   "expandPinned": "默认展开已固定",
+  "modeSwitchIconsOnly": "模式切换栏仅显示图标",
   "shiftEnterAdmin": "Shift+Enter 以管理员身份启动",
   "explorerBar": "Windows 资源管理器",
   "openInCmd": "CMD 中打开",

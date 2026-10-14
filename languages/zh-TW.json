@@ -166,6 +166,7 @@
   "showRecent": "顯示最近使用",
   "showExplorerBar": "顯示「Windows 檔案總管」欄",
   "expandPinned": "預設展開已固定",
+  "modeSwitchIconsOnly": "模式切換欄僅顯示圖示",
   "shiftEnterAdmin": "Shift+Enter 以系統管理員身份啟動",
   "explorerBar": "Windows 檔案總管",
   "openInCmd": "在 CMD 中開啟",

@@ -80,8 +80,10 @@
 | 窗口位置 | `appearance.window_position` + `remember_position` | 居中 / 跟随鼠标 / 左上 / 右上 / 左下 / 右下 / **自定义**（=首次出现也不自动定位；Flutter 版没有） |
 
 组「导航栏」：显示最近使用 `show_recent`、显示 Explorer 栏
-`show_explorer_bar`、默认展开已固定 `expand_pinned`、Shift+Enter 管理员
-`shift_enter_admin`（均为 toggle）；最近使用条数 `recent_count`
+`show_explorer_bar`、默认展开已固定 `expand_pinned`、模式切换栏仅图标
+`mode_switch_icons_only`（默认关；开启后搜索行的模式胶囊只显示图标，
+悬停 tooltip 给名，无图标模式回退 `res/icons/unknow_universal.svg`）、
+Shift+Enter 管理员 `shift_enter_admin`（均为 toggle）；最近使用条数 `recent_count`
 （10/20/30/50）；应用 / 剪贴板占位符 `search_placeholder_apps` /
 `search_placeholder_clipboard`（220px 输入框）；记住上次所在页面
 `remember_last_page`（+ hint）。**#40 起语义（2026-10-13）**：会话内

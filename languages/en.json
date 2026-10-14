@@ -194,6 +194,7 @@
   "showRecent": "Show recent",
   "showExplorerBar": "Show Explorer-folder bar",
   "expandPinned": "Expand pinned by default",
+  "modeSwitchIconsOnly": "Mode bar shows icons only",
   "shiftEnterAdmin": "Shift+Enter runs as administrator",
   "explorerBar": "Windows Explorer",
   "openInCmd": "Open in CMD",

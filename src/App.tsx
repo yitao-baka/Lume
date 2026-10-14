@@ -82,6 +82,9 @@ function App() {
   });
   /** Key that switches pages (settings → 系统 → 快捷键). */
   const [switchKey, setSwitchKey] = createSignal(_cfg?.hotkeys?.switch_mode || "Tab");
+  /** Settings-driven: 模式切换栏仅显示图标 (ROADMAP #47, default off —
+   * pills keep icon + name). */
+  const [modeIconsOnly, setModeIconsOnly] = createSignal(_a?.mode_switch_icons_only ?? false);
   /** Settings-driven: Shift+Enter launches with administrator privileges. */
   const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(_a?.shift_enter_admin !== false);
   /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
@@ -610,6 +613,7 @@ function App() {
       );
       setEntrySize(s.appearance.entry_size);
       setShiftEnterAdmin(s.appearance.shift_enter_admin !== false);
+      setModeIconsOnly(s.appearance.mode_switch_icons_only);
       setWindowHeight(s.appearance.window_height);
       setWindowWidth(s.appearance.window_width);
       setSwitchKey(s.hotkeys.switch_mode || "Tab");
@@ -951,6 +955,7 @@ function App() {
         query={query}
         placeholder={placeholder}
         pages={pages}
+        iconsOnly={modeIconsOnly}
         onInput={(text) => void handleInput(text)}
         onSwitchPage={(id) => void switchMode(id)}
         onOpenSettings={() => void openSettings()}

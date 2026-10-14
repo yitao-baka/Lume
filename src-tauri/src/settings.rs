@@ -173,6 +173,10 @@ pub struct Appearance {
     /// Start the launcher with the 「已固定」 bar expanded (default: collapsed).
     #[serde(default)]
     pub expand_pinned: bool,
+    /// 模式切换栏仅显示图标（ROADMAP #47）——默认关：胶囊显示图标 + 名称；
+    /// 开启后只显示图标（悬停 tooltip / 无障碍名给模式名）。
+    #[serde(default)]
+    pub mode_switch_icons_only: bool,
     /// Shift+Enter launches the selected app with administrator privileges.
     #[serde(default = "default_shift_enter_admin")]
     pub shift_enter_admin: bool,
@@ -511,6 +515,7 @@ impl Default for Settings {
                 show_recent: true,
                 show_explorer_bar: true,
                 expand_pinned: false,
+                mode_switch_icons_only: false,
                 shift_enter_admin: true,
                 recent_count: 20,
                 search_placeholder_apps: String::new(),
@@ -1131,6 +1136,7 @@ mod tests {
         assert_eq!(s.appearance.language, "system");
         assert_eq!(s.appearance.entry_size, 110);
         assert_eq!(s.appearance.window_height, 520);
+        assert!(!s.appearance.mode_switch_icons_only, "图标开关默认关");
         assert_eq!(s.hotkeys.toggle, "Alt+Space");
         assert!(s
             .index
@@ -1173,6 +1179,24 @@ mod tests {
         let s = read_settings(&base);
         assert_eq!(s.appearance.window_width, 720);
         assert_eq!(s.hotkeys.switch_mode, "Tab");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// A settings.toml written before `mode_switch_icons_only` existed must
+    /// load with the switch off (serde default), not fail the whole table.
+    #[test]
+    fn legacy_settings_without_mode_switch_icons_only_defaults_off() {
+        let base = temp_base("legacy-icons-only");
+        ensure_settings_files(&base).unwrap();
+        let text = fs::read_to_string(settings_path(&base)).unwrap();
+        let stripped = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("mode_switch_icons_only"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), stripped).unwrap();
+        let s = read_settings(&base);
+        assert!(!s.appearance.mode_switch_icons_only);
         fs::remove_dir_all(&base).ok();
     }
 

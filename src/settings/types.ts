@@ -25,6 +25,8 @@ export interface SettingsData {
     show_explorer_bar: boolean;
     /** Start with the 「已固定」 bar expanded. */
     expand_pinned: boolean;
+    /** Mode pills show icons only (default off — icon + name). */
+    mode_switch_icons_only: boolean;
     /** Shift+Enter launches the selected app with administrator privileges. */
     shift_enter_admin: boolean;
     /** Cap for the recent-opens list. */
@@ -148,6 +150,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
     show_recent: true,
     show_explorer_bar: true,
     expand_pinned: false,
+    mode_switch_icons_only: false,
     shift_enter_admin: true,
     recent_count: 20,
     search_placeholder_apps: "",

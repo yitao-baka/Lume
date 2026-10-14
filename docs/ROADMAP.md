@@ -3167,3 +3167,43 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
   （新增：闲置默认值/缺键回退/light-write 往返、豁免表往返、清单
   `keep_session` 解析 + PluginInfo camelCase 传输）；`cargo check` /
   `pnpm exec tsc --noEmit` / `pnpm run build` / debug exe 构建干净。
+
+---
+
+## 47. 模式切换栏仅图标（已实现）
+
+**状态：已实现（2026-10-14）。** 需求（2026-10-14 用户）：模式切换栏只显示
+图标；设置里可选、默认关（保持「图标 + 名称」原样）。配套决定：无图标模式
+回退 `res/icons/unknow_universal.svg`。需求二「栏宽最多占搜索框一半、超限
+隐藏」暂缓，等用户考虑清楚再立项。
+
+### 47.1 语义
+
+- 设置 → 导航页 →「导航栏」→ 模式切换栏仅图标
+  `appearance.mode_switch_icons_only`（默认关）。开启后搜索行的模式胶囊只
+  显示图标；`title` + `aria-label` 始终给模式名（悬停原生 tooltip 可看）。
+- 胶囊高度两种呈现一致（纵向内边距不变）——切换开关搜索行不跳动；横向内边距
+  10 → 8 保住点击热区。
+- 无图标模式（清单未声明 icon）在两种呈现下都回退 `unknow_universal.svg`
+  （legacy 过滤链，随主题反色）——原先带名态会渲染空 src 的破图。
+
+### 47.2 实现
+
+- Rust：`Appearance.mode_switch_icons_only: bool`（`#[serde(default)]`，
+  旧 settings.toml 缺键 → false）；`Settings::default` 与回归测试同步。
+- 前端：`SearchBox` 新增 `iconsOnly` 访问器 + `.mode-switch.icons-only`
+  类（`.mode-switch-label` 隐藏）、标签 span、`title`/`aria-label`、
+  `UNKNOWN_ICON` 回退；`App.tsx` 首帧读 `__LUME_CONFIG__`、`settings-applied`
+  实时更新；LauncherPane 开关 + 三语文案。
+
+### 47.3 验证
+
+- 新增 `scripts/cdp_mode_bar_icons_verify.mjs`（debug exe）**22/22 全过**：
+  A 默认关图标 + 名称 / title + aria-label 齐备；B 无图标回退；C 实时开启
+  （类生效、名称隐藏、每颗胶囊变窄、高度不变、回退仍在）；D 点击切页 +
+  切换键循环；E 关回复原；F 真实设置面板（导航页开关 → 保存并应用 →
+  启动器实时生效 + 落盘）；G 重启首帧即仅图标（`__LUME_CONFIG__` 注入）。
+  脚本结束恢复原设置并移除夹具。
+- 回归：`cdp_plugin_mode_bar_verify` **15/15**；`cargo test` **210 passed /
+  9 ignored**（新增：默认值断言 + 旧 settings.toml 缺键回退）；`cargo check` /
+  `pnpm exec tsc --noEmit` / `pnpm run build` / debug exe 构建干净。

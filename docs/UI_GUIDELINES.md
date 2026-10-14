@@ -53,6 +53,10 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
 
 - 20px magnifier glyph, `rgba(242,242,242,0.45)`, 12px gap before the input.
 - Input: transparent, 22px, accent caret. No border, no focus ring.
+- Mode pills (home + plugin modes, before the gear): icon + name; 设置 →
+  导航页 → `mode_switch_icons_only` switches them to icon-only (the tooltip
+  carries the name). Pill height is identical in both presentations — the
+  search row must not resize on the toggle.
 
 ## Results
 

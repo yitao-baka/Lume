@@ -7,8 +7,15 @@
 import { For, Show } from "solid-js";
 import { t } from "../i18n";
 import { pickIcon } from "../launcher/iconSpec";
-import type { HostIcon } from "../launcher/types";
+import type { HostIcon, PickedIcon } from "../launcher/types";
 import settingsIcon from "../../res/icons/settings.svg";
+import unknownIcon from "../../res/icons/unknow_universal.svg";
+
+/** Fallback for a mode that declares no icon (ROADMAP #47): the bundled
+ * unknown icon, so an icon-only pill is never blank — and a label pill never
+ * shows a broken image. `legacy` keeps the dark-mode inversion the other
+ * bundled SVGs get. */
+const UNKNOWN_ICON: PickedIcon = { src: unknownIcon, legacy: true };
 
 /** One page pill (the home page first, then plugin modes). */
 export interface SearchBoxPage {
@@ -27,6 +34,8 @@ export interface SearchBoxProps {
   query: () => string;
   placeholder: () => string;
   pages: () => SearchBoxPage[];
+  /** 仅图标（设置 → 导航页，默认关）：胶囊隐藏名称，title/aria-label 保名. */
+  iconsOnly: () => boolean;
   /** The query input changed (already routed by the shell). */
   onInput: (text: string) => void;
   onSwitchPage: (id: string) => void;
@@ -61,13 +70,19 @@ export function SearchBox(props: SearchBoxProps) {
         spellcheck={false}
         autocomplete="off"
       />
-      <div class="mode-switch" role="tablist" aria-label="Search mode">
+      <div
+        class="mode-switch"
+        classList={{ "icons-only": props.iconsOnly() }}
+        role="tablist"
+        aria-label="Search mode"
+      >
         <For each={props.pages()}>
           {(p) => {
             // Theme-reactive (#44): pickIcon reads themeMode(), so a flip
             // swaps the pill's variant live; an explicit pick opts out of
-            // the legacy `--icon-filter` inversion.
-            const icon = () => pickIcon(p.icon);
+            // the legacy `--icon-filter` inversion. No icon at all falls
+            // back to UNKNOWN_ICON (#47) in both presentations.
+            const icon = () => pickIcon(p.icon) ?? UNKNOWN_ICON;
             return (
               <button
                 class="mode-switch-item"
@@ -75,13 +90,15 @@ export function SearchBox(props: SearchBoxProps) {
                 role="tab"
                 aria-selected={p.active}
                 aria-busy={p.loading}
+                title={p.label}
+                aria-label={p.label}
                 onClick={() => props.onSwitchPage(p.id)}
               >
                 <span class="mode-switch-icon-wrap">
                   <img
                     class="mode-switch-icon"
-                    classList={{ "icon-explicit": !!icon() && !icon()!.legacy }}
-                    src={icon()?.src}
+                    classList={{ "icon-explicit": !icon().legacy }}
+                    src={icon().src}
                     alt=""
                     draggable={false}
                   />
@@ -89,7 +106,7 @@ export function SearchBox(props: SearchBoxProps) {
                     <span class="mode-switch-spinner" aria-hidden="true" />
                   </Show>
                 </span>
-                {p.label}
+                <span class="mode-switch-label">{p.label}</span>
               </button>
             );
           }}

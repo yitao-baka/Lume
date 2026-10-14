@@ -77,6 +77,11 @@ pub struct Plugins {
     /// and on every theme flip (`appicon::apply`).
     #[serde(default)]
     pub color_modes: HashMap<String, String>,
+    /// Idle-reset exemptions (ROADMAP #46), plugin id → keep its session
+    /// state across an idle reset. Absent = follow the manifest's
+    /// `keep_session` declaration; the user override always wins.
+    #[serde(default)]
+    pub keep_session_overrides: HashMap<String, bool>,
 }
 
 impl Plugins {
@@ -192,6 +197,15 @@ pub struct Appearance {
     /// Last clipboard category when `last_page == "clipboard"` (`"all"` | …).
     #[serde(default = "default_last_page_kind")]
     pub last_page_kind: String,
+    /// 闲置重置 (ROADMAP #46): after the launcher stayed hidden this long,
+    /// the next summon starts clean — home page, empty query, non-exempt
+    /// pages factory-reset. On by default.
+    #[serde(default = "default_true")]
+    pub idle_reset_enabled: bool,
+    /// Idle-reset threshold in minutes (UI offers 5/15/30/60/120/240; the
+    /// frontend clamps to 1–1440 when consuming).
+    #[serde(default = "default_idle_reset_minutes")]
+    pub idle_reset_minutes: u32,
 }
 
 /// Default last page: the Navigate main menu.
@@ -202,6 +216,11 @@ fn default_last_page() -> String {
 /// Default clipboard category: 全部.
 fn default_last_page_kind() -> String {
     "all".into()
+}
+
+/// Default idle-reset threshold (30 minutes; ROADMAP #46).
+fn default_idle_reset_minutes() -> u32 {
+    30
 }
 
 /// Default entry-box edge (matches a ~110px box in the current 6-col grid).
@@ -499,6 +518,8 @@ impl Default for Settings {
                 remember_last_page: false,
                 last_page: "apps".into(),
                 last_page_kind: "all".into(),
+                idle_reset_enabled: true,
+                idle_reset_minutes: 30,
             },
             hotkeys: Hotkeys {
                 toggle: "Alt+Space".into(),
@@ -531,6 +552,7 @@ impl Default for Settings {
                 trust_all: false,
                 window_bounds: HashMap::new(),
                 color_modes: HashMap::new(),
+                keep_session_overrides: HashMap::new(),
             },
             automation: Automation {
                 enabled: true,
@@ -920,6 +942,30 @@ pub fn set_plugin_trust_all(
     Ok(())
 }
 
+/// Idle-reset exemption override (ROADMAP #46) — the per-plugin switch in
+/// 设置 → 插件, overriding the manifest's `keep_session` declaration.
+/// `true` keeps the plugin's query + page state; `false` forces the reset
+/// even when the manifest asked to keep it. Light write like the other plugin
+/// toggles; the launcher reads the map on `settings-applied`.
+#[tauri::command]
+pub fn set_plugin_keep_session(
+    id: String,
+    keep: bool,
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+        crate::plugin_perm::deny_from_plugin_windows(&window)?;
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.keep_session_overrides.insert(id, keep);
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -948,6 +994,61 @@ mod tests {
         next.plugins.trust_all = true;
         write_settings_light(&base, &next).unwrap();
         assert!(read_settings(&base).plugins.trust_all);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// 闲置重置 (ROADMAP #46): on by default with a 30-minute threshold, both
+    /// when the settings file predates the keys and when only one key is
+    /// missing; both round-trip through a light write.
+    #[test]
+    fn idle_reset_defaults_on_30min_and_round_trips() {
+        let base = temp_base("idle-reset");
+        ensure_settings_files(&base).unwrap();
+        let s = read_settings(&base);
+        assert!(s.appearance.idle_reset_enabled, "default on");
+        assert_eq!(s.appearance.idle_reset_minutes, 30);
+        // Older settings.toml without the keys → same defaults (serde).
+        let text = toml::to_string_pretty(&Settings::default()).unwrap();
+        let without = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("idle_reset_"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), without).unwrap();
+        let s = read_settings(&base);
+        assert!(s.appearance.idle_reset_enabled);
+        assert_eq!(s.appearance.idle_reset_minutes, 30);
+        let mut next = s;
+        next.appearance.idle_reset_enabled = false;
+        next.appearance.idle_reset_minutes = 60;
+        write_settings_light(&base, &next).unwrap();
+        let reloaded = read_settings(&base);
+        assert!(!reloaded.appearance.idle_reset_enabled);
+        assert_eq!(reloaded.appearance.idle_reset_minutes, 60);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// Idle-reset exemptions default empty and round-trip; `true` keeps and
+    /// `false` forces a reset (the manifest default is resolved in the
+    /// frontend, so both values must persist verbatim).
+    #[test]
+    fn plugin_keep_session_overrides_default_empty_and_round_trip() {
+        let base = temp_base("keep-session");
+        ensure_settings_files(&base).unwrap();
+        assert!(read_settings(&base).plugins.keep_session_overrides.is_empty());
+        let mut next = read_settings(&base);
+        next.plugins.keep_session_overrides.insert("keep".into(), true);
+        next.plugins.keep_session_overrides.insert("drop".into(), false);
+        write_settings_light(&base, &next).unwrap();
+        let reloaded = read_settings(&base);
+        assert_eq!(
+            reloaded.plugins.keep_session_overrides.get("keep"),
+            Some(&true)
+        );
+        assert_eq!(
+            reloaded.plugins.keep_session_overrides.get("drop"),
+            Some(&false)
+        );
         fs::remove_dir_all(&base).ok();
     }
 

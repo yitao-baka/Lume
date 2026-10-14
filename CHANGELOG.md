@@ -41,6 +41,23 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **闲置重置（ROADMAP #46）** — 启动器隐藏超过阈值后的下一次呼出从干净状态
+  开始：回导航页、清空搜索，并**完整重置**未豁免的插件页（查询 + 页面状态
+  + 保活宿主 + 会话帧；下次进入冷启动）。默认**开 + 30 分钟**，设置 → 导航页
+  可选 5/15/30/60/120/240；计时锚点是唯一隐藏收口 `window::hide_main`
+  （blur / 热键 / Esc）广播的 `launcher-hidden`，比较**挂钟间隔**、无后台
+  定时器（睡眠/休眠照常计时）。豁免双层：清单 `keep_session = true` 是默认，
+  设置 → 插件 每个 mode 卡片可逐插件覆盖（用户值优先）；豁免只保状态、不保
+  落地页，home 永不豁免、分离窗口不参与；仅会话内生效（重启恢复仍由
+  `remember_last_page` 决定）。`docs/SETTINGS.md` / `PLUGIN_API.md`
+  §3/§6C / `PLUGINS.md` / `ARCHITECTURE.md` / `TESTING.md` / `ROADMAP.md`
+  #46 同步。验证：`cdp_idle_reset_verify` **48/48**（阈值内不重置 /
+  完整重置 / 清单与用户双向豁免 / 总开关关闭 / 恢复默认）；回归
+  `cdp_plugin_state_verify` 54/54、`cdp_p2b_verify` 29/29、
+  `cdp_plugin_window_verify` 16/16、`cdp_plugins_pane_verify` ALL PASS；
+  `cargo test` 209 passed / 9 ignored、
+  `cargo check` / `tsc --noEmit` / `pnpm run build` / debug exe 构建干净。
+
 - **插件图标深/浅两套（ROADMAP #44）** — 插件可为交给宿主渲染的图标提供两套
   （清单 `icon_light`/`icon_dark`、`[[features]]` 同名字段、运行时行
   `icon: { light, dark }`），宿主按**图标所在表面**的生效主题选一套：启动器

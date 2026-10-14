@@ -242,6 +242,11 @@ pub struct PluginManifest {
     /// opt in).
     #[serde(default)]
     pub detachable: bool,
+    /// Mode plugins: keep this mode's query + page state across an idle reset
+    /// (ROADMAP #46) — a declarative default the user can override per plugin
+    /// in 设置 → 插件 (`settings.plugins.keep_session_overrides`).
+    #[serde(default)]
+    pub keep_session: bool,
     /// Mode plugins: whether the host renders its built-in hover detach
     /// button on the mode page (default true). Plugins that draw their own
     /// detach affordance (via `app.detach`) set `detach_button = false` to
@@ -354,6 +359,10 @@ pub struct PluginInfo {
     /// Mode plugins: hidden from the mode switch bar / switch-key cycle
     /// (manifest `hidden`); the Navigate search rows stay the entry.
     pub hidden: bool,
+    /// Mode plugins: manifest `keep_session` (ROADMAP #46) — the idle-reset
+    /// exemption default; the launcher combines it with the user override map.
+    #[serde(rename = "keepSession")]
+    pub keep_session: bool,
     /// Mode plugins: pill icon (relative to the plugin dir); also the
     /// default Navigate-result icon for this plugin's rows.
     pub icon: String,
@@ -536,6 +545,7 @@ pub fn list_plugins(
             detachable: false,
             detach_button: true,
             hidden: false,
+            keep_session: false,
             icon: String::new(),
             icon_light: String::new(),
             icon_dark: String::new(),
@@ -583,6 +593,7 @@ pub fn list_plugins(
             detachable: m.detachable,
             detach_button: m.detach_button,
             hidden: m.hidden,
+            keep_session: m.keep_session,
             icon: m.icon,
             icon_light: m.icon_light,
             icon_dark: m.icon_dark,
@@ -742,6 +753,27 @@ height = 560
         // is the Navigate search row.
         assert!(!parse_manifest("id = \"m\"").unwrap().hidden);
         assert!(parse_manifest("id = \"m\"\nhidden = true").unwrap().hidden);
+        // keep_session is optional and defaults to false; true declares the
+        // idle-reset exemption (ROADMAP #46).
+        assert!(!parse_manifest("id = \"m\"").unwrap().keep_session);
+        assert!(parse_manifest("id = \"m\"\nkeep_session = true").unwrap().keep_session);
+    }
+
+    #[test]
+    fn keep_session_flag_parses_and_reaches_the_frontend() {
+        let root = std::env::temp_dir().join(format!("lume-plugins-keep-{}", std::process::id()));
+        let demo = root.join("plugins").join("demo");
+        fs::create_dir_all(&demo).unwrap();
+        fs::write(demo.join("plugin.toml"), "id = \"demo\"\nkeep_session = true\n").unwrap();
+        let all = list_plugins(&root, &[], &[], false);
+        let demo = all.iter().find(|p| p.id == "demo").unwrap();
+        assert!(demo.keep_session);
+        let json = serde_json::to_string(demo).unwrap();
+        assert!(json.contains("\"keepSession\":true"), "{json}");
+        // Built-ins never declare the exemption.
+        let builtin = all.iter().find(|p| p.id == "clipboard").unwrap();
+        assert!(!builtin.keep_session);
+        fs::remove_dir_all(&root).ok();
     }
 
     #[test]

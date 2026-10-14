@@ -266,14 +266,10 @@ pub fn run() {
                             // click was meant for it, not for another app.
                             || preview_click;
                         if !suppressed {
-                            let _ = hide_on_blur.hide();
-                            // The satellite preview dies with the launcher: a
-                            // merely hidden window could keep playing media and
-                            // never reclaim its decoded memory.
-                            window::teardown_preview(&app_handle);
-                            // Main renderer goes Low only after it stays hidden
-                            // (frequent focus-loss re-shows stay instant).
-                            window::trim_main_when_idle(&app_handle);
+                            // Central hide path: emits `launcher-hidden` (the
+                            // idle-reset anchor), tears the preview down and
+                            // arms the memory trim.
+                            let _ = window::hide_main(&app_handle);
                         } else if preview_click {
                             // The blur came from clicking the satellite — hand
                             // focus BACK to the launcher. Otherwise the preview's
@@ -482,6 +478,7 @@ pub fn run() {
             settings::set_plugin_trusted,
             settings::set_plugin_dev_mode,
             settings::set_plugin_trust_all,
+            settings::set_plugin_keep_session,
             clipboard::get_clipboard_text,
             clipboard::set_clipboard_text,
             svc::svc_status,

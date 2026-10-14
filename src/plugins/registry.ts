@@ -1083,6 +1083,9 @@ export function modePlugins(): {
     label?: string;
   };
   hidden: boolean;
+  /** Manifest `keep_session` (ROADMAP #46) — idle-reset exemption default;
+   * the composition root combines it with the per-plugin user override. */
+  keepSession: boolean;
 }[] {
   return plugins
     .filter((p) => p.mode && isEnabled(p.id))
@@ -1091,6 +1094,7 @@ export function modePlugins(): {
       instance: p.mode!,
       modeMeta: p.modeMeta,
       hidden: manifests().find((m) => m.id === p.id)?.hidden === true,
+      keepSession: manifests().find((m) => m.id === p.id)?.keepSession === true,
     }));
 }
 

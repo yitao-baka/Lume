@@ -174,7 +174,7 @@ export function createClipboardStore(services: PluginServices) {
    * launcher when 粘贴后关闭 is enabled (default). Invalid rows are blocked with
    * a toast and keep the launcher open. */
   function pasteClip(item: ClipboardItem) {
-    services.markEntryOpened(); // 粘贴即使用该条目 → 清空搜索记忆
+    services.markEntryOpened(); // 粘贴即使用该条目 → 首页下次呼出清查询（#40）
     if (item.valid === false) {
       services.showToast(t("clipInvalid"));
       return;
@@ -191,7 +191,7 @@ export function createClipboardStore(services: PluginServices) {
   }
   /** Merge-paste every Space-selected entry (Enter with a non-empty set). */
   function pasteClipMulti() {
-    services.markEntryOpened(); // 合并粘贴即使用条目 → 清空搜索记忆
+    services.markEntryOpened(); // 合并粘贴即使用条目 → 首页下次呼出清查询（#40）
     const ids = clips()
       .filter((c) => multiIds().has(c.id))
       .map((c) => c.id);
@@ -231,7 +231,7 @@ export function createClipboardStore(services: PluginServices) {
 
   /** Open a link row in the default browser (ShellExecuteW via launch_app). */
   function openClipLink(item: ClipboardItem) {
-    services.markEntryOpened(); // 打开链接即使用条目 → 清空搜索记忆
+    services.markEntryOpened(); // 打开链接即使用条目 → 首页下次呼出清查询（#40）
     void invoke("launch_app", { path: item.content, name: item.content, elevated: false });
     void services.resetAndHide();
   }
@@ -334,7 +334,7 @@ export function createClipboardStore(services: PluginServices) {
     }
   });
 
-  /** Clear per-show state (clearSearch hook). */
+  /** Clear per-show state (the summon-time reset hook). */
   function reset() {
     setMultiIds(new Set<number>());
     setDeletingId(null);

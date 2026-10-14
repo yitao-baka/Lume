@@ -392,7 +392,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
   /** Activate the selected entry — a bar/section tile (section contract) or
    * the grid row at `selected()`. */
   function activate(opts?: { elevated?: boolean }): void {
-    services.markEntryOpened(); // Enter/点击打开条目 → 清空搜索记忆
+    services.markEntryOpened(); // Enter/点击打开条目 → 首页下次呼出清查询（#40）
     const elevated = opts?.elevated ?? false;
     // Bar zone: the owning section activates its selected item — a plain app
     // launch (recent/pinned/plugin bars), a 推荐使用 feature row, an explorer
@@ -469,8 +469,8 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       });
   }
 
-  /** Per-show reset (clearSearch hook): rows, drill level and the one-shot
-   * feature-row state. */
+  /** Per-show reset (the summon-time reset hook): rows, drill level and the
+   * one-shot feature-row state. */
   function resetState() {
     setDrill(null);
     setDroppedFiles([]);

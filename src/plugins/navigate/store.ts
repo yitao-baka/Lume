@@ -29,7 +29,8 @@ export interface NavigateDeps {
   /** Open the shared right-click menu (the composition root renders it). */
   openMenu: (m: MenuState) => void;
   showToast: (text: string, opts?: { undo?: () => void; duration?: number }) => void;
-  /** Marks that an entry was opened (launch / terminal) — clears search recall. */
+  /** Marks an opened entry (launch / terminal): the home page clears its own
+   * query on the next summon; plugin pages keep state (#40). */
   markEntryOpened: () => void;
   resetAndHide: () => void;
 }
@@ -292,7 +293,7 @@ export function createNavigateStore(deps: NavigateDeps) {
     return sections().some((s) => s.expandable && s.expanded());
   }
 
-  /** Reset every bar's selection (fresh show / clearSearch). */
+  /** Reset every bar's selection (fresh show / summon reset). */
   function resetSelections() {
     setRecentSelected(0);
     setPinnedSelected(0);
@@ -486,7 +487,7 @@ export function createNavigateStore(deps: NavigateDeps) {
   /** Launch a specific app and hide the launcher. When elevated, waits for the
    * UAC prompt so a cancellation keeps the launcher open instead of hiding. */
   function launchApp(app: AppEntry, elevated = false) {
-    deps.markEntryOpened(); // 打开条目 → 清空搜索记忆, 下次呼出回导航页
+    deps.markEntryOpened(); // 打开条目 → 首页下次呼出清查询（#40）
     if (elevated) {
       void (async () => {
         try {
@@ -528,7 +529,7 @@ export function createNavigateStore(deps: NavigateDeps) {
       return;
     }
     const shell = idx === 1 ? "powershell" : "cmd";
-    deps.markEntryOpened(); // 打开终端即使用条目 → 清空搜索记忆
+    deps.markEntryOpened(); // 打开终端即使用条目 → 首页下次呼出清查询（#40）
     void invoke("open_terminal_in_folder", { path: ctx.path, shell, elevated }).catch((err) =>
       console.error("open terminal failed", err),
     );

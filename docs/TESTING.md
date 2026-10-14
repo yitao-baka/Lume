@@ -161,6 +161,11 @@ dev URL instead.
 5. **DB migration** — `lume.db` lives in `<base>/data/` (portable:
    `<exe_dir>/data/`; installed: `%LOCALAPPDATA%\Lume\data\`); clipboard
    history survives the move from the old app-data location (auto-copied once).
+6. **Idle reset (ROADMAP #46)** — 设置 → 导航页：「闲置重置」默认开、阈值
+   30 分钟。把启动器呼出再隐藏，超过阈值后下次呼出应回导航页、搜索框为空，
+   未豁免插件页冷启动；清单 `keep_session = true` 或 设置 → 插件 打开豁免的
+   插件应保留查询与页面状态（但落地仍是导航页）；总开关关闭后不重置。
+   自动验证：`node scripts/cdp_idle_reset_verify.mjs`（需先构建 debug exe）。
 
 ### Service / run-as-admin / auto-start (Program Files iteration)
 

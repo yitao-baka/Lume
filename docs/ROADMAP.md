@@ -3111,3 +3111,59 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
   hide/show 重放空查询不误清；输入跟随；**逐字删空后 `#srcInput` 清空**；
   切页往返保留；再次删空仍清；新 enter 载荷照常优先。
 - 回归观察：进入/切页/就绪三类重放的空查询均未误清（上两条断言即覆盖）。
+
+---
+
+## 46. 闲置重置（Idle reset）：可开关、可调阈值、可豁免（已实现）
+
+**状态：已实现（2026-10-14）。** 需求（2026-10-13 用户）：用户很久没碰电脑
+后大概率忘了上次打开的页面，干净的启动器才符合直觉。该语义曾以「5 分钟
+搜索召回」存在（#17.5），#40 泛化为会话续存时被整体取代；本次按用户拍板
+把它作为**显式设置**加回来：默认开 + 30 分钟，并加「清单声明 + 用户覆盖」
+两层豁免。
+
+### 46.1 语义（已按用户拍板执行）
+
+- 计时锚点 = 启动器**上次隐藏**，不是后台定时器：`window::hide_main` 是
+  唯一隐藏收口（blur-to-hide / 热键切换 / Esc / `hide_launcher`），隐藏时
+  广播 `launcher-hidden`；前端记时间戳，下次 `beginSummon` 比较挂钟间隔。
+  睡眠/休眠照常计时；隐藏窗口被 WebView2 内存裁剪也不影响判定。
+- 超阈值 → **完整重置**：回导航页、清空导航查询；所有未豁免模式逐实例
+  `setQuery("")` + `restorePage("all")` + `reset()`、卸载保活宿主、丢弃
+  `sessionFrames`（下次进入冷启动）。query 住在插件实例而非 iframe，只卸
+  宿主会「复活」旧查询，所以必须逐实例清。
+- **豁免双层**：清单 `keep_session = true` 是声明式默认；设置 → 插件 每个
+  mode 卡片的开关写 `settings.plugins.keep_session_overrides`（用户值优先，
+  `true` 保留 / `false` 强制重置）。豁免只保状态、不保落地页——超阈值一律
+  先回导航页。home 永不豁免；分离窗口是单一权威，不参与重置。
+- 仅会话内：`lastHiddenAt` 只在内存；重启后的恢复仍由
+  `remember_last_page` 单独决定（查询与快照从不落盘）。
+
+### 46.2 实现
+
+- Rust：`Appearance.idle_reset_enabled`（默认 true）/`idle_reset_minutes`
+  （默认 30；UI 5/15/30/60/120/240，前端消费时钳 1–1440）；
+  `Plugins.keep_session_overrides: HashMap<String,bool>` + 命令
+  `set_plugin_keep_session`（light write + `settings-applied` 即时生效）；
+  `PluginManifest.keep_session` → `PluginInfo.keepSession`；
+  `window::hide_main` 收口隐藏并广播事件（blur / toggle / Esc 三路共用）。
+- 前端：`App.tsx` 的 `idleResetDue` / `applyIdleReset`（`beginSummon` 首步）、
+  `launcher-hidden` 监听、`settings-applied` 更新信号；LauncherPane
+  （开关 + 阈值档位）、PluginsPane（卡片豁免开关）、三语文案；
+  CDP tap `window.__idleReset` 记录每次重置的 reset/kept 名单。
+
+### 46.3 验证
+
+- 新增 `scripts/cdp_idle_reset_verify.mjs`（debug exe）**48/48 全过**：
+  阈值内（+10min）不重置；+31min 完整重置（回导航页、首页查询空、
+  非豁免宿主卸载 → 重进 query 空 + iframe 新建）；豁免页（清单
+  `keep_session` 与用户 `true` 两条路）宿主/iframe 身份/查询全保留且重进
+  恢复；用户 `false` 强制重置清单豁免页；总开关关闭后超阈值也不重置；
+  恢复默认设置后清单豁免重新生效。时间通过页面内覆写 `Date.now` 偏移
+  模拟（锚点比较即挂钟），每次可见期归零。
+- 回归：`cdp_plugin_state_verify` **54/54**、`cdp_p2b_verify` **29/29**、
+  `cdp_plugin_window_verify` **16/16**、`cdp_plugins_pane_verify` **ALL PASS**；
+  `cargo test` **209 passed / 9 ignored**
+  （新增：闲置默认值/缺键回退/light-write 往返、豁免表往返、清单
+  `keep_session` 解析 + PluginInfo camelCase 传输）；`cargo check` /
+  `pnpm exec tsc --noEmit` / `pnpm run build` / debug exe 构建干净。

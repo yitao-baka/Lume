@@ -16,6 +16,9 @@ view = "view.html"
 titlebar = "titlebar.html"
 height = 480
 detachable = true
+# 闲置重置豁免（ROADMAP #46 夹具）：验证「清单声明 keep_session 默认保留，
+# 用户级 override 可翻转」两条路径。
+keep_session = true
 # 进入规则："sp:" 前缀 → 「State Probe：注入」行，激活把查询作为 enter
 # payload 投进页面（分离后走窗口的跨窗推送）——测试用驱动通道。
 [[features]]

@@ -108,6 +108,7 @@ export default {
 | `detachable` | bool | `false` | **mode 专属**（P6，§6G）— 页面可以分离为独立窗口：设置页显示「可分离」chip，激活该模式时页面右上角悬停出现「在独立窗口打开」按钮（插件也可经 `lume.app.detach()` 自绘按钮触发，§6C）。依赖启动器搜索框交互（`setSubInput`/`setQuery` 驱动）的模式不要声明。 |
 | `detach_button` | bool | `true` | **mode 专属 + `detachable` 配套**（P6，§6G）— 宿主是否在模式页右上角渲染内置的悬停「在独立窗口打开」按钮。插件自绘分离按钮（常驻、纯图标…）时设 `false` 把右上角完全让给页面，分离走 `lume.app.detach()`（§6C）。 |
 | `hidden` | bool | `false` | **mode 专属** — 在模式切换栏（pill）与切换键（Tab）循环中隐藏本模式：不渲染 pill、Tab 不切入（模式激活时 Tab 从导航页重新开始）。唯一入口是导航页搜索结果：keywords 的「进入 <name>」行、`[[features]]` 命中行与插件互跳（`app.redirect`）。设置 → 插件 卡片会显示「仅搜索进入」徽标；插件仍然可以被启停。示例：`examples/plugins/hidden-mode/`。 |
+| `keep_session` | bool | `false` | **mode 专属**（#46）— 闲置重置（启动器隐藏超过设置阈值后的下一次呼出，§6C）时保留本模式会话状态的**声明式默认**：查询、页面状态、保活宿主与会话帧都不动。用户可在 设置 → 插件 逐插件覆盖（`settings.plugins.keep_session_overrides`，用户值优先）。适合「状态 = 未保存草稿」的页面；不改变「超阈值先回导航页」这一点。示例：`examples/plugins/state-probe/`。 |
 | `icon` | string | `""` | **旧版单图（兼容）** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录，或 `data:`/`http(s):`/`asset:`/`blob:` URI）。省略 = 不显示图标。**同时是本插件在导航搜索结果里的默认行图标**：keywords 行、没有自己 `icon` 的 provider 结果与 feature 行都用它（没有才回退到 `path` 常规图标管线）。旧图表现不变：在本来就按 `--icon-filter` 反相的位置（模式 pill、列表模板行）深色下仍反相；结果网格/设置卡片沿用原样。分离窗口（§6G）的任务栏图标同源。 |
 | `icon_light` | string | `""` | **浅色界面变体（#44）** — 浅色表面显示的那套图（通常是深色描边），相对插件目录（URI 规则同上）。省略 → 回退 `icon`（仍没有 → 用另一套）。显式变体一律**按原样渲染、不再反相**。 |
 | `icon_dark` | string | `""` | **深色界面变体（#44）** — 深色表面显示的那套图（通常是浅色描边）。省略 → 回退 `icon`（仍没有 → 用另一套）。 |
@@ -555,6 +556,16 @@ enter/settings/theme）**之后**投递。**例外：新的进入优先**——�
 `lume.on.snapshot` 里自行剔除。旧版按 DOM 顺序的 v1 快照仍可被应用
 （兼容，新代码不再产生）。
 
+**闲置重置（ROADMAP #46，2026-10-14 起）**：启动器**隐藏**超过设置阈值
+（默认开 + 30 分钟；睡眠/休眠照常计时）后的下一次呼出，宿主回到导航页并
+**完整重置**所有未豁免的模式页：查询清零（`setQuery("")`——query 住在插件
+实例里，只卸宿主会「复活」旧查询）、`restorePage("all")` + `reset()` 各调
+一次、保活宿主卸载、`sessionFrames` 丢弃——被重置的模式下次进入等同**
+冷启动**（页面脚本重新加载、DOM/JS 状态从零开始）。豁免 = 清单
+`keep_session` 或用户在设置里的覆盖（用户值优先）；豁免页完全不动，超阈值
+时也只是「先回导航页」，其状态可在下次进入时原样恢复。分离窗口不属于
+启动器会话，不参与重置；进程重启后的恢复仍由 `remember_last_page` 决定。
+
 **插件自身颜色模式（`lume.theme.set`，ROADMAP #36，2026-10-12 起）**：插件可以让
 **自己的**明暗与启动器不同 —— 三个取值 `"system"`（跟随启动器）/ `"light"` /
 `"dark"`。语义边界（照抄实现，别自行推断）：
@@ -630,9 +641,9 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 | 方法 | 语义 |
 |---|---|
 | `showToast(text, opts?)` | 底部 toast。`opts.undo` 撤销回调（3s 窗口）；`opts.duration` 覆盖默认停留（1.6s）。 |
-| `markEntryOpened()` | 标记「本此呼出已使用条目」→ 清空搜索召回（下次呼出回导航页）。launch/paste/开链接类动作都应调用。 |
-| `resetAndHide()` | 清空会话状态（走 clearSearch）并隐藏启动器。 |
-| `persistLastPage()` | 防抖 400ms 持久化「记住上次所在页面」（读活动模式的 `pageKind`）。模式内切换分类/页面时调用。 |
+| `markEntryOpened()` | 标记「已使用条目」。下一次呼出时若停在**导航首页**，首页清空自己的查询后重搜；插件页的查询与页面状态不受影响，也不会强制切回导航页（#40 起）。launch/paste/开链接类动作都应调用。 |
+| `resetAndHide()` | 隐藏启动器（`endSummon` + `hide_launcher`）。#40 起**不清理** mode/query/页面状态，会话续存不受影响。 |
+| `persistLastPage()` | 防抖 400ms 持久化「记住上次所在页面」（读活动模式的 `pageKind`）；#40 起它只决定**重启恢复**，会话内续存始终开启。模式内切换分类/页面时调用。 |
 | `runSearch(q)` | **根搜索管线**：重置选中 + 令牌 +1 → 活动页 `instance.search(q)`。页面内部刷新数据应调它而不是自己的 `search`，以保证选中态/令牌一致。 |
 | `scheduleResize()` | 下一帧重测窗口高度（内容变化后调用）。 |
 | `searchToken()` | 单调递增令牌——根每次搜索 +1。异步结果落地前比对，令牌变了就丢弃（防乱序）。 |
@@ -650,9 +661,9 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 
 | 成员 | 调用方 / 时机 |
 |---|---|
-| `query()` / `setQuery(q)` | 组合根读取/清空当前页面查询（呼出恢复、clearSearch 全清、搜索框输入回写）。每个页面一份独立 query。 |
+| `query()` / `setQuery(q)` | 组合根读取/设置当前页面查询（呼出续存、搜索框输入回写、首页条目后清空）。每个页面一份独立 query；hide/show 与切模式都不清（#40 会话续存）。 |
 | `search(q)` | 根 `runSearch` 对**活动页**的统一分发（导航首页同样走此路径）。实现须：取 `services.searchToken()` 快照 → 异步取数 → 令牌不一致则丢弃 → 写自己的 rows → `setSelected(0)` + 复位滚动 → `services.scheduleResize()`。 |
-| `reset()` | 每次呼出（`clearSearch`）与切模式（`switchMode`）调用：清多选/对话框/动画态等**每呼出状态**，并清空自己的 rows（原生语义：呼出即全新搜索）。 |
+| `reset()` | 每次**呼出**（`launcher-shown` → `beginSummon`，仅活动页）、页面挂载与启动页恢复时调用；#40 起切模式**不**调用，也不负责清 query/页面状态。实现只清多选/对话框/动画态等**每呼出状态**；rows 清空后由随后的 `runSearch` 重填。 |
 | `selected()` / `setSelected(i)` | 根 `moveSelection`（↑↓/网格移动）、`runSearch` 复位、Enter 激活前的对齐。 |
 | `rows()` | `currentResults()`（键盘移动的边界）与 Enter 激活。返回 `PageRow[]`（`AppEntry \| ClipboardItem`，#30 起泛化；任意模式自定义行模型仍留待后续）。 |
 | `activate(opts?)` | Enter / 点击选中行的激活（`opts.elevated` = Shift+Enter 提权请求，应用启动类页面消费它）：多选 → 合并粘贴；单选 → 粘贴。 |
@@ -666,7 +677,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 | `heightPolicy?()` | 可选 — `"fit"` = 窗口随内容自适应（导航首页）；`"fixed"`（默认）= 搜索框下方定高拼接。sizer 的分支选择依据。 |
 | `anyExpanded?()` | 可选 — 是否有展开态栏目（fit 页专用，sizer 工作区封顶）。 |
 | `desiredHeight?()` | 可选 — sizer 定高分支读取：本页面的固定窗口高度（清单 `height`），`null` = 用全局设置高度（§5B）。 |
-| `home?` | 可选 — 主页标记（导航页）：切模式**不**复位（搜索召回依赖）；其余页面切入时先 `restorePage("all")` + `reset()`。 |
+| `home?` | 可选 — 主页标记（导航页）。#40 起所有保活页面都跨模式留存（不再切入即 `restorePage("all")` + `reset()`）；该标记现在只用于 **keep-alive LRU 豁免**（首页永不被淘汰）。 |
 | `placeholder?()` | 可选 — 本页激活时搜索框占位符（subInput 接管优先，然后本值，最后 `app.setPlaceholder` 映射）。 |
 | `menuActions?()` | 可选 — 共享右键菜单动作来源（窄结构接口，见 §6B.4）。 |
 | `pageKind()` / `restorePage(kind)` | 记住上次所在页面：持久化当前页（如剪贴板分类）/ 恢复；切到该页面时根先 `restorePage("all")` 复位。 |
@@ -981,9 +992,9 @@ lume.app.removeSubInput();                                       // 交还
   投递给接管者）。
 - **一次只有一个拥有者**：别的插件调 `setSubInput` 不会抢走；`removeSubInput`
   只有拥有者自己有效。
-- **自动释放**：切模式、再次呼出（clearSearch）、插件被重载/关闭都会把搜索框
+- **自动释放**：切模式、再次呼出、插件被重载/关闭都会把搜索框
   交还宿主（所有权是会话级状态，不持久化）。
-- 与「搜索记忆」的关系：接管期间输入的文字仍写入该模式的 query（宿主照常显示），
+- 与「会话续存」的关系：接管期间输入的文字仍写入该模式的 query（宿主照常显示），
   但不会触发 `search`。
 
 ### 6E.3 provider 二级下钻（`drill` + `select` + `filter`）
@@ -1730,6 +1741,9 @@ pluginBuiltin`。
     （`user:true` 才触发回流到该插件页）。`__frameStates` 的帧上报新增
     `restoring`（迟到 DOM 重试窗口是否仍在活动）——状态「回弹」类问题的
     判据。
+  - `window.__idleReset`（main，ROADMAP #46）：每次闲置重置的决策
+    `{at, reset:[ids], kept:[ids]}`（`kept` = 分离中或豁免、未被重置的模式），
+    环形缓冲 40 条——`scripts/cdp_idle_reset_verify.mjs` 的判据。
   - `window.__rpcLog` / `__logicEntries`（逻辑宿主）：帧 rpc 结局摘要与
     每插件帧状态（`loaded`/`calls`）。
   - `window.__pluginThemes`（各窗口，ROADMAP #36）：本插件的颜色模式偏好写入

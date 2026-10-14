@@ -442,10 +442,11 @@ fn show(window: &WebviewWindow) -> tauri::Result<()> {
     apply_geometry(window)?;
     window.show()?;
     window.set_focus()?;
-    // Fresh-show signal for the frontend: it resets to the main menu exactly on
-    // this event, NOT on every focus regain. Dragging the frameless window
-    // briefly deactivates + refocuses it (see `is_mid_drag`), and a reset on
-    // that would wipe the current mode/search mid-drag.
+    // Fresh-show signal for the frontend: it re-arms summon-scoped state exactly
+    // on this event, NOT on every focus regain (session continuation keeps the
+    // page/query; a home-page entry clears the home query, ROADMAP #40).
+    // Dragging the frameless window briefly deactivates + refocuses it (see
+    // `is_mid_drag`), and re-arming there would wipe summon state mid-drag.
     let _ = window.emit("launcher-shown", ());
     Ok(())
 }
@@ -461,11 +462,7 @@ pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
         .get_webview_window(MAIN_WINDOW)
         .ok_or_else(|| "main window not found".to_string())?;
     if window.is_visible().map_err(|e| e.to_string())? {
-        window.hide().map_err(|e| e.to_string())?;
-        // The satellite preview lives and dies with the launcher.
-        teardown_preview(&app);
-        // Main renderer goes Low only after MAIN_IDLE_TRIM_SECS hidden.
-        trim_main_when_idle(&app);
+        hide_main(&app)?;
     } else {
         // Record which window had focus before the launcher appeared.
         if let Some(focus) = app.try_state::<FocusState>() {
@@ -477,18 +474,29 @@ pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Hide the launcher window.
-#[tauri::command]
-pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
+/// Hide the main window and signal the frontend. EVERY launcher-hide path
+/// (blur-to-hide, hotkey toggle, Esc / the `hide_launcher` command) funnels
+/// through here, so `launcher-hidden` is the single idle-reset anchor
+/// (ROADMAP #46): the frontend measures "time since the user last left the
+/// launcher" — never a background timer, which the memory-trimmed hidden
+/// webview cannot be trusted to run on time.
+pub fn hide_main(app: &AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_WINDOW)
         .ok_or_else(|| "main window not found".to_string())?;
     window.hide().map_err(|e| e.to_string())?;
+    let _ = window.emit("launcher-hidden", ());
     // The satellite preview lives and dies with the launcher.
-    teardown_preview(&app);
+    teardown_preview(app);
     // Main renderer goes Low only after MAIN_IDLE_TRIM_SECS hidden.
-    trim_main_when_idle(&app);
+    trim_main_when_idle(app);
     Ok(())
+}
+
+/// Hide the launcher window.
+#[tauri::command]
+pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
+    hide_main(&app)
 }
 
 /// Open (show + focus) the settings window.

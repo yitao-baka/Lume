@@ -129,6 +129,9 @@ export default function PluginsPane() {
    * plugin regardless of its manifest. Only effective while dev mode is on
    * (the backend gate); this pane is its only UI. */
   const [trustAll, setTrustAll] = createSignal(false);
+  /** Idle-reset exemption overrides (ROADMAP #46): plugin id → explicit user
+   * value; absent means follow the manifest's `keep_session` default. */
+  const [keepOverrides, setKeepOverrides] = createSignal<Record<string, boolean>>({});
   /** `.lupx` install flow: the picked archive's inspected facts (null when
    * no install is in flight), its source path, and a busy flag while a
    * command runs. */
@@ -158,10 +161,18 @@ export default function PluginsPane() {
     // (the pane's own controls light-write, so no dirty-state round trip).
     void invoke<unknown>("get_settings")
       .then((s) => {
-        const pluginsSlice = (s as { plugins?: { dev_mode?: boolean; trust_all?: boolean } })
-          .plugins;
+        const pluginsSlice = (
+          s as {
+            plugins?: {
+              dev_mode?: boolean;
+              trust_all?: boolean;
+              keep_session_overrides?: Record<string, boolean>;
+            };
+          }
+        ).plugins;
         setDevMode(pluginsSlice?.dev_mode === true);
         setTrustAll(pluginsSlice?.trust_all === true);
+        setKeepOverrides({ ...(pluginsSlice?.keep_session_overrides ?? {}) });
       })
       .catch(() => {});
   });
@@ -193,6 +204,17 @@ export default function PluginsPane() {
       await invoke("set_plugin_enabled", { id: p.id, enabled: v });
       setPlugins((list) => list.map((x) => (x.id === p.id ? { ...x, enabled: v } : x)));
       showStatus(true, t(v ? "pluginToastEnabled" : "pluginToastDisabled", { name: p.name || p.id }));
+    } catch (err) {
+      showStatus(false, String(err));
+    }
+  }
+
+  /** Idle-reset exemption (ROADMAP #46): writes the user override map; the
+   * manifest `keep_session` stays the default when no override exists. */
+  async function toggleKeepSession(p: PluginManifest, keep: boolean) {
+    try {
+      await invoke("set_plugin_keep_session", { id: p.id, keep });
+      setKeepOverrides((m) => ({ ...m, [p.id]: keep }));
     } catch (err) {
       showStatus(false, String(err));
     }
@@ -462,9 +484,11 @@ export default function PluginsPane() {
               p={p}
               open={openId() === p.id}
               devMode={devMode()}
+              keepSession={keepOverrides()[p.id] ?? p.keepSession}
               settingValues={values()[p.id] ?? ({} as Record<string, unknown>)}
               onToggleOpen={() => void toggleOpen(p)}
               onToggleEnabled={(v) => void toggle(p, v)}
+              onToggleKeepSession={(v) => void toggleKeepSession(p, v)}
               onReload={() => void reload(p)}
               onUninstall={() => void uninstall(p)}
               onPutSetting={(key, value) => void putSetting(p, key, value)}
@@ -491,9 +515,12 @@ function PluginCard(props: {
   /** Global developer mode — gates 重载 and the 开发 badge (the global
    * 全部授权 switch lives in the toolbar, not per-card). */
   devMode: boolean;
+  /** Effective idle-reset exemption (user override ?? manifest keep_session). */
+  keepSession: boolean;
   settingValues: Record<string, unknown>;
   onToggleOpen: () => void;
   onToggleEnabled: (v: boolean) => void;
+  onToggleKeepSession: (v: boolean) => void;
   onReload: () => void;
   onUninstall: () => void;
   onPutSetting: (key: string, value: unknown) => void;
@@ -601,6 +628,19 @@ function PluginCard(props: {
                   )}
                 </For>
               </div>
+            </div>
+          </Show>
+
+          {/* Idle-reset exemption (ROADMAP #46): the manifest `keep_session`
+              is only the default — this user switch wins. Only mode pages
+              hold session state worth keeping. */}
+          <Show when={p().kind === "mode"}>
+            <div class="plg-dsec">
+              <div class="settings-row-between">
+                <span class="settings-sub-label">{t("pluginKeepSession")}</span>
+                <Toggle checked={props.keepSession} onChange={props.onToggleKeepSession} />
+              </div>
+              <span class="plg-note">{t("pluginKeepSessionHint")}</span>
             </div>
           </Show>
 

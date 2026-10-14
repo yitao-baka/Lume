@@ -366,6 +366,14 @@ before adding a field:
   时该插件尚在等待重放的会话帧直接作废（新进入优先于旧快照，#42）。对标
   zTools 的 WebContentsView 保活/搬移；Tauri 不能搬 webview，页面自有 JS
   状态需 `lume.on.snapshot/restore`（§6C）。
+- **Idle reset（ROADMAP #46）**：Rust `window::hide_main` 是唯一隐藏收口
+  （blur / 热键 / Esc / `hide_launcher`），隐藏时广播 `launcher-hidden`；
+  前端在 `beginSummon` 里比较挂钟间隔（无后台定时器，睡眠/休眠照常计时），
+  超阈值即 `applyIdleReset()`：回导航页、清 home 查询、逐实例
+  `setQuery("")` + `restorePage("all")` + `reset()`、卸载非豁免保活宿主并
+  丢弃会话帧。豁免 = 清单 `keep_session` 或用户覆盖
+  （`settings.plugins.keep_session_overrides`，用户值优先）；分离窗口不参与；
+  `lastHiddenAt` 仅内存，跨重启恢复仍由 `remember_last_page` 决定。
 - **Bridge host-form constant（ROADMAP #42）**：`injectBridge` /
   `injectTitlebarBridge` pin a synchronous `lume.env.form` on every plugin
   frame — `"launcher"` (inside the launcher window) or `"window"` (a

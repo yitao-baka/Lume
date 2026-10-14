@@ -2,7 +2,7 @@
 //! entry-box size (docs/SETTINGS.md). Edits drive the working copy via
 //! `onChange`, which marks the settings dirty and enables 保存并应用.
 
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import { t, type Messages } from "../i18n";
 import type { SettingsData } from "./types";
 import { Chip, NumberPreset, Row, Toggle } from "./controls";
@@ -137,6 +137,29 @@ export default function LauncherPane(props: {
           />
         </Row>
         <span class="settings-hint">{t("rememberLastPageHint")}</span>
+        <Row label={t("idleReset")}>
+          <Toggle
+            checked={a().idle_reset_enabled}
+            onChange={(v) => props.onChange({ idle_reset_enabled: v })}
+          />
+        </Row>
+        <Show when={a().idle_reset_enabled}>
+          <Row label={t("idleResetMinutes")}>
+            <NumberPreset
+              value={a().idle_reset_minutes}
+              presets={[
+                { label: "5", value: 5 },
+                { label: "15", value: 15 },
+                { label: "30", value: 30 },
+                { label: "60", value: 60 },
+                { label: "120", value: 120 },
+                { label: "240", value: 240 },
+              ]}
+              onCommit={(v) => props.onChange({ idle_reset_minutes: v })}
+            />
+          </Row>
+        </Show>
+        <span class="settings-hint">{t("idleResetHint")}</span>
       </div>
 
       <h2 class="settings-grouptitle">{t("groupEntryBox")}</h2>

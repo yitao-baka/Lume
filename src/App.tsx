@@ -1,5 +1,6 @@
-//! Composition root / shell — owns the session lifecycle (search recall, mode
-//! switching, summon resets) and wires the `PluginServices` every page gets.
+//! Composition root / shell — owns the session lifecycle (keep-alive session
+//! continuation, mode switching, summon-scoped re-arms) and wires the
+//! `PluginServices` every page gets.
 //! The surface is the uTools-style splice: the `SearchBox` widget on top, the
 //! active page widget (`ModeInstance.View`) below it, and the shared overlays
 //! (toast, context menu). Every page below the search box is a plugin — the
@@ -49,7 +50,7 @@ import {
   setPluginDetached,
   setPluginServices,
 } from "./plugins/registry";
-import { createHostStack, dropSessionFrame, putSessionFrame } from "./launcher/session";
+import { createHostStack, dropSessionFrame, dropSessionFrames, putSessionFrame } from "./launcher/session";
 import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
 import { createClipboardPlugin } from "./plugins/clipboard";
 import { createPreviewPlugin } from "./plugins/preview";
@@ -102,6 +103,14 @@ function App() {
    * category). */
   const [lastPageKind, setLastPageKind] = createSignal<ClipKind>(
     (_a?.last_page_kind as ClipKind) ?? "all"
+  );
+  /** Settings-driven: 闲置重置 (ROADMAP #46) — after the launcher stayed
+   * hidden for this long, the next summon starts clean. */
+  const [idleResetEnabled, setIdleResetEnabled] = createSignal(_a?.idle_reset_enabled ?? true);
+  const [idleResetMinutes, setIdleResetMinutes] = createSignal(_a?.idle_reset_minutes ?? 30);
+  /** Per-plugin exemptions (user override wins over manifest keep_session). */
+  const [keepSessionOverrides, setKeepSessionOverrides] = createSignal<Record<string, boolean>>(
+    _cfg?.plugins?.keep_session_overrides ?? {}
   );
 
   // Apply imperative config immediately (locale + theme are not signal-driven).
@@ -199,9 +208,67 @@ function App() {
   // 卸载），超上限按 LRU 淘汰并先抓快照；只有显式动作（禁用/重载、首页打开
   // 条目后的查询清空）会动状态。查询与页面状态仅内存，重启不保留。
   let entryOpened = false; // 最近一次条目是否从首页打开（只有首页下次清查询）
+  // Idle-reset anchor (ROADMAP #46): set from the Rust `launcher-hidden`
+  // event, which every hide path emits. 0 = not hidden since boot.
+  let lastHiddenAt = 0;
 
   function markEntryOpened() {
     entryOpened = true;
+  }
+
+  /** Idle-reset exemption: the user override wins over the manifest default.
+   * The home page is never exempt (it is the reset target). */
+  function idleResetExempt(id: ModeId, manifestKeep: boolean): boolean {
+    const override = keepSessionOverrides()[id];
+    return override !== undefined ? override : manifestKeep;
+  }
+
+  /** Whether the launcher was hidden long enough to reset on this show. */
+  function idleResetDue(): boolean {
+    if (!idleResetEnabled() || lastHiddenAt <= 0) return false;
+    const minutes = Math.min(1440, Math.max(1, idleResetMinutes() || 30));
+    return Date.now() - lastHiddenAt >= minutes * 60_000;
+  }
+
+  /** 闲置重置 (ROADMAP #46) — complete reset: home page, empty home query,
+   * and every non-exempt plugin page factory-reset (query + page kind +
+   * summon state + DOM host + session frames). Exempt pages keep everything
+   * (manifest `keep_session` or the user override). A detached window is its
+   * own single authority and is never touched here. */
+  function applyIdleReset() {
+    ensureHost(NAVIGATE_MODE_ID);
+    setMode(NAVIGATE_MODE_ID);
+    const home = modeById(NAVIGATE_MODE_ID);
+    home?.setQuery("");
+    const reset: ModeId[] = [];
+    const kept: ModeId[] = [];
+    for (const mp of modePlugins()) {
+      if (mp.id === NAVIGATE_MODE_ID) continue;
+      if (isPluginDetached(mp.id)) {
+        kept.push(mp.id);
+        continue;
+      }
+      if (idleResetExempt(mp.id, mp.keepSession)) {
+        kept.push(mp.id);
+        continue;
+      }
+      // The query lives in the mode instance (not the iframe), so clear it
+      // explicitly — retiring the host alone would resurrect the old query
+      // the next time the page is entered.
+      mp.instance.setQuery("");
+      mp.instance.restorePage("all");
+      mp.instance.reset?.();
+      dropSessionFrames(mp.id);
+      hostStack.retire(mp.id);
+      reset.push(mp.id);
+    }
+    entryOpened = false;
+    persistLastPage();
+    // CDP tap (scripts/cdp_idle_reset_verify.mjs): what the reset decided.
+    const w = window as unknown as { __idleReset?: unknown[] };
+    const tap = (w.__idleReset ??= []);
+    tap.push({ at: Date.now(), reset, kept });
+    tap.splice(0, Math.max(0, tap.length - 40));
   }
 
   /** Hide-time bookkeeping — summon-scoped state only; pages keep everything. */
@@ -215,6 +282,10 @@ function App() {
   /** Show-time restore (D1): a home-page entry clears the home query only;
    * plugin pages keep query + page state. Invalid active modes fall home. */
   function beginSummon() {
+    if (idleResetDue()) {
+      lastHiddenAt = 0;
+      applyIdleReset();
+    }
     if (!modeById(mode())) {
       ensureHost(NAVIGATE_MODE_ID);
       setMode(NAVIGATE_MODE_ID);
@@ -569,6 +640,9 @@ function App() {
       setRememberLastPage(s.appearance.remember_last_page ?? false);
       setLastPageMode(s.appearance.last_page || NAVIGATE_MODE_ID);
       setLastPageKind((s.appearance.last_page_kind as ClipKind) ?? "all");
+      setIdleResetEnabled(s.appearance.idle_reset_enabled !== false);
+      setIdleResetMinutes(s.appearance.idle_reset_minutes ?? 30);
+      setKeepSessionOverrides({ ...(s.plugins?.keep_session_overrides ?? {}) });
     } catch {
       // Keep defaults if settings can't be read.
     }
@@ -823,8 +897,8 @@ function App() {
     // query and its page state stay; only summon-scoped bits are re-armed.
     // This listens to the Rust `launcher-shown` event, not `onFocusChanged`:
     // dragging the frameless window briefly deactivates and refocuses it
-    // (Rust `is_mid_drag` suppresses the hide on that side), and a reset
-    // there would wipe the current page mid-drag.
+    // (Rust `is_mid_drag` suppresses the hide on that side), and re-arming
+    // there would clear summon-scoped state mid-drag.
     const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
       for (const p of allPlugins()) p.lifecycle?.onShow?.();
       beginSummon();
@@ -835,6 +909,16 @@ function App() {
       queueMicrotask(() => document.getElementById("search-input")?.focus());
     });
     onCleanup(() => unlisten());
+
+    // Idle-reset anchor (ROADMAP #46): every hide path in Rust funnels
+    // through `window::hide_main`, which emits this event. The next show
+    // compares `Date.now() - lastHiddenAt` — no background timer, so
+    // sleep/hibernate count correctly and the hidden webview's throttled
+    // timers never matter.
+    const unlistenHidden = await getCurrentWindow().listen("launcher-hidden", () => {
+      lastHiddenAt = Date.now();
+    });
+    onCleanup(() => unlistenHidden());
 
     // The satellite preview's × button (or any Rust-side teardown) clears our
     // Esc-priority state — without this, Esc would think the preview is still

@@ -314,6 +314,7 @@ mod tests {
             trust_all,
             window_bounds: HashMap::new(),
             color_modes: HashMap::new(),
+            keep_session_overrides: HashMap::new(),
         }
     }
 

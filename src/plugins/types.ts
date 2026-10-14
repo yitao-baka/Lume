@@ -87,6 +87,10 @@ export interface PluginManifest {
    * switch-key cycle (manifest `hidden`, default false). Its only entries are
    * the Navigate search rows (keywords / `[[features]]`) and redirects. */
   hidden: boolean;
+  /** Mode plugins: manifest `keep_session` (ROADMAP #46) — keep this mode's
+   * query + page state across an idle reset. The per-plugin user override in
+   * 设置 → 插件 (`settings.plugins.keep_session_overrides`) wins. */
+  keepSession: boolean;
   /** Mode plugins: icon, relative to the plugin dir (resolved to a URL by
    * the registry). Empty = no pill image. Doubles as the default
    * Navigate-result icon for every row this plugin contributes. */
@@ -565,8 +569,10 @@ export interface SnapshotEnvelopeV2 {
 /** Services the composition root provides to every plugin. */
 export interface PluginServices {
   showToast(text: string, opts?: { undo?: () => void; duration?: number }): void;
-  /** Marks that an entry was used (launch/paste/…) — clears search recall. */
+  /** Marks that an entry was used (launch/paste/…). On the next summon the
+   * home page clears its own query; plugin pages keep query + state (#40). */
   markEntryOpened(): void;
+  /** Hide the launcher; session state (mode/query/page) is kept (#40). */
   resetAndHide(): void;
   /** Debounced 记住上次所在页面 write. */
   persistLastPage(): void;
@@ -706,9 +712,9 @@ export interface ModeInstance {
    * to use the global 设置 → 窗口大小 → 高度. Read by the sizer's
    * fixed-height branch (plugin modes). */
   desiredHeight?: () => number | null;
-  /** The home page keeps its session state (query, rows, feature rows) across
-   * mode switches — search recall depends on it. Every other page starts from
-   * a clean page (`restorePage("all")` + `reset()`) when switched to. */
+  /** Home-page marker (the navigate page). #40: every kept-alive page survives
+   * mode switches; this flag's remaining job is LRU exemption — the home page
+   * is never evicted. */
   home?: boolean;
   /** Search-box placeholder while this page is active ("" is never returned —
    * pages fall back to their own default text). */

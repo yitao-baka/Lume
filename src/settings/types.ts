@@ -40,6 +40,11 @@ export interface SettingsData {
     last_page: string;
     /** Last clipboard category when last_page === "clipboard". */
     last_page_kind: string;
+    /** 闲置重置 (ROADMAP #46): after the launcher stayed hidden this long, the
+     * next summon starts clean (home, empty query, non-exempt pages reset). */
+    idle_reset_enabled: boolean;
+    /** Idle-reset threshold in minutes (UI offers 5/15/30/60/120/240). */
+    idle_reset_minutes: number;
   };
   hotkeys: { toggle: string; switch_mode: string };
   index: {
@@ -121,6 +126,10 @@ export interface SettingsData {
     /** Per-plugin color-mode preference (`lume.theme.set`, ROADMAP #36):
      * plugin id → `"system" | "light" | "dark"`. Absent = `"system"`. */
     color_modes?: Record<string, string>;
+    /** Idle-reset exemptions (ROADMAP #46): plugin id → true keeps its
+     * session state across an idle reset, false forces a reset. Absent =
+     * the manifest's `keep_session` default. */
+    keep_session_overrides?: Record<string, boolean>;
   };
 }
 
@@ -146,6 +155,8 @@ export const DEFAULT_SETTINGS: SettingsData = {
     remember_last_page: false,
     last_page: "apps",
     last_page_kind: "all",
+    idle_reset_enabled: true,
+    idle_reset_minutes: 30,
   },
   hotkeys: { toggle: "Alt+Space", switch_mode: "Tab" },
   index: {

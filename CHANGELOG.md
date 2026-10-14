@@ -6,6 +6,20 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **搜索框删空收尾丢失（translator 1.4.1，插件侧修复）** — translator 模式页
+  激活时把搜索框 "Hello" 逐字删空，插件原文停在 "H"。CDP 定位：宿主
+  `setQuery`/`search` 两条路径都确实投递了 `query("")`（`__frameStates` +
+  console 双向核对），是插件 `lume.on.query` 把空串写死丢弃。插件 1.4.1
+  改为记录最近一次非空下发值、空串仅在原文仍等于该值时清空（`enter` 载荷 /
+  历史 / 页内编辑不会被呼出·切页·就绪重放误清），页内「重置原文」× 同步
+  走 `store.clearSource()`（作废在途翻译/防抖）。`docs/PLUGIN_API.md` §6C
+  固化空串判别模式（ROADMAP #45）。验证：`test/_verify_query_clear.mjs`
+  端到端 **9/9**（feature 进入 / hide-show 不误清 / 逐字删空清空 /
+  切页往返保留 / 再次删空 / 新 enter 优先）；插件 `pnpm run verify`
+  （95 测试 + build + check）干净。
+
 ### Changed
 
 - **导航页「推荐使用」栏（ROADMAP #43）** — 插件结果与正常结果全面隔离：

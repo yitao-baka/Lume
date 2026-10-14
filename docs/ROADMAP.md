@@ -3072,3 +3072,42 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
   camelCase 传输 + `pixels_for` 的显式取用/缺一回落/legacy 反相三例）；
   `cargo check` / `pnpm exec tsc --noEmit` / `pnpm run build` /
   `pnpm run tauri build --debug --no-bundle` 干净。
+
+---
+
+## 45. 搜索框删空收尾丢失（translator，插件侧修复，已解决）
+
+**状态：已解决（2026-10-14）——宿主侧零代码改动；`LumePlugins/translator`
+1.4.1 修复。**
+
+用户报告：translator 模式页激活时，在启动器搜索框把 "Hello" 逐字删空，
+插件原文停在 "H"。
+
+### 45.1 定位（宿主无辜，插件过滤了空串）
+
+- debug exe + CDP 复现：进 translator 页后依次把搜索框置
+  "Hello"→…→""，读宿主 `__frameStates` 里插件的 `#srcInput`：
+  原文停在 "H"；宿主 console 显示 `(translator) event → query` 对
+  每一步都投递了，含**两条** `""`（`handleInput` 的 `setQuery` 与
+  `runSearch`→`search` 各一条）。
+- 根因在插件：`lume.on.query` 为躲开宿主状态重放的空查询而写死
+  「`!text.trim()` 直接 return」——最后一删被插件自己丢弃。宿主契约
+  （`query` 含清空）与投递链路都正常。
+
+### 45.2 修复（translator 1.4.1）
+
+- `lume.on.query` 记录最近一次下发的非空文本；空串仅在「原文仍等于该值」
+  时清空（新增 `store.clearSource()`：作废在途翻译/防抖 + 复位译文侧状态），
+  来自 `enter` 载荷 / 历史 / 页内编辑的原文不会被呼出/切页/就绪重放误清；
+  页内「重置原文」× 共用同一条清空路径。
+- 文档：`PLUGIN_API.md` §6C 补充空串判别模式（上面的段落即本次固化）；
+  插件仓库 CHANGELOG/ARCHITECTURE 同步。
+
+### 45.3 验证
+
+- 插件：`pnpm run verify`（95 单测 + build + check）干净。
+- 端到端（debug exe，把 1.4.1 装进 `<base>/plugins/translator`）：
+  `test/_verify_query_clear.mjs` **9/9** —— feature 进入载荷落地；
+  hide/show 重放空查询不误清；输入跟随；**逐字删空后 `#srcInput` 清空**；
+  切页往返保留；再次删空仍清；新 enter 载荷照常优先。
+- 回归观察：进入/切页/就绪三类重放的空查询均未误清（上两条断言即覆盖）。

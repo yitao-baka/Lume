@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { t } from "../../i18n";
 import copyIcon from "../../../res/icons/copy.svg";
 import runIcon from "../../../res/icons/normal_run.svg";
-import type { AppEntry, MenuState } from "../../launcher/types";
+import type { AppEntry, MenuState, PluginIconSpec } from "../../launcher/types";
 
 export interface NavigateDeps {
   /** Settings: show the 「最近使用」 bar (display-only toggle). */
@@ -43,8 +43,9 @@ export interface NavItem {
   /** Launch target (file path or URL). Action tiles that activate by index
    * (explorer) use an empty string. */
   path: string;
-  /** Explicit icon URL (data:/http(s):/asset:) overriding the icon pipeline. */
-  icon?: string;
+  /** Explicit icon overriding the icon pipeline: a URL or a resolved
+   * light/dark set (#44). */
+  icon?: string | PluginIconSpec;
   /** Render as a monochrome (currentColor-filtered) SVG tile. */
   mono?: boolean;
 }
@@ -89,7 +90,7 @@ export interface NavSection {
 export interface ContributedBar {
   id: string;
   title: string;
-  items: { name: string; path: string; icon?: string }[];
+  items: { name: string; path: string; icon?: string | PluginIconSpec }[];
 }
 
 /** The empty-query 「推荐使用」 section: plugin-offered rows for the current

@@ -3004,3 +3004,71 @@ uTools / zTools 的 WebContentsView 保活 + 跨窗搬移模型）。
   （202 passed / 9 ignored）干净。
 - 截图：`test/p2b_files.png`（空查询：已固定 + 推荐使用并存）、
   `test/p43_nonempty_split.png`（非空查询：正常结果 + 推荐使用分隔行）。
+---
+
+## 44. 插件图标深/浅两套（#44，已实现）
+
+**状态：已实现（2026-10-14）。** 插件可为「交给宿主渲染的图标」提供深浅两套
+（清单 `icon_light`/`icon_dark`、`[[features]]` 同名字段、运行时行
+`icon: { light, dark }`），宿主按**图标所在表面**的生效主题选一套；主题
+运行中切换即时换图，不必重跑搜索。旧单图 `icon` 保留为兼容回退：显式变体
+按原样渲染（不再叠加 `--icon-filter` 反相），旧图在原本会反相的位置
+（模式 pill、列表模板行）保持反相。
+
+### 44.1 选择规则与主题来源
+
+- 浅色表面：`icon_light` → `icon` → `icon_dark`；深色表面：`icon_dark` →
+  `icon` → `icon_light`。命中 `icon` = 旧行为（含既有反相约定）。
+- 表面主题：启动器搜索结果行 / 模式 pill / 列表模板行 / 设置卡片跟随各自
+  窗口文档的生效主题（`system` 跟 OS 实时）；独立插件窗的任务栏/Alt+Tab
+  图标跟随该插件的生效主题（`lume.theme.set` 覆盖优先），与窗口画布/
+  chrome 一致。插件 iframe 页面内部的图不归宿主（插件已收 `on.theme`）。
+
+### 44.2 实现
+
+- **Rust 清单**（`plugins.rs`）：`PluginFeature` / `PluginManifest` 新增
+  `icon_light` / `icon_dark`（TOML snake_case；`PluginInfo` JSON 为
+  `iconLight`/`iconDark`）。纯增量、不 bump `HOST_PLUGIN_API`。
+- **解析**（新模块 `src/launcher/iconSpec.ts`）：`resolveIconInput`（字符串
+  = legacy / 对象 = 显式对）、`resolveThemedIcon`（清单三字段）、`pickIcon`
+  （按主题选并标记 `legacy`）、`resolveIconUrl`（URI 直通 + 插件相对路径）。
+  设置页与 registry 共用同一份，避免两套解析漂移。
+- **响应式主题**（`theme.ts`）：新增 `themeMode()` signal，`writeColorMode`
+  同时写 `data-theme` 与 signal；`currentThemeMode()` 改读 signal（对外
+  非响应式语义不变）。网格行/胶囊/卡片在渲染时 `pickIcon(spec)` 读 signal，
+  OS/设置翻转即时换图。
+- **渲染点**：`NavigateView`（网格行）、`SearchBox`（pill）、
+  `listTemplate`（列表行；无显式 icon 时回退插件清单图标集——与 provider
+  行同规则）、`PluginsPane`（设置卡片）、registry 的 keyword/feature 行。
+  显式变体渲染加 `.icon-explicit`，CSS 对其 `filter: none`；旧图仍走
+  `--icon-filter`。
+- **任务栏图标**（P6.8 扩展）：detach 时把解析后的两套一起光栅化上传
+  （`plugin_window_open` 新增 `iconPngDark`/`iconThemed`）；`appicon.rs`
+  的 `PluginIconRecord` 存两份 RGBA，`pixels_for` 按窗口生效主题取用、
+  显式变体不反相；旧上传仍反相。主题翻转由 `appicon::apply` 直接换 HICON，
+  不再与前端往返。
+- **顺带修旧债**：`navBars` 相对路径图标此前未按插件目录解析；list 模板行
+  icon 此前完全不解析（绝对路径也不转 asset）——两处接上统一解析。
+- 示例 `examples/plugins/themed-icons/`（pill/行/feature 三种用法 + legacy
+  对照行）；`examples/plugins/plugin-api.d.ts` 同步行图标类型；文档
+  `PLUGIN_API` §3/§5.1–5.2/§6E.1/§6E.5/§6G/§11、`PLUGINS`、
+  `ARCHITECTURE`、`TESTING` 同步。
+
+### 44.3 验证
+
+- 新增 `scripts/cdp_plugin_themed_icon_verify.mjs`：
+  - 主流程 **21/21 全过**：浅色下关键字行 / pill / 显式行 / 缺省行取 light
+    变体且 `filter:none`（显式变体不受反相）；`save_settings` 切深色后
+    同一批即时换 dark；legacy 行仍 `invert(1)`；feature 行（`[[features]]`
+    自带两套）随主题来回换；独立窗任务栏 ICON_BIG 像素浅色 = 原样 light
+    （#2e8b57）、窗口内 `theme.set("dark")` 后 = 原样 dark（#ffd166，非
+    反相值）、切回后恢复。
+  - `--legacy` 分支 **6/6 全过**：旧单图任务栏图标深色下仍是 `invert_rgb`
+    结果（#2e8b57 → #d174a8）。
+- 回归：`cdp_plugin_theme_verify` **28/28**、`cdp_p2b_verify` **29/29**、
+  `cdp_p2_verify` **17/21**（余 4 项为 #30 记录的 `iframe.contentDocument`
+  陈旧探针基线，与本次无关；验证时临时启用 `text-tools` 后已还原）。
+- `cargo test` **206 passed / 9 ignored**（新增：清单/feature 字段解析 +
+  camelCase 传输 + `pixels_for` 的显式取用/缺一回落/legacy 反相三例）；
+  `cargo check` / `pnpm exec tsc --noEmit` / `pnpm run build` /
+  `pnpm run tauri build --debug --no-bundle` 干净。

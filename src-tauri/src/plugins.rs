@@ -83,6 +83,21 @@ pub struct PluginFeature {
     /// Optional row icon (relative to the plugin dir; resolved like `icon`).
     #[serde(default)]
     pub icon: String,
+    /// Optional light-theme icon variant (ROADMAP #44): the artwork shown on
+    /// light surfaces (usually the dark-stroked one). An explicit variant
+    /// takes precedence over `icon` and is rendered as-is (no inversion).
+    #[serde(
+        default,
+        rename(serialize = "iconLight", deserialize = "icon_light")
+    )]
+    pub icon_light: String,
+    /// Optional dark-theme icon variant: the artwork shown on dark surfaces
+    /// (usually the light-stroked one). See `icon_light`.
+    #[serde(
+        default,
+        rename(serialize = "iconDark", deserialize = "icon_dark")
+    )]
+    pub icon_dark: String,
     /// `window` rules (P4, ROADMAP #29): match the foreground window at
     /// summon time. Within one field the values OR, across fields they AND;
     /// a rule with **no** field at all never matches. `process` matches the
@@ -244,6 +259,16 @@ pub struct PluginManifest {
     /// explicit `icon`).
     #[serde(default)]
     pub icon: String,
+    /// Explicit light-theme icon variant (ROADMAP #44), relative to the
+    /// plugin dir — shown on light surfaces and rendered as-is (explicit
+    /// variants never run through the legacy `--icon-filter` inversion).
+    /// Falls back to `icon`, then `icon_dark`.
+    #[serde(default)]
+    pub icon_light: String,
+    /// Explicit dark-theme icon variant — shown on dark surfaces. Falls back
+    /// to `icon`, then `icon_light`.
+    #[serde(default)]
+    pub icon_dark: String,
     /// Declarative entry rules (any kind) — a matched query offers an
     /// 「<label>」 row that enters the plugin with the query as payload.
     #[serde(default)]
@@ -332,6 +357,12 @@ pub struct PluginInfo {
     /// Mode plugins: pill icon (relative to the plugin dir); also the
     /// default Navigate-result icon for this plugin's rows.
     pub icon: String,
+    /// Explicit light-theme icon variant (manifest `icon_light`; #44).
+    #[serde(rename = "iconLight")]
+    pub icon_light: String,
+    /// Explicit dark-theme icon variant (manifest `icon_dark`; #44).
+    #[serde(rename = "iconDark")]
+    pub icon_dark: String,
     /// Development flag (manifest `development`): the frontend reloads this
     /// plugin on every refresh so code edits take effect without a restart.
     pub development: bool,
@@ -506,6 +537,8 @@ pub fn list_plugins(
             detach_button: true,
             hidden: false,
             icon: String::new(),
+            icon_light: String::new(),
+            icon_dark: String::new(),
             development: false,
             api: HOST_PLUGIN_API,
             keywords_pinyin: Vec::new(),
@@ -551,6 +584,8 @@ pub fn list_plugins(
             detach_button: m.detach_button,
             hidden: m.hidden,
             icon: m.icon,
+            icon_light: m.icon_light,
+            icon_dark: m.icon_dark,
             development: m.development,
             api: m.api,
             keywords_pinyin,
@@ -707,6 +742,46 @@ height = 560
         // is the Navigate search row.
         assert!(!parse_manifest("id = \"m\"").unwrap().hidden);
         assert!(parse_manifest("id = \"m\"\nhidden = true").unwrap().hidden);
+    }
+
+    #[test]
+    fn themed_icon_variants_parse_and_reach_the_frontend() {
+        // ROADMAP #44: explicit light/dark variants live next to the legacy
+        // single `icon`; omitted variants stay empty (legacy manifests are
+        // unchanged).
+        let m = parse_manifest(
+            "id = \"m\"\nicon = \"icon.svg\"\nicon_light = \"light.svg\"\nicon_dark = \"dark.svg\"\n",
+        )
+        .unwrap();
+        assert_eq!(m.icon, "icon.svg");
+        assert_eq!(m.icon_light, "light.svg");
+        assert_eq!(m.icon_dark, "dark.svg");
+        let legacy = parse_manifest("id = \"m\"\nicon = \"icon.svg\"").unwrap();
+        assert_eq!(legacy.icon_light, "");
+        assert_eq!(legacy.icon_dark, "");
+
+        // The PluginInfo JSON the frontend reads spells them camelCase.
+        let root = std::env::temp_dir().join(format!("lume-plugins-themed-{}", std::process::id()));
+        let demo = root.join("plugins").join("demo");
+        fs::create_dir_all(&demo).unwrap();
+        fs::write(
+            demo.join("plugin.toml"),
+            "id = \"demo\"\nicon_light = \"light.svg\"\nicon_dark = \"dark.svg\"\n",
+        )
+        .unwrap();
+        let all = list_plugins(&root, &[], &[], false);
+        let demo = all.iter().find(|p| p.id == "demo").unwrap();
+        assert_eq!(demo.icon_light, "light.svg");
+        assert_eq!(demo.icon_dark, "dark.svg");
+        let json = serde_json::to_string(demo).unwrap();
+        assert!(json.contains("\"iconLight\":\"light.svg\""), "{json}");
+        assert!(json.contains("\"iconDark\":\"dark.svg\""), "{json}");
+        assert!(!json.contains("icon_light"), "{json}");
+        // Built-ins declare no variants.
+        let builtin = all.iter().find(|p| p.id == "clipboard").unwrap();
+        assert_eq!(builtin.icon_light, "");
+        assert_eq!(builtin.icon_dark, "");
+        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
@@ -875,6 +950,9 @@ height = 560
              label = \"在浏览器打开\"\n\
              regex = \"^https?://\"\n\
              min_length = 8\n\
+             icon = \"rule.svg\"\n\
+             icon_light = \"rule-light.svg\"\n\
+             icon_dark = \"rule-dark.svg\"\n\
              \n\
              [[features]]\n\
              code = \"upper\"\n\
@@ -887,12 +965,19 @@ height = 560
         assert_eq!(m.features[0].label, "在浏览器打开");
         assert_eq!(m.features[0].regex, "^https?://");
         assert_eq!(m.features[0].min_length, Some(8));
+        assert_eq!(m.features[0].icon, "rule.svg");
+        assert_eq!(m.features[0].icon_light, "rule-light.svg");
+        assert_eq!(m.features[0].icon_dark, "rule-dark.svg");
+        assert_eq!(m.features[1].icon_light, "", "omitted → legacy-only");
         assert_eq!(m.features[1].over, true);
         assert_eq!(m.features[1].max_length, Some(40));
         // The frontend sees camelCase (directional serde rename).
         let json = serde_json::to_string(&m.features[0]).unwrap();
         assert!(json.contains("\"minLength\":8"), "{json}");
         assert!(!json.contains("min_length"), "{json}");
+        assert!(json.contains("\"iconLight\":\"rule-light.svg\""), "{json}");
+        assert!(json.contains("\"iconDark\":\"rule-dark.svg\""), "{json}");
+        assert!(!json.contains("icon_light"), "{json}");
     }
 
     #[test]

@@ -23,7 +23,8 @@
   --border-strong: rgba(255, 255, 255, 0.16);
   --hover: rgba(255, 255, 255, 0.08);
   --selected: rgba(255, 255, 255, 0.14);
-  /* Bundled SVGs use dark `#333` strokes — invert so they read as light icons. */
+  /* Bundled SVGs use dark `#333` strokes — invert so they read as light
+     icons. Themed plugin icons (#44) render explicit variants as-is. */
   --icon-filter: invert(1);
 }
 

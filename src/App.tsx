@@ -22,6 +22,7 @@ import type { ClipKind, MenuState } from "./launcher/types";
 import { MIN_WINDOW_H, TOAST_MS, TOAST_UNDO_MS } from "./launcher/types";
 import type { ModeId, PageRow, PluginServices } from "./plugins/types";
 import { createIconStore } from "./launcher/icons";
+import { pickIcon } from "./launcher/iconSpec";
 import { createWindowSizer } from "./launcher/sizing";
 import { buildMenuItems, type ClipMenuActions, type NavMenuActions } from "./launcher/menu";
 import { createKeyRouter } from "./launcher/keyboard";
@@ -396,8 +397,8 @@ function App() {
           // the payload — onEnter pushes it into the window either way. The
           // icon rides along: this path also covers a stale detached flag
           // whose window is gone and would be recreated (P6.8).
-          pluginWindowIcon(pluginId)
-            .then((iconPng) => invoke("plugin_window_open", { id: pluginId, iconPng }))
+          pluginWindowIcons(pluginId)
+            .then((icons) => invoke("plugin_window_open", { id: pluginId, ...icons }))
             .then(() => deliverFeature(pluginId, info))
             .catch((err) => console.error("plugin_window_open failed:", err));
           return true;
@@ -577,12 +578,33 @@ function App() {
    * the launcher page BEFORE the window exists, hand the frames to the
    * window on its ready push, then retire the launcher host — single
    * authority: from here on the window owns the page until it closes. */
-  /** Rasterized taskbar icon for a detached plugin window (P6.8): the mode's
-   * manifest `icon`, or undefined when it has none / cannot be read — the
-   * window then keeps the Lume theme icon. */
-  function pluginWindowIcon(id: ModeId): Promise<string | undefined> {
-    const url = modePlugins().find((p) => p.id === id)?.modeMeta?.icon;
-    return url ? rasterizePluginIcon(url) : Promise.resolve(undefined);
+  /** Rasterized taskbar icons for a detached plugin window (P6.8; themed
+   * variants #44): the resolved light/dark set plus whether the plugin
+   * declared explicit variants. `plugin_window_open` then picks per the
+   * window's effective mode (and never inverts explicit variants); a legacy
+   * single icon uploads one PNG and keeps the historical Rust-side
+   * inversion. No icon at all leaves the window on the Lume theme icon. */
+  async function pluginWindowIcons(
+    id: ModeId
+  ): Promise<{ iconPng?: string; iconPngDark?: string; iconThemed: boolean }> {
+    const spec = modePlugins().find((p) => p.id === id)?.modeMeta?.icon;
+    if (!spec) return { iconThemed: false };
+    const themed =
+      typeof spec === "object" && (spec.light !== undefined || spec.dark !== undefined);
+    if (!themed) {
+      // Legacy single icon (or a compiled-in built-in URL): one upload, the
+      // Rust side inverts it for the dark window variant.
+      const legacy = pickIcon(spec, "light");
+      const iconPng = legacy ? await rasterizePluginIcon(legacy.src) : undefined;
+      return { iconPng, iconThemed: false };
+    }
+    const light = pickIcon(spec, "light");
+    const dark = pickIcon(spec, "dark");
+    const [iconPng, iconPngDark] = await Promise.all([
+      light ? rasterizePluginIcon(light.src) : Promise.resolve(undefined),
+      dark ? rasterizePluginIcon(dark.src) : Promise.resolve(undefined),
+    ]);
+    return { iconPng, iconPngDark, iconThemed: true };
   }
 
   async function detachMode(m: ModeId) {
@@ -597,7 +619,7 @@ function App() {
       // Store BEFORE opening: the window's ready handshake may consume it
       // the moment the page is up (the old order raced that handshake).
       if (snapshot != null) stored = putSessionFrame(m, "view", snapshot);
-      await invoke("plugin_window_open", { id: m, iconPng: await pluginWindowIcon(m) });
+      await invoke("plugin_window_open", { id: m, ...(await pluginWindowIcons(m)) });
     } catch (err) {
       if (stored) dropSessionFrame(m, "view"); // the live page stays authoritative
       console.error("plugin_window_open failed:", err);

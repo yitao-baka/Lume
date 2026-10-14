@@ -18,10 +18,16 @@
 //! P6.8 (ROADMAP #34): a detached plugin window gets its own taskbar icon —
 //! the plugin's manifest `icon`, rasterized by the launcher's webview at
 //! detach time (this crate has no SVG decoder; `image` is PNG-only) and
-//! uploaded through `plugin_window_open`. Dark mode inverts it exactly like
-//! the launcher's `--icon-filter` treats the in-app pill, so icon and pill
-//! never disagree; icon-less plugins keep the Lume theme icon. The separate
-//! taskbar identity (AppUserModelID) is set in `plugin_window.rs`.
+//! uploaded through `plugin_window_open`. Icon-less plugins keep the Lume
+//! theme icon; the separate taskbar identity (AppUserModelID) is set in
+//! `plugin_window.rs`.
+//!
+//! Themed variants (ROADMAP #44): a plugin declaring `icon_light`/`icon_dark`
+//! uploads BOTH rasterized variants; the pick is rendered as-is (no
+//! inversion), so the artwork is exactly what the author shipped. Only the
+//! legacy single-icon upload keeps the historical dark-mode inversion (the
+//! same treatment as the launcher's `--icon-filter` on in-app pills) —
+//! existing plugins render unchanged.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -110,58 +116,126 @@ fn hicon_from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<SendHicon> {
     .map(SendHicon)
 }
 
-/// Per-plugin taskbar icons for detached windows (P6.8, ROADMAP #34): the
-/// RGBA the launcher rasterized at detach, plus the built HICONs — one per
-/// theme variant, so a theme flip rebuilds without another round trip.
+/// Per-plugin taskbar icons for detached windows (P6.8, ROADMAP #34; themed
+/// variants ROADMAP #44): the RGBA the launcher rasterized at detach, plus
+/// the built HICONs — one per theme, so a theme flip rebuilds without
+/// another round trip.
 #[derive(Default)]
 pub struct PluginIcons(Mutex<PluginIconStore>);
 
+/// One uploaded icon set for a plugin (see `PluginIcons::remember`).
+#[derive(Default)]
+struct PluginIconRecord {
+    /// Explicit light-theme variant (themed uploads only).
+    light: Option<(u32, u32, Vec<u8>)>,
+    /// Explicit dark-theme variant (themed uploads only).
+    dark: Option<(u32, u32, Vec<u8>)>,
+    /// true = light/dark are explicit variants, rendered as-is and never
+    /// inverted; false = a legacy single upload that dark mode inverts.
+    themed: bool,
+}
+
 #[derive(Default)]
 struct PluginIconStore {
-    rgba: HashMap<String, (u32, u32, Vec<u8>)>,
+    rgba: HashMap<String, PluginIconRecord>,
     hicons: HashMap<(String, bool), SendHicon>,
 }
 
 impl PluginIcons {
-    /// Decode the uploaded base64 PNG and remember it for `id` (the cached
-    /// HICONs are dropped so the next apply rebuilds them). Failures are
-    /// logged and ignored — the window keeps the Lume theme icon.
-    pub fn remember(&self, id: &str, png_base64: &str) {
-        use base64::Engine as _;
-        let bytes = match base64::engine::general_purpose::STANDARD.decode(png_base64) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("[appicon] plugin \"{id}\" icon: bad base64 ({e})");
-                return;
-            }
+    /// Decode the uploaded base64 PNG(s) and remember them for `id` (the
+    /// cached HICONs are dropped so the next apply rebuilds them).
+    /// `themed` marks an explicit pair: `light_png`/`dark_png` are then the
+    /// two variants; otherwise `light_png` is the legacy single icon that
+    /// dark mode inverts. Failures are logged and ignored — the window keeps
+    /// the Lume theme icon (or the other variant when one decoded).
+    pub fn remember(
+        &self,
+        id: &str,
+        light_png: Option<&str>,
+        dark_png: Option<&str>,
+        themed: bool,
+    ) {
+        let light = light_png.and_then(|png| decode_plugin_png(id, png));
+        let dark = if themed {
+            dark_png.and_then(|png| decode_plugin_png(id, png))
+        } else {
+            None
         };
-        match image::load_from_memory(&bytes) {
-            Ok(img) => {
-                let img = img
-                    .resize_exact(ICON_PX, ICON_PX, image::imageops::FilterType::Lanczos3)
-                    .into_rgba8();
-                let mut store = self.0.lock().unwrap();
-                store.rgba.insert(id.to_string(), (ICON_PX, ICON_PX, img.into_raw()));
-                store.hicons.remove(&(id.to_string(), true));
-                store.hicons.remove(&(id.to_string(), false));
-            }
-            Err(e) => eprintln!("[appicon] plugin \"{id}\" icon: decode failed ({e})"),
+        if light.is_none() && dark.is_none() {
+            return; // nothing decodable — keep whatever was remembered before
         }
+        let mut store = self.0.lock().unwrap();
+        store.rgba.insert(
+            id.to_string(),
+            PluginIconRecord {
+                light,
+                dark,
+                themed,
+            },
+        );
+        store.hicons.remove(&(id.to_string(), true));
+        store.hicons.remove(&(id.to_string(), false));
     }
 
-    /// The theme-variant HICON for `id`, built on first use; None when this
-    /// plugin never uploaded an icon.
+    /// The theme HICON for `id`, built on first use; None when this plugin
+    /// never uploaded a decodable icon.
     fn hicon(&self, id: &str, dark: bool) -> Option<HICON> {
         let mut store = self.0.lock().unwrap();
         if let Some(icon) = store.hicons.get(&(id.to_string(), dark)) {
             return Some(icon.0);
         }
-        let (width, height, rgba) = store.rgba.get(id)?.clone();
-        let pixels = if dark { invert_rgb(&rgba) } else { rgba };
+        let (width, height, pixels) = {
+            let record = store.rgba.get(id)?;
+            pixels_for(record, dark)?
+        };
         let icon = hicon_from_rgba(width, height, &pixels)?;
         let handle = icon.0;
         store.hicons.insert((id.to_string(), dark), icon);
         Some(handle)
+    }
+}
+
+/// Decode one uploaded base64 PNG into RGBA, resized to `ICON_PX`.
+fn decode_plugin_png(id: &str, png_base64: &str) -> Option<(u32, u32, Vec<u8>)> {
+    use base64::Engine as _;
+    let bytes = match base64::engine::general_purpose::STANDARD.decode(png_base64) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("[appicon] plugin \"{id}\" icon: bad base64 ({e})");
+            return None;
+        }
+    };
+    match image::load_from_memory(&bytes) {
+        Ok(img) => {
+            let img = img
+                .resize_exact(ICON_PX, ICON_PX, image::imageops::FilterType::Lanczos3)
+                .into_rgba8();
+            Some((ICON_PX, ICON_PX, img.into_raw()))
+        }
+        Err(e) => {
+            eprintln!("[appicon] plugin \"{id}\" icon: decode failed ({e})");
+            None
+        }
+    }
+}
+
+/// Pick the RGBA pixels for one theme from an uploaded set: explicit
+/// variants are used as-is (falling back to the other variant when one is
+/// missing); the legacy single icon is inverted in dark mode. Pure, so the
+/// selection is unit tested.
+fn pixels_for(record: &PluginIconRecord, dark: bool) -> Option<(u32, u32, Vec<u8>)> {
+    if record.themed {
+        let (primary, fallback) = if dark {
+            (&record.dark, &record.light)
+        } else {
+            (&record.light, &record.dark)
+        };
+        primary.clone().or_else(|| fallback.clone())
+    } else {
+        record
+            .light
+            .clone()
+            .map(|(w, h, rgba)| (w, h, if dark { invert_rgb(&rgba) } else { rgba }))
     }
 }
 
@@ -284,5 +358,46 @@ fn set_hicon<R: Runtime>(win: &WebviewWindow<R>, hicon: HICON) {
             Some(WPARAM(ICON_SMALL as usize)),
             Some(LPARAM(hicon.0 as isize)),
         );
+    }
+}
+
+#[cfg(test)]
+mod themed_icon_tests {
+    use super::*;
+
+    fn px(r: u8, g: u8, b: u8) -> Vec<u8> {
+        vec![r, g, b, 255]
+    }
+
+    #[test]
+    fn themed_picks_the_exact_variant_without_inversion() {
+        let record = PluginIconRecord {
+            light: Some((1, 1, px(1, 2, 3))),
+            dark: Some((1, 1, px(200, 201, 202))),
+            themed: true,
+        };
+        assert_eq!(pixels_for(&record, false).unwrap().2, px(1, 2, 3));
+        assert_eq!(pixels_for(&record, true).unwrap().2, px(200, 201, 202));
+    }
+
+    #[test]
+    fn themed_falls_back_to_the_other_variant() {
+        let dark_only = PluginIconRecord {
+            light: None,
+            dark: Some((1, 1, px(9, 9, 9))),
+            themed: true,
+        };
+        assert_eq!(pixels_for(&dark_only, false).unwrap().2, px(9, 9, 9));
+    }
+
+    #[test]
+    fn legacy_still_inverts_on_dark() {
+        let legacy = PluginIconRecord {
+            light: Some((1, 1, px(10, 20, 30))),
+            dark: None,
+            themed: false,
+        };
+        assert_eq!(pixels_for(&legacy, false).unwrap().2, px(10, 20, 30));
+        assert_eq!(pixels_for(&legacy, true).unwrap().2, px(245, 235, 225));
     }
 }

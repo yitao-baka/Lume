@@ -6,6 +6,8 @@
 
 import { For, Show } from "solid-js";
 import { t } from "../../i18n";
+import { pickIcon } from "../../launcher/iconSpec";
+import type { PluginIconSpec } from "../../launcher/types";
 import unknownIcon from "../../../res/icons/unknow_universal.svg";
 import type { AppEntry, MenuState } from "../../launcher/types";
 import type { NavSection, NavigateStore } from "./store";
@@ -35,7 +37,13 @@ export interface NavigateViewProps {
  * freezes at the initial value (no selection feedback at all). */
 function itemBox(
   props: NavigateViewProps,
-  item: { name: string; path: string; icon?: string; mono?: boolean; description?: string },
+  item: {
+    name: string;
+    path: string;
+    icon?: string | PluginIconSpec;
+    mono?: boolean;
+    description?: string;
+  },
   opts: { wrap?: boolean },
   selected: () => boolean,
   handlers: {
@@ -46,7 +54,10 @@ function itemBox(
     onDragPress?: (e: PointerEvent) => void;
   }
 ) {
-  const src = () => item.icon ?? props.iconFor(item.path);
+  // Theme-reactive (#44): pickIcon reads themeMode(), so a theme flip swaps
+  // the variant without re-running the search; an absent/empty set falls
+  // through to the cached path pipeline.
+  const src = () => pickIcon(item.icon)?.src ?? props.iconFor(item.path);
   return (
     <div
       class="result-box"

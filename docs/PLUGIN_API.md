@@ -98,17 +98,19 @@ export default {
 | `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
 | `titlebar` | string | `""` | **mode 专属，仅独立窗口**（§6G）— 标题栏 HTML 页（相对插件目录）：渲染为标题与窗口控制按钮之间的第二个桥接 iframe，与 `view` 同一沙箱与 `window.lume` 能力（uTools 式搜索框等自由内容）。launcher 内嵌时忽略。示例 `examples/plugins/titlebar-demo/`。 |
 | `template` | string | `""` | mode 插件：`"list"` = 用内置列表模板渲染 `entry` 逻辑的行，**免 `view` HTML**（§6E.5） |
-| `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。行图标 = 插件自己的 `icon`。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
+| `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。行图标 = 插件自己的图标集（#44 两套按所在表面主题选）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.7）。 |
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§5.8）。 |
 | `api` | integer | `1` | **目标宿主 API 版本**（#32.1）— 插件针对的契约版本（§11）。缺省 = 当前宿主版本（旧清单零改动）；声明**高于**宿主支持的版本（`HOST_PLUGIN_API`）→ 加载期明确拒绝 + toast 提示，而不是静默半坏。 |
 | `network_allow` | string[] | `[]` | **网络白名单**（#32.3）— `network` 能力的私网放行名单（§6D.1）：默认拒绝回环/私网/链路本地目标（防 SSRF），`network_allow = ["192.168.1.10", "*.internal.example.com"]` 声明的 host（精确或 `*.` 通配后缀，大小写不敏感）跳过该检查。公网访问无需声明。 |
 | `settings` | array of table | `[]` | **声明式设置**（P3.4，§6F.3）——`[[settings]]` 子表：`key`、`label`、`type`（`toggle`/`select`/`text`）、`default`、`[[settings.options]]`（`value`/`label`）。设置 → 插件 自动渲染，值存插件 `__settings` 文档，插件经 `ctx.settings.get/all` 读、`onSettings` 感知变更。 |
-| `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`（结果行图标；省略 → 默认用插件自己的 `icon`）。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入，含 `file_type` 类别，§6E.1.1）、`"img"`（剪贴板图片）与 `"window"`（活动窗口匹配，§6H.4）规则见对应小节。 |
+| `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§6E.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`（旧版单图行图标）、`icon_light`/`icon_dark`（#44 两套行图标；显式变体优先，一组都没给 → 用插件自己的图标集）。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入，含 `file_type` 类别，§6E.1.1）、`"img"`（剪贴板图片）与 `"window"`（活动窗口匹配，§6H.4）规则见对应小节。 |
 | `height` | integer | — | **mode 专属** — 本模式页面的窗口高度（逻辑 px）。省略 = 全局 设置 → 窗口大小 → 高度；前端会钳制到工作区高度（见 §5B）。分离窗口的默认高度同样取它（§6G）。 |
 | `detachable` | bool | `false` | **mode 专属**（P6，§6G）— 页面可以分离为独立窗口：设置页显示「可分离」chip，激活该模式时页面右上角悬停出现「在独立窗口打开」按钮（插件也可经 `lume.app.detach()` 自绘按钮触发，§6C）。依赖启动器搜索框交互（`setSubInput`/`setQuery` 驱动）的模式不要声明。 |
 | `detach_button` | bool | `true` | **mode 专属 + `detachable` 配套**（P6，§6G）— 宿主是否在模式页右上角渲染内置的悬停「在独立窗口打开」按钮。插件自绘分离按钮（常驻、纯图标…）时设 `false` 把右上角完全让给页面，分离走 `lume.app.detach()`（§6C）。 |
 | `hidden` | bool | `false` | **mode 专属** — 在模式切换栏（pill）与切换键（Tab）循环中隐藏本模式：不渲染 pill、Tab 不切入（模式激活时 Tab 从导航页重新开始）。唯一入口是导航页搜索结果：keywords 的「进入 <name>」行、`[[features]]` 命中行与插件互跳（`app.redirect`）。设置 → 插件 卡片会显示「仅搜索进入」徽标；插件仍然可以被启停。示例：`examples/plugins/hidden-mode/`。 |
-| `icon` | string | `""` | **mode 专属** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录）。省略 = 不显示图标。**同时是本插件在导航搜索结果里的默认行图标**：keywords 行、没有自己 `icon` 的 provider 结果与 feature 行都用它（没有才回退到 `path` 常规图标管线）。`data:`/`http(s):`/`asset:`/`blob:` URI 原样透传，其余按文件路径走 asset 协议解析。分离窗口（§6G）的任务栏图标同源：分离时宿主把该文件光栅化后设为窗口图标（省略 = 独立窗回退 Lume 主题图标）。 |
+| `icon` | string | `""` | **旧版单图（兼容）** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录，或 `data:`/`http(s):`/`asset:`/`blob:` URI）。省略 = 不显示图标。**同时是本插件在导航搜索结果里的默认行图标**：keywords 行、没有自己 `icon` 的 provider 结果与 feature 行都用它（没有才回退到 `path` 常规图标管线）。旧图表现不变：在本来就按 `--icon-filter` 反相的位置（模式 pill、列表模板行）深色下仍反相；结果网格/设置卡片沿用原样。分离窗口（§6G）的任务栏图标同源。 |
+| `icon_light` | string | `""` | **浅色界面变体（#44）** — 浅色表面显示的那套图（通常是深色描边），相对插件目录（URI 规则同上）。省略 → 回退 `icon`（仍没有 → 用另一套）。显式变体一律**按原样渲染、不再反相**。 |
+| `icon_dark` | string | `""` | **深色界面变体（#44）** — 深色表面显示的那套图（通常是浅色描边）。省略 → 回退 `icon`（仍没有 → 用另一套）。 |
 
 **解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
 
@@ -116,6 +118,18 @@ export default {
 - 非 `plugin.toml` 的散文件、无清单的子目录一律忽略。
 - 清单里的字段拼错会被 toml 解析器**忽略**（不会报错）——拼写要对照上表。
 - 磁盘插件清单按 id 排序后合并进列表；内置插件（clipboard/preview）始终排在前面。
+
+**图标深/浅两套（#44）**：`icon_light` / `icon_dark`（以及运行时行上的
+`icon: { light, dark }`）由宿主决定显示哪一套 —— 按图标**所在表面**的当前
+生效主题：启动器内的搜索结果行 / 模式 pill / 列表模板行 / 设置页卡片跟随
+启动器（设置窗口）自己的主题（`system` 跟 OS 实时）；独立插件窗口的
+任务栏 / Alt+Tab 图标跟随**该插件的生效主题**（`lume.theme.set` 覆盖优先，
+与窗口画布/chrome 一致）。选择顺序：浅色表面 `icon_light` → `icon` →
+`icon_dark`；深色表面 `icon_dark` → `icon` → `icon_light`。命中旧
+`icon` 时保持旧行为；命中显式变体时原样渲染（不反相）。主题运行中切换时，
+已经显示的行/胶囊/任务栏图标即时换套（无需重跑搜索）。插件 iframe 页面
+内部的图仍由插件自己负责（页面已收 `on.theme`）。示例：
+`examples/plugins/themed-icons/`。
 
 ---
 
@@ -201,7 +215,7 @@ export default {
 | `name` | string | ✅ | 结果条目显示名（网格里单行省略）。 |
 | `path` | string | — | 文件绝对路径 **或** URL。声明了 `enter` 的条目可省略（动作条目不打开任何东西，宿主生成合成去重键）。激活时经 `launch_app`（`ShellExecuteW`）打开。 |
 | `description` | string | — | 可选副行，显示在名字下方（结果网格两行形态）。 |
-| `icon` | string | — | 可选显式图标：`data:`/`http(s):`/`asset:`/`blob:` URI 原样使用，其余按文件路径解析（**相对路径相对插件目录**）。省略 = 用插件清单 `icon`；插件也没声明才走 `path` 的常规图标管线。 |
+| `icon` | string \| `{ light?, dark? }` | — | 可选显式图标：字符串形式是 `data:`/`http(s):`/`asset:`/`blob:` URI 或文件路径（**相对路径相对插件目录**）；`{ light, dark }` 为两套变体（#44，取值规则相同），宿主按所在表面主题选一套并按原样渲染。省略（或对象里一个都没有）= 用插件清单的图标集；都没有才走 `path` 的常规图标管线。 |
 | `enter` | boolean | — | 标记：激活本条目**不调 `launch_app`**，改为回调 provider 的 `onEnter(item)`；启动器保持打开，插件自行决定何时 `ctx.app.hide()`。 |
 
 #### 5.1.1 `enter` 动作条目
@@ -249,8 +263,10 @@ export default function create(ctx) {
      迟到的结果被丢弃。
 - **激活路径**：普通条目与原生条目完全一致 — 点击/Enter → `launch_app`
   （URL 走默认浏览器，文件走 ShellExecute）。**图标优先级**：条目的
-  显式 `icon`（URI 或相对插件目录的路径）→ 插件清单 `icon`（默认行图标）
-  → `path` 的常规 `get_app_icons` 管线（取不到 → 未知图标回退）。声明了 `enter` 的
+  显式 `icon`（字符串或 #44 的 `{light,dark}` 两套；URI 或相对插件目录的
+  路径）→ 插件清单图标集（`icon_light`/`icon_dark`/`icon`，按所在表面
+  主题选）→ `path` 的常规 `get_app_icons` 管线（取不到 → 未知图标回退）。
+  声明了 `enter` 的
   条目改为回调 `onEnter(item)`（§5.1.1）。
 - **错误隔离**：单个 provider 的 `search` 抛错/拒绝 →
   `console.error("provider search failed: <id>")`，其它 provider 与原生
@@ -377,7 +393,9 @@ export default function create(ctx) {
   员启动）。
 - **图标**：`icon` 可省 — 文件路径走 `get_app_icons` 管线（取不到 → 未知图
   标回退）；`data:`/`https?:`/`asset:`/`blob:` URI 直接使用，其它字符串按
-  文件路径（如插件目录内的图标）经 asset 协议解析。
+  文件路径经 asset 协议解析（相对路径相对插件目录，#44 起生效）。也可给
+  `{ light, dark }` 两套（#44），宿主按所在表面主题选一套、显式变体按原样
+  渲染。
 - **调用时机**：组合时、每次呼出（`launcher-shown`）、每次插件刷新
   （settings-applied）。可返回 Promise（宿主等待）；单插件抛错/坏形状只影
   响它自己。动态栏目（按 `ctx.storage` 状态返回不同条目）因此可行。
@@ -903,8 +921,9 @@ regex = "^https?://"    # 正则匹配输入（与 over 二选一；两者都有
     不隐藏。
 - **无 UI 的用法**：service 插件 + `over` + `onFeature` 就能做「选中文本 → 转
   换 → 写剪贴板」这类零 UI 工具。
-- **行图标**：规则声明了 `icon` 用它（相对插件目录的路径或 URI）；
-  省略 → 默认用插件清单 `icon`；都没有才回退未知图标。
+- **行图标**：规则声明了 `icon_light`/`icon_dark` 用两套（#44，按所在表面
+  主题选、按原样渲染）；只有旧 `icon` 则用它（旧行为不变）；一组都没给 →
+  默认用插件清单的图标集；都没有才回退未知图标。
 
 ### 6E.1.1 `type = "files"` 文件拖入与 `type = "img"` 剪贴板图片进入（P2.2）
 
@@ -1009,7 +1028,8 @@ Solid 列表组件渲染其行；键盘 ↑/↓/Enter 走共享导航（宿主�
 `selected()` / `activate()`），点击行回调 `onEnter(item)`。逻辑契约：
 
 - **`search(q) → 行数组`（必需）**：行形状与 provider 结果相同
-  （`{ name, path?, description?, icon? }`，`name` 必填）。
+  （`{ name, path?, description?, icon? }`，`name` 必填；`icon` 同样接受
+  `{ light, dark }`，省略时用插件清单的图标集，#44）。
 - `onEnter(item)`（可选）：行激活。启动器保持打开 —— 插件自己决定何时
   `ctx.app.hide()`。
 - 可选钩子 `onShow` / `onHide` / `onQuery(q)` / `onSubInput` / `onSettings` 与
@@ -1194,7 +1214,7 @@ detachable = true     # 允许分离为独立窗口
 | 动作 | 行为 |
 |---|---|
 | 分离（按钮） | `plugin_window_open` 创建（或聚焦既有）窗口 `plugin-<id>`，加载 `plugin.html?plugin=<id>`；启动器隐藏 |
-| 任务栏图标 / 身份 | 分离时按 manifest `icon` 光栅化为窗口图标（无 `icon` 回退 Lume 主题图标）：任务栏按钮与 Alt+Tab 都是插件图标，深色主题按 `--icon-filter` 约定反相（跟随应用主题），主题切换/重开自动重绘；窗口携带独立 AppUserModelID `Lume.Plugin.<id>`，任务栏独立成项（可单独钉住，不与其他 Lume 窗口合并） |
+| 任务栏图标 / 身份 | 分离时把插件图标集解析出的浅/深两套（`icon_light`/`icon_dark`，缺失回退 `icon`/另一套）一起光栅化上传，窗口按**该插件的生效主题**取对应一套：显式变体按原样显示（不反相）；只有旧单图时保持 `--icon-filter` 反相约定。无图标回退 Lume 主题图标。任务栏按钮与 Alt+Tab 都是插件图标，主题切换/重开自动重绘；窗口携带独立 AppUserModelID `Lume.Plugin.<id>`，任务栏独立成项（可单独钉住，不与其他 Lume 窗口合并） |
 | 再次激活 | pill 点击 / Tab 循环 / 关键字 / redirect 进入一个已分离的模式 → 聚焦其窗口（不切启动器页面），启动器隐藏 |
 | 就绪握手 | 窗口页监听器就绪后调 `plugin_window_ready` → 启动器注册表推送 `{show, query, enter, settings, snapshot?}`（`plugin-state` 事件）——跨窗口版的 `__lumeReady` 状态重放。`snapshot` 是 detach 时从启动器内页面取走的**帧快照 v2**（`{v:2, frames:{view, titlebar?}}`，§6C）：view 帧在标准回放之后投递；titlebar 帧在标准回放之前**静默**恢复（不派发 input/change，避免把标题栏输入经 `app.setQuery` 回灌冲掉当前 query） |
 | 显隐 | 窗口获得焦点/重新打开 → `show` 事件重放 + `onShow` 钩子；窗口隐藏不留事件（shown 推送发生在建窗瞬间、页面尚未加载，**不携带快照**） |
@@ -1726,6 +1746,9 @@ pluginBuiltin`。
   二次校验）。演进规则：**破坏性变更必须 bump 版本**；非破坏性新增（新能力、
   新 hook、新字段）不 bump；废弃的 API 先标注、保留至少一个版本周期后再在
   bump 时移除。v1 之前以「字段只增不改义」演进的历史照旧成立。
+- **图标两套（#44）是增量字段**：`icon_light`/`icon_dark` 与运行时
+  `icon: {light,dark}` 未 bump 版本；旧宿主忽略新字段后回退 `icon`（仍无则
+  无图），需要兼容旧宿主的插件保留一个 `icon` 兜底即可。
 - `kind` 是分发键，新增贡献类型会引入新的 kind 值。
 - `ModeInstance.rows` 已泛化为 `PageRow`（`AppEntry | ClipboardItem`，#30
   主窗口部件化改造）；任意模式自定义行模型仍留待后续。
@@ -1767,6 +1790,9 @@ pluginBuiltin`。
   ROADMAP #36）—— §6C、§6G.4
 - ✅ 模式切换栏隐藏（`hidden`）+ 导航结果行图标默认插件图标
   （ROADMAP #37）—— §3、§5.1–5.2、§6B.1、§6E.1
+- ✅ 插件图标深/浅两套：`icon_light`/`icon_dark` + 运行时 `{light,dark}`，
+  按表面主题选择；独立窗任务栏图标两套原样取用（ROADMAP #44）——
+  §3、§5.1–5.2、§6E.1、§6E.5、§6G
 
 未做（见 `docs/PLUGIN_GAP_ANALYSIS.md` P4 后半）：
 

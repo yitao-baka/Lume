@@ -24,13 +24,15 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
 `kind` 决定贡献类型（**三类均已支持磁盘加载**）：
 
 - `provider` — 向搜索结果追加条目（纯对象 `{search}` 或工厂 `create(ctx)`；
-  条目支持 `description` 副行、显式 `icon` 与 `enter` 动作回调（激活不打开
+  条目支持 `description` 副行、显式 `icon`（字符串或 #44 的
+  `{ light, dark }` 两套）与 `enter` 动作回调（激活不打开
   文件而是回调 `onEnter(item)`），完整契约见 `docs/PLUGIN_API.md` §5.1；
   多文件入口（`entry` 指向目录）见 §5.6。示例 `examples/plugins/web-search/`
   与 `examples/plugins/actions/`）
 - `mode` — 整页模式：`view` HTML 自由 UI（沙箱 iframe）+ 可选 `entry`
   逻辑钩子 + `keywords` 全局关键字进入 + 可选 `height` 窗口高度 +
-  可选 `icon` pill 图标（也是搜索结果行的默认图标）+ `hidden = true` 不进
+  可选 `icon` pill 图标、`icon_light`/`icon_dark` 深浅两套（#44，也是搜索
+  结果行/列表行的默认图标）+ `hidden = true` 不进
   模式切换栏（只能从导航页搜索结果进入，示例 `examples/plugins/hidden-mode/`）
   + `detachable = true` 允许分离为独立窗口（P6，
   见 `docs/PLUGIN_API.md` §6G；示例 `examples/plugins/hello-mode/`；
@@ -78,8 +80,10 @@ export default {
 
 - **返回条目** `{ name, path }` — 与原生结果同构：追加在原生索引结果之后
   （按 path 去重，总数封顶 20），激活时经 `launch_app` 打开（文件路径与
-  URL 都可以）。**图标**：条目的显式 `icon`（URI 或相对插件目录的路径）
-  → 清单 `icon`（默认行图标）→ `path` 常规管线（取不到 → 未知图标回退）。
+  URL 都可以）。**图标**：条目的显式 `icon`（URI 或相对插件目录的路径；
+  也可给 `{ light, dark }` 两套，宿主按所在表面主题选一套——#44）
+  → 清单图标集（`icon_light`/`icon_dark`/`icon`）→ `path` 常规管线
+  （取不到 → 未知图标回退）。
 - **调用时机**：Navigate 模式每次非空搜索（空查询的主菜单不触发）。
 - **异常隔离**：单个 provider 抛错只会在控制台记录，不影响原生搜索；
   加载失败（文件缺失/非 ES Module/缺少 search）同样只记录并跳过。

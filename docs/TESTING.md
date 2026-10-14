@@ -340,6 +340,14 @@ dev URL instead.
 8. **HTTP and slow requests** — `node scripts/cdp_http_probe_verify.mjs`
    (offline local echo server) covers status/headers/text/json, non-2xx,
    request timeout and post-timeout bridge health.
+9. **Themed plugin icons (#44)** — `node scripts/cdp_plugin_themed_icon_verify.mjs`
+   (fixture `examples/plugins/themed-icons` + a self-built detachable window
+   fixture): keyword rows, mode pill, list-template rows and feature rows pick
+   the light/dark variant by the surface theme and swap live on a real
+   settings flip; explicit variants opt out of `--icon-filter` while a legacy
+   string row keeps `invert(1)`; the detached window's taskbar HICON is the
+   raw uploaded variant per the plugin's effective mode. `--legacy` reruns
+   only the legacy single-icon taskbar branch (dark still inverts).
 9. **Manual item** — real OS file drag into the launcher, real UAC prompts,
    service/agent registration, taskbar AUMID pinning and actual drag of a
    detached-window titlebar cannot be fully automated; use the sections above

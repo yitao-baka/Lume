@@ -10,8 +10,30 @@
 //! (`lume.theme.set`, `src/plugins/themePrefs.ts`): `"light"`/`"dark"` pin that
 //! plugin's surfaces, `"system"` follows the launcher. The launcher's own
 //! `data-theme` is never derived from a plugin preference.
+//!
+//! #44: `themeMode()` exposes the current document's mode as a **reactive**
+//! signal — host-rendered plugin icons pick their variant through it, so a
+//! theme flip (setting change or the OS in system mode) re-renders them
+//! without re-running a search. `writeColorMode` is the single writer.
+
+import { createSignal } from "solid-js";
 
 let systemMedia: MediaQueryList | null = null;
+
+/** Reactive color-mode accessor; reads track flips. Outside a Solid tracking
+ * scope (Rust-facing pushes, rasterizers) it is simply the current value. */
+const [themeModeSignal, setThemeModeSignal] = createSignal<"light" | "dark">("dark");
+
+/** The document's current color mode, reactive. */
+export function themeMode(): "light" | "dark" {
+  return themeModeSignal();
+}
+
+/** One writer for the attribute + the signal — they must never diverge. */
+function writeColorMode(mode: "light" | "dark"): void {
+  document.documentElement.dataset.theme = mode;
+  setThemeModeSignal(mode);
+}
 
 /**
  * Apply the color mode to the current document. Called on startup (with the
@@ -27,14 +49,12 @@ export function applyColorMode(mode: string): void {
     systemMedia.addEventListener("change", onSystemChange);
     onSystemChange();
   } else {
-    document.documentElement.dataset.theme = mode;
+    writeColorMode(mode === "light" ? "light" : "dark");
   }
 }
 
 function onSystemChange(): void {
-  document.documentElement.dataset.theme = systemMedia?.matches
-    ? "light"
-    : "dark";
+  writeColorMode(systemMedia?.matches ? "light" : "dark");
 }
 
 /** A color-mode *setting* resolved to the mode it currently means — the same
@@ -48,9 +68,11 @@ export function resolveColorMode(setting: string): "light" | "dark" {
 }
 
 /** The document's current color mode — the single source of truth for anything
- * that must hand a theme value to another surface (plugin page canvases). */
+ * that must hand a theme value to another surface (plugin page canvases).
+ * Non-reactive by contract; use `themeMode()` where a render must track
+ * flips (host-rendered plugin icons, #44). */
 export function currentThemeMode(): "light" | "dark" {
-  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  return themeMode();
 }
 
 /** The theme's solid panel surface per color mode (`--surface` in theme.css).

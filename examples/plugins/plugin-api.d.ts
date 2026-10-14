@@ -13,9 +13,11 @@
 interface LumeProviderResult {
   name: string;
   description?: string;
-  /** 图标：`data:`/`asset:`/`http(s):` URI 或相对插件目录的文件路径；
-   * 省略 = 用插件清单 `icon`（都没有才走 path 的常规图标管线）。 */
-  icon?: string;
+  /** 图标：`data:`/`asset:`/`http(s):` URI 或相对插件目录的文件路径；也可给
+   * `{ light, dark }` 两套（ROADMAP #44）——宿主按图标所在表面的当前主题选
+   * 一套，显式变体按原样渲染（不叠加旧版反相）；一个都不给 = 用插件清单
+   * 图标（都没有才走 path 的常规图标管线）。 */
+  icon?: string | { light?: string; dark?: string };
   /** 条目路径（打开/去重键；可省）。 */
   path?: string;
 }

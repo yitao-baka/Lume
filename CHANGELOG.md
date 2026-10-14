@@ -27,6 +27,28 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件图标深/浅两套（ROADMAP #44）** — 插件可为交给宿主渲染的图标提供两套
+  （清单 `icon_light`/`icon_dark`、`[[features]]` 同名字段、运行时行
+  `icon: { light, dark }`），宿主按**图标所在表面**的生效主题选一套：启动器
+  搜索结果行 / 模式 pill / 列表模板行 / 设置卡片跟随启动器（`system` 跟 OS
+  实时），独立插件窗的任务栏 / Alt+Tab 图标跟随该插件的生效主题
+  （`lume.theme.set` 覆盖优先）。主题运行中切换即时换图（新增响应式
+  `themeMode()`，无需重跑搜索）；显式变体按原样渲染、不再叠加
+  `--icon-filter` 反相，旧单图 `icon` 保持既有行为（含 pill / 列表行的
+  反相约定）作为兼容回退。分离窗任务栏图标：detach 时把两套一起光栅化上传，
+  Rust `PluginIconRecord` 按窗口生效主题取用（显式变体不反相，旧上传仍
+  反相）。顺带修：`navBars` 相对路径图标按插件目录解析、list 模板行图标
+  接入统一解析（此前完全不解析）。纯增量字段，不 bump `HOST_PLUGIN_API`。
+  示例 `examples/plugins/themed-icons/`；`docs/PLUGIN_API.md` §3 / §5.1–5.2 /
+  §6E.1 / §6E.5 / §6G / §11、`docs/PLUGINS.md`、`docs/ARCHITECTURE.md`、
+  `docs/TESTING.md`、`docs/ROADMAP.md` #44 同步。验证：新
+  `cdp_plugin_themed_icon_verify` **21/21**（浅→深即时换套、显式不过滤、
+  legacy 仍 `invert(1)`、feature 行随主题、任务栏 ICON_BIG 像素按插件生效
+  主题取原样变体）+ `--legacy` **6/6**（旧单图深色仍反相）；
+  `cdp_plugin_theme_verify` 28/28、`cdp_p2b_verify` 29/29、`cdp_p2_verify`
+  17/21（既有 4 项陈旧探针基线）；`cargo test` 206 passed / 9 ignored、
+  `cargo check` / `tsc --noEmit` / `pnpm run build` / debug exe 构建干净。
+
 - **`lume.env.form` 宿主形态常量（ROADMAP #42）** — 注入桥为每个插件帧钉死
   同步常量 `"launcher"`（启动器主窗口内嵌）/ `"window"`（独立窗口的 view /
   titlebar 帧），页面脚本运行前即可读；逻辑帧（§6I）恒为 `"launcher"`；

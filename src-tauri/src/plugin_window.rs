@@ -44,6 +44,12 @@
 //! Rust has no SVG decoder); icon-less plugins keep the Lume theme icon.
 //! Both are applied before the first `show()`.
 //!
+//! Themed variants (ROADMAP #44): a plugin with `icon_light`/`icon_dark`
+//! uploads both rasterized variants (`icon_png` + `icon_png_dark`,
+//! `icon_themed = true`); `appicon.rs` then picks per the window's
+//! effective color mode without inversion, and a theme flip re-picks from
+//! the cached set. A legacy single upload keeps the historical inversion.
+//!
 //! Color mode (ROADMAP #36): everything this window paints on its own —
 //! the opaque canvas behind the page, the taskbar/alt-tab icon variant, and
 //! the document theme `pluginWindow.tsx` applies — keys off the **plugin's**
@@ -93,6 +99,8 @@ pub fn window_label(id: &str) -> String {
 pub async fn plugin_window_open(
     id: String,
     icon_png: Option<String>,
+    icon_png_dark: Option<String>,
+    icon_themed: Option<bool>,
     app: AppHandle,
     state: State<'_, SettingsState>,
     closing: State<'_, ClosingSet>,
@@ -190,8 +198,13 @@ pub async fn plugin_window_open(
     // `appicon::apply` never covered (created after startup). The variant
     // follows the plugin's effective mode, not the launcher's: the taskbar
     // entry belongs to this window.
-    if let Some(b64) = icon_png.as_deref() {
-        icons.remember(&id, b64);
+    if icon_png.is_some() || icon_png_dark.is_some() {
+        icons.remember(
+            &id,
+            icon_png.as_deref(),
+            icon_png_dark.as_deref(),
+            icon_themed.unwrap_or(false),
+        );
     }
     if !appicon::apply_plugin_window(&win, &icons, &id, plugin_mode) {
         appicon::apply_window(&win, plugin_mode);

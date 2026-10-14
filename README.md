@@ -48,7 +48,8 @@ The goal is:
   NTFS USN/MFT index, exposed through one async search facade
 - ✅ Plugin platform — provider / mode / service contributions, sandboxed UI,
   Rust-side permission checks, `.lupx` install/signature support, detached
-  windows, declarative settings, private storage, and development hot reload
+  windows, declarative settings, private storage, development hot reload, and
+  light/dark plugin icon pairs picked per surface theme
 - ✅ Automation + elevation agent — foreground-window rules can send a
   configured hotkey, including to elevated targets through the minimal
   `lume-agent.exe` helper

@@ -11,9 +11,11 @@
 //! the launcher's permission checks see the new state immediately.
 
 import { createSignal, For, onMount, Show } from "solid-js";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { t, type Messages } from "../i18n";
+import { pickIcon, resolveThemedIcon } from "../launcher/iconSpec";
+import type { PickedIcon } from "../launcher/types";
 import type { PluginManifest, PluginSetting } from "../plugins/types";
 import { Chip, Toggle } from "./controls";
 import reloadIcon from "../../res/icons/refresh.svg";
@@ -99,16 +101,12 @@ function pluginDescription(p: PluginManifest): string {
   return key ? t(key) : "";
 }
 
-/** Manifest icon → URL (data:/http pass through; a relative path resolves
- * against the plugin dir via the asset protocol — same rule as the
- * launcher's pill icons). */
-function pluginIcon(p: PluginManifest): string | undefined {
-  if (typeof p.icon !== "string" || p.icon === "") return undefined;
-  if (/^(data:|https?:|asset:|blob:)/i.test(p.icon)) return p.icon;
-  if (p.dir && !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(p.icon)) {
-    return convertFileSrc(p.dir + "\\" + p.icon);
-  }
-  return convertFileSrc(p.icon);
+/** Manifest icon set → a theme pick (ROADMAP #44): explicit `icon_light` /
+ * `icon_dark` variants win over the legacy `icon`; relative paths resolve
+ * against the plugin dir (same rule as the launcher's pill icons). The
+ * settings window's own effective theme decides. */
+function pluginIcon(p: PluginManifest): PickedIcon | undefined {
+  return pickIcon(resolveThemedIcon(p.icon, p.iconLight, p.iconDark, p.dir));
 }
 
 type Filter = "all" | "enabled" | "disabled" | "disk";
@@ -525,7 +523,7 @@ function PluginCard(props: {
       <div class="plg-head" onClick={props.onToggleOpen}>
         <div class="plg-tile" classList={{ [p().kind]: true }}>
           <Show when={icon()} fallback={<span class="plg-tile-letter">{tileChar()}</span>}>
-            <img src={icon()} alt="" draggable={false} />
+            <img src={icon()!.src} alt="" draggable={false} />
           </Show>
         </div>
         <div class="plg-main">

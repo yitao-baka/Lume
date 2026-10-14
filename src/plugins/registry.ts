@@ -10,7 +10,7 @@
 //! satellite.
 
 import { createSignal } from "solid-js";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginColorMode, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { HOST_PLUGIN_API } from "./types";
@@ -21,6 +21,8 @@ import { fetchDiskFile } from "./disk";
 import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
+import { resolveIconInput, resolveThemedIcon } from "../launcher/iconSpec";
+import type { HostIcon, PluginIconSpec } from "../launcher/types";
 import { currentThemeMode } from "../theme";
 import {
   pluginColorMode,
@@ -104,7 +106,7 @@ export function providerPlugins(): {
   id: string;
   instance: ProviderInstance;
   dir?: string;
-  icon?: string;
+  icon?: PluginIconSpec;
 }[] {
   return plugins
     .filter((p) => p.provider && isEnabled(p.id))
@@ -429,41 +431,37 @@ export function callHook(id: string, logic: Record<string, unknown>, name: strin
   return undefined;
 }
 
-/** data:/http(s):/asset:/blob: URIs pass through untouched; anything else in
- * an item's `icon` is a file path (absolute, or relative to `base` — a
- * manifest icon is relative to the plugin dir) → asset URL. */
-export function resolvePluginIcon(icon: unknown, base?: string): string | undefined {
-  if (typeof icon !== "string" || icon === "") return undefined;
-  if (/^(data:|https?:|asset:|blob:)/i.test(icon)) return icon;
-  if (base && !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(icon)) {
-    return convertFileSrc(base + "\\" + icon);
-  }
-  return convertFileSrc(icon);
+/** Resolve a raw row/manifest icon input (a string or `{ light, dark }`
+ * pair) into a spec. Re-exported under the historical name; the
+ * implementation lives in `src/launcher/iconSpec.ts` so the settings pane
+ * (which does not load this registry) shares it (ROADMAP #44). */
+export { resolveIconInput as resolvePluginIcon };
+
+/** A manifest's icon set (ROADMAP #44): explicit light/dark variants with
+ * the legacy single `icon` as the middle fallback. Undefined when the
+ * manifest declares none. */
+export function manifestIconSpec(m: PluginManifest): PluginIconSpec | undefined {
+  return resolveThemedIcon(m.icon, m.iconLight, m.iconDark, m.dir);
 }
 
-/** The plugin's own icon as a URL: the resolved manifest `icon` for disk
- * plugins, the compiled-in `modeMeta.icon` for built-in modes. This is the
- * default icon for every Navigate row the plugin contributes (keyword rows,
- * provider results / feature rows without an explicit `icon`). */
-export function pluginIcon(id: string): string | undefined {
+/** The plugin's own icon set: the resolved manifest fields for disk plugins,
+ * the compiled-in `modeMeta.icon` for built-in modes. This is the default
+ * icon for every Navigate row the plugin contributes (keyword rows, provider
+ * results / feature rows without an explicit `icon`). */
+export function pluginIcon(id: string): HostIcon | undefined {
   const p = plugins.find((x) => x.id === id);
-  return p?.icon || p?.modeMeta?.icon || undefined;
-}
-
-/** One Navigate row icon contributed by plugin `p`: an explicit per-row
- * `icon` (URI, or path relative to the plugin dir) wins; otherwise the
- * plugin's own icon (manifest `icon`) is the default; undefined when the
- * plugin has neither (the caller falls back to the path/unknown pipeline). */
-export function pluginRowIcon(p: LauncherPlugin, explicit?: unknown): string | undefined {
-  const custom =
-    typeof explicit === "string" && explicit ? resolvePluginIcon(explicit, p.dir) : undefined;
-  return custom ?? p.icon ?? undefined;
+  return p?.icon ?? p?.modeMeta?.icon ?? undefined;
 }
 
 /** Validate + normalize a plugin's `navBars()` return: prefix bar ids with
- * the plugin id (the zone-key namespace), resolve icons, cap items per bar.
- * Malformed bars/entries are dropped with a console error. */
-function normalizeNavBarContributions(pluginId: string, raw: unknown): NavBarContribution[] {
+ * the plugin id (the zone-key namespace), resolve icons (relative paths
+ * against the plugin dir, #44), cap items per bar. Malformed bars/entries are
+ * dropped with a console error. */
+function normalizeNavBarContributions(
+  pluginId: string,
+  raw: unknown,
+  dir?: string
+): NavBarContribution[] {
   if (!Array.isArray(raw)) return [];
   const out: NavBarContribution[] = [];
   for (const bar of raw) {
@@ -480,16 +478,18 @@ function normalizeNavBarContributions(pluginId: string, raw: unknown): NavBarCon
     }
     const items = b.items
       .slice(0, 50) // keep the bar grid sane, like the provider result cap
-      .filter((it): it is { name: string; path: string; icon?: string } => {
+      .filter((it): it is { name: string; path: string; icon?: unknown } => {
         const x = it as { name?: unknown; path?: unknown; icon?: unknown } | null;
         return (
           !!x &&
           typeof x.name === "string" &&
           typeof x.path === "string" &&
-          (x.icon === undefined || typeof x.icon === "string")
+          (x.icon === undefined ||
+            typeof x.icon === "string" ||
+            (typeof x.icon === "object" && x.icon !== null))
         );
       })
-      .map((it) => ({ name: it.name, path: it.path, icon: resolvePluginIcon(it.icon) }));
+      .map((it) => ({ name: it.name, path: it.path, icon: resolveIconInput(it.icon, dir) }));
     out.push({ id: `${pluginId}:${b.id}`, title: b.title, items });
   }
   return out;
@@ -499,7 +499,8 @@ function normalizeNavBarContributions(pluginId: string, raw: unknown): NavBarCon
  * undefined when the logic object doesn't provide one. */
 function navBarsContribution(
   pluginId: string,
-  logic: Record<string, unknown>
+  logic: Record<string, unknown>,
+  dir?: string
 ): (() => Promise<NavBarContribution[]> | NavBarContribution[]) | undefined {
   if (typeof logic.navBars !== "function") return undefined;
   return () => {
@@ -507,7 +508,8 @@ function navBarsContribution(
       return Promise.resolve(
         normalizeNavBarContributions(
           pluginId,
-          (logic.navBars as () => unknown)()
+          (logic.navBars as () => unknown)(),
+          dir
         )
       );
     } catch (err) {
@@ -843,10 +845,10 @@ export async function loadDiskPlugins() {
         // 内的调用走 registry 的快速失败，而不是被宿主静默丢弃后拖满 8s。
         pushLogicLoad(m.id);
         const proxy = logicProxy(m.id);
-        const navBars = navBarsContribution(m.id, proxy);
+        const navBars = navBarsContribution(m.id, proxy, m.dir);
         definePlugin({
           id: m.id,
-          icon: resolvePluginIcon(m.icon, m.dir),
+          icon: manifestIconSpec(m),
           features: m.features ?? [],
           dir: m.dir,
           provider: {
@@ -894,11 +896,11 @@ export async function loadDiskPlugins() {
         const instance = createListTemplateMode(m, logic, services!);
         definePlugin({
           id: m.id,
-          icon: resolvePluginIcon(m.icon, m.dir),
+          icon: manifestIconSpec(m),
           modeMeta: {
             labelKey: "",
             placeholderKey: "",
-            icon: resolvePluginIcon(m.icon, m.dir) ?? "",
+            icon: manifestIconSpec(m),
             label: m.name || m.id,
           },
           keywords: m.keywords,
@@ -920,14 +922,14 @@ export async function loadDiskPlugins() {
         if (m.entry) pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const logic = m.entry ? logicProxy(m.id) : {};
         const instance = createDiskModeInstance(m, logic, services!);
-        const navBars = navBarsContribution(m.id, logic);
+        const navBars = navBarsContribution(m.id, logic, m.dir);
         definePlugin({
           id: m.id,
-          icon: resolvePluginIcon(m.icon, m.dir),
+          icon: manifestIconSpec(m),
           modeMeta: {
             labelKey: "",
             placeholderKey: "",
-            icon: resolvePluginIcon(m.icon, m.dir) ?? "",
+            icon: manifestIconSpec(m),
             label: m.name || m.id,
           },
           keywords: m.keywords,
@@ -948,10 +950,10 @@ export async function loadDiskPlugins() {
         );
       } else if (m.kind === "service" && m.entry) {
         pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
-        const navBars = navBarsContribution(m.id, logicProxy(m.id));
+        const navBars = navBarsContribution(m.id, logicProxy(m.id), m.dir);
         definePlugin({
           id: m.id,
-          icon: resolvePluginIcon(m.icon, m.dir),
+          icon: manifestIconSpec(m),
           lifecycle: {
             onShow: () => void logicCall(m.id, "onShow", []).catch(() => {}),
             onHide: () => void logicCall(m.id, "onHide", []).catch(() => {}),
@@ -1019,10 +1021,10 @@ export async function applyPluginSettings(id: string): Promise<void> {
  * first: exact (case-insensitive) → prefix → pinyin initials prefix → full
  * pinyin prefix. Pinyin comes precomputed from the backend (`keywordsPinyin`)
  * — the frontend has no pinyin table of its own. */
-export function modeKeywordMatches(q: string): { id: ModeId; name: string; icon?: string }[] {
+export function modeKeywordMatches(q: string): { id: ModeId; name: string; icon?: HostIcon }[] {
   const needle = q.trim().toLowerCase();
   if (!needle) return [];
-  const hits: { id: ModeId; name: string; tier: number; icon?: string }[] = [];
+  const hits: { id: ModeId; name: string; tier: number; icon?: HostIcon }[] = [];
   for (const p of plugins) {
     if (!p.mode || !isEnabled(p.id)) continue;
     const kws = (p as { keywords?: string[] }).keywords ?? [];
@@ -1074,7 +1076,12 @@ export function navBarPlugins(): {
 export function modePlugins(): {
   id: ModeId;
   instance: ModeInstance;
-  modeMeta?: { labelKey: string; placeholderKey: string; icon: string; label?: string };
+  modeMeta?: {
+    labelKey: string;
+    placeholderKey: string;
+    icon?: string | PluginIconSpec;
+    label?: string;
+  };
   hidden: boolean;
 }[] {
   return plugins
@@ -1310,14 +1317,15 @@ function compileFeatureRegex(pluginId: string, idx: number, pattern: string): Re
 export interface FeatureMatch extends FeatureEnterInfo {
   pluginId: string;
   label: string;
-  icon?: string;
+  icon?: PluginIconSpec;
 }
 
-/** One feature row's icon: the rule's explicit `icon` (relative to the
- * plugin dir) or — when the rule has none — the plugin's own manifest icon
- * (`pluginRowIcon`), so every plugin row shows its identity by default. */
-function featureIcon(p: LauncherPlugin, f: PluginFeature): string | undefined {
-  return pluginRowIcon(p, f.icon);
+/** One feature row's icon: the rule's explicit `icon`/`icon_light`/
+ * `icon_dark` (relative to the plugin dir) or — when the rule has none —
+ * the plugin's own icon set, so every plugin row shows its identity by
+ * default. */
+function featureIcon(p: LauncherPlugin, f: PluginFeature): PluginIconSpec | undefined {
+  return resolveThemedIcon(f.icon, f.iconLight, f.iconDark, p.dir) ?? p.icon;
 }
 
 /** Entry rules of enabled plugins matching a query (empty query → none). */

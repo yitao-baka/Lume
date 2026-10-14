@@ -1910,7 +1910,9 @@ body.settings-window #root {
 
 /* The bundled SVGs use dark `#333` strokes — inverted to light in dark mode
    (`--icon-filter`), left as-is on the light theme. Real extracted PNG icons
-   are unaffected; `.icon-unknown` is the bundled unknown-icon fallback. */
+   are unaffected; `.icon-unknown` is the bundled unknown-icon fallback.
+   Themed plugin icons (#44): explicit light/dark variants are the author's
+   final artwork — `.icon-explicit` opts them out of the inversion. */
 .icon-btn-icon,
 .mode-switch-icon,
 .ctx-item-icon,
@@ -1920,6 +1922,11 @@ body.settings-window #root {
 .folder-icon-svg,
 .icon-unknown {
   filter: var(--icon-filter);
+}
+
+.mode-switch-icon.icon-explicit,
+.plugin-list-icon.icon-explicit {
+  filter: none;
 }
 
 /* 「插件」页 — modern plugin-manager cards: a summary/filter toolbar, one

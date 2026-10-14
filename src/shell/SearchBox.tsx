@@ -6,13 +6,17 @@
 
 import { For, Show } from "solid-js";
 import { t } from "../i18n";
+import { pickIcon } from "../launcher/iconSpec";
+import type { HostIcon } from "../launcher/types";
 import settingsIcon from "../../res/icons/settings.svg";
 
 /** One page pill (the home page first, then plugin modes). */
 export interface SearchBoxPage {
   id: string;
   label: string;
-  icon?: string;
+  /** Pill icon: a compiled-in URL for built-ins, a resolved light/dark spec
+   * for disk modes (#44). */
+  icon?: HostIcon;
   active: boolean;
   /** The page is still loading: the pill carries the feedback (accent label +
    * a spinner on the icon) while the window is collapsed to the search row. */
@@ -59,24 +63,36 @@ export function SearchBox(props: SearchBoxProps) {
       />
       <div class="mode-switch" role="tablist" aria-label="Search mode">
         <For each={props.pages()}>
-          {(p) => (
-            <button
-              class="mode-switch-item"
-              classList={{ active: p.active, loading: p.loading }}
-              role="tab"
-              aria-selected={p.active}
-              aria-busy={p.loading}
-              onClick={() => props.onSwitchPage(p.id)}
-            >
-              <span class="mode-switch-icon-wrap">
-                <img class="mode-switch-icon" src={p.icon} alt="" draggable={false} />
-                <Show when={p.loading}>
-                  <span class="mode-switch-spinner" aria-hidden="true" />
-                </Show>
-              </span>
-              {p.label}
-            </button>
-          )}
+          {(p) => {
+            // Theme-reactive (#44): pickIcon reads themeMode(), so a flip
+            // swaps the pill's variant live; an explicit pick opts out of
+            // the legacy `--icon-filter` inversion.
+            const icon = () => pickIcon(p.icon);
+            return (
+              <button
+                class="mode-switch-item"
+                classList={{ active: p.active, loading: p.loading }}
+                role="tab"
+                aria-selected={p.active}
+                aria-busy={p.loading}
+                onClick={() => props.onSwitchPage(p.id)}
+              >
+                <span class="mode-switch-icon-wrap">
+                  <img
+                    class="mode-switch-icon"
+                    classList={{ "icon-explicit": !!icon() && !icon()!.legacy }}
+                    src={icon()?.src}
+                    alt=""
+                    draggable={false}
+                  />
+                  <Show when={p.loading}>
+                    <span class="mode-switch-spinner" aria-hidden="true" />
+                  </Show>
+                </span>
+                {p.label}
+              </button>
+            );
+          }}
         </For>
       </div>
       <button

@@ -9,6 +9,32 @@ import type { Messages } from "../i18n";
  * through the plugin registry (src/plugins). */
 export type Mode = string;
 
+/** A resolved plugin icon set (ROADMAP #44): explicit light/dark variants
+ * plus the optional legacy single `icon`. All URLs are already resolved
+ * (asset/data/http…). */
+export interface PluginIconSpec {
+  /** Explicit light-theme variant (shown on light surfaces, as-is). */
+  light?: string;
+  /** Explicit dark-theme variant (shown on dark surfaces, as-is). */
+  dark?: string;
+  /** The legacy single icon (manifest `icon` / a plain-string row icon):
+   * dark mode still applies the historical filter convention to it. */
+  legacy?: string;
+}
+
+/** One theme's pick from a spec (see `pickIcon`). `legacy` marks a pick
+ * from the legacy single icon — render sites that historically inverted
+ * plugin icons keep the filter for those and suppress it for explicit
+ * variants (which are the author's final artwork). */
+export interface PickedIcon {
+  src: string;
+  legacy: boolean;
+}
+
+/** A host-rendered icon input: a plain URL/legacy string, or a resolved
+ * spec. */
+export type HostIcon = string | PluginIconSpec;
+
 /** A launcher entry as returned by the Rust `search_apps` command. */
 export interface AppEntry {
   id: number;
@@ -17,8 +43,10 @@ export interface AppEntry {
   /** Provider extras (P0.2): optional second line under the name in the
    * results grid. */
   description?: string;
-  /** Explicit icon (provider rows) — wins over the cached icon pipeline. */
-  icon?: string;
+  /** Explicit icon (provider rows) — wins over the cached icon pipeline.
+   * A `PluginIconSpec` for plugin-supplied artwork (#44; a legacy string for
+   * the bundled icon set). */
+  icon?: string | PluginIconSpec;
   /** Set on provider rows declared with `enter`: activation calls the
    * provider's `onEnter(item)` instead of launch_app; `path` is a synthetic
    * dedup key in that case. */

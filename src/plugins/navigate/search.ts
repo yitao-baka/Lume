@@ -10,7 +10,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { t } from "../../i18n";
 import { plog } from "../log";
 import type { AppEntry, FileSearchOut } from "../../launcher/types";
-import type { ForegroundInfo, PluginServices, ProviderInstance, ProviderResult } from "../types";
+import type {
+  ForegroundInfo,
+  PluginIconSpec,
+  PluginServices,
+  ProviderInstance,
+  ProviderResult,
+} from "../types";
 import type { FeatureMatch } from "../registry";
 import {
   featureMatches,
@@ -66,11 +72,11 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
   /** Convert one provider result into a grid entry — shared by the search
    * merge and by drilled levels (P2.4). `seq` only feeds the synthetic dedup
    * key used for rows that open nothing. Icon rule: the result's explicit
-   * `icon` (a URI, or a path relative to the plugin dir) wins; a row without
-   * one shows the plugin's own icon (manifest `icon`); with neither, the
-   * regular path pipeline (unknown-icon fallback) applies. */
+   * `icon` (a URI / plugin-relative path, or a `{light,dark}` pair; #44)
+   * wins; a row without one shows the plugin's own icon set; with neither,
+   * the regular path pipeline (unknown-icon fallback) applies. */
   function providerRowToEntry(
-    p: { id: string; instance: ProviderInstance; dir?: string; icon?: string },
+    p: { id: string; instance: ProviderInstance; dir?: string; icon?: PluginIconSpec },
     it: ProviderResult,
     seq: number
   ): AppEntry | null {
@@ -122,7 +128,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
 
   /** Provider rows → grid entries (drop malformed ones). */
   function rowsToEntries(
-    p: { id: string; instance: ProviderInstance; dir?: string; icon?: string },
+    p: { id: string; instance: ProviderInstance; dir?: string; icon?: PluginIconSpec },
     rows: ProviderResult[]
   ): AppEntry[] {
     const out: AppEntry[] = [];

@@ -1,0 +1,31 @@
+# Themed Icons — 插件图标深浅两套（ROADMAP #44）的参考示例。
+#
+# 宿主按「图标被画在哪个表面」决定用哪一套：启动器搜索结果行 / 模式 pill /
+# 列表模板行跟随启动器当前生效主题（system 跟随 OS 实时）；独立窗的任务栏
+# 图标跟随该插件的生效主题（lume.theme.set 覆盖优先）。显式变体（icon_light /
+# icon_dark / 行上的 { light, dark }）一律按原样渲染，不再叠加旧版
+# `--icon-filter` 反相；旧的单图 `icon` 保留为兼容回退。
+#
+# 安装：把整个 themed-icons/ 目录拷进 <base>/plugins/，重启 Lume（或触发一次
+# 设置变更）。用法：输入「themed」/「双色」进入本模式；切换 设置 → 界面 →
+# 颜色模式 观察 pill 与行图标换套。
+id = "themed-icons"
+name = "Themed Icons"
+version = "1.0.0"
+kind = "mode"
+description = "示例：icon_light / icon_dark 两套图标 + 运行时光/暗行图标对"
+entry = "main.js"
+template = "list"          # 零 HTML 的列表模式：宿主渲染 main.js 的行
+keywords = ["themed", "双色"]
+
+# 插件级两套图：pill、没有显式 icon 的行、设置页卡片都用它。
+icon_light = "icons/pill-light.svg"   # 浅色界面用（深蓝圆）
+icon_dark = "icons/pill-dark.svg"     # 深色界面用（琥珀圆）
+
+# 声明式进入规则也可以自带两套图（规则级胜过插件级默认）。
+[[features]]
+code = "echo"
+label = "Themed Icons：处理这段文字"
+regex = "^themed:.+"
+icon_light = "icons/row-light.svg"
+icon_dark = "icons/row-dark.svg"

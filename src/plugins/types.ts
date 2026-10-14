@@ -14,10 +14,10 @@
 //! the manifest/permission surfaces exist so the loader can slot in).
 
 import type { Component } from "solid-js";
-import type { AppEntry, ClipboardItem, FileSearchOut, PreviewReq } from "../launcher/types";
+import type { AppEntry, ClipboardItem, FileSearchOut, PreviewReq, PluginIconSpec } from "../launcher/types";
 import type { ColorMode, PluginColorMode } from "../theme";
 
-export type { FileSearchOut, PluginColorMode, ColorMode };
+export type { FileSearchOut, PluginColorMode, ColorMode, PluginIconSpec };
 
 /** One plugin's color-mode state (`lume.theme.get`, docs/PLUGIN_API.md §6C). */
 export interface PluginColorState {
@@ -91,6 +91,14 @@ export interface PluginManifest {
    * the registry). Empty = no pill image. Doubles as the default
    * Navigate-result icon for every row this plugin contributes. */
   icon: string;
+  /** Explicit light-theme icon variant (manifest `icon_light`; ROADMAP #44)
+   * — shown on light surfaces and rendered as-is (never inverted). Wins over
+   * `icon`. */
+  iconLight: string;
+  /** Explicit dark-theme icon variant (manifest `icon_dark`) — shown on
+   * dark surfaces and rendered as-is. Falls back to `icon`, then
+   * `icon_light`. */
+  iconDark: string;
   /** Development flag (manifest `development`): the registry reloads the
    * plugin from disk on every refresh (settings-applied) — code edits take
    * effect without a restart. */
@@ -184,8 +192,13 @@ export interface PluginFeature {
   /** Optional bounds (characters for text rules; file counts for `files`). */
   minLength: number | null;
   maxLength: number | null;
-  /** Optional row icon (relative to the plugin dir). */
+  /** Optional row icon (relative to the plugin dir; a legacy single icon). */
   icon: string;
+  /** Explicit light-theme icon variant (#44) — wins over `icon` at this
+   * level. */
+  iconLight: string;
+  /** Explicit dark-theme icon variant (#44). */
+  iconDark: string;
 }
 
 /** Payload delivered when a declarative entry rule fires. */
@@ -755,10 +768,13 @@ export interface ProviderResult {
   path?: string;
   /** Optional second line rendered under the name in the results grid. */
   description?: string;
-  /** Explicit icon: data:/http(s):/asset:/blob: URIs pass through, anything
-   * else is treated as a file path (resolved via the asset protocol).
-   * Omitted → the regular icon pipeline for `path`. */
-  icon?: string;
+  /** Explicit icon: a string (data:/http(s):/asset:/blob: URI, or a file
+   * path relative to the plugin dir) or a `{ light, dark }` pair of the
+   * same forms (ROADMAP #44 — the host picks by the surface theme; explicit
+   * variants render as-is, a plain string keeps the legacy convention).
+   * Omitted → the plugin's own icon set, then the regular icon pipeline for
+   * `path`. */
+  icon?: string | PluginIconInput;
   /** Marker: activating this row calls the provider's `onEnter(item)`
    * instead of launch_app. The launcher stays open — the plugin decides
    * when to hide itself (ctx.app.hide). */
@@ -767,6 +783,13 @@ export interface ProviderResult {
    * `select(item)` and replaces the grid with its rows (Esc returns to the
    * parent level). Requires the provider to implement `select`. */
   drill?: boolean;
+}
+
+/** Raw light/dark icon pair a plugin may hand over at runtime (#44). Each
+ * value accepts the same forms as a plain string icon. */
+export interface PluginIconInput {
+  light?: string;
+  dark?: string;
 }
 
 /** A Navigate-page bar (栏目) contributed by a plugin — rendered on the
@@ -780,11 +803,11 @@ export interface NavBarContribution {
   id: string;
   /** Rendered title — the plugin localizes it itself. */
   title: string;
-  /** Bar entries. `icon` is optional: data:/http(s): URIs pass through,
-   * anything else is treated as a file path (resolved via the asset
-   * protocol); omitted → the regular icon pipeline (real icons for file
-   * paths, unknown-icon fallback otherwise). */
-  items: { name: string; path: string; icon?: string }[];
+  /** Bar entries. `icon` is optional: a string or `{ light, dark }` pair
+   * (data:/http(s):/asset: URIs pass through; relative paths resolve against
+   * the plugin dir, #44); omitted → the regular icon pipeline (real icons
+   * for file paths, unknown-icon fallback otherwise). */
+  items: { name: string; path: string; icon?: string | PluginIconInput }[];
 }
 
 /** A `provider` contribution: feeds extra results into Navigate search
@@ -818,7 +841,9 @@ export interface LauncherPlugin {
   modeMeta?: {
     labelKey: string;
     placeholderKey: string;
-    icon: string;
+    /** Pill icon (compiled-in URL for built-ins, a resolved spec for disk
+     * modes; #44). */
+    icon?: string | PluginIconSpec;
     /** Raw display label (disk modes have no i18n key). */
     label?: string;
   };
@@ -840,10 +865,11 @@ export interface LauncherPlugin {
   /** Absolute plugin directory (disk plugins) — used to resolve relative
    * result icons (provider results, feature rules). */
   dir?: string;
-  /** The plugin's own icon, resolved to a URL by the registry (manifest
-   * `icon`). It is the default icon for every Navigate row this plugin
-   * contributes that does not carry an explicit per-row `icon`. */
-  icon?: string;
+  /** The plugin's own resolved icon set (manifest `icon` / `icon_light` /
+   * `icon_dark`, ROADMAP #44). It is the default icon for every Navigate
+   * row this plugin contributes that does not carry an explicit per-row
+   * `icon`. */
+  icon?: PluginIconSpec;
   pluginName?: string;
   /** Headless lifecycle hooks (disk service plugins). */
   lifecycle?: ServiceHooks;

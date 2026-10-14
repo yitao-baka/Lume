@@ -20,12 +20,14 @@ import type { Component } from "solid-js";
 import type {
   FeatureEnterInfo,
   ModeInstance,
+  PluginIconSpec,
   PluginManifest,
   PluginServices,
   ProviderResult,
 } from "./types";
 import type { ClipboardItem } from "../launcher/types";
-import { callHook, throttledLogicCall } from "./registry";
+import { pickIcon, resolveIconInput } from "../launcher/iconSpec";
+import { callHook, manifestIconSpec, throttledLogicCall } from "./registry";
 import { plog } from "./log";
 import { t } from "../i18n";
 
@@ -36,6 +38,11 @@ function ListTemplateView(props: {
   onSelect: (i: number) => void;
   onActivate: (i: number) => void;
   query: () => string;
+  /** The plugin dir — relative row icons resolve against it (#44). */
+  dir?: string;
+  /** The plugin's own icon set: the default for rows without an explicit
+   * `icon` (same rule as provider rows). */
+  defaultIcon?: PluginIconSpec;
 }) {
   return (
     <div class="plugin-list" role="listbox">
@@ -44,24 +51,39 @@ function ListTemplateView(props: {
         fallback={<span class="hint">{props.query().trim() === "" ? t("pluginListEmpty") : t("noResults")}</span>}
       >
         <For each={props.rows()}>
-          {(row, i) => (
-            <div
-              class="plugin-list-row"
-              classList={{ "plugin-list-selected": i() === props.selected() }}
-              role="option"
-              aria-selected={i() === props.selected()}
-              onMouseMove={() => props.onSelect(i())}
-              onClick={() => props.onActivate(i())}
-            >
-              <Show when={row.icon}>
-                <img class="plugin-list-icon" src={row.icon} alt="" draggable={false} />
-              </Show>
-              <span class="plugin-list-name">{row.name}</span>
-              <Show when={row.description}>
-                <span class="plugin-list-desc">{row.description}</span>
-              </Show>
-            </div>
-          )}
+          {(row, i) => {
+            // Theme-reactive (#44): resolve the row's icon input (string or
+            // light/dark pair) against the plugin dir — falling back to the
+            // plugin's own icon set like provider rows — then pick by the
+            // current surface theme; explicit variants opt out of the legacy
+            // invert.
+            const icon = () =>
+              pickIcon(resolveIconInput(row.icon, props.dir) ?? props.defaultIcon);
+            return (
+              <div
+                class="plugin-list-row"
+                classList={{ "plugin-list-selected": i() === props.selected() }}
+                role="option"
+                aria-selected={i() === props.selected()}
+                onMouseMove={() => props.onSelect(i())}
+                onClick={() => props.onActivate(i())}
+              >
+                <Show when={icon()}>
+                  <img
+                    class="plugin-list-icon"
+                    classList={{ "icon-explicit": !icon()!.legacy }}
+                    src={icon()!.src}
+                    alt=""
+                    draggable={false}
+                  />
+                </Show>
+                <span class="plugin-list-name">{row.name}</span>
+                <Show when={row.description}>
+                  <span class="plugin-list-desc">{row.description}</span>
+                </Show>
+              </div>
+            );
+          }}
         </For>
       </Show>
     </div>
@@ -82,6 +104,7 @@ export function createListTemplateMode(
   // spinner flash on an already-warm page).
   const [loaded, setLoaded] = createSignal(false);
   const hook = (name: string, ...args: unknown[]) => callHook(m.id, logic, name, ...args);
+  const defaultIcon = manifestIconSpec(m);
 
   const activateRow = (i: number) => {
     const item = rows()[i];
@@ -154,6 +177,8 @@ export function createListTemplateMode(
         onSelect={(i) => setSelected(i)}
         onActivate={(i) => activateRow(i)}
         query={query}
+        dir={m.dir}
+        defaultIcon={defaultIcon}
       />
     )) as unknown as Component,
   };

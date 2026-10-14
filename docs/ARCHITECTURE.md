@@ -433,9 +433,16 @@ before adding a field:
     longer touches the shell. The registry also owns the mode-pill data:
     a manifest `hidden = true` mode is filtered out of the pill bar and the
     switch-key cycle (its entry is the Navigate search row), and every
-    Navigate row a plugin contributes defaults to the plugin's own manifest
-    `icon` when the row carries no explicit `icon` (provider results, feature
-    rows, keyword-entry rows).
+    Navigate row a plugin contributes defaults to the plugin's own icon set
+    when the row carries no explicit `icon` (provider results, feature rows,
+    keyword-entry rows). The set is the manifest `icon_light`/`icon_dark`
+    pair with the legacy single `icon` as fallback (#44); `pickIcon` chooses
+    per the **surface's** current mode through the reactive
+    `themeMode()` signal (`src/theme.ts`), so a theme flip re-renders rows,
+    pills and settings cards without re-running a search. Explicit variants
+    render as-is; only legacy picks keep the historical `--icon-filter`
+    inversion. A detached plugin window's taskbar icon goes through the same
+    rule Rust-side (`appicon.rs`), keyed to the plugin's effective mode.
 - `src/launcher/` shared modules:
   - `types.ts` — shared types + pure constants (mode/entry types, key sets,
     sizing constants, category tables).
@@ -444,6 +451,10 @@ before adding a field:
     preview-target decision).
   - `icons.ts` — `createIconStore()`: the in-memory icon cache mirroring the
     backend `IconCache` (batched `get_app_icons` fetches).
+  - `iconSpec.ts` — plugin icon specs (#44): `resolveIconInput` /
+    `resolveThemedIcon` / `pickIcon` (surface-theme choice, legacy flag for
+    the `--icon-filter` exemption) / `resolveIconUrl` (URI pass-through +
+    plugin-relative asset URLs). Shared by the registry and the settings pane.
   - `sizing.ts` — `createWindowSizer()`: the "拼接" height model (fit pages
     auto-size to content; fixed pages splice in under the search box at the
     manifest/`window_height` height), bar column measurement, work-area cap,

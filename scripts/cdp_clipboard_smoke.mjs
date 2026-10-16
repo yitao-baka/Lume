@@ -1,5 +1,5 @@
 // Dev helper: end-to-end smoke test for the clipboard-mode redesign
-// (ROADMAP #13, phase 1). Launches the release exe with CDP, seeds the
+// (docs/ROADMAP_HISTORY.md #13). Launches the release exe with CDP, seeds the
 // clipboard through the app's own listener, switches to Clipboard mode, and
 // inspects the DOM: category tabs, rows, status bar, filtering, virtual list.
 // Usage: node scripts/cdp_clipboard_smoke.mjs

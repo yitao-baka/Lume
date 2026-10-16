@@ -82,10 +82,10 @@ function App() {
   });
   /** Key that switches pages (settings → 系统 → 快捷键). */
   const [switchKey, setSwitchKey] = createSignal(_cfg?.hotkeys?.switch_mode || "Tab");
-  /** Settings-driven: 模式切换栏仅显示图标 (ROADMAP #47, default off —
+  /** Settings-driven: 模式切换栏仅显示图标 (docs/ROADMAP_HISTORY.md #47, default off —
    * pills keep icon + name). */
   const [modeIconsOnly, setModeIconsOnly] = createSignal(_a?.mode_switch_icons_only ?? false);
-  /** Settings-driven: 各模式使用独立搜索词 (ROADMAP #48, default off — every
+  /** Settings-driven: 各模式使用独立搜索词 (docs/ROADMAP_HISTORY.md #48, default off — every
    * mode shares one search-box value and the latest input wins). */
   const [perModeQuery, setPerModeQuery] = createSignal(_a?.per_mode_query ?? false);
   /** Settings-driven: Shift+Enter launches with administrator privileges. */
@@ -96,7 +96,7 @@ function App() {
   /** Plugin-driven placeholders keyed by plugin id (app.setPlaceholder) —
    * shown while that plugin's mode page is active, "" = default text. */
   const [modePlaceholders, setModePlaceholders] = createSignal<Record<string, string>>({});
-  /** Search-box ownership (P2.3): the plugin currently receiving keystrokes
+  /** Search-box ownership : the plugin currently receiving keystrokes
    * instead of a normal search. Cleared on every summon, mode switch and
    * plugin reload — ownership is session state, never persisted. */
   const [subInput, setSubInput] = createSignal<{ pluginId: string; placeholder: string } | null>(null);
@@ -110,7 +110,7 @@ function App() {
   const [lastPageKind, setLastPageKind] = createSignal<ClipKind>(
     (_a?.last_page_kind as ClipKind) ?? "all"
   );
-  /** Settings-driven: 闲置重置 (ROADMAP #46) — after the launcher stayed
+  /** Settings-driven: 闲置重置 (docs/ROADMAP_HISTORY.md #46) — after the launcher stayed
    * hidden for this long, the next summon starts clean. */
   const [idleResetEnabled, setIdleResetEnabled] = createSignal(_a?.idle_reset_enabled ?? true);
   const [idleResetMinutes, setIdleResetMinutes] = createSignal(_a?.idle_reset_minutes ?? 30);
@@ -122,7 +122,7 @@ function App() {
   // Apply imperative config immediately (locale + theme are not signal-driven).
   setLocale(resolveLocale(_a?.language ?? "system"));
   applyColorMode(_a?.color_mode ?? "system");
-  // Per-plugin color-mode overrides (ROADMAP #36) before any page renders —
+  // Per-plugin color-mode overrides (docs/ROADMAP_HISTORY.md #36) before any page renders —
   // the first push into a plugin page's iframe must already be its effective
   // mode, not the launcher's.
   applyPluginColorPrefsFromSettings(_cfg?.plugins?.color_modes);
@@ -164,7 +164,7 @@ function App() {
     if (!perModeQuery()) clearActiveQuery("consume");
   }
 
-  // Keep-alive host stack (ROADMAP #40): every visited page stays mounted
+  // Keep-alive host stack (docs/ROADMAP_HISTORY.md #40): every visited page stays mounted
   // (hidden) so its DOM/JS state survives mode switches and hides; over the
   // cap the LRU page is snapshotted and unmounted, remount restores it.
   const hostStack = createHostStack({
@@ -241,12 +241,12 @@ function App() {
    * home page) are always ready. */
   const pageLoading = (): boolean => !(activeMode()?.ready?.() ?? true);
 
-  // ── 会话续存（ROADMAP #40）──
+  // ── 会话续存（docs/ROADMAP_HISTORY.md #40）──
   // hide/show、模式切换与分离回流都不再重置页面：已访问页面保活（隐藏而非
   // 卸载），超上限按 LRU 淘汰并先抓快照；只有显式动作（禁用/重载、首页打开
   // 条目后的查询清空）会动状态。查询与页面状态仅内存，重启不保留。
   let entryOpened = false; // 最近一次条目是否从首页打开（只有首页下次清查询）
-  // Idle-reset anchor (ROADMAP #46): set from the Rust `launcher-hidden`
+  // Idle-reset anchor (docs/ROADMAP_HISTORY.md #46): set from the Rust `launcher-hidden`
   // event, which every hide path emits. 0 = not hidden since boot.
   let lastHiddenAt = 0;
 
@@ -268,7 +268,7 @@ function App() {
     return Date.now() - lastHiddenAt >= minutes * 60_000;
   }
 
-  /** 闲置重置 (ROADMAP #46) — complete reset: home page, empty home query,
+  /** 闲置重置 (docs/ROADMAP_HISTORY.md #46) — complete reset: home page, empty home query,
    * and every non-exempt plugin page factory-reset (query + page kind +
    * summon state + DOM host + session frames). Exempt pages keep everything
    * (manifest `keep_session` or the user override). A detached window is its
@@ -437,7 +437,7 @@ function App() {
     resetAndHide: () => void resetAndHide(),
     detachMode: (pluginId) => void detachMode(pluginId),
     setPluginColorMode: async (pluginId, mode) => {
-      // ROADMAP #36 — the plugin pins its OWN color mode. Persist first (the
+      // docs/ROADMAP_HISTORY.md #36 — the plugin pins its OWN color mode. Persist first (the
       // write is the contract: a resolved promise means the value survives a
       // restart), then move the live surfaces. Daemon errors reach the page
       // through the bridge reply, so a failed write never looks applied.
@@ -490,7 +490,7 @@ function App() {
       void getCurrentWindow().startDragging();
     },
     setSubInput: (pluginId, opts) => {
-      // P2.3 — one owner at a time; `null` releases. Releasing is a no-op when
+      // — one owner at a time; `null` releases. Releasing is a no-op when
       // some other plugin holds the box (a plugin can never steal or drop
       // another's ownership by accident).
       setSubInput((prev) => {
@@ -512,12 +512,12 @@ function App() {
         // filtered by the entry trigger (matches the pre-#48 empty box).
         consumeSharedQuery();
         // The mode is detached: deliver the payload into its window and
-        // raise it — no page switch happens here (P6).
+        // raise it — no page switch happens here .
         if (isPluginDetached(pluginId)) {
           // Raise/focus first (its shown event replays `show`), then deliver
           // the payload — onEnter pushes it into the window either way. The
           // icon rides along: this path also covers a stale detached flag
-          // whose window is gone and would be recreated (P6.8).
+          // whose window is gone and would be recreated .
           pluginWindowIcons(pluginId)
             .then((icons) => invoke("plugin_window_open", { id: pluginId, ...icons }))
             .then(() => deliverFeature(pluginId, info))
@@ -592,7 +592,7 @@ function App() {
     onCleanup(router.install());
   });
 
-  /** Search-box placeholder for the active page (P1): subInput ownership wins,
+  /** Search-box placeholder for the active page : subInput ownership wins,
    * then the page's own placeholder, then the plugin `setPlaceholder` map. */
   const placeholder = () => {
     const si = subInput();
@@ -620,7 +620,7 @@ function App() {
   async function handleInput(text: string) {
     setQuery(text);
     // Page-specific interception first (the home page's provider drill-down
-    // filter, P2.4), then search-box ownership (P2.3): the owner receives
+    // filter), then search-box ownership : the owner receives
     // keystrokes through its own onSubInput instead of a normal search.
     if (activeMode()?.handleQuery?.(text)) return;
     const owner = subInput()?.pluginId ?? null;
@@ -689,7 +689,7 @@ function App() {
         // Plugin bars ride the same refresh (启停 toggles add/remove bars).
         void navigatePlugin.refreshBars();
         // Detached windows of disabled/removed/reloaded plugins must not
-        // linger — close them (P6 consistency).
+        // linger — close them ( consistency).
         for (const id of detachedPluginIds()) {
           if (!modeById(id)) {
             setPluginDetached(id, false);
@@ -715,11 +715,11 @@ function App() {
     }
   }
 
-  /** Detach the current mode page into its own window (P6 / #40): snapshot
+  /** Detach the current mode page into its own window (#40): snapshot
    * the launcher page BEFORE the window exists, hand the frames to the
    * window on its ready push, then retire the launcher host — single
    * authority: from here on the window owns the page until it closes. */
-  /** Rasterized taskbar icons for a detached plugin window (P6.8; themed
+  /** Rasterized taskbar icons for a detached plugin window (themed
    * variants #44): the resolved light/dark set plus whether the plugin
    * declared explicit variants. `plugin_window_open` then picks per the
    * window's effective mode (and never inverts explicit variants); a legacy
@@ -783,7 +783,7 @@ function App() {
     }
     ensureHost(m); // keep-alive: mount lazily, then leave it mounted
     setMode(m);
-    // 搜索框所有权属于上一个页面：切模式即交还宿主（P2.3）。
+    // 搜索框所有权属于上一个页面：切模式即交还宿主。
     setSubInput(null);
     // #48: in shared mode the incoming page adopts the one query — mirror it
     // into the page before searching so its own query-driven logic (empty
@@ -892,7 +892,7 @@ function App() {
     });
     onCleanup(() => unlistenDevChanged());
 
-    // Detached plugin windows (P6): state handshakes + lifecycle. The
+    // Detached plugin windows: state handshakes + lifecycle. The
     // registry owns the per-plugin push suppliers; these listeners just
     // forward the window events.
     const unlistenPwReady = await listen<string>("plugin-window-ready", (e) => {
@@ -932,7 +932,7 @@ function App() {
     // plugin's logic iframe): the write is already durable in Rust, but this
     // window owns the preference mirror every `theme` push derives from —
     // without this the launcher would keep pushing the pre-change mode after
-    // the plugin comes back from its detached window (ROADMAP #36).
+    // the plugin comes back from its detached window (docs/ROADMAP_HISTORY.md #36).
     const unlistenPluginColorMode = await listen<{ id: string; mode: string }>(
       "plugin-color-mode",
       (e) => {
@@ -948,13 +948,13 @@ function App() {
 
     // Settings-pane plugin settings (plugin_store::plugin_settings_put →
     // "plugin-settings"): the values changed in the settings window, hand the
-    // new set to the plugin instance living here (P3.4).
+    // new set to the plugin instance living here .
     const unlistenPluginSettings = await listen<string>("plugin-settings", (e) => {
       void applyPluginSettings(e.payload);
     });
     onCleanup(() => unlistenPluginSettings());
 
-    // OS file drop (P2.2): the Tauri drag-drop handler (enabled on this
+    // OS file drop : the Tauri drag-drop handler (enabled on this
     // window only) delivers real paths — WebView2's HTML5 drop never exposes
     // them. Pages own their drop rows (the home page offers matching plugin
     // features); the state clears on the next hide/summon.
@@ -967,7 +967,7 @@ function App() {
     onCleanup(() => unlistenDrag());
 
     // The launcher stays hidden between toggles. On every fresh show (hotkey /
-    // tray toggle) the session RESUMES (ROADMAP #40): the last page, its
+    // tray toggle) the session RESUMES (docs/ROADMAP_HISTORY.md #40): the last page, its
     // query and its page state stay; only summon-scoped bits are re-armed.
     // This listens to the Rust `launcher-shown` event, not `onFocusChanged`:
     // dragging the frameless window briefly deactivates and refocuses it
@@ -984,7 +984,7 @@ function App() {
     });
     onCleanup(() => unlisten());
 
-    // Idle-reset anchor (ROADMAP #46): every hide path in Rust funnels
+    // Idle-reset anchor (docs/ROADMAP_HISTORY.md #46): every hide path in Rust funnels
     // through `window::hide_main`, which emits this event. The next show
     // compares `Date.now() - lastHiddenAt` — no background timer, so
     // sleep/hibernate count correctly and the hidden webview's throttled
@@ -1040,7 +1040,7 @@ function App() {
             </div>
           )}
         </For>
-        {/* 分离为独立窗口（P6）— detachable 磁盘 mode 的悬停显现按钮。
+        {/* 分离为独立窗口— detachable 磁盘 mode 的悬停显现按钮。
             自绘按钮形态的插件（清单 `detach_button = false`，如 translator）
             不渲染它：右上角让给插件页面，分离走 `app.detach` 桥接接口。 */}
         <Show when={showsBuiltinDetachButton(mode())}>

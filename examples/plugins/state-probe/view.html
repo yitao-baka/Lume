@@ -44,7 +44,7 @@
       mirror.value = String(scroller.scrollTop);
     });
 
-    // 「迟到 DOM」（ROADMAP #40 验证）：load 后 600ms 才插入。宿主恢复若在
+    // 「迟到 DOM」（docs/ROADMAP_HISTORY.md #40 验证）：load 后 600ms 才插入。宿主恢复若在
     // ready 时立刻应用会错过它——必须靠恢复重试在插入后补上。
     setTimeout(function () {
       if (document.getElementById("late")) return;

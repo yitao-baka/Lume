@@ -1,4 +1,4 @@
-# Web-search provider — the reference example for disk plugins (ROADMAP #7).
+# Web-search provider — the reference example for disk plugins (docs/ROADMAP_HISTORY.md #7).
 # Install: copy this folder into <base>/plugins/ (next to lume.exe, or
 # %LOCALAPPDATA%\Lume\plugins when installed under Program Files), then
 # toggle it in 设置 → 插件.
@@ -7,5 +7,5 @@ name = "Web Search"
 version = "1.0.0"
 kind = "provider"
 description = "Appends a Bing search row for the query"
-permissions = ["network"]   # enforced since P3.2 (this example only opens URLs, so it is a no-op here)
+permissions = ["network"] # enforced since (this example only opens URLs, so it is a no-op here)
 entry = "main.js"

@@ -1,4 +1,4 @@
-// 独立窗口验证（P6）：mode 页分离为独立窗口的端到端流程。
+// 独立窗口验证：mode 页分离为独立窗口的端到端流程。
 //   ① detach  hello-mode（detachable = true）激活后页面有「在独立窗口打开」
 //            按钮 → 点击 → 启动器隐藏，plugin-<id> 窗口创建（CDP 新 target）
 //   ② 窗口页  plugin.html 加载：桥接 iframe 带沙箱属性；就绪握手后宿主推送

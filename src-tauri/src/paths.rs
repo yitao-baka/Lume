@@ -2,7 +2,7 @@
 //!
 //! Portable: all config/data/resources live next to the executable so Lume can
 //! be carried around as a folder: `<exe_dir>/settings`, `<exe_dir>/data`,
-//! `<exe_dir>/languages`, `<exe_dir>/res` (docs/NORMS.md).
+//! `<exe_dir>/languages`, `<exe_dir>/res` (docs/ARCHITECTURE.md, Data management).
 //!
 //! Installed: when the exe lives under `Program Files` (read-only for normal
 //! users) the writable data moves to `%LOCALAPPDATA%\Lume\`. The SYSTEM service

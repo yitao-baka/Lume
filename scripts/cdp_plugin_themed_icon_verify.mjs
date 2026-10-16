@@ -1,4 +1,4 @@
-// 插件图标深浅两套（ROADMAP #44）回归：
+// 插件图标深浅两套（docs/ROADMAP_HISTORY.md #44）回归：
 //
 //   ① 启动器浅色：关键字行 / 模式 pill / 列表模板行（显式对与清单缺省）都取
 //      light 变体；显式变体带 .icon-explicit（不受 --icon-filter 反相）。

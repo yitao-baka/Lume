@@ -1,4 +1,4 @@
-// Dev helper: ROADMAP #15 memory reclaim test.
+// Dev helper: docs/ROADMAP_HISTORY.md #15 memory reclaim test.
 // Launches the release exe with CDP, seeds an image clipboard row, opens the
 // satellite preview, and snapshots memory via measure-webview-mem.ps1 at:
 //   baseline        — preview at about:blank (expect renderer ×3)

@@ -1,4 +1,4 @@
-// P1 验证（ROADMAP #24）：宿主能力面。
+// 验证（docs/ROADMAP_HISTORY.md #24）：宿主能力面。
 //   ① HTTP：webview 直连被 CORS 挡住，宿主 http.request 同一 URL 成功；
 //   ② 通知：plugin_notify 注册隐藏图标 + 弹气泡（截屏核对）；
 //   ③ 剪贴板：图片写入 → PowerShell 读回；文件列表写→读往返；
@@ -105,7 +105,7 @@ check("h: lists the host-tool actions", names.filter((n) => n.startsWith("h: "))
 // balloons — even a PowerShell NotifyIcon control experiment shows nothing).
 const corner = (name) => ps(`Add-Type -AssemblyName System.Drawing,System.Windows.Forms; $b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $w=560;$h=400;$img=New-Object System.Drawing.Bitmap($w,$h); $g=[System.Drawing.Graphics]::FromImage($img); $g.CopyFromScreen($b.Width-$w,$b.Height-$h,0,0,(New-Object System.Drawing.Size($w,$h))); $img.Save('test/${name}'); 'ok'`);
 const before = corner("p1_notify_before.png");
-const notified = await invoke("plugin_notify", { title: "Lume P1 验证", body: "宿主通知：气泡应出现在右下角", pluginId: "host-tools" });
+const notified = await invoke("plugin_notify", { title: "Lume 验证", body: "宿主通知：气泡应出现在右下角", pluginId: "host-tools" });
 await sleep(600);
 corner("p1_notify_after.png");
 const sameBytes = readFileSync("test/p1_notify_before.png").equals(readFileSync("test/p1_notify_after.png"));
@@ -131,7 +131,7 @@ const filesBack = await invoke("plugin_clipboard_read_files");
 check("clipboard file list round-trips", JSON.stringify(filesBack) === JSON.stringify(filesIn), JSON.stringify(filesBack));
 
 // ── ④ 对话框：打开后 ESC 取消（异步命令不被阻塞，取消解析为 []） ──
-const dlgPromise = m.evalJs(`window.__TAURI_INTERNALS__.invoke("plugin_dialog_open", { params: { title: "P1 smoke" } })`);
+const dlgPromise = m.evalJs(`window.__TAURI_INTERNALS__.invoke("plugin_dialog_open", { params: { title: " smoke" } })`);
 await sleep(2200); // the native picker is up now
 try { ps(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{ESC}')`); } catch (err) { console.log("sendkeys failed:", String(err).slice(0, 100)); }
 await sleep(1500);
@@ -156,13 +156,13 @@ await invoke("toggle_launcher");
 await sleep(1200);
 const winState = () => ps(`E:\\SoftwareDevelopment\\Projects\\LumeLauncher\\scripts\\ps_lume_windows.ps1`);
 check("launcher visible before the paste", /visible=1/.test(winState()), winState());
-await invoke("plugin_clipboard_paste", { text: "P1 paste check" });
+await invoke("plugin_clipboard_paste", { text: " paste check" });
 await sleep(1200);
 check("clipboard.paste hid the launcher (auto-paste flow ran)", /visible=0/.test(winState()), winState());
 const pasteLog = readFileSync("test/p1_lume.log", "utf8");
 check("paste used the real paste path (no plain-copy fallback)", pasteLog.includes("[plugins] clipboard.paste: text") && !pasteLog.includes("copied without pasting"));
 const clipText = ps(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetText()`);
-check("pasted text stayed on the clipboard", clipText === "P1 paste check", clipText);
+check("pasted text stayed on the clipboard", clipText === " paste check", clipText);
 
 await m.shot("p1_panel.png");
 console.log(`\n${pass} passed, ${fail} failed`);

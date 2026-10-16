@@ -17,99 +17,69 @@ The goal is:
 **Pre-26.10 — plugin platform + whole-drive file search + system integration**
 (current)
 
-- ✅ Global shortcut — configurable (default Alt+Space); conflicts reported,
+- Global shortcut — configurable (default Alt+Space); conflicts reported,
   never silently swapped
-- ✅ Main menu — 最近使用 + 已固定 + 推荐使用 (plugin context rows) bars
+- Main menu — 最近使用 + 已固定 + 推荐使用 (plugin context rows) bars
   (expandable), pinyin search, arrow/mouse navigation, real icons,
   Explorer-folder context bar
-- ✅ Clipboard manager — text / image / file / audio history, category tabs
+- Clipboard manager — text / image / file / audio history, category tabs
   (全部/文本/图片/音乐/视频/收藏), source-app tracking, virtualized list, pin /
   per-entry delete with undo, clear with keep-pinned confirm, search + copy
   back, Space multi-select + Enter merged paste, auto-paste into the previous
   window, rich text + 「复制为纯文本」, ignored-apps list, pause-recording
   toggle, auto-merge (合并复制), content dedupe, multi-file entries (checkable
   file list + invalid-entry graying), and a 「剪贴板」 settings pane
-- ✅ Satellite preview — text / text-file / image / audio / video / PDF previews
+- Satellite preview — text / text-file / image / audio / video / PDF previews
   render in a separate non-activating window docked to the launcher's right
   edge, so the main renderer never holds decoded bitmaps / media buffers
-- ✅ WebView2 idle-memory trimming — hidden windows' renderers swap their memory
+- WebView2 idle-memory trimming — hidden windows' renderers swap their memory
   out (`SetMemoryUsageTargetLevel(Low)`), cutting the idle baseline ~26%
-- ✅ Auto-hide on focus loss
-- ✅ i18n — Simplified Chinese / Traditional Chinese / English
-- ✅ Pinyin search for Chinese app names
-- ✅ System tray icon — left-click toggles, right-click Restart / Exit
-- ✅ Auto-sizing window — height fits the results, stays centered (fixed
+- Auto-hide on focus loss
+- i18n — Simplified Chinese / Traditional Chinese / English
+- Pinyin search for Chinese app names
+- System tray icon — left-click toggles, right-click Restart / Exit
+- Auto-sizing window — height fits the results, stays centered (fixed
   height in clipboard mode)
-- ✅ Settings window — appearance / navigation / clipboard / hotkeys / search
+- Settings window — appearance / navigation / clipboard / hotkeys / search
   / automation / plugins / about (grouped-card layout with a settings search
   box)
-- ✅ Search-state recall — a search you didn't open is restored on the next
+- Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows
-- ✅ Whole-drive file search — Everything IPC first, then the LumeSVC
+- Whole-drive file search — Everything IPC first, then the LumeSVC
   NTFS USN/MFT index, exposed through one async search facade
-- ✅ Plugin platform — provider / mode / service contributions, sandboxed UI,
+- Plugin platform — provider / mode / service contributions, sandboxed UI,
   Rust-side permission checks, `.lupx` install/signature support, detached
   windows, declarative settings, private storage, development hot reload, and
   light/dark plugin icon pairs picked per surface theme
-- ✅ Automation + elevation agent — foreground-window rules can send a
+- Automation + elevation agent — foreground-window rules can send a
   configured hotkey, including to elevated targets through the minimal
   `lume-agent.exe` helper
 
-Version history in [CHANGELOG.md](CHANGELOG.md); how to run and verify in
+Version history in [CHANGELOG.md](CHANGELOG.md); shipped iterations in
+[docs/ROADMAP_HISTORY.md](docs/ROADMAP_HISTORY.md); open work in
+[docs/ROADMAP.md](docs/ROADMAP.md); how to run and verify in
 [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
 # Philosophy
 
-## Fast
-
-Everything should feel instant.
-
-Target:
-
-- Launcher popup < 50ms
-- Search response < 20ms
-- Idle CPU < 0.2%
-
----
-
-## Minimal
-
-Avoid unnecessary features.
-
-Every feature must answer:
-
-"Does this make users faster?"
-
----
-
-## Elegant
-
-The UI should feel native, clean and focused.
+Lume stays **fast** (launcher popup < 50ms, search response < 20ms, idle
+CPU < 0.2%), **minimal** (every feature must answer "does this make users
+faster?"; prefer deleting a feature over maintaining it) and **elegant** (a
+native, clean, focused UI). The non-negotiable development rules live in
+[AGENTS.md](AGENTS.md); the visual contract in
+[docs/UI_GUIDELINES.md](docs/UI_GUIDELINES.md).
 
 ---
 
 # Tech Stack
 
-## Frontend
-
-- SolidJS
-- TypeScript
-- Vite
-
-## Backend
-
-- Rust
-- Tauri v2
-
-## Database
-
-- SQLite via `rusqlite` (bundled) — clipboard history, recent opens and pinned
-  apps live in `<base>/data/lume.db`; plugin documents live in
-  `plugin_store.db`, and rebuildable index/icon caches use separate databases
-  (`<base>` = the exe dir in portable mode, or `%LOCALAPPDATA%\Lume` when
-  installed under Program Files)
+SolidJS + TypeScript + Vite on the frontend; Rust + Tauri v2 on the backend;
+SQLite via `rusqlite` (bundled) for clipboard history, recent opens, pinned
+apps and plugin documents (`<base>` = the exe dir in portable mode, or
+`%LOCALAPPDATA%\Lume` when installed under Program Files). Module-level
+details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
@@ -219,54 +189,44 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
 
 ## Planned
 
-- Plugin ecosystem follow-ups — `.lupx` market/source, drag-package install,
-  browser URL and selection capture, super panel
-- File-search hardening — non-NTFS volumes, orphan cleanup, index persistence,
-  richer search settings
-- Workflow
-- OCR
-- AI commands
-- Cross platform support
+Open work — plugin ecosystem follow-ups (`.lupx` market source, drag-package
+install, browser URL and selection capture, super panel), file-search
+hardening, workflow / OCR / AI commands, cross-platform exploration — is
+tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 
 ---
 
 # Development
 
-Read:
+Before making changes read [AGENTS.md](AGENTS.md), then the topic docs:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+[docs/UI_GUIDELINES.md](docs/UI_GUIDELINES.md),
+[docs/TESTING.md](docs/TESTING.md); for plugins
+[docs/PLUGIN_API.md](docs/PLUGIN_API.md) (reference) and
+[docs/PLUGINS.md](docs/PLUGINS.md) (getting started); settings in
+[docs/SETTINGS.md](docs/SETTINGS.md). Open work is listed in
+[docs/ROADMAP.md](docs/ROADMAP.md); shipped iterations in
+[CHANGELOG.md](CHANGELOG.md) and
+[docs/ROADMAP_HISTORY.md](docs/ROADMAP_HISTORY.md).
 
-- AGENTS.md
-- docs/RULES.md
-- docs/ARCHITECTURE.md
-
-before making changes.
-
-And remember:
-Due to network problems, You should always use mirror sources to download the required files.
+Due to network problems, always use mirror sources to download required files.
 
 ## Run
 
 The frontend is managed with **pnpm** (`pnpm install`; see `.npmrc`,
-`pnpm-workspace.yaml`, `package.json` → `packageManager`). Commands:
-
-- **Development**: `pnpm run tauri dev` (loads the frontend from the vite dev
-  server; run from a terminal).
-- **Embedded debug build**: `pnpm run tauri build --debug --no-bundle` — the
-  frontend is compiled into the exe and CDP scripts can run without vite.
-- **Standalone**: `pnpm run tauri build --no-bundle`, then run
-  `src-tauri/target/release/lume.exe` — it embeds the frontend and shows no
-  console window.
+`pnpm-workspace.yaml`, `package.json` → `packageManager`). `pnpm run tauri dev`
+runs the dev loop; `pnpm run tauri build --debug --no-bundle` produces the
+embedded debug exe (CDP smoke tests use this); `pnpm run tauri build
+--no-bundle` produces the standalone release exe
+(`src-tauri/target/release/lume.exe`, no console). Full verification matrix in
+[docs/TESTING.md](docs/TESTING.md).
 
 ## Package
 
-The standard release is a **portable zip** (no MSI/NSIS), produced by:
-
-```powershell
-pnpm run package:zip
-```
-
-The script runs the release Tauri build and writes
-`src-tauri/target/release/bundle/zip/Lume_<version>_x64_portable.zip`. The zip
-contains `lume.exe` + `lume-agent.exe` + `lume-svc.exe` + `languages/` +
-`res/icons/`, so the elevation agent and service ship next to the main exe as
-the portable model expects.
+The standard release is a **portable zip** (no MSI/NSIS): `pnpm run
+package:zip` runs the release build and writes
+`src-tauri/target/release/bundle/zip/Lume_<version>_x64_portable.zip` with
+`lume.exe` + `lume-agent.exe` + `lume-svc.exe` + `languages/` + `res/icons/`,
+so the elevation agent and service ship next to the main exe as the portable
+model expects.

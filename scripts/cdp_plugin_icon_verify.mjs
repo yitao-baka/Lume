@@ -1,4 +1,4 @@
-// 独立窗任务栏图标 / 身份回归（P6.8，ROADMAP #34）。
+// 独立窗任务栏图标 / 身份回归（docs/ROADMAP_HISTORY.md #34）。
 //
 //   ① 真实 detach file-search（关键字行进模式页 → 点「在独立窗口打开」）——
 //      前端把 manifest `icon`（SVG）光栅化后随 plugin_window_open 上传，

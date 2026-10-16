@@ -1,4 +1,4 @@
-//! Per-plugin color-mode preferences (`lume.theme.set`, ROADMAP #36).
+//! Per-plugin color-mode preferences (`lume.theme.set`docs/ROADMAP_HISTORY.md #36).
 //!
 //! The launcher owns the color mode; a plugin may **pin its own surfaces**
 //! (`"light"` / `"dark"`) without touching the launcher, or leave `"system"`

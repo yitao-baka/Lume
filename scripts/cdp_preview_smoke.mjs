@@ -1,4 +1,4 @@
-// Dev helper: ROADMAP #15 smoke test for the satellite preview window.
+// Dev helper: docs/ROADMAP_HISTORY.md #15 smoke test for the satellite preview window.
 // Launches the release exe with CDP, seeds text + image clipboard rows,
 // switches to Clipboard mode, and verifies:
 //   1. three page targets exist (main / settings / preview)

@@ -1,5 +1,5 @@
 /**
- * Satellite preview window (ROADMAP #15).
+ * Satellite preview window (docs/ROADMAP_HISTORY.md #15).
  *
  * All clipboard previews render here instead of the launcher renderer, so a
  * decoded 4K bitmap or buffered video never lingers in the main window. The
@@ -14,7 +14,7 @@
  * lives in the MAIN window (a non-activating window never receives keys); the
  * × button here is the in-window close affordance.
  *
- * PDF preview (ROADMAP #14, PDF.js): `pdfjs-dist` is imported lazily so the
+ * PDF preview (docs/ROADMAP_HISTORY.md #14, PDF.js): `pdfjs-dist` is imported lazily so the
  * ~MB library only loads into this renderer on the first PDF preview. Only the
  * visible page is rendered (canvas re-drawn on page/zoom change) and previous
  * docs are destroyed, so a giant PDF never pins the whole document in memory.
@@ -63,7 +63,7 @@ function PreviewApp() {
   const [error, setError] = createSignal<string | null>(null);
   /** "contain" fits the image; clicking toggles to "one-one" (natural size). */
   const [fit, setFit] = createSignal<"contain" | "one-one">("contain");
-  /** Multi-file list (ROADMAP #17): paths + existence + checked indices. */
+  /** Multi-file list (docs/ROADMAP_HISTORY.md #17): paths + existence + checked indices. */
   const [filelist, setFilelist] = createSignal<FileListState | null>(null);
 
   /** Toggle a file's checkbox. Persists only while 记住勾选 is on. */
@@ -277,7 +277,7 @@ function PreviewApp() {
               <Match when={req()!.kind === "video"}>
                 <video src={mediaSrc()} poster={poster() ?? undefined} controls preload="none" />
               </Match>
-              {/* Multi-file list (ROADMAP #17): every recorded file with a
+              {/* Multi-file list (docs/ROADMAP_HISTORY.md #17): every recorded file with a
                   checkbox; missing files are struck through + disabled. Copy /
                   paste in the launcher only uses the checked files. */}
               <Match when={req()!.kind === "filelist"}>

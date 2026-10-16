@@ -1,11 +1,11 @@
-// P2.5b 示例（docs/PLUGIN_GAP_ANALYSIS.md P2.5 / PLUGIN_API §6E）：清单
+// 示例（docs/PLUGIN_API.md §10.4 / PLUGIN_API §6E）：清单
 // 插件 —— kind = "mode" + template = "list"，没有 view.html。
 //
 // 宿主把本文件装进启动器窗口（provider 同款 ctx），内置列表组件渲染
 // search(q) 返回的行；↑/↓/Enter 由共享键盘导航驱动（宿主读 rows()/selected/
 // activate），点击行 → onEnter(item)。
 //
-// 数据存在插件文档库里（P3.1）：第一次进入预置两行演示数据。
+// 数据存在插件文档库里：第一次进入预置两行演示数据。
 //
 // 类型：下面的 reference + @ts-check 让本文件过 `tsc` 校验（类型面见
 // examples/plugins/plugin-api.d.ts；校验命令见 examples/tsconfig.json）。

@@ -1,4 +1,4 @@
-// 插件自身颜色模式验证（ROADMAP #36）：插件用 `lume.theme.set` 改自己的明暗，
+// 插件自身颜色模式验证（docs/ROADMAP_HISTORY.md #36）：插件用 `lume.theme.set` 改自己的明暗，
 // 启动器不受影响；launcher 内嵌页与独立窗口两条路径都在覆盖内。
 //   ① 基线    启动器浅色、hello-mode 无偏好 → 页面画布 = 面板色（浅）
 //   ② 驱动    搜索框输入 theme:dark（示例页 on.query 里调 lume.theme.set，

@@ -1,4 +1,4 @@
-//! 共享插件逻辑宿主窗口（P6.5 进程隔离）。
+//! 共享插件逻辑宿主窗口（进程隔离）。
 //!
 //! 一个隐藏窗口（label `plugin-logic-host`，页面 `pluginLogic.html`）承载
 //! **所有**声明 `entry` 的磁盘插件的逻辑：每个插件一个 opaque-origin 沙箱

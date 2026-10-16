@@ -103,7 +103,7 @@ export function fileContent(name: string): FileContent {
  * "other" binaries (.dll/.exe/.zip…) never do. Image-kind rows carry an `id`
  * resolved via `get_clipboard_image`; image-file rows a `path`.
  *
- * Two additions (ROADMAP #17): ① an **invalid** row (content gone) never opens
+ * Two additions (docs/ROADMAP_HISTORY.md #17): ① an **invalid** row (content gone) never opens
  * the preview; ② a **multi-file** row (≥2 paths) always shows the file LIST —
  * with checkboxes and per-file existence — instead of previewing one of its
  * files. */

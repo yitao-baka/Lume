@@ -1,9 +1,10 @@
 # AGENTS.md
 
 本文件是 ZCode agent 在本仓库（Lume 启动器）的工作守则。
-改代码前至少过一遍 `docs/RULES.md`、`docs/ARCHITECTURE.md`、`docs/UI_GUIDELINES.md`、
-`docs/NORMS.md`；插件相关再加 `docs/PLUGIN_API.md`（API 参考）与 `docs/PLUGINS.md`（上手）。
-功能现状见 `README.md` 的 Status；进度与历史见 `docs/ROADMAP.md` / `CHANGELOG.md`。
+改代码前至少过一遍 `docs/ARCHITECTURE.md`、`docs/UI_GUIDELINES.md`；
+插件相关再加 `docs/PLUGIN_API.md`（API 参考）与 `docs/PLUGINS.md`（上手）；
+设置相关看 `docs/SETTINGS.md`。功能现状见 `README.md` 的 Status；
+开放事项见 `docs/ROADMAP.md`，进度与历史见 `CHANGELOG.md` / `docs/ROADMAP_HISTORY.md`。
 
 ## 项目速览
 
@@ -61,6 +62,10 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
    （一块连续面板，uTools 式拼接）——不给 `.launcher` 加 border / radius / 半透明。
 7. WebView2 内建快捷键（Find / Print / Reload / DevTools / 历史导航）在
    `src/launcher/keyboard.ts` 统一屏蔽；只有 Lume 自己的键与搜索框文本编辑放行。
+8. **文档规范**：任何文档（docs/、README、代码注释中的文档性引用）**不得出现阶段性
+   分期编号**（P0/P1/P2/P3/P4/P5/P6、Phase 1、阶段名）与完成状态标志
+   （✅、"已实现"、"已完成"）；文档只描述当前契约或开放事项，历史进度一律归
+   `CHANGELOG.md` 与 `docs/ROADMAP_HISTORY.md`。
 
 ## 插件系统（改动前必读 `docs/PLUGIN_API.md`）
 
@@ -93,11 +98,13 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
   （或 release 版）重建 exe，否则测到的是上一版内嵌 bundle。
 - 手工项不要自动化：注册服务/代理、UAC、真实拖拽、实机快捷键等按 `docs/TESTING.md`
   手工清单验证；`cargo test` 有意不碰这些。
-- 每轮收尾同步文档：`docs/ROADMAP.md`（新功能先在此立项；完成后在 #N 下写
-  实现/踩坑/验证，**迭代详情以这里为准**）+ `CHANGELOG.md` 的 `[Unreleased]`（按仓库
-  条目风格带验证数据）+ 相关 docs（PLUGIN_API / SETTINGS / ARCHITECTURE / TESTING）。
+- 每轮收尾同步文档：`docs/ROADMAP.md`（新功能先在此立项为开放事项；完成后从开放
+  事项删除，实现/踩坑/验证写入 `docs/ROADMAP_HISTORY.md` 新条目——**迭代详情以
+  归档为准**）+ `CHANGELOG.md` 的 `[Unreleased]`（按仓库条目风格带验证数据）+
+  相关 docs（PLUGIN_API / SETTINGS / ARCHITECTURE / TESTING）。**禁止在活跃文档
+  写进度标记或分期编号**（见硬性约定 8）。
 - CDP 观测 tap：`window.__frameStates` / `__rpcLog` / `__logicCircuit` / `__snapPending` 等
-  是既有探针（见 PLUGIN_API §10），诊断帧/桥问题时先用它们。
+  是既有探针（见 PLUGIN_API §15），诊断帧/桥问题时先用它们。
 
 ## 踩坑清单（实测固化，改动时别踩回去）
 
@@ -124,7 +131,7 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
 - **分离窗口的事件监听必须带 `target`**：Tauri 的 JS `listen()` 默认目标是
   `EventTarget::Any`，而 `emit_to` 的过滤器只看**监听器**目标（每个 webview 都会被遍历）
   —— 不带 `target` 的监听器会收到**所有**其它插件的 `emit_to` 流量。单窗口时看不出
-  （载荷相同），一旦载荷带插件私有值就串台（ROADMAP #36 实测：hello-mode 的窗口按
+  （载荷相同），一旦载荷带插件私有值就串台（docs/ROADMAP_HISTORY.md #36 实测：hello-mode 的窗口按
   file-search 的 `themePref` 重刷了自己）；两个独立窗口并存时，关闭请求也是广播的，
   会「关一个连带关另一个」。插件私有事件一律
   `listen(ev, fn, { target: getCurrentWindow().label })`，应用级事件（`settings-applied`）

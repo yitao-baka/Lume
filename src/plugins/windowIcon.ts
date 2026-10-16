@@ -1,4 +1,4 @@
-//! Taskbar icon for a detached plugin window (P6.8, ROADMAP #34).
+//! Taskbar icon for a detached plugin window (docs/ROADMAP_HISTORY.md #34).
 //!
 //! The manifest `icon` is usually an SVG and the Rust side has no SVG
 //! decoder (`image` is PNG-only), so the webview rasterizes it once at

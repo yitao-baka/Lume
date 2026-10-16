@@ -25,7 +25,7 @@ export const BRIDGE_SCRIPT = `
   try { parent.postMessage({ __lumeFrameBoot: { frame: window.name } }, "*"); } catch (err) {}
   var pending = new Map();
   var rpcId = 0;
-  // Host form (§6C, ROADMAP #42): the host pins every frame to "launcher"
+  // Host form (§6.1, docs/ROADMAP_HISTORY.md #42): the host pins every frame to "launcher"
   // (inside the launcher window) or "window" (a detached plugin window) before
   // any page script runs. This is the ONLY reliable way to tell the two apart —
   // do NOT count parent-document iframes: keep-alive (#40) keeps several mode
@@ -59,7 +59,7 @@ export const BRIDGE_SCRIPT = `
   }
   // 透明传递：**不吞错**（与逻辑帧 pluginLogicFrame.js 的 call 一致）。曾经
   // catch 后无 return 把失败静默成 undefined —— 权限拒绝/超时等错误不可感知，
-  // 与 P3.2「fail loud」相悖。
+  // 「fail loud」相悖。
   var call = function (method, args) {
     return rpc(method, args).catch(function (err) {
       console.error("[lume bridge]", method, err);
@@ -206,7 +206,7 @@ export const BRIDGE_SCRIPT = `
     // / .settings / .theme = function(payload) —— .theme 收到的是本插件**生效**
     // 的明暗（受 lume.theme.set 影响）。
     on: {},
-    // 状态快照（P6.5，可选实现）：lume.on.snapshot = () => state — 宿主在
+    // 状态快照（可选实现）：lume.on.snapshot = () => state — 宿主在
     // detach/关闭前向页面要一份状态（与桥自动捕获的表单/滚动合并后跨窗口
     // 传递）；lume.on.restore = (state) => {} — 宿主把快照的 custom 层交给
     // 页面（auto 层由桥自动回放）。快照仅内存流转，不落盘。
@@ -222,7 +222,7 @@ export const BRIDGE_SCRIPT = `
       }
     }
     if (d.__lumeCall) {
-      // 宿主 → 页面的带响应调用（P6.5）：今天只有 "snapshot"（状态快照）。
+      // 宿主 → 页面的带响应调用：今天只有 "snapshot"（状态快照）。
       // 结果必须回执，宿主侧有超时兜底，但回执让它能提前收口。
       var c = d.__lumeCall;
       Promise.resolve()
@@ -270,7 +270,7 @@ export const BRIDGE_SCRIPT = `
       }
     }
   });
-  // ── 状态快照（P6.5 / 会话快照 v2，ROADMAP #40）──
+  // ── 状态快照（会话快照 v2，docs/ROADMAP_HISTORY.md #40）──
   // detach / 关闭独立窗口前，宿主通过 __lumeCall{type:"snapshot"} 向页面要
   // 一份状态（帧域快照 v2）。auto 层由桥自动捕获/回放：输入控件按**稳定键**
   // （id → name → nth-of-type 路径，含 open shadow root）寻址，另有
@@ -421,7 +421,7 @@ export const BRIDGE_SCRIPT = `
       });
   }
   // 恢复：立即 + 观察 DOM + 250ms 轮询，持续 RESTORE_MS；按稳定键应用，
-  // 用户先动过的字段/滚动不再覆盖。v1（P6.5 按 DOM 顺序的 fields 数组）兼容。
+  // 用户先动过的字段/滚动不再覆盖。v1（按 DOM 顺序的 fields 数组）兼容。
   var restoreState = null;
   function stopRestore() {
     var st = restoreState;
@@ -829,7 +829,7 @@ function injectAtHead(html: string, tail: string, form: "launcher" | "window"): 
   const injection =
     `<base target="_blank">` +
     `<style>html{background:var(--lume-page-bg,${PANEL_SURFACE_BG[currentThemeMode()]})}</style>` +
-    // `lume.env.form` (ROADMAP #42): the hosting surface this frame lives in.
+    // `lume.env.form` (docs/ROADMAP_HISTORY.md #42): the hosting surface this frame lives in.
     // Injected BEFORE the bridge so `window.lume` exists synchronously with
     // the right value, and the page cannot corrupt it by running first.
     `<script>window.__LUME_HOST_FORM__=${JSON.stringify(form)};</script>` +
@@ -873,7 +873,7 @@ export const PLUGIN_FRAME_SANDBOX = "allow-scripts allow-forms allow-popups allo
  * spinner forever — past this grace period the page is shown as-is. */
 const READY_GRACE_MS = 3000;
 
-/** Boot watchdog delays (P6.6 blank-window fix). A fresh frame is expected to
+/** Boot watchdog delays ( blank-window fix). A fresh frame is expected to
  * report `__lumeFrameBoot` a few ms after its navigation commits; a frame that
  * stays silent this long never got a document and is re-navigated (see
  * `createIframeView`). Runs only while the current document is unbooted, so a
@@ -884,7 +884,7 @@ const BOOT_RETRY_DELAYS_MS = [700, 1500, 2800];
  * record of why). */
 const BOOT_FINAL_CHECK_MS = 1600;
 
-/** Snapshot size cap (P6.5): the snapshot travels as JSON through Tauri
+/** Snapshot size cap : the snapshot travels as JSON through Tauri
  * events and lives in session memory only — past this cap drop the plugin's
  * custom layer first, then give up entirely. */
 const SNAPSHOT_MAX_CHARS = 1_000_000;
@@ -919,8 +919,8 @@ export function createIframeView(
 ): {
   View: Component & { setHtml(html: string): void };
   post: (type: string, payload?: unknown) => void;
-  /** Ask the page for its state snapshot (P6.5; frame snapshot v2 since
-   * ROADMAP #40). Resolves null when the page isn't live, doesn't answer
+  /** Ask the page for its state snapshot (frame snapshot v2 since
+   * docs/ROADMAP_HISTORY.md #40). Resolves null when the page isn't live, doesn't answer
    * within `timeoutMs`, or errors — a dead or hostile page must never block
    * a detach/close. */
   snapshot: (timeoutMs?: number) => Promise<unknown | null>;

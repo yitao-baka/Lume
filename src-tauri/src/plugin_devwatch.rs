@@ -1,4 +1,4 @@
-//! 插件目录 dev 监听（ROADMAP #32.7）—— 编辑插件代码自动热重载。
+//! 插件目录 dev 监听（docs/ROADMAP_HISTORY.md #32.7）—— 编辑插件代码自动热重载。
 //!
 //! 仅 `plugins.dev_mode` 开启时工作：递归监听 `<base>/plugins`，静默 800ms
 //! 后向 main 窗口发 `plugin-dev-changed`；前端（registry.refreshPlugins）

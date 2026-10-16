@@ -1,4 +1,4 @@
-//! Detached plugin windows (P6) — a disk mode plugin's page hosted in its
+//! Detached plugin windows — a disk mode plugin's page hosted in its
 //! own window.
 //!
 //! Window label convention: `plugin-<plugin id>`; the page is
@@ -20,7 +20,7 @@
 //! - The page calls `plugin_window_ready` once its listeners are up; the
 //!   main window's registry answers by pushing the current state (the
 //!   cross-window equivalent of the bridge's `__lumeReady` handshake).
-//! - Close paths (P6.5 snapshot hand-off): a USER-initiated close
+//! - Close paths ( snapshot hand-off): a USER-initiated close
 //!   (× / Esc / Alt+F4) is intercepted once — the page is asked to snapshot
 //!   its state first and reports back via `plugin_window_close_report`,
 //!   which remembers the geometry, delivers the closed event WITH the
@@ -36,7 +36,7 @@
 //! window is small; creation is hidden-then-shown and per-plugin windows are
 //! reused, never duplicated.
 //!
-//! Taskbar identity (P6.8, ROADMAP #34): the window carries its own
+//! Taskbar identity (docs/ROADMAP_HISTORY.md #34): the window carries its own
 //! AppUserModelID (`Lume.Plugin.<id>`) so the shell gives it a separate
 //! taskbar entry — own button, own icon, individually pinnable — instead of
 //! merging it into the launcher's. The icon is the plugin's manifest `icon`
@@ -44,13 +44,13 @@
 //! Rust has no SVG decoder); icon-less plugins keep the Lume theme icon.
 //! Both are applied before the first `show()`.
 //!
-//! Themed variants (ROADMAP #44): a plugin with `icon_light`/`icon_dark`
+//! Themed variants (docs/ROADMAP_HISTORY.md #44): a plugin with `icon_light`/`icon_dark`
 //! uploads both rasterized variants (`icon_png` + `icon_png_dark`,
 //! `icon_themed = true`); `appicon.rs` then picks per the window's
 //! effective color mode without inversion, and a theme flip re-picks from
 //! the cached set. A legacy single upload keeps the historical inversion.
 //!
-//! Color mode (ROADMAP #36): everything this window paints on its own —
+//! Color mode (docs/ROADMAP_HISTORY.md #36): everything this window paints on its own —
 //! the opaque canvas behind the page, the taskbar/alt-tab icon variant, and
 //! the document theme `pluginWindow.tsx` applies — keys off the **plugin's**
 //! effective color mode (`settings.plugins.color_modes`, `lume.theme.set`),
@@ -138,7 +138,7 @@ pub async fn plugin_window_open(
     // The window opens in the PLUGIN's color mode (its own `lume.theme.set`
     // preference, else the launcher's) — the plugin's page is the only content
     // here, and a window that opened in the launcher's mode would flash the
-    // wrong canvas before the page's first paint (ROADMAP #36).
+    // wrong canvas before the page's first paint (docs/ROADMAP_HISTORY.md #36).
     let plugin_mode = snapshot.plugins.color_mode_for(&id, &snapshot.appearance.color_mode);
     // Theme before first paint, same as the main/settings windows.
     let config_json = serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".into());
@@ -177,7 +177,7 @@ pub async fn plugin_window_open(
     // shadow(true) windows draw DWM's documented 1px white border — suppress
     // it (shadow + Win11 rounded corners stay).
     crate::window::clear_dwm_border(&win);
-    // Separate taskbar identity before the window is ever shown (P6.8). The
+    // Separate taskbar identity before the window is ever shown. The
     // property-store write must run on the window's owning (main) thread: a
     // store obtained elsewhere accepts SetValue with S_OK and drops the
     // value (实测回读为空 —— PowerShell 复现同款行为), so this hops over
@@ -217,12 +217,12 @@ pub async fn plugin_window_open(
         if let WindowEvent::CloseRequested { api, .. } = event {
             if closing2.contains(&id2) {
                 // 已在关闭流程中（close_report / 程序化关闭 / 看门狗）——
-                // 记账后放行（P6.5 之前的行为）。
+                // 记账后放行（原有行为）。
                 remember_bounds(&app2, &id2, &win2);
                 let _ = app2
                     .emit_to("main", "plugin-window-closed", serde_json::json!({ "id": id2 }));
             } else {
-                // 用户发起的关闭：拦截一次，让页面先快照（P6.5）。页面应答
+                // 用户发起的关闭：拦截一次，让页面先快照。页面应答
                 // plugin_window_close_report 完成销毁；3s 内无应答（插件卡死）
                 // 由看门狗强制销毁 —— 关闭必须总能完成。
                 api.prevent_close();
@@ -254,7 +254,7 @@ pub async fn plugin_window_open(
     Ok("opened".into())
 }
 
-/// `lume.theme.set` (ROADMAP #36): persist one plugin's color-mode preference
+/// `lume.theme.set` (docs/ROADMAP_HISTORY.md #36): persist one plugin's color-mode preference
 /// and, when the call came from anywhere but the launcher window, tell the
 /// launcher — its in-memory mirror is what derives every later `theme` push, so
 /// a mode pinned inside a detached window must survive the window closing.
@@ -398,7 +398,7 @@ pub fn plugin_window_close(
     Ok(())
 }
 
-/// The page-reported close (P6.5): the frontend snapshotted the view on a
+/// The page-reported close : the frontend snapshotted the view on a
 /// user-initiated close (× / Esc / close-requested answer) and hands the
 /// state back here. Remember the geometry, deliver the closed event WITH
 /// the snapshot payload, then destroy. `win.destroy()` skips
@@ -421,7 +421,7 @@ pub fn plugin_window_close_report(
         let _ = app.emit_to(
             "main",
             "plugin-window-closed",
-            // `user: true`（ROADMAP #40）：前端据此把状态收进会话并回流到
+            // `user: true`（docs/ROADMAP_HISTORY.md #40）：前端据此把状态收进会话并回流到
             // 该插件页；程序化关闭（禁用/重载）不带它，状态直接丢弃。
             serde_json::json!({ "id": id, "snapshot": snapshot, "query": query, "user": true }),
         );
@@ -500,7 +500,7 @@ fn set_window_aumid(win: &tauri::WebviewWindow, id: &str) {
 
 /// The window's `IPropertyStore` (`SHGetPropertyStoreForWindow`). Errors are
 /// logged — a window without an AUMID simply merges into the launcher's
-/// taskbar entry, the pre-P6.8 behaviour.
+/// taskbar entry, the pre- behaviour.
 unsafe fn property_store(
     hwnd: windows::Win32::Foundation::HWND,
 ) -> Option<windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore> {

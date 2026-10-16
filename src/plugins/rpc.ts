@@ -4,7 +4,7 @@
 //! Keep the two ctx surfaces in step with this switch: the view bridge
 //! (`iframeBridge.tsx` client) and the logic frame (`public/pluginLogicFrame.js`)
 //! each expose every method here; `cdp_p2b_verify` asserts the parity so a
-//! method can no longer exist on one surface but route nowhere (ROADMAP #38).
+//! method can no longer exist on one surface but route nowhere (docs/ROADMAP_HISTORY.md #38).
 //!
 //! Shared by two hosts of a plugin page: the **launcher window** (mode page
 //! inside the results area, `registry.ts`) and a **detached plugin window**
@@ -21,7 +21,7 @@ export async function execHostRpc(
   method: string,
   args: Record<string, unknown>,
   services: PluginServices,
-  /** P6.5：逻辑宿主 iframe 的令牌——携带时 createHostApi 把它注入每次
+  /** 逻辑宿主 iframe 的令牌——携带时 createHostApi 把它注入每次
    * invoke，Rust 按令牌强制归属 plugin id。视图宿主不携带。 */
   hostToken?: string
 ): Promise<unknown> {

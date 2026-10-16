@@ -1,4 +1,4 @@
-//! Session state (ROADMAP #40) — the cross-surface page state that must
+//! Session state (docs/ROADMAP_HISTORY.md #40) — the cross-surface page state that must
 //! survive hide/show, mode switches, keep-alive eviction and the detached
 //! window hand-off.
 //!
@@ -180,7 +180,7 @@ export function createHostStack(deps: {
     // the evictions already in flight keeps ONE overflow down to one victim;
     // the old `entries.size <= maxLive` break started an eviction for every
     // candidate — the first overflow nuked the whole stack minus the active
-    // page (ROADMAP #42).
+    // page (docs/ROADMAP_HISTORY.md #42).
     let toStart =
       entries.size - maxLive - candidates.filter((e) => e.evicting).length;
     for (const e of candidates) {

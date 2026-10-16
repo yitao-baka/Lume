@@ -10,7 +10,7 @@
 //! clipboard-format-listener window: it needs no hidden HWND/WndProc and its
 //! idle cost is negligible (one system call every quarter second).
 //!
-//! Storage (ROADMAP #12): the DB stores only *references*, never the copied
+//! Storage (docs/ROADMAP_HISTORY.md #12): the DB stores only *references*, never the copied
 //! data's original form. Text rows keep the text inline; image rows keep a
 //! PNG file in `data/PictureCache/<id>.png` and store the relative path;
 //! file rows (copied from Explorer, CF_HDROP) keep the newline-joined path
@@ -101,7 +101,7 @@ pub struct ClipboardItem {
     pub merged_count: i64,
     /// False when the entry's content is gone (image PNG missing, or every
     /// file of a file row missing) — drives the strikethrough+gray row state
-    /// and blocks copy/paste (ROADMAP #17).
+    /// and blocks copy/paste (docs/ROADMAP_HISTORY.md #17).
     pub valid: bool,
     /// Indices (into the newline-joined `content`) of the files the user has
     /// checked in the multi-file preview; `None` = no override (default: every
@@ -1288,7 +1288,7 @@ pub fn set_clipboard_text(text: String) -> Result<(), String> {
     cb.set_text(text).map_err(|e| e.to_string())
 }
 
-// ── Plugin host clipboard surface (P1.3 of docs/PLUGIN_GAP_ANALYSIS.md) ──
+// ── Plugin host clipboard surface (docs/PLUGIN_API.md §8.1) ──
 //
 // Plugins could already read/write text; these add the other two payload kinds
 // (PNG images, CF_HDROP file lists) plus the paste-into-the-previous-window
@@ -1622,7 +1622,7 @@ pub fn get_file_text(path: String) -> Result<String, String> {
 }
 
 /// Read a file's raw bytes (base64) for preview renderers that must decode
-/// binary content in JS (pdf.js, SheetJS). The P5 sandbox made plugin pages
+/// binary content in JS (pdf.js, SheetJS). The sandbox made plugin pages
 /// opaque origins, so `fetch(asset://…)` is CORS-refused there — this bridge
 /// call restores the byte channel the asset protocol used to provide
 /// (fs.read permission, frontend ledger). Cap mirrors the thumbnail path.
@@ -2803,7 +2803,7 @@ mod tests {
 
     #[test]
     fn migrate_adds_source_app_to_path_era_table() {
-        // A ROADMAP-#12-era table: has kind/path but no source_app. init_db
+        // A pre-index table (docs/ROADMAP_HISTORY.md): has kind/path but no source_app. init_db
         // must add the column via ALTER and keep the rows.
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
@@ -2829,7 +2829,7 @@ mod tests {
         fs::remove_dir_all(&base).ok();
     }
 
-    // ── ROADMAP #17: 失效判定 / 勾选子集 / 去重开关 ─────────────────────────
+    // ── 失效判定 / 勾选子集 / 去重开关 (docs/ROADMAP_HISTORY.md): 失效判定 / 勾选子集 / 去重开关 ─────────────────────────
 
     #[test]
     fn file_row_valid_reflects_surviving_paths() {

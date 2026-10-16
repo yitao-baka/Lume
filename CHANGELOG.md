@@ -4,7 +4,30 @@ All notable changes to Lume are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/), versions follow
 [semantic versioning](https://semver.org/).
 
+> 历史条目保留当年的文档名与分期编号（如 P5 / ROADMAP #N）原文；被引用的
+> `docs/RULES.md`、`docs/NORMS.md`、`docs/PLUGIN_GAP_ANALYSIS.md` 已合并或删除，现状见 `docs/` 下各活跃文档。
+
 ## [Unreleased]
+
+### Documentation
+
+- **文档体系改革 —— 活跃文档与历史归档分离** — 删除 `docs/RULES.md` 与
+  `docs/NORMS.md`（内容分别并入 README/AGENTS 与 SETTINGS/ARCHITECTURE）；
+  路线图一拆为二：`docs/ROADMAP.md` 改为只含开放事项（近期候选 / 远期方向 /
+  明确不做），`docs/ROADMAP_HISTORY.md` 归档 #0–#49 的全部实现与验证记录；
+  删除已自我归档的 `docs/PLUGIN_GAP_ANALYSIS.md`（uTools 调研的历史使命
+  已由 PLUGIN_API 与路线图吸收，被删能力已在 ROADMAP「明确不做」登记）。
+  `docs/PLUGIN_API.md` 重写为纯 API 参考：废除 P0–P6 与 #N 进度标记、重排
+  连续章节编号（5A/6C/6I 交错问题消除）、删除「已完成」清单与历史注记，
+  功能契约零丢失。`docs/SETTINGS.md` 删除 5 节历史「实现说明」（缺失条目
+  已补进本文件的 Unreleased），`docs/TESTING.md` / `ARCHITECTURE.md` /
+  `PLUGINS.md` / `UI_GUIDELINES.md` 清除阶段编号与进度标记。全仓 109 个
+  文件的代码注释引用由 `ROADMAP #N` 重定向为 `docs/ROADMAP_HISTORY.md #N`。
+  **新增文档规范（AGENTS.md 硬性约定 8）**：任何文档不得出现分期编号
+  （P0–P6、Phase N）与完成状态标志，历史进度一律归 CHANGELOG 与
+  ROADMAP_HISTORY。验证：`pnpm exec tsc --noEmit` 通过；
+  `rg "P[0-6]|ROADMAP #|NORMS|RULES"` 在活跃文档与代码注释零残留
+  （归档文件与 CHANGELOG/History 内的历史记录除外）。
 
 ### Removed
 
@@ -14,8 +37,8 @@ All notable changes to Lume are documented here. Format based on
   （`[hotkey] <combo> unavailable: …` + 指引行）并保持无呼出键，不再静默换键；改键走
   设置 → 快捷键（录制仍实时校验占用；托盘 → 设置 始终可达）。顺带修掉旧候选
   链的副作用：自定义呼出键重启后被 Alt+Space 顶掉（旧 `register` 不读设置）。
-  `docs/ARCHITECTURE.md` / `SETTINGS.md` / `TESTING.md` / `ROADMAP.md` #49、
-  `README.md` 同步。验证：debug exe 实机——A 默认设置日志
+  `docs/ARCHITECTURE.md` / `SETTINGS.md` / `TESTING.md` /
+  `docs/ROADMAP_HISTORY.md` #49、`README.md` 同步。验证：debug exe 实机——A 默认设置日志
   `[hotkey] registered Alt+Space`；B 外部进程先占 Alt+Space 再启动，日志
   `[hotkey] Alt+Space unavailable: HotKey already registered …` + 无任何
   `registered Ctrl+…`，占位进程随后注册 Ctrl+Space 成功（证明无回退）；
@@ -47,7 +70,8 @@ All notable changes to Lume are documented here. Format based on
   （全局关键字 / feature / provider；下钻与过滤仍是整栏替换）。拖入文件自动
   聚焦该栏首行（Enter 直接激活）；剪贴板/窗口行随呼出出现与消失，不再夺走
   召唤时自动选中的栏目。`docs/PLUGIN_API.md` §5.2/§5A/§6E.1/§6E.1.1/§6H.4、
-  `docs/ARCHITECTURE.md`、`docs/TESTING.md`、`docs/ROADMAP.md` #43 同步。
+  `docs/ARCHITECTURE.md`、`docs/TESTING.md`、`docs/ROADMAP_HISTORY.md` #43
+  同步。
   验证：`cdp_p2b_verify` **29 项全过**（空查询并存断言 + 非空分块
   `{normal:1, plugin:4}` / 拖入聚焦首行 + Enter 激活）、
   `cdp_window_feature_verify` **14 项全过**；`cdp_p2_verify` 17/21 与既有
@@ -64,7 +88,8 @@ All notable changes to Lume are documented here. Format based on
   `appearance.per_mode_query`（默认关；设置 → 导航页 →「导航栏」组，挨着
   「记住上次所在页面」）可恢复逐页独立查询（#48 之前行为）；两种模式都仅
   会话内存、查询从不落盘。`docs/SETTINGS.md` / `PLUGIN_API.md` /
-  `ARCHITECTURE.md` / `TESTING.md` / `ROADMAP.md` #48 同步。验证：
+  `ARCHITECTURE.md` / `TESTING.md` / `docs/ROADMAP_HISTORY.md` #48 同步。
+  验证：
   `cdp_mode_query_verify` **47/47**（默认共享 / 面板开关实时 + 播种 / 行进入
   消耗 / 闲置重置清共享 / 重启注入与不落盘）；`cdp_idle_reset_verify`
   **48/48**（脚本钉住独立搜索词前提；共享重置由 #48 脚本覆盖）、
@@ -80,7 +105,8 @@ All notable changes to Lume are documented here. Format based on
   开启后模式胶囊只显示图标，`title`/`aria-label`（悬停 tooltip）保名；两种
   呈现胶囊高度一致（切换不跳行）；无图标模式回退
   `res/icons/unknow_universal.svg`。`docs/SETTINGS.md` / `ARCHITECTURE.md` /
-  `UI_GUIDELINES.md` / `TESTING.md` / `ROADMAP.md` #47 同步。验证：
+  `UI_GUIDELINES.md` / `TESTING.md` / `docs/ROADMAP_HISTORY.md` #47
+  同步。验证：
   `cdp_mode_bar_icons_verify` **22/22**（默认关 / 实时开关 / 真实设置面板
   保存并应用 / 重启首帧注入 / 无图标回退 / 点击与切换键交互），回归
   `cdp_plugin_mode_bar_verify` 15/15；`cargo test` 210 passed / 9 ignored、
@@ -95,8 +121,9 @@ All notable changes to Lume are documented here. Format based on
   设置 → 插件 每个 mode 卡片可逐插件覆盖（用户值优先）；豁免只保状态、不保
   落地页，home 永不豁免、分离窗口不参与；仅会话内生效（重启恢复仍由
   `remember_last_page` 决定）。`docs/SETTINGS.md` / `PLUGIN_API.md`
-  §3/§6C / `PLUGINS.md` / `ARCHITECTURE.md` / `TESTING.md` / `ROADMAP.md`
-  #46 同步。验证：`cdp_idle_reset_verify` **48/48**（阈值内不重置 /
+  §3/§6C / `PLUGINS.md` / `ARCHITECTURE.md` / `TESTING.md` /
+  `docs/ROADMAP_HISTORY.md` #46 同步。验证：`cdp_idle_reset_verify`
+  **48/48**（阈值内不重置 /
   完整重置 / 清单与用户双向豁免 / 总开关关闭 / 恢复默认）；回归
   `cdp_plugin_state_verify` 54/54、`cdp_p2b_verify` 29/29、
   `cdp_plugin_window_verify` 16/16、`cdp_plugins_pane_verify` ALL PASS；
@@ -117,7 +144,7 @@ All notable changes to Lume are documented here. Format based on
   接入统一解析（此前完全不解析）。纯增量字段，不 bump `HOST_PLUGIN_API`。
   示例 `examples/plugins/themed-icons/`；`docs/PLUGIN_API.md` §3 / §5.1–5.2 /
   §6E.1 / §6E.5 / §6G / §11、`docs/PLUGINS.md`、`docs/ARCHITECTURE.md`、
-  `docs/TESTING.md`、`docs/ROADMAP.md` #44 同步。验证：新
+  `docs/TESTING.md`、`docs/ROADMAP_HISTORY.md` #44 同步。验证：新
   `cdp_plugin_themed_icon_verify` **21/21**（浅→深即时换套、显式不过滤、
   legacy 仍 `invert(1)`、feature 行随主题、任务栏 ICON_BIG 像素按插件生效
   主题取原样变体）+ `--legacy` **6/6**（旧单图深色仍反相）；
@@ -293,8 +320,9 @@ All notable changes to Lume are documented here. Format based on
 
 - **发布前文档同步（Pre-26.10）** — README 状态/功能/打包命令更新到插件平台、
   全盘文件搜索与提权代理；`RULES` / `NORMS` / `ARCHITECTURE` / `SETTINGS` /
-  `TESTING` 按当前三二进制、插件权限与构建/验收流程校正；`ROADMAP` 标记 #6、
-  #7、#8、#10.4 的后续落地，并加入 2026-10-12 当前快照；`PLUGIN_API` 修正
+  `TESTING` 按当前三二进制、插件权限与构建/验收流程校正；
+  `docs/ROADMAP_HISTORY.md` 标记 #6、#7、#8、#10.4 的后续落地，并加入
+  2026-10-12 当前快照；`PLUGIN_API` 修正
   权限与沙箱层数措辞；`PLUGIN_GAP_ANALYSIS` 明确归档为 P0 前历史分析。
 
 - **`.lupx` 覆盖安装按版本关系措辞（ROADMAP #28.1）** — 原实现遇到同 id 已装
@@ -617,6 +645,16 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
   `scripts/cdp_sandbox_verify.mjs` 14 项实机验证（探针插件在沙箱内自检）
   （`src-tauri/src/plugin_perm.rs`、`src/plugins/{iframeBridge,permissions,
   hostApi}.ts`）。
+- **全局开发者模式（`plugins.dev_mode`）** — 设置 → 插件工具栏最右新增「开发者
+  模式」开关（默认关；轻量写 `set_plugin_dev_mode` + `settings-applied`，初值
+  经 `get_settings` 读取）。关闭时隐藏全部开发者选项（卡片上的重载按钮、「开发」
+  徽章与「全部授权」开关），且后端 `get_plugins` 以空表调 `list_plugins`、把
+  所有插件上报 `trusted=false`——前端权限层无需改动即 fail-closed 到声明能力，
+  残留 trusted id 不授予任何能力；开启时显示并生效，随后重读插件清单。i18n
+  新增 `pluginsDevMode{,Hint,On,Off}` ×3 语言。验证：`cargo test` 含
+  `plugin_dev_mode_defaults_off_and_round_trips`（整表缺失 / 缺键均默认关 +
+  轻量写往返）；`cdp_plugins_pane_verify` 新增开发者选项显隐断言（关 = 无重载
+  按钮 / 无开发徽章，开 = 重载按钮回归）。
 - **提权注入代理（Elevation agent）** — 新增第三个二进制 `lume-agent.exe`：一个
   极小的**高完整性**助手，唯一能力是「向指定前台窗口发送一次配置好的组合键」。
   解决的是自动动作对**以管理员权限运行的目标程序**永远不生效——根因是 UIPI
@@ -643,6 +681,32 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
 
 ### Changed
 
+- **逐插件「全部授权」并入全局开发者选项（`plugins.trust_all`）** — 插件详情
+  面板里的逐插件授权行删除（`.plg-trust` 样式一并移除），改为工具栏开发者模式
+  开关旁的全局「全部授权」（默认关，橙色警示文案，仅开发者模式开启时显示；
+  轻量写 `set_plugin_trust_all` + `settings-applied`）。`list_plugins` 增加
+  `trust_all` 参数（`is_trusted` 短路为真）；`get_plugins` 门控扩为：dev_mode 关
+  → trusted 空 + trust_all=false；开 → 透传 trusted 列表与 trust_all。
+  `set_plugin_trusted` 命令保留（列表仍被尊重）但设置页不再调用。i18n：删
+  `pluginToastTrustedOn/Off`、`pluginTrustHint`，增 `pluginsTrustAll{Hint,On,Off}`
+  ×3 语言。验证：`cargo test` 含 `plugin_trust_all_defaults_off_and_round_trips`；
+  `cdp_plugins_pane_verify` 断言同步更新（开 = 重载 + 全局全部授权各就位、
+  详情面板无逐插件授权行）。
+- **插件页重设计 —— 卡片式插件管理器** — `PluginsPane.tsx` 从扁平行列表重写为
+  卡片 + 详情面板布局（样式为 `App.css` 的 `plg-*` 块，旧 `settings-plugin-*`
+  类删除；重载按钮复用 `settings-icon-btn` + `res/icons/refresh.svg`）。工具栏 =
+  概要行（「共 N 个插件 · M 个已启用」）+ 分段筛选（全部 / 已启用 / 已停用 /
+  磁盘插件）+ 关键词筛选输入框（无匹配给空态「没有匹配的插件」）；每插件一张
+  卡片（图标或按类型着色的首字母块、名称 / 版本 / 内置·磁盘·开发徽章、描述、
+  类型 + 关键词预览、重载 / 启停 / 展开），详情面板单开（关键词 chips、进入
+  规则、权限能力 chips 本地化 + 说明、声明式设置、ID 与磁盘位置）。i18n 新增
+  约 45 键 × 3 语言（筛选 / 概要 / 空态、详情分区标题、能力词 `perm*` + 说明、
+  内置插件描述、操作反馈 `pluginToast*`、`pluginSettingDefault`），
+  `Settings.tsx` 的 `SECTION_SEARCH_KEYS.plugins` 同步补齐（能力词与分区标题
+  可被设置搜索命中）。验证：`tsc --noEmit` + `vite build` + `cargo build` 干净；
+  `scripts/cdp_plugins_pane_verify.mjs` 6 项全过（工具栏 / 卡片结构 / 详情面板 /
+  筛选输入 / 已停用筛选空态 / 声明式设置渲染），截图 `test/plg_dark_list.png`、
+  `test/plg_light_detail.png`（双主题目检）。
 - **代理用完即灭活（非驻留）** — 「登录后常驻代理」关闭时，一条规则的快捷键经
   提权代理发送**完成**后立即关闭代理，而不是让它再闲置约 60s 才自灭。为兼容并发
   规则，`shutdown` 改为**优雅退出**：代理收到 `shutdown` 只置 `should_exit`，等
@@ -1050,7 +1114,7 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
 - **PDF 预览（ROADMAP #16，PDF.js）** — `pdfjs-dist` v6 懒加载（Vite 分包，仅首次
   预览 PDF 时进卫星 renderer），手写迷你查看器：翻页 `‹ ›` + 页码 + 缩放 `＋ −`，
   **只渲染当前可见页**（离屏回收，巨型 PDF 不会撑爆卫星窗）；文件经 asset:// 读取，
-  无新后端命令。Office 与 压缩包 预览按决策放弃。见 `docs/ROADMAP.md` #16。
+  无新后端命令。Office 与 压缩包 预览按决策放弃。见 `docs/ROADMAP_HISTORY.md` #16。
 - **源码/歌词/字幕归文本** — `fileContent`/`file_content_kind`（前后端两份）新增
   常见编程语言扩展名（`kt swift php rb dart scala cs fs fsx r pl hs zig nim ex exs
   erl clj vue svelte jsx tsx mjs cjs groovy gradle proto gql tex`）、歌词 `.lrc`、
@@ -1085,7 +1149,7 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
   → 隐藏并导航 `about:blank`（页面卸载；renderer 进程保留待复用，实测为部分回收）。
   主窗口从此恒为基础宽度、永不为预览变化。关闭经主窗 Esc 或卫星窗 × 按钮。CDP 实测：
   renderer×3、磁吸贴齐、主窗不加宽、图片 asset:// 渲染、Esc 回收全通过。见
-  `docs/ROADMAP.md` #15。
+  `docs/ROADMAP_HISTORY.md` #15。
 - **`scripts/measure-webview-mem.ps1`** — memory-measurement harness that
   snapshots Lume's whole process tree (`lume.exe` + `msedgewebview2` children)
   by process type, reporting private working set / working set / commit, with a

@@ -21,7 +21,7 @@ view = "view.html"     # 桥接 iframe 页 — 本插件不需要 entry 逻辑�
 height = 420
 hidden = true          # 不在模式切换栏/切换键循环里出现；入口 = 导航搜索行
 
-# 声明式进入（P2.1）：输入 "hush:xxx" 出「hush:…」行；该行同样默认用本插件 icon。
+# 声明式进入：输入 "hush:xxx" 出「hush:…」行；该行同样默认用本插件 icon。
 # 注意这里没有 entry 逻辑，宿主会直接投递给页面的 lume.on.enter。
 [[features]]
 code = "note"

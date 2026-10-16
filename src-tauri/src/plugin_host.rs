@@ -1,5 +1,5 @@
-//! Plugin host capabilities: file dialogs and screen geometry (P1.4 / P1.5 of
-//! docs/PLUGIN_GAP_ANALYSIS.md).
+//! Plugin host capabilities: file dialogs and screen geometry (of
+//! docs/PLUGIN_API.md).
 //!
 //! Two small surfaces that plugins otherwise cannot reach from the webview:
 //!
@@ -12,7 +12,7 @@
 //! - **Screen** — cursor position and the monitor list (physical pixels), for
 //!   plugins that position their own windows or react to where the user is.
 //!
-//! Permissions: `dialog` and `screen` (manifest-declared; enforcement is P3.2,
+//! Permissions: `dialog` and `screen` (manifest-declared; enforcement is,
 //! these are the documented ledger entries).
 
 use std::path::PathBuf;
@@ -198,7 +198,7 @@ pub struct CursorPos {
 }
 
 /// Path kind per index of the input list — what the `files` feature matcher
-/// needs to tell a folder from a file (ROADMAP #28: `fileType = "folder"`).
+/// needs to tell a folder from a file (docs/ROADMAP_HISTORY.md #28: `fileType = "folder"`).
 /// `"missing"` = the path no longer exists (a drop of a since-deleted temp
 /// file). Launcher-internal (no plugin id, no permission): the frontend calls
 /// it once per drag-drop with the paths the OS handed over.

@@ -1,5 +1,5 @@
 //! Preview plugin — the `service` contribution owning the satellite preview
-//! window routing (ROADMAP #7).
+//! window routing (docs/ROADMAP_HISTORY.md #7).
 //!
 //! The Rust side owns the window itself (created at startup, WS_EX_NOACTIVATE,
 //! docked to the launcher's right edge — window lifecycle is core
@@ -25,7 +25,7 @@ export function createPreviewPlugin(deps: PreviewPluginDeps): LauncherPlugin {
   const [currentPreview, setCurrentPreview] = createSignal<PreviewReq | null>(null);
   let previewTimer: number | undefined;
 
-  // Satellite preview sync (ROADMAP #15): every selection / category / mode
+  // Satellite preview sync (docs/ROADMAP_HISTORY.md #15): every selection / category / mode
   // change re-evaluates what the preview window should show, but the actual
   // show/hide is debounced (~100ms) so fast keyboard scrolling through rows
   // (esp. "other" binaries between previewable ones) doesn't thrash the window.

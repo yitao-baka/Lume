@@ -52,7 +52,7 @@ impl Default for FocusState {
     }
 }
 
-/// Session-scoped placement bookkeeping for the launcher (ROADMAP #41).
+/// Session-scoped placement bookkeeping for the launcher (docs/ROADMAP_HISTORY.md #41).
 ///
 /// The 窗口位置 setting is an *initial* position only: it applies when the
 /// window first appears in a run (or when the setting itself changes); later
@@ -174,7 +174,7 @@ pub fn set_memory_target(app: &AppHandle, label: &str, low: bool) {
 /// launcher is handled separately (`restore_main` / `trim_main_when_idle`) so
 /// the hotkey show path never pays a swap-back.
 pub fn sync_aux_memory_targets(app: &AppHandle) {
-    // plugin-logic-host（P6.5）永远隐藏 —— 恒定低水位。
+    // plugin-logic-host永远隐藏 —— 恒定低水位。
     set_memory_target(app, "plugin-logic-host", true);
     for label in [SETTINGS_WINDOW, PREVIEW_WINDOW] {
         let visible = app
@@ -244,7 +244,7 @@ fn apply_geometry(window: &WebviewWindow) -> tauri::Result<()> {
     // 记住位置 (自定义) opts out of automatic placement entirely, as before.
     // Presets place the window on its first appearance / a config change and
     // once recover a stale spot that fell off every monitor; otherwise the
-    // last close position wins (ROADMAP #41).
+    // last close position wins (docs/ROADMAP_HISTORY.md #41).
     let recovered = !appearance.remember_position && off_all_monitors(window);
     if !appearance.remember_position && (first_show || cfg_changed || follow_mouse || recovered) {
         if first_show || cfg_changed || recovered {
@@ -350,7 +350,7 @@ fn record_anchor(window: &WebviewWindow) {
 
 /// True when the launcher must keep its current spot instead of the preset
 /// anchor: either the user moved it earlier this session, or it no longer sits
-/// at the last position we applied — a sticky manual placement (ROADMAP #41).
+/// at the last position we applied — a sticky manual placement (docs/ROADMAP_HISTORY.md #41).
 fn user_moved(window: &WebviewWindow, state: &PlacementState) -> bool {
     let mut inner = state.inner.lock().unwrap();
     if inner.user_placed {
@@ -444,7 +444,7 @@ fn show(window: &WebviewWindow) -> tauri::Result<()> {
     window.set_focus()?;
     // Fresh-show signal for the frontend: it re-arms summon-scoped state exactly
     // on this event, NOT on every focus regain (session continuation keeps the
-    // page/query; a home-page entry clears the home query, ROADMAP #40).
+    // page/query; a home-page entry clears the home query (docs/ROADMAP_HISTORY.md #40).
     // Dragging the frameless window briefly deactivates + refocuses it (see
     // `is_mid_drag`), and re-arming there would wipe summon state mid-drag.
     let _ = window.emit("launcher-shown", ());
@@ -477,7 +477,7 @@ pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
 /// Hide the main window and signal the frontend. EVERY launcher-hide path
 /// (blur-to-hide, hotkey toggle, Esc / the `hide_launcher` command) funnels
 /// through here, so `launcher-hidden` is the single idle-reset anchor
-/// (ROADMAP #46): the frontend measures "time since the user last left the
+/// (docs/ROADMAP_HISTORY.md #46): the frontend measures "time since the user last left the
 /// launcher" — never a background timer, which the memory-trimmed hidden
 /// webview cannot be trusted to run on time.
 pub fn hide_main(app: &AppHandle) -> Result<(), String> {
@@ -565,7 +565,7 @@ pub fn window_toggle_pin(window: WebviewWindow) -> Result<bool, String> {
 /// Apply the window-geometry settings to the launcher immediately (used by
 /// Save / Apply). Width applies now. An explicit 窗口位置 change re-applies the
 /// preset now (instant feedback; it also forgets a manual spot), while an
-/// unrelated save never pulls a dragged window back (ROADMAP #41) — it only
+/// unrelated save never pulls a dragged window back (docs/ROADMAP_HISTORY.md #41) — it only
 /// keeps a never-moved window anchored while its width changes.
 pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> Result<(), String> {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
@@ -603,7 +603,7 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
 /// Re-apply the launcher's position after the frontend resized its height —
 /// kept anchored to the center / chosen corner while the window still sits
 /// exactly where we put it. No-op for 记住位置 and follow-mouse, or once the
-/// user moved the window by hand: from then on its spot is theirs (ROADMAP
+/// user moved the window by hand: from then on its spot is theirs (docs/ROADMAP_HISTORY.md
 /// #41).
 #[tauri::command]
 pub fn apply_position(app: AppHandle) -> Result<(), String> {
@@ -641,13 +641,13 @@ pub fn get_work_area(app: AppHandle) -> Result<f64, String> {
     Ok(wa.size.height as f64 / monitor.scale_factor())
 }
 
-// ── Satellite preview window (ROADMAP #15) ───────────────────────────────────
+// ── Satellite preview window (docs/ROADMAP_HISTORY.md #15) ───────────────────────────────────
 // All clipboard previews (text / text files / images / audio / video) render in
 // this separate, non-activating window docked flush to the main window's right
 // edge. It is created at startup (like the settings window) to avoid the
 // runtime-window-creation GPU-hang risk, and on close it navigates to
 // `about:blank` so the decoded bitmaps / media buffers leave the page while the
-// renderer process stays resident for reuse. See `docs/ROADMAP.md` #15.
+// renderer process stays resident for reuse. See `docs/ROADMAP_HISTORY.md` #15.
 
 /// The frontend's last pushed preview request. The page reads it on mount
 /// (`get_preview_request`) — which also self-corrects a `preview-update` event
@@ -915,7 +915,7 @@ fn dock_position(
 
 /// The URL of the satellite page: the vite dev server in dev, the bundled app
 /// protocol in production. Kept in one place — verify against the running
-/// app's `window.location.origin` once (docs/ROADMAP.md #15).
+/// app's `window.location.origin` once (docs/ROADMAP_HISTORY.md #15).
 fn preview_page_url(app: &AppHandle) -> tauri::Url {
     let base = if cfg!(dev) {
         app.config()
@@ -950,7 +950,7 @@ pub fn clear_dwm_border(win: &WebviewWindow) {
 /// value makes panel, strip and page read as one uniform surface — corners
 /// included, since DWM rounds them. Do not give the strip its own color or
 /// make the panel translucent: the two can never match over an arbitrary
-/// wallpaper (ROADMAP #30.5).
+/// wallpaper (docs/ROADMAP_HISTORY.md #30.5).
 pub fn set_panel_frame_border(win: &WebviewWindow, color_mode: &str) {
     set_dwm_border(win, Some(panel_surface_rgb(win, color_mode)))
 }

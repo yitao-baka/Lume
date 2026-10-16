@@ -1,4 +1,4 @@
-//! Plugin host capability: HTTP requests (P1.1 of docs/PLUGIN_GAP_ANALYSIS.md).
+//! Plugin host capability: HTTP requests (docs/PLUGIN_API.md §8.1).
 //!
 //! Plugin pages run in the launcher webview, where `fetch` is subject to CORS —
 //! which kills the single largest class of launcher plugins (translators,
@@ -11,7 +11,7 @@
 //! reply carries the body base64-encoded; `ctx.http.request` in the frontend
 //! decodes it and offers `text()` / `json()` conveniences.
 //!
-//! Permission: `network` (declared in the manifest; enforcement layer is P3.2
+//! Permission: `network` (declared in the manifest; enforcement layer is 
 //! — until then this is the documented ledger entry).
 
 use base64::Engine;

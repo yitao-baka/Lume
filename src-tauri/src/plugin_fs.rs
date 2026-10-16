@@ -1,4 +1,4 @@
-//! Plugin private files (P3.3, ROADMAP #26) — `<base>/plugins/<id>/files/`.
+//! Plugin private files (docs/ROADMAP_HISTORY.md #26) — `<base>/plugins/<id>/files/`.
 //!
 //! A plugin's own scratch space: attachments, exports, caches. It sits inside
 //! the plugin folder the user placed, so writing here needs **no** permission

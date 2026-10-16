@@ -1,6 +1,6 @@
 // 宿主 HTTP 回归（视图帧路径）：http-probe 夹具在 mode 页沙箱里自检四条路径，
 // 宿主侧读回断言。离线可跑（本地 echo 服务），不碰第三方接口。
-//   ① 正常 JSON        status/headers/text()/json() 全可用（P6.5 回归点：
+// ① 正常 JSON status/headers/text()/json() 全可用（回归点：
 //                      成功结果带函数，跨 postMessage 不可克隆 → 曾假失败）
 //   ② 非 2xx           不抛错，状态码可读
 //   ③ 12s 慢响应       比旧看门狗死限（10s）慢但仍成功 → 必须拿到 200 与 JSON

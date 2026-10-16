@@ -2,7 +2,7 @@
 //! card: icon tile, name + badges, description, and an enable toggle; the
 //! card body expands into a detail panel with the declared keywords, entry
 //! rules, capability chips (localized + explained), the 全部授权 escape
-//! hatch, the plugin's declarative settings (P3.4) and its on-disk location.
+//! hatch, the plugin's declarative settings and its on-disk location.
 //!
 //! Toggling writes `settings.plugins.disabled` (light write) and emits
 //! `settings-applied`; the launcher re-reads the registry and a disabled
@@ -55,7 +55,7 @@ function kindLabel(kind: string): string {
   return kind;
 }
 
-/** Capability words (manifest `permissions`, enforced by the P3.2 layer)
+/** Capability words (manifest `permissions`, enforced by the layer)
  * mapped to localized labels + one-line explanations. Unknown words from a
  * newer manifest degrade to the raw word. */
 const PERM_INFO: Record<string, { label: keyof Messages; desc: keyof Messages }> = {
@@ -101,7 +101,7 @@ function pluginDescription(p: PluginManifest): string {
   return key ? t(key) : "";
 }
 
-/** Manifest icon set → a theme pick (ROADMAP #44): explicit `icon_light` /
+/** Manifest icon set → a theme pick (docs/ROADMAP_HISTORY.md #44): explicit `icon_light` /
  * `icon_dark` variants win over the legacy `icon`; relative paths resolve
  * against the plugin dir (same rule as the launcher's pill icons). The
  * settings window's own effective theme decides. */
@@ -129,7 +129,7 @@ export default function PluginsPane() {
    * plugin regardless of its manifest. Only effective while dev mode is on
    * (the backend gate); this pane is its only UI. */
   const [trustAll, setTrustAll] = createSignal(false);
-  /** Idle-reset exemption overrides (ROADMAP #46): plugin id → explicit user
+  /** Idle-reset exemption overrides (docs/ROADMAP_HISTORY.md #46): plugin id → explicit user
    * value; absent means follow the manifest's `keep_session` default. */
   const [keepOverrides, setKeepOverrides] = createSignal<Record<string, boolean>>({});
   /** `.lupx` install flow: the picked archive's inspected facts (null when
@@ -209,7 +209,7 @@ export default function PluginsPane() {
     }
   }
 
-  /** Idle-reset exemption (ROADMAP #46): writes the user override map; the
+  /** Idle-reset exemption (docs/ROADMAP_HISTORY.md #46): writes the user override map; the
    * manifest `keep_session` stays the default when no override exists. */
   async function toggleKeepSession(p: PluginManifest, keep: boolean) {
     try {
@@ -631,7 +631,7 @@ function PluginCard(props: {
             </div>
           </Show>
 
-          {/* Idle-reset exemption (ROADMAP #46): the manifest `keep_session`
+          {/* Idle-reset exemption (docs/ROADMAP_HISTORY.md #46): the manifest `keep_session`
               is only the default — this user switch wins. Only mode pages
               hold session state worth keeping. */}
           <Show when={p().kind === "mode"}>
@@ -644,7 +644,7 @@ function PluginCard(props: {
             </div>
           </Show>
 
-          {/* Capabilities (P3.2): what the manifest declares and the
+          {/* Capabilities : what the manifest declares and the
               enforced-by-default note. The trust escape hatch is the global
               全部授权 switch in the toolbar (developer mode only) — there is
               deliberately no per-plugin trust control here anymore.
@@ -670,7 +670,7 @@ function PluginCard(props: {
             </div>
           </Show>
 
-          {/* Declared settings (P3.4) — the manifest describes the inputs,
+          {/* Declared settings — the manifest describes the inputs,
               the pane renders them and writes through to the store. */}
           <Show when={p().settings.length > 0}>
             <div class="plg-dsec">

@@ -1,4 +1,4 @@
-/* Detached plugin window (P6) — the host page for a mode plugin living in
+/* Detached plugin window — the host page for a mode plugin living in
    its own window. The shared TitleBar (src/components/TitleBar.tsx) sits
    above the bridged iframe; the iframe fills the rest. Colors follow the
    shared theme variables (src/theme.css — same tokens as the launcher). */

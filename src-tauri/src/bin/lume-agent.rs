@@ -1,4 +1,4 @@
-//! `lume-agent.exe` — the elevated input-injection helper (docs/ROADMAP.md #22).
+//! `lume-agent.exe` — the elevated input-injection helper (docs/ROADMAP_HISTORY.md #22).
 //!
 //! Deliberately tiny and single-purpose: it owns one named pipe and can do
 //! exactly one thing with it (inject a configured hotkey into a foreground
@@ -13,7 +13,7 @@
 //! focus (~60s idle or, in 常驻 mode, indefinitely). That also means stderr is
 //! invisible, so failures are reported back over the pipe (`status`/
 //! `inject_ack`) and the install/uninstall outcome over the result file — the
-//! same lesson LumeSVC learned (ROADMAP #20.1: under the SCM stderr does not
+//! same lesson LumeSVC learned (docs/ROADMAP_HISTORY.md #20.1: under the SCM stderr does not
 //! exist).
 
 #![windows_subsystem = "windows"]

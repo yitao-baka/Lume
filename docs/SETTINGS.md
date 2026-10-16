@@ -1,13 +1,12 @@
 # 设置功能规范（Settings）
 
-迭代状态：**分组卡片布局（2026-08-30 重排）**。信息架构与 `feat/flutter-settings`
-分支的 Flutter 独立设置 exe 对齐；实现载体仍是主进程的 SolidJS WebView2 窗口
-（两个 Lume 版本共用同一 settings.toml 格式，仅设置载体不同）。通用文件规范见
-`docs/NORMS.md`。
+本文是设置窗口的功能与字段规范。设置窗口是独立于启动器的 SolidJS WebView2
+窗口，无边框、页面自绘标题栏；布局、分区与控件、各字段语义及保存/恢复行为以
+本文为准。通用文件规范见 `docs/ARCHITECTURE.md`。
 
 ## 概览
 
-- **独立设置窗口**（launcher 之外的 `settings` webview，带原生标题栏），
+- **独立设置窗口**（launcher 之外的 `settings` webview，无边框自绘标题栏），
   940×660 启动（min 560×420），可调整大小；齿轮按钮 + 托盘「设置」打开；
   标题栏 X = 隐藏（工作副本保留），`close_settings` 在保存成功后调用。
 - 打开设置窗口不影响 launcher 自身的显隐与焦点逻辑；隐藏时窗口内存随
@@ -25,9 +24,9 @@
 │  快捷键      │  │ 标签行                控件（右）  │    │
 │  搜索        │  └─────────────────────────────────┘    │
 │  系统        │      分组标题                            │
-│  关于        │  ┌─────────────────────────────────┐    │
-│              │  │ …                                │    │
-│              │  └─────────────────────────────────┘    │
+│  自动化      │  ┌─────────────────────────────────┐    │
+│  插件        │  │ …                                │    │
+│  关于        │  └─────────────────────────────────┘    │
 ├──────────────┴─────────────────────────────────────────┤
 │                       [恢复默认设置] [保存并应用]        │  ← 底栏
 └────────────────────────────────────────────────────────┘
@@ -42,10 +41,10 @@
 
 ### 设置搜索框
 
-与 Flutter 设置 exe 的 `_cardText` 机制一致：每个分区持有一份 i18n 键清单
-（`Settings.tsx` 的 `SECTION_SEARCH_KEYS`），查询对分区标题 + 清单的本地化
-文本做大小写不敏感子串匹配；不匹配的分区从导航栏隐藏，内容区**堆叠显示全部
-匹配分区**；清空查询恢复单分区视图；点击导航项即清空查询回到该分区。
+每个分区持有一份 i18n 键清单（`Settings.tsx` 的 `SECTION_SEARCH_KEYS`），
+查询对分区标题 + 清单的本地化文本做大小写不敏感子串匹配；不匹配的分区从
+导航栏隐藏，内容区**堆叠显示全部匹配分区**；清空查询恢复单分区视图；点击
+导航项即清空查询回到该分区。
 
 ## 保存 / 恢复语义
 
@@ -53,10 +52,11 @@
   写入 → 立即生效（dedup 唯一索引重建 / 窗口宽度 / 呼出热键重注册 / 索引
   刷新 + `settings-applied` 事件）→ **关闭设置窗口**；失败留在设置页
   （保持脏状态）供重试。
-- **「恢复默认设置」= 两步语义（同 Flutter）**：仅把内存工作副本重置为
-  `DEFAULT_SETTINGS`（`src/settings/types.ts`，镜像 Rust `Default`）并标脏 +
-  toast；**不写盘**，需再点「保存并应用」才落盘。无确认对话框（两步天然防
-  误触）。`restore_default` 命令保留但设置页不再调用。
+- **「恢复默认设置」= 两步语义**：仅把内存工作副本重置为
+  `DEFAULT_SETTINGS`（`src/settings/types.ts`，镜像 Rust `Default`；新增字段需
+  手动同步，无编译期交叉校验）并标脏 + toast；**不写盘**，需再点
+  「保存并应用」才落盘。无确认对话框（两步天然防误触）。`restore_default`
+  命令保留但设置页不再调用。
 - 开机自启动 / 服务注册卸载 / 导入 / 导出 / 恢复备份 / 刷新索引 = **即时
   生效**，不走脏状态。
 
@@ -77,7 +77,7 @@
 |---|---|---|
 | 宽度 | `appearance.window_width` | 540 / 720 / 900 |
 | 高度 | `appearance.window_height` | 420 / 520 / 620 |
-| 窗口位置 | `appearance.window_position` + `remember_position` | 居中 / 跟随鼠标 / 左上 / 右上 / 左下 / 右下 / **自定义**（=首次出现也不自动定位；Flutter 版没有） |
+| 窗口位置 | `appearance.window_position` + `remember_position` | 居中 / 跟随鼠标 / 左上 / 右上 / 左下 / 右下 / **自定义**（=首次出现也不自动定位） |
 
 组「导航栏」：显示最近使用 `show_recent`、显示 Explorer 栏
 `show_explorer_bar`、默认展开已固定 `expand_pinned`、模式切换栏仅图标
@@ -86,23 +86,25 @@
 Shift+Enter 管理员 `shift_enter_admin`（均为 toggle）；最近使用条数 `recent_count`
 （10/20/30/50）；应用 / 剪贴板占位符 `search_placeholder_apps` /
 `search_placeholder_clipboard`（220px 输入框）；记住上次所在页面
-`remember_last_page`（+ hint）。**#40 起语义（2026-10-13）**：会话内
-续存（hide/show、模式切换、分离回流）始终开启、与该开关无关；开关只控
+`remember_last_page`（+ hint）。**语义**（`docs/ROADMAP_HISTORY.md` #40）：
+会话内续存（hide/show、模式切换、分离回流）始终开启、与该开关无关；开关只控
 「重启后恢复上次模式 + 分类」，查询与页面快照从不落盘。
 
-各模式使用独立搜索词 `per_mode_query`（默认关 + hint，ROADMAP #48）：**关 =
-所有模式共享同一份搜索框内容**——以最新输入为准，模式切换/切换键把该值交给
-目标页并按其执行搜索，插件 `app.setQuery` / 输入框占用回填写的也是这份值；
-打开首页条目后的下次呼出与闲置重置清空它，分离窗口关闭回流时窗口最后的查询
-并入。**开 = 每个模式分别记住自己的查询**（#48 之前的旧行为）。两种模式都只
-在会话内存里，查询从不落盘。注意：经关键字 / feature 行**进入**某模式属于
-「使用条目」，会消耗共享值（入口触发词不是目标页的过滤条件）；共享模式下
-插件页的 `keep_session` 闲置豁免只保页面状态，不保独立搜索词。
+各模式使用独立搜索词 `per_mode_query`（默认关 + hint，
+`docs/ROADMAP_HISTORY.md` #48）：**关 = 所有模式共享同一份搜索框内容**
+——以最新输入为准，模式切换/切换键把该值交给目标页并按其执行搜索，插件
+`app.setQuery` / 输入框占用回填写的也是这份值；打开首页条目后的下次呼出与
+闲置重置清空它，分离窗口关闭回流时窗口最后的查询并入。**开 = 每个模式分别
+记住自己的查询**。两种模式都只在会话内存里，查询从不落盘。注意：经关键字 /
+feature 行**进入**某模式属于「使用条目」，会消耗共享值（入口触发词不是目标
+页的过滤条件）；共享模式下插件页的 `keep_session` 闲置豁免只保页面状态，
+不保独立搜索词。
 
 闲置重置 `idle_reset_enabled` + 阈值 `idle_reset_minutes`（5 / 15 / 30 / 60 /
-120 / 240 分钟；默认**开 + 30 分钟**，ROADMAP #46）：启动器**隐藏**超过阈值后，
-下一次呼出从干净状态开始——回导航页、清空搜索；所有**未豁免**的插件页被完整
-重置（查询、页面分类/状态、保活宿主与会话帧一并清掉，下次进入是冷启动）。
+120 / 240 分钟；默认**开 + 30 分钟**，`docs/ROADMAP_HISTORY.md` #46）：启动器
+**隐藏**超过阈值后，下一次呼出从干净状态开始——回导航页、清空搜索；所有
+**未豁免**的插件页被完整重置（查询、页面分类/状态、保活宿主与会话帧一并
+清掉，下次进入是冷启动）。
 豁免有两层：清单 `keep_session = true` 提供默认值，设置 → 插件 每个 mode
 卡片上的开关可按插件覆盖（**用户值优先**）。豁免只保「页面状态」，不保
 「落地页」——超阈值时一律先回导航页。分离窗口是单一权威，不参与重置；
@@ -110,23 +112,21 @@ Shift+Enter 管理员 `shift_enter_admin`（均为 toggle）；最近使用条�
 
 组「条目框」：条目框大小 `entry_size`（70 / 110 / 150）。
 
-**窗口位置语义（2026-10-13，ROADMAP #41）**：预设/自定义只决定**本次运行窗口
-首次出现**的位置；此后每次呼出都继承上次关闭时的位置，内容高度变化只维持原
-锚点（用户手动拖过窗口后锚点也不再套用）——不再每次呼出/保存重置。「跟随
-鼠标」是唯一例外：每次呼出都定位到光标。显式改「窗口位置」保存时立即生效并
-重新接管；保存无关设置不会把手动摆放的窗口拉回。位置不落盘：重启后按设置
-重新首次定位（settings.toml 与 Flutter 版互通格式不变）。
+**窗口位置语义**（`docs/ROADMAP_HISTORY.md` #41）：预设/自定义只决定**本次
+运行窗口首次出现**的位置；此后每次呼出都继承上次关闭时的位置，内容高度变化
+只维持原锚点（用户手动拖过窗口后锚点也不再套用）——每次呼出/保存都不重置。
+「跟随鼠标」是唯一例外：每次呼出都定位到光标。显式改「窗口位置」保存时立即
+生效并重新接管；保存无关设置不会把手动摆放的窗口拉回。位置不落盘：重启后按
+设置重新首次定位。
 
-> **档位变更（2026-08-30）**：宽度 600/720/840 → 540/720/900、高度
-> 360/520/720 → 420/520/620、条目框 80/110/140 → 70/110/150、最近使用
-> +50 档——与 Flutter 版对齐。旧的非默认值仍生效，只是对应 chip 不再高亮。
+> **档位兼容**：旧配置中不在当前档位列表里的值仍生效，只是对应 chip 不再高亮。
 
 ### 3. 剪贴板（`clipboard`）
 
-卡片「历史记录条数上限」（组标题复用首行标签，同 Flutter）：上限
+卡片「历史记录条数上限」（组标题复用首行标签）：上限
 `history_cap`（100/200/500/1000）、记录图片 `record_images`、记录文件
 `record_files`、合并复制 `merge_copy` + 条件显示的**合并窗口滑块**
-`merge_window_ms`（500–5000ms，步进 100，显示秒——由档位 chips 改为滑块）、
+`merge_window_ms`（500–5000ms，步进 100，显示秒）、
 **忽略应用整宽列表编辑器** `ignore_apps`（damage-map 图标行 + 输入行 +
 folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `dedup`（+ hint）。
 
@@ -136,8 +136,7 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 
 组「粘贴」：粘贴后关闭窗口 `paste_close`。
 
-组「预览」：开启预览 `preview`（+ hint）、**记住勾选 `remember_checks`**
-（本次重排新增到设置页；schema 已有，此前仅在预览区右键菜单切换）。
+组「预览」：开启预览 `preview`（+ hint）、**记住勾选 `remember_checks`**。
 
 ### 4. 快捷键（`navHotkeys`）
 
@@ -148,32 +147,31 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 被系统占用 / 无效），失败留在录制态并显示错误行。
 
 `hotkeys.toggle` 是启动时唯一注册的组合（单次注册）：被别的程序占用时只在
-日志报错并保持无呼出键，**不会自动换用别的组合**（旧候选链已废弃）；托盘 →
-设置始终可达，改成空闲组合即可。
+日志报错并保持无呼出键，**不会自动换用别的组合**；托盘 → 设置始终可达，
+改成空闲组合即可。
 
-> 预设 chips 是 main 版保留项：WebView2 捕获不到 Alt+Space（系统菜单占用），
-> 预设是回到默认呼出键的唯一入口。Flutter 版只有录制按钮。
+> 预设 chips 的存在原因：WebView2 捕获不到 Alt+Space（被系统菜单占用），
+> 预设是回到默认呼出键的唯一入口。
 
 ### 5. 搜索（`navSearch`）
 
-组「索引目录」（标题行含**刷新索引**图标按钮 + 2s toast——main 版保留项）：
+组「索引目录」（标题行含**刷新索引**图标按钮 + 2s toast）：
 
 - **系统索引**：每目录一行 toggle（本地化标签：桌面 / System32 / 开始菜单，
-  默认 Desktop ✓、System32 ✓、StartMenu ✗）→ `index.system_dirs`。
-- **用户索引**：**键值编辑器**（对齐 Flutter，样式仿 Windows 环境变量对话框）
+  默认 Desktop、System32 开，StartMenu 关）→ `index.system_dirs`。
+- **用户索引**：**键值编辑器**（样式仿 Windows 环境变量对话框）
   → `index.user_index: [{name, path, no_files}]`。行 = folder_open 图标 +
-  **名称（粗体）→ 路径** + **「索引文件」toggle（main 版保留项，`no_files`，
-  Flutter 版无）** + 删除；添加行 = 名称输入（留空自动取 basename）+ 路径
+  **名称（粗体）→ 路径** + **「索引文件」toggle（`no_files`）** + 删除；
+  添加行 = 名称输入（留空自动取 basename）+ 路径
   输入 + folder_plus 按钮，任一输入框 Enter 提交；空态「尚未添加索引项」。
 
 组「索引缓存」：刷新间隔滑块 `index.cache_refresh_interval_minutes`
 （5–1440 分钟，步进 5）。
 
-> **schema 迁移（2026-08-30）**：`user_dirs`/`user_dirs_no_files`（旧路径
-> 列表）→ `user_index` 键值结构。`Index::migrate()` 在 `read_settings` 时
-> 一次性转换（name = basename），旧 settings.toml 自动升级，写回只保留
-> `user_index`；两版本格式互通。`cache.rs::live_dirs` 与 `dirwatch.rs`
-> 改读 `user_index`。
+> **schema**：`index.user_index: [{name, path, no_files}]`；旧的 `user_dirs` /
+> `user_dirs_no_files` 路径列表在 `read_settings` 时由 `Index::migrate()`
+> 一次性转换为键值结构（name = basename），旧 settings.toml 读取时自动升级，
+> 写回只保留 `user_index`；`cache.rs::live_dirs` 与 `dirwatch.rs` 读 `user_index`。
 
 ### 6. 系统（`system`）
 
@@ -186,8 +184,8 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   注册/卸载按钮 + 能力边界说明。与「系统服务」同款：OS 是唯一事实源、即时生效、
   不走脏状态、UAC 取消给友好提示、2s 后重查。**状态查询不会拉起代理**。
 - 组「导入导出」：导出（save 对话框，默认 settings.toml）、导入（open
-  对话框 + 重载工作副本）、**恢复备份设置**（双击确认——main 版保留项，
-  Flutter 版已删）。`backup.toml` 由每次保存自动写。
+  对话框 + 重载工作副本）、**恢复备份设置**（双击确认）。`backup.toml`
+  由每次保存自动写。
 
 ### 7. 自动化（`automation`）
 
@@ -205,9 +203,6 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 
 ### 8. 插件（`plugins`）
 
-> **重设计（2026-09-22）**：从扁平行列表升级为插件管理器式卡片布局
-> （`PluginsPane.tsx`，样式类 `plg-*`）。
-
 **工具栏**：概要行（「共 N 个插件 · M 个已启用」）+ 分段筛选
 （全部 / 已启用 / 已停用 / 磁盘插件）+ 关键词筛选输入框（按名称 / id /
 描述 / 关键词子串匹配）；无匹配时显示空态「没有匹配的插件」。最右是
@@ -219,8 +214,8 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
   与全部授权都授予不了任何能力（权限层 fail-closed 到声明能力）；开启时
   显示并生效，随后重读插件清单。
 - **「全部授权」**（`plugins.trust_all`，橙色警示文案，**仅在开发者模式
-  开启时显示**，2026-09-22 起取代旧的逐插件授权开关）：对所有磁盘插件
-  跳过能力检查。生效条件 = dev_mode 开 ∧ trust_all 开（`list_plugins`
+  开启时显示**）：对所有磁盘插件跳过能力检查。生效条件 = dev_mode 开 ∧
+  trust_all 开（`list_plugins`
   的 `trust_all` 参数把全部磁盘插件上报为 trusted）；设置页不再提供
   逐插件的 trusted 切换（旧 `trusted` 列表仍被尊重，但 UI 不再写入）。
 
@@ -243,116 +238,33 @@ folder_plus 添加，空态「尚未添加忽略应用」）、内容去重 `ded
 - **权限**（仅磁盘插件）：manifest `permissions` 逐词映射为本地化
   能力 chips（剪贴板/网络/通知/对话框/屏幕信息/全盘搜索/读取文件/
   写入文件/回收站，悬停显示一句话说明）+ 强制说明文案。逐插件的
-  「全部授权」开关已并入工具栏的全局开发者选项（见上）。
-- **声明式设置**（`[[settings]]`，P3.4）：toggle / select chips /
+  「全部授权」开关并入工具栏的全局开发者选项（见上）。
+- **声明式设置**（`[[settings]]`）：toggle / select chips /
   文本输入；值 ≠ 默认时在该行下方显示「默认 {value}」提示；写入经
   `plugin_settings_put`，插件经 `plugin-settings` 事件收到变更。
 - **信息**：ID 与磁盘位置（等宽字体，可选中复制）。
 
 启停 / 全部授权 / 重载均给出本地化的 2.4s 状态反馈（成功 / 失败）。
-启停语义不变：写 `settings.plugins.disabled`，`settings-applied` 后
+启停语义：写 `settings.plugins.disabled`，`settings-applied` 后
 启动器重读注册表；关闭活动模式插件自动回导航页。格式与开发见
 `docs/PLUGINS.md`。
 
-**非 UI 字段（宿主静默写入，设置页不渲染）**：
+**轻量写字段（不走「保存并应用」脏状态）**：
 
 | 键 | 含义 |
 |---|---|
-| `plugins.window_bounds.<id>` | 独立窗口记住的几何（P6，关闭时写） |
-| `plugins.color_modes.<id>` | 本插件自己的颜色模式（`lume.theme.set`，ROADMAP #36）：`system` \| `light` \| `dark`，缺省 = `system`（跟随启动器）。插件调 `theme.set` 时写；重启、独立窗口建窗（窗口底色 + 任务栏图标变体）与主题翻转时都读它 |
-| `plugins.keep_session_overrides.<id>` | 闲置重置豁免的用户覆盖（ROADMAP #46）：`true` 保留该插件会话状态，`false` 强制重置；缺省 = 跟随清单 `keep_session`。「设置 → 插件」每个 mode 卡片写入 |
+| `plugins.window_bounds.<id>` | 独立窗口记住的几何（关闭时写） |
+| `plugins.color_modes.<id>` | 本插件自己的颜色模式（`lume.theme.set`，`docs/ROADMAP_HISTORY.md` #36）：`system` \| `light` \| `dark`，缺省 = `system`（跟随启动器）。插件调 `theme.set` 时写；重启、独立窗口建窗（窗口底色 + 任务栏图标变体）与主题翻转时都读它 |
+| `plugins.keep_session_overrides.<id>` | 闲置重置豁免的用户覆盖（`docs/ROADMAP_HISTORY.md` #46）：`true` 保留该插件会话状态，`false` 强制重置；缺省 = 跟随清单 `keep_session`。「设置 → 插件」每个 mode 卡片写入 |
 
-两者都只写 `settings.toml`、**不发 `settings-applied`**：改的是插件自己的
-表面，不需要让整个前端刷新一遍（几何/颜色由发起方或下一次窗口事件自行收敛）。
+- 几何与颜色两项由宿主静默写入：只写 `settings.toml`、**不发 `settings-applied`**
+  ——改的是插件自己的表面，不需要让整个前端刷新一遍（由发起方或下一次
+  窗口事件自行收敛）。
+- `keep_session_overrides` 由设置页开关经 `set_plugin_keep_session` 轻量写并
+  广播 `settings-applied`，启动器重读豁免表。
 
 ### 9. 关于（`about`）
 
-行式布局（对齐 Flutter）：描述（`aboutTagline`）、版本（`APP_VERSION_LABEL`，
-无 v 前缀）、许可证 Apache License 2.0、作者 yitao-baka、主页
+行式布局：描述（`aboutTagline`）、版本（`APP_VERSION_LABEL`，无 v 前缀）、
+许可证 Apache License 2.0、贡献者 IndexEeve&yitao-baka、主页
 `https://github.com/yitao-baka/Lume`（点击经 `launch_app` ShellExecuteW 打开）。
-旧的大图标居中头部移除。
-
-## 实现说明（2026-08-30 重排）
-- 壳：`src/settings/Settings.tsx`（顶栏 / 搜索过滤 / 9 导航 / 底栏）；
-  分区组件 `AppearancePane` / `LauncherPane` / `ClipboardPane` / `HotkeysPane`
-  / `SearchPane` / `SystemPane` / `AboutPane`；共享控件 `controls.tsx`
-  （Chip / Toggle / NumberPreset / Row）。旧 `InterfacePane.tsx` 删除（拆入
-  外观 + 导航页）；`plugins.svg` / `interface.svg` 不再被设置页引用（文件保留）。
-- 设置窗口 720×560 → 940×660（`lib.rs`）。
-- i18n 新增 20 键（nav* / group* / searchSettings / settingsUserIndex* /
-  about* / clipIgnoreEmpty），三语言同步。
-- 验证：`cargo test` 74 通过（含 `legacy_user_dirs_migrate_to_key_value_index`）、
-  `tsc --noEmit` + `vite build` 干净。
-
-## 实现说明（2026-09-22 全部授权并入全局开发者选项）
-
-- 用户反馈：逐插件的「全部授权」行本身就是开发者选项，应并入全局。
-  卡片详情里的授权行删除（`.plg-trust` 样式一并移除），改为工具栏
-  dev_mode 开关旁的**全局「全部授权」**（`plugins.trust_all`，默认关，
-  新命令 `set_plugin_trust_all`，仅 dev_mode 开时显示）。
-- `list_plugins` 增加 `trust_all: bool` 参数（`is_trusted` 短路为真）；
-  `get_plugins` 的门控扩为：dev_mode 关 → trusted 空 + trust_all=false；
-  dev_mode 开 → 透传 trusted 列表与 trust_all。`set_plugin_trusted`
-  命令保留（列表仍被尊重）但设置页不再调用。
-- i18n：删 `pluginToastTrustedOn/Off`、`pluginTrustHint`，增
-  `pluginsTrustAll{Hint,On,Off}` ×3 语言。
-- 测试：`plugin_trust_all_defaults_off_and_round_trips`。
-
-## 实现说明（2026-09-22 全局开发者模式）
-
-- `settings.plugins.dev_mode`（Rust `Plugins` 结构，`#[serde(default)]`，
-  默认关）；新命令 `set_plugin_dev_mode`（轻量写 + `settings-applied`，
-  与 `set_plugin_enabled` / `set_plugin_trusted` 同款）。
-- **trusted 门控在 `get_plugins`**（`plugins.rs`）：dev_mode 关时以空表
-  调 `list_plugins`，所有插件上报 `trusted=false` —— 前端权限层
-  （`permissions.ts`）无需改动即 fail-closed 到声明能力；残留 trusted id
-  不授予任何能力。
-- 插件页：工具栏最右「开发者模式」开关（初值经 `get_settings` 读取）；
-  关闭时隐藏重载按钮 / 「开发」徽章 / 「全部授权」行，开启时显示并在
-  切换后重读清单。i18n +5 键 ×3（`pluginsDevMode{,Hint,On,Off}`）。
-- 测试：`plugin_dev_mode_defaults_off_and_round_trips`（整表缺失 / 缺键
-  均默认关 + 轻量写往返）。
-
-## 实现说明（2026-09-22 插件页重设计）
-
-- `PluginsPane.tsx` 全量重写（卡片 + 详情面板），样式为 `App.css` 的
-  `plg-*` 块（旧 `settings-plugin-*` 类删除）；重载按钮复用
-  `settings-icon-btn` + `res/icons/refresh.svg`。
-- i18n 新增 ~45 键 × 3 语言（筛选/概要/空态、详情分区标题、能力词
-  `perm*` 标签 + 说明、内置插件描述、操作反馈 `pluginToast*`、
-  `pluginSettingDefault`）；`Settings.tsx` 的 `SECTION_SEARCH_KEYS.plugins`
-  补齐新键（能力词与分区标题可被设置搜索命中）。
-- 验证：`tsc --noEmit` + `vite build` + `cargo build` 干净；
-  `scripts/cdp_plugins_pane_verify.mjs` 6 项全过（工具栏/卡片结构/详情
-  面板/筛选输入/已停用筛选空态/声明式设置渲染），截图
-  `test/plg_dark_list.png`、`test/plg_light_detail.png`（双主题目检）。
-
-## 实现说明（2026-09-19 提权代理）
-
-> **变更（2026-09-19）**：自动化页新增 `automation.use_agent`（使用提权代理，
-> 默认开）与 `automation.agent_resident`（登录后常驻代理，默认关）；系统页新增
-> 「提权代理」组。导航项 9 个不变（无新分区）。**默认值坑**：`Automation` 原先
-> `#[derive(Default)]`，整张 `[automation]` 表缺失时（功能上线前写的
-> settings.toml）派生 Default 会把 `enabled`/`use_agent` 静默关掉 →
-> 改为手写 `impl Default for Automation`，并由
-> `automation_defaults_apply_when_the_table_is_absent` 钉住。
-
-- 自动化页：`AutomationPane.tsx` 两个新 `Row`+`Toggle`+`settings-hint`（走壳的
-  脏状态，随「保存并应用」落盘）；「测试」的失败原因分支补 `needs_agent` /
-  `unavailable` / `blocked`（含 `uipi`）/ `focus_moved`。
-- 系统页：`SystemPane.tsx` 新增 `AgentStatus` 接口 + `agent`/`agentBusy`/
-  `agentMsg` 三个信号 + `agentText()` + `toggleAgent()`（UAC 取消识别 `canceled`、
-  2s 后复查），与既有「系统服务」组同构。
-- `src/settings/types.ts`：`SettingsData.automation` 与 `DEFAULT_SETTINGS` 同步
-  两个字段（无编译期校验，四处手改成对）。
-- 设置搜索：`SECTION_SEARCH_KEYS.automation` 补 `autoUseAgent` /
-  `autoAgentResident`，`system` 补 `settingsAgentGroup`。
-- i18n 新增 23 键 × 3 语言（`autoUseAgent{,Hint}` / `autoAgentResident{,Hint}` /
-  `autoTest{NeedsAgent,AgentUnavailable,Blocked,FocusMoved}` / `settingsAgent*` 共
-  15 键），三语言键集完全一致（253 键）。
-- 命令 `agent_status` / `agent_install` / `agent_uninstall`（注册进
-  `lib.rs` 的 `generate_handler!`）。
-- 验证：`cargo test` 122 通过（+16，含两个新字段默认/往返与「整表缺失」回归）、
-  `tsc --noEmit` + `vite build` 干净、
-  `scripts/cdp_agent_smoke.mjs` 14 项 + `scripts/cdp_agent_verify.mjs`
-  端到端 9 项全过（截图 `test/agent_automation.png`、`test/agent_system.png`）。

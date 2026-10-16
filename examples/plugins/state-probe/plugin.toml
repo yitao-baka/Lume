@@ -1,4 +1,4 @@
-# State Probe — 会话/分离状态验证夹具（ROADMAP #40）
+# State Probe — 会话/分离状态验证夹具（docs/ROADMAP_HISTORY.md #40）
 # 覆盖：表单（input/checkbox/select multiple/contenteditable）、滚动容器、
 # 自定义快照钩子（lume.on.snapshot/restore）、load 后 600ms 才插入的「迟到
 # DOM」（验证宿主恢复重试）、以及 titlebar 帧的独立状态回传。
@@ -10,13 +10,13 @@ id = "state-probe"
 name = "State Probe"
 version = "1.0.0"
 kind = "mode"
-description = "会话与分离状态探针（ROADMAP #40 验证夹具）"
+description = "会话与分离状态探针（docs/ROADMAP_HISTORY.md #40 验证夹具）"
 keywords = ["stateprobe", "状态探针"]
 view = "view.html"
 titlebar = "titlebar.html"
 height = 480
 detachable = true
-# 闲置重置豁免（ROADMAP #46 夹具）：验证「清单声明 keep_session 默认保留，
+# 闲置重置豁免（docs/ROADMAP_HISTORY.md #46 夹具）：验证「清单声明 keep_session 默认保留，
 # 用户级 override 可翻转」两条路径。
 keep_session = true
 # 进入规则："sp:" 前缀 → 「State Probe：注入」行，激活把查询作为 enter

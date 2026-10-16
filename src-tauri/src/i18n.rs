@@ -3,7 +3,7 @@
 //! The frontend bundles the default language JSON at build time. This module
 //! additionally exposes `languages/*.json` found under the writable data root
 //! (`paths::languages_dir()`) as runtime overrides, so users can tweak strings
-//! without a rebuild (docs/NORMS.md).
+//! without a rebuild (docs/ARCHITECTURE.md).
 
 use serde::Serialize;
 

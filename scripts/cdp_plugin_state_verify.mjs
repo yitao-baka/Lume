@@ -1,4 +1,4 @@
-// 会话续存 + 分离窗口状态 端到端验证（ROADMAP #40）。
+// 会话续存 + 分离窗口状态 端到端验证（docs/ROADMAP_HISTORY.md #40）。
 //
 // 夹具 examples/plugins/state-probe（可分离 + titlebar）：
 //   视图帧：input#src / checkbox#flag / select[multiple]#multi /
@@ -131,7 +131,7 @@ const readField = (conn, frame, id) => conn.evalJs(`(() => {
   return null;
 })()`);
 // The bridge's diagnostic frame state (`__frameStates`) also carries the
-// hosting form — `lume.env.form`, ROADMAP #42. Read it off the latest state
+// hosting form — `lume.env.form`docs/ROADMAP_HISTORY.md #42. Read it off the latest state
 // that reported a known field id (identifies the frame without CDP).
 const readFrameForm = (conn, id) => conn.evalJs(`(() => {
   const st = (window.__frameStates || []).filter((s) => (s.values || []).some((x) => x.id === ${JSON.stringify(id)}));

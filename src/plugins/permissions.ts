@@ -1,4 +1,4 @@
-//! Capability permissions (P3.2) — the ledger and the choke point.
+//! Capability permissions — the ledger and the choke point.
 //!
 //! A disk plugin declares what it needs in `plugin.toml`
 //! (`permissions = ["network", ...]`); a capability it did **not** declare is

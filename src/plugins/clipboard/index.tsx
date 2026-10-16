@@ -1,4 +1,4 @@
-//! Clipboard plugin — the first `mode` contribution (ROADMAP #7).
+//! Clipboard plugin — the first `mode` contribution (docs/ROADMAP_HISTORY.md #7).
 //!
 //! Owns a full launcher page: the history store (`store.ts`), the view
 //! (`ClipboardView.tsx`), the mode-specific keyboard handling, the

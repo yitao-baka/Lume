@@ -55,7 +55,7 @@ console.log("results:", JSON.stringify(names));
 console.log("provider loaded:", await m.evalJs(`!!Array.from(document.querySelectorAll(".result-box-name")).find((n) => n.textContent.includes("zzqx"))`));
 await m.shot("plugin_provider_search.png");
 
-// ── mode page iframe under the sandbox (P5) ──
+// ── mode page iframe under the sandbox ──
 // Enter the file-search mode; the page renders and the iframe is an
 // opaque-origin sandbox now: the host cannot reach into it (no
 // contentDocument / lume readback). The in-iframe behaviours — keydown

@@ -1,4 +1,4 @@
-# Files & Image Demo — P2.2 示例（files 拖入 + img 剪贴板图片进入）+ P4 fileType。
+# Files & Image Demo — 示例（files 拖入 + img 剪贴板图片进入）+ fileType。
 #
 # 覆盖：
 #   ① type = "files"  把任意文件从资源管理器拖到 Lume 主菜单（或拖过来后按
@@ -6,7 +6,7 @@
 #                     数组投递给 onFeature（info.paths）
 #   ② type = "img"    剪贴板里是图片时，空查询主菜单出现「处理剪贴板图片」
 #                     行；激活后插件用 ctx.clipboard.readImage() 读 PNG data URI
-#   ③ fileType (P4)   按类别匹配：fileType = "folder"（只匹配文件夹）与
+# ③ fileType 按类别匹配：fileType = "folder"（只匹配文件夹）与
 #                     "image"（按扩展名类别表匹配图片文件），不写 extensions
 #
 # 安装：把整个 files-img-demo/ 目录拷进 <base>/plugins/，重启 Lume。
@@ -21,7 +21,7 @@ id = "files-img-demo"
 name = "文件处理器 (Files & Image Demo)"
 kind = "provider"
 version = "1.0.0"
-description = "P2.2 示例：type=files 文件拖入 + type=img 剪贴板图片进入 + P4 fileType"
+description = "示例：type=files 文件拖入 + type=img 剪贴板图片进入 + fileType"
 entry = "main.js"
 
 # fs.read（读拖入文件前 200 字符）+ clipboard（readImage / writeText）。
@@ -37,7 +37,7 @@ type = "files"
 extensions = ["md", "txt"]
 min_length = 1
 
-# fileType 规则（P4, ROADMAP #28）：extensions 非空时优先，所以类别规则要
+# fileType 规则（docs/ROADMAP_HISTORY.md #28）：extensions 非空时优先，所以类别规则要
 # 单独一条。file_type = "folder" 只匹配文件夹；"image" 按图片扩展名类别表
 # 匹配；"others" = 不在任何类别表里的文件。合法类别：
 # image/video/audio/document/text/folder/others（TOML 键是 snake_case 的

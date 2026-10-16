@@ -1,4 +1,4 @@
-// P2.2 示例（docs/PLUGIN_GAP_ANALYSIS.md P2.2 / PLUGIN_API §6E）：files 拖入
+// 示例（docs/PLUGIN_API.md §9.2 / §9.3 / PLUGIN_API §6E）：files 拖入
 // 与 img 剪贴板图片进入。
 //
 // 覆盖：

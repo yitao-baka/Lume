@@ -1,4 +1,4 @@
-// 模式切换栏隐藏 + 导航结果行图标默认（ROADMAP #37）。
+// 模式切换栏隐藏 + 导航结果行图标默认（docs/ROADMAP_HISTORY.md #37）。
 //
 //   ① manifest `hidden = true` 的 mode（examples/plugins/hidden-mode，纯 view）：
 //      get_plugins 上报 hidden、切换栏没有它的 pill；

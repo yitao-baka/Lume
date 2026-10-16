@@ -1,5 +1,5 @@
 # Main launcher window probe/mover — how scripts/cdp_window_position_verify.mjs
-# drives a REAL user-style window move (ROADMAP #41).
+# drives a REAL user-style window move (docs/ROADMAP_HISTORY.md #41).
 #
 # Finds lume.exe's main window even while hidden: class "Tauri Window",
 # title "Lume", WS_EX_TOPMOST (设置/插件窗口不是 topmost；preview 标题不同).

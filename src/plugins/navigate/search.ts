@@ -47,19 +47,19 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
    * render in the 「推荐使用」 block below the normal results (#43). */
   const [pluginStart, setPluginStart] = createSignal(0);
   const [selected, setSelected] = createSignal(0);
-  // P2.2 — plugin entry rows for OS file drops (paths arrive via the Tauri
+  // — plugin entry rows for OS file drops (paths arrive via the Tauri
   // drag-drop handler) and for the clipboard image. Cleared on hide/summon.
-  // `droppedFileKinds` runs parallel to `droppedFiles` (P4, ROADMAP #28):
+  // `droppedFileKinds` runs parallel to `droppedFiles` (docs/ROADMAP_HISTORY.md #28):
   // "file" | "folder" | "missing" per path, so `fileType` rules can tell a
   // directory from a file with one attributes query per drop.
   const [droppedFiles, setDroppedFiles] = createSignal<string[]>([]);
   const [droppedFileKinds, setDroppedFileKinds] = createSignal<string[]>([]);
-  /** The window that had focus before this summon (P4, ROADMAP #29) — feeds
+  /** The window that had focus before this summon (docs/ROADMAP_HISTORY.md #29) — feeds
    * the `type = "window"` feature rows on the empty-query menu. `null` when
    * no window was captured or no window features exist. */
   const [fgContext, setFgContext] = createSignal<ForegroundInfo | null>(null);
   const [clipboardImgOk, setClipboardImgOk] = createSignal(false);
-  /** Provider drill-down level (P2.4): the row we descended into plus the
+  /** Provider drill-down level : the row we descended into plus the
    * rows of the level above, so Esc can pop back. */
   const [drill, setDrill] = createSignal<{
     pluginId: string;
@@ -70,7 +70,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     filterable: boolean;
   } | null>(null);
   /** Convert one provider result into a grid entry — shared by the search
-   * merge and by drilled levels (P2.4). `seq` only feeds the synthetic dedup
+   * merge and by drilled levels. `seq` only feeds the synthetic dedup
    * key used for rows that open nothing. Icon rule: the result's explicit
    * `icon` (a URI / plugin-relative path, or a `{light,dark}` pair; #44)
    * wins; a row without one shows the plugin's own icon set; with neither,
@@ -102,7 +102,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     };
   }
 
-  /** P2.2 files/img feature rows → grid entries. The name composes the
+  /** files/img feature rows → grid entries. The name composes the
    * manifest label with the file count (files only); the payload keeps the
    * matched paths for the plugin. */
   function featureRowToEntry(f: FeatureMatch): AppEntry {
@@ -139,7 +139,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     return out;
   }
 
-  /** Leave a drilled level (P2.4): restore the parent rows, release the
+  /** Leave a drilled level : restore the parent rows, release the
    * search box if this provider claimed it. Returns false when not drilled. */
   function popDrill(): boolean {
     const d = drill();
@@ -248,7 +248,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         ...(kw.icon ? { icon: kw.icon } : {}),
       });
     }
-    // 声明式进入（features，P2.1）：正则/任意文本命中 → 「<label>」行，
+    // 声明式进入（features）：正则/任意文本命中 → 「<label>」行，
     // 激活把当前查询作为 payload 投递给插件（mode 先切页再 onEnter）。
     for (const f of featureMatches(q)) {
       plugin.push({
@@ -259,7 +259,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         featureEnter: { pluginId: f.pluginId, code: f.code, type: f.type, payload: f.payload },
       });
     }
-    // P2.2: a file dropped while a query is up also offers its rows.
+    // : a file dropped while a query is up also offers its rows.
     for (const f of fileFeatureMatches(droppedFiles(), droppedFileKinds())) {
       plugin.push(featureRowToEntry(f));
     }
@@ -297,7 +297,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     services.scheduleResize();
   }
 
-  /** Intercept the drill-filter keystrokes (P2.4): while drilled into a
+  /** Intercept the drill-filter keystrokes : while drilled into a
    * filterable provider row, typing feeds the current level instead of
    * running a search. Returns false when not drilled. */
   function handleQuery(q: string): boolean {
@@ -325,7 +325,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
    * or a plain launch. Shared by the results grid and the 「推荐使用」 section
    * (the section contract calls it back with its own index). */
   function activateEntry(item: AppEntry, elevated: boolean): void {
-    // 声明式进入行（features/P2.1）：把查询作为 payload 投递给插件。
+    // 声明式进入行（features/）：把查询作为 payload 投递给插件。
     // mode 目标先切页再 onEnter；provider/service 直接 onFeature。
     if (item.featureEnter) {
       const fe = item.featureEnter;
@@ -339,7 +339,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       if (!ok) services.showToast(t("pluginActionUnavailable", { id: item.featureEnter.pluginId }));
       return;
     }
-    // 二级下钻行（P2.4）：provider.select 的返回行替换网格，Esc 回上一级。
+    // 二级下钻行：provider.select 的返回行替换网格，Esc 回上一级。
     if (item.providerDrill) {
       const d = item.providerDrill;
       const p = providerPlugins().find((x) => x.id === d.pluginId);
@@ -407,7 +407,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     activateEntry(item, elevated);
   }
 
-  /** OS file drop (P2.2): record the paths for the feature rows. The kinds
+  /** OS file drop : record the paths for the feature rows. The kinds
    * query and the follow-up search only run while this page is active (the
    * old root behavior: a drop elsewhere still records the paths). */
   function onFilesDropped(paths: string[]) {
@@ -433,7 +433,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       });
   }
 
-  /** The window that had focus before this summon (P4, ROADMAP #29) —
+  /** The window that had focus before this summon (docs/ROADMAP_HISTORY.md #29) —
    * fetched only when some plugin declares a `type = "window"` rule (zero
    * IPC otherwise). Non-blocking on purpose: the COM hop behind this command
    * can stall for longer than a summon may wait, so the fetch lands whenever

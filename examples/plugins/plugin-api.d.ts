@@ -1,4 +1,4 @@
-//! 插件逻辑的全局类型（ROADMAP #32.10）。
+//! 插件逻辑的全局类型（docs/ROADMAP_HISTORY.md #32.10）。
 //!
 //! 在 `@ts-check` 的插件 JS 顶部引用本文件即可获得 ctx 与钩子的类型：
 //!
@@ -14,7 +14,7 @@ interface LumeProviderResult {
   name: string;
   description?: string;
   /** 图标：`data:`/`asset:`/`http(s):` URI 或相对插件目录的文件路径；也可给
-   * `{ light, dark }` 两套（ROADMAP #44）——宿主按图标所在表面的当前主题选
+   * `{ light, dark }` 两套（docs/ROADMAP_HISTORY.md #44）——宿主按图标所在表面的当前主题选
    * 一套，显式变体按原样渲染（不叠加旧版反相）；一个都不给 = 用插件清单
    * 图标（都没有才走 path 的常规图标管线）。 */
   icon?: string | { light?: string; dark?: string };

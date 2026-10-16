@@ -1,4 +1,4 @@
-// P4 示例（ROADMAP #29 / docs/PLUGIN_API.md §6E.1 window 规则）：
+// 示例（docs/ROADMAP_HISTORY.md #29 / docs/PLUGIN_API.md §6E.1 window 规则）：
 // 活动窗口匹配 —— 呼出前的前台窗口命中 [[features]] type="window" 规则时，
 // 空查询主菜单出现「<label>」行；激活后 onFeature 收到
 // info.window = {process, className, title, path?}。

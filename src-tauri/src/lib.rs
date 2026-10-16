@@ -80,7 +80,7 @@ fn acquire_single_instance() -> InstanceGuard {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Single instance: hold a named mutex for the process lifetime; a second
-    // launch exits immediately (docs/NORMS.md).
+    // launch exits immediately (docs/ARCHITECTURE.md).
     let _guard = match acquire_single_instance() {
         InstanceGuard::Held(h) => h,
         InstanceGuard::Exit => return,
@@ -102,7 +102,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Migrate the legacy DB into the data/ dir first, so clipboard/pins
-            // open the new location (docs/NORMS.md).
+            // open the new location (docs/ARCHITECTURE.md).
             paths::migrate_db(app);
             // Installed layout: copy any exe-adjacent data/settings/languages
             // into the writable %LOCALAPPDATA% base before settings init.
@@ -141,7 +141,7 @@ pub fn run() {
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
-            // P2.2: the Tauri drag-drop handler is ENABLED here (the only
+            // : the Tauri drag-drop handler is ENABLED here (the only
             // window) so OS file drags arrive as `tauri://drag-drop` with real
             // paths (WebView2's HTML5 drop never exposes paths). The handler
             // swallows non-file HTML5 drags, which is why pinned-bar reordering
@@ -189,7 +189,7 @@ pub fn run() {
                 window::clear_dwm_border(&sw);
             }
 
-            // Satellite preview window (ROADMAP #15): all clipboard previews
+            // Satellite preview window (docs/ROADMAP_HISTORY.md #15): all clipboard previews
             // (text / text files / images / audio / video) render here, docked
             // flush to the launcher's right edge. Created at startup (hidden)
             // like the settings window to avoid runtime window creation;
@@ -244,7 +244,7 @@ pub fn run() {
             // backdrop effect would be invisible — while its translucent
             // composite can never be reproduced by the opaque DWM frame strip,
             // which is what produced the edge/corner ring
-            // (docs/UI_GUIDELINES.md 拼接面, ROADMAP #30.5).
+            // (docs/UI_GUIDELINES.md 拼接面，docs/ROADMAP_HISTORY.md).
             // Dismiss the launcher whenever it loses focus (click elsewhere) —
             // but not while it's being dragged, which briefly deactivates the
             // frameless window even though the cursor is still over it.
@@ -357,7 +357,7 @@ pub fn run() {
             // System tray icon (Restart / Exit right-click menu).
             tray::setup(app);
             // Theme-matched app icon (dark/light artwork pair) on the windows'
-            // taskbar icons and the tray (docs/ROADMAP.md #31).
+            // taskbar icons and the tray (docs/ROADMAP_HISTORY.md #31).
             appicon::apply(app.handle(), &current.appearance.color_mode);
             // All three webviews start hidden — swap their idle memory out now so
             // the launch baseline is minimal. The first hotkey restores Normal
@@ -495,7 +495,7 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running Lume")
-        // 记住上次所在页面 (ROADMAP #40): no app-exit hook — the bookmark now
+        // 记住上次所在页面 (docs/ROADMAP_HISTORY.md #40): no app-exit hook — the bookmark now
         // survives restarts. It is only written while the toggle is on, and the
         // frontend restores it under the same toggle; search words and page
         // snapshots stay memory-only either way.

@@ -1,4 +1,4 @@
-//! 提权注入代理 — `lume-agent.exe` (docs/ROADMAP.md #22).
+//! 提权注入代理 — `lume-agent.exe` (docs/ROADMAP_HISTORY.md #22).
 //!
 //! `SendInput` is subject to UIPI: a medium-integrity process cannot inject
 //! input into a higher-integrity window, and the failure is silent ("neither

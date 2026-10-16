@@ -1,4 +1,4 @@
-//! Plugin contracts (ROADMAP #7, v1).
+//! Plugin contracts (docs/ROADMAP_HISTORY.md #7, v1).
 //!
 //! A plugin pairs a manifest (Rust `plugins.rs`) with one or more
 //! *contributions* in the frontend registry. v1 ships two first-party
@@ -49,7 +49,7 @@ export interface PluginManifest {
   kind: string;
   description: string;
   /** Capability words the plugin declares (`permissions = [...]` in the
-   * manifest). Enforced since P3.2: an RPC whose permission is missing here
+   * manifest). Enforced since : an RPC whose permission is missing here
    * is refused (unless `trusted`). See `docs/PLUGIN_API.md` §6D.6. */
   permissions: string[];
   builtin: boolean;
@@ -74,7 +74,7 @@ export interface PluginManifest {
   /** Mode plugins: the mode page's preferred window height (logical px);
    * null = use the global 设置 → 窗口大小 → 高度. */
   height: number | null;
-  /** Mode plugins: the page may be detached into its own window (P6). The
+  /** Mode plugins: the page may be detached into its own window. The
    * detach affordance (mode-page button + pill) only shows for plugins that
    * declare this. */
   detachable: boolean;
@@ -87,7 +87,7 @@ export interface PluginManifest {
    * switch-key cycle (manifest `hidden`, default false). Its only entries are
    * the Navigate search rows (keywords / `[[features]]`) and redirects. */
   hidden: boolean;
-  /** Mode plugins: manifest `keep_session` (ROADMAP #46) — keep this mode's
+  /** Mode plugins: manifest `keep_session` (docs/ROADMAP_HISTORY.md #46) — keep this mode's
    * query + page state across an idle reset. The per-plugin user override in
    * 设置 → 插件 (`settings.plugins.keep_session_overrides`) wins. */
   keepSession: boolean;
@@ -95,7 +95,7 @@ export interface PluginManifest {
    * the registry). Empty = no pill image. Doubles as the default
    * Navigate-result icon for every row this plugin contributes. */
   icon: string;
-  /** Explicit light-theme icon variant (manifest `icon_light`; ROADMAP #44)
+  /** Explicit light-theme icon variant (manifest `icon_light`; docs/ROADMAP_HISTORY.md #44)
    * — shown on light surfaces and rendered as-is (never inverted). Wins over
    * `icon`. */
   iconLight: string;
@@ -119,7 +119,7 @@ export interface PluginManifest {
    * a query the rule matches offers an 「<label>」 row that enters the plugin
    * with the query text as payload. See `PluginFeature`. */
   features: PluginFeature[];
-  /** Declarative settings (`[[settings]]`, P3.4) — rendered by 设置 → 插件;
+  /** Declarative settings (`[[settings]]`) — rendered by 设置 → 插件;
    * the values live in the plugin's `__settings` document and reach the
    * plugin through `settings.all()` / `settings.get()` + `onSettings`. */
   settings: PluginSetting[];
@@ -127,7 +127,7 @@ export interface PluginManifest {
   dir: string;
 }
 
-/** One manifest-declared setting (P3.4). The manifest is the schema: only
+/** One manifest-declared setting. The manifest is the schema: only
  * declared keys can be written, so a renamed key cannot leave stale values. */
 export interface PluginSetting {
   /** Key the plugin reads (`settings.get(key)`). */
@@ -142,7 +142,7 @@ export interface PluginSetting {
   options: { value: string; label: string }[];
 }
 
-/** A stored document (P3.1): the plugin's own fields plus the store's
+/** A stored document : the plugin's own fields plus the store's
  * bookkeeping. `_rev` is the optimistic lock a write must present. */
 export type PluginDoc = Record<string, unknown> & { _id: string; _rev: number };
 
@@ -175,8 +175,8 @@ export interface PluginFeature {
    * When non-empty, extension matching wins and folders never match. */
   extensions: string[];
   /** `files` rules: a category instead of an extension list —
-   * `image` | `video` | `audio` | `document` | `text` | `folder` | `others`
-   * (P4). `folder` matches directories; the rest are extension tables over
+   * `image` | `video` | `audio` | `document` | `text` | `folder` | `others`.
+   * `folder` matches directories; the rest are extension tables over
    * files. Ignored when `extensions` is non-empty. */
   fileType: string | null;
   /** `window` rules: foreground-window matchers. Within one field the
@@ -226,7 +226,7 @@ export interface FeatureEnterInfo {
  * inspired). First-party plugins get the same shape via `createHostApi`. */
 export interface PluginHostApi {
   theme: {
-    /** Pin **this plugin's own** color mode (ROADMAP #36, docs/PLUGIN_API.md
+    /** Pin **this plugin's own** color mode (docs/ROADMAP_HISTORY.md #36, docs/PLUGIN_API.md
      * §6C): `"system"` follows the launcher, `"light"` / `"dark"` force the
      * plugin's surfaces (page canvas + detached window chrome) whatever the
      * launcher does. The launcher itself is never affected — no launcher
@@ -272,26 +272,26 @@ export interface PluginHostApi {
      * detached titlebar page uses it because events inside an iframe never
      * reach the host's drag region (docs/PLUGIN_API.md §6G). */
     dragWindow(): void;
-    /** System notification (P1.2) — reaches the user while the launcher is
+    /** System notification — reaches the user while the launcher is
      * hidden (the in-app toast cannot). Rendered through the shell's
      * notification area; title/body are truncated by the shell's field
      * widths. */
     notify(title: string, body: string): Promise<void>;
-    /** Take over the launcher's search box (P2.3): subsequent keystrokes are
+    /** Take over the launcher's search box : subsequent keystrokes are
      * delivered to this plugin's `onSubInput` instead of running a search.
      * `placeholder` replaces the box's hint while owned; `value` writes an
      * initial text. The host clears ownership on mode switch / next summon. */
     setSubInput(opts?: { placeholder?: string; value?: string }): void;
     /** Give the search box back to the host. */
     removeSubInput(): void;
-    /** Jump to another plugin (P2.5): a mode is switched to and receives an
+    /** Jump to another plugin : a mode is switched to and receives an
      * `enter` with `type: "redirect"`; providers/services get
      * `onFeature(info)`. Unknown ids are reported with a toast. */
     redirect(pluginId: string, opts?: { code?: string; payload?: string }): void;
-    /** Detach this mode into its own window (P6, §6G). Only meaningful for
+    /** Detach this mode into its own window (§6G). Only meaningful for
      * `detachable` mode pages; in a detached window it refocuses it. */
     detach(): void;
-    /** The window that had focus before the launcher appeared (P4, ROADMAP
+    /** The window that had focus before the launcher appeared (docs/ROADMAP_HISTORY.md
      * #28): process name, window class, title and — when it was an Explorer
      * folder view — the folder path. `null` when no foreground window was
      * ever captured this session. Permission: `window`. */
@@ -319,19 +319,19 @@ export interface PluginHostApi {
      * stays on the clipboard afterwards, like a normal copy. */
     paste(payload: { text?: string; image?: string; files?: string[] }): Promise<void>;
   };
-  /** Host-side HTTP (P1.1) — no CORS: the request runs in a Rust worker via
+  /** Host-side HTTP — no CORS: the request runs in a Rust worker via
    * WinHTTP (Schannel TLS, automatic system proxy). http/https only, default
    * timeout 10s (≤60s), response truncated at 4 MiB with `truncated` set. */
   http: {
     request(req: HttpRequest): Promise<HttpResponse>;
   };
-  /** Native file pickers (P1.4). Cancelling resolves to `[]` / `null` — not
+  /** Native file pickers. Cancelling resolves to `[]` / `null` — not
    * an error, the plugin decides what to say. */
   dialog: {
     open(opts?: DialogOptions): Promise<string[]>;
     save(opts?: DialogOptions): Promise<string | null>;
   };
-  /** Screen geometry (P1.5) in **physical** pixels. */
+  /** Screen geometry in **physical** pixels. */
   screen: {
     cursor(): Promise<{ x: number; y: number }>;
     displays(): Promise<DisplayInfo[]>;
@@ -343,7 +343,7 @@ export interface PluginHostApi {
     set(key: string, value: unknown): Promise<void>;
     remove(key: string): Promise<void>;
   };
-  /** Plugin-scoped **document** store (P3.1) — `<base>/data/plugin_store.db`,
+  /** Plugin-scoped **document** store — `<base>/data/plugin_store.db`,
    * a separate SQLite database so a plugin's data can be dropped wholesale.
    * uTools/CouchDB-shaped: documents carry `_rev`, and a write that presents a
    * stale one rejects with a message starting `conflict:` so the plugin can
@@ -368,7 +368,7 @@ export interface PluginHostApi {
      * that entry while the rest of the batch still lands. */
     bulkDocs(docs: PluginDocInput[]): Promise<BulkDocResult[]>;
   };
-  /** Declarative settings (P3.4). The manifest's `[[settings]]` block is the
+  /** Declarative settings. The manifest's `[[settings]]` block is the
    * schema — the settings pane renders it and these calls read the values.
    * `all()` is the natural call on page load; `onSettings` fires on change. */
   settings: {
@@ -378,7 +378,7 @@ export interface PluginHostApi {
     get<T = unknown>(key: string): Promise<T | null>;
   };
   /** Filesystem reads for preview-style plugins. Arbitrary-path access is
-   * part of the v1 trust model (§9 安全模型: 显式放置即信任) — since P3.2 the
+   * part of the v1 trust model (§9 安全模型: 显式放置即信任) — since the
    * host enforces the declared `fs.read` permission; a plugin's **own**
    * `files/` dir needs none. */
   fs: {
@@ -386,7 +386,7 @@ export interface PluginHostApi {
      * show a "preview first 512KB" style message on rejection. */
     readText(path: string): Promise<string>;
     /** Raw file bytes, base64-encoded (≤ 32 MB, rejects above). The byte
-     * channel for binary preview renderers (pdf.js, SheetJS): the P5 sandbox
+     * channel for binary preview renderers (pdf.js, SheetJS): the sandbox
      * made plugin pages opaque origins, so fetch(asset://) is CORS-refused
      * there and `<img>`/`<video>` (which bypass CORS) cannot hand bytes to
      * JS. Permission: `fs.read`. */
@@ -400,7 +400,7 @@ export interface PluginHostApi {
     /** Shell icons for a batch of paths — same shape as `get_app_icons`
      * (`icon` is a data/asset URI or null when extraction failed). */
     icon(paths: string[]): Promise<{ path: string; icon: string | null }[]>;
-    /** Write text into the plugin's own `files/` dir (P3.3) — no permission
+    /** Write text into the plugin's own `files/` dir — no permission
      * needed, the directory belongs to the plugin. Resolves with the absolute
      * path (handy for `openPath` / `paste` / an `<img src>`). `name` is a file
      * name, never a path; ≤10 MiB. */
@@ -421,7 +421,7 @@ export interface PluginHostApi {
      * 全部授权). The parent directory must exist; ≤10 MiB. */
     writeFile(path: string, text: string): Promise<void>;
   };
-  /** Whole-drive file search — the unified `file_search` facade (ROADMAP
+  /** Whole-drive file search — the unified `file_search` facade (docs/ROADMAP_HISTORY.md
    * #20): a running Everything when present, the LumeSVC self-hosted USN
    * index otherwise. `max` defaults to 12, clamped 1..=100. Legacy callers
    * pass a bare number (max); opts objects add `offset` (0-based page start)
@@ -450,7 +450,7 @@ export interface PluginFileSearchOptions {
   folder?: boolean;
 }
 
-/** One request for `http.request` (P1.1). */
+/** One request for `http.request`. */
 export interface HttpRequest {
   /** Absolute http/https URL. */
   url: string;
@@ -476,7 +476,7 @@ export interface HttpResponse {
   truncated: boolean;
 }
 
-/** Shared picker options for `dialog.open` / `dialog.save` (P1.4). */
+/** Shared picker options for `dialog.open` / `dialog.save`. */
 export interface DialogOptions {
   title?: string;
   /** Directory the picker opens in. */
@@ -491,7 +491,7 @@ export interface DialogOptions {
   folder?: boolean;
 }
 
-/** One monitor (P1.5), physical pixels. */
+/** One monitor, physical pixels. */
 export interface DisplayInfo {
   x: number;
   y: number;
@@ -505,7 +505,7 @@ export interface DisplayInfo {
   primary: boolean;
 }
 
-/** The window that had focus before the launcher appeared (P4, ROADMAP
+/** The window that had focus before the launcher appeared (docs/ROADMAP_HISTORY.md
  * #28) — what `app.foreground()` returns and what a `type = "window"`
  * feature's payload carries. Snapshot semantics: captured at summon time,
  * not re-probed per call. */
@@ -528,13 +528,13 @@ export interface ServiceHooks {
   onHide?(): void;
   /** Every Navigate keystroke (non-empty query). */
   onQuery?(q: string): void;
-  /** A declarative entry rule of this plugin fired (P2.1) — the headless
+  /** A declarative entry rule of this plugin fired — the headless
    * handler runs without any UI (e.g. transform the text and copy it). */
   onFeature?(info: FeatureEnterInfo): void;
   /** The service took over the search box (`app.setSubInput`) — keystrokes
-   * arrive here (P2.3). */
+   * arrive here. */
   onSubInput?(text: string): void;
-  /** The user changed this plugin's declared settings (P3.4) — `values` is
+  /** The user changed this plugin's declared settings — `values` is
    * the effective set (`settings.all()`), delivered on change. */
   onSettings?(values: Record<string, unknown>): void;
 }
@@ -551,7 +551,7 @@ export interface DiskModeLogic {
   onHide?(): void;
 }
 
-/** Session snapshot frames (ROADMAP #40): one mode's page state captured
+/** Session snapshot frames (docs/ROADMAP_HISTORY.md #40): one mode's page state captured
  * from its iframe(s). The launcher contributes/takes `view`; a detached
  * window takes both `view` and `titlebar`. Values are opaque JSON produced
  * by the bridge's frame snapshot v2 — memory-only, never persisted. */
@@ -610,20 +610,20 @@ export interface PluginServices {
   /** `app.dragWindow` bridge RPC — begin moving the host window (the
    * launcher while in-launcher, the plugin's own window when detached). */
   dragWindow(): void;
-  /** Search-box ownership (P2.3): `opts` claims it for `pluginId`, `null`
+  /** Search-box ownership : `opts` claims it for `pluginId`, `null`
    * releases it. Only the active mode's owner receives keystrokes. */
   setSubInput(pluginId: string, opts: { placeholder?: string; value?: string } | null): void;
   /** The plugin id currently owning the search box (null = the host owns it). */
   subInputOwner(): string | null;
   /** Switch to a plugin's mode and/or deliver a declarative entry payload
-   * (P2.1 features + P2.5 redirect). Returns false when the target is
+   * ( features + redirect). Returns false when the target is
    * unknown or unloaded. */
   enterPlugin(pluginId: string, info: FeatureEnterInfo): boolean;
   /** `app.detach` bridge RPC — detach the caller's mode into its own
-   * window (P6, §6G). In a detached window this raises/focuses it (the
+   * window (§6G). In a detached window this raises/focuses it (the
    * mode is already detached there). */
   detachMode(pluginId: string): void;
-  /** `theme.set` bridge RPC (ROADMAP #36) — the caller's **own** color-mode
+  /** `theme.set` bridge RPC (docs/ROADMAP_HISTORY.md #36) — the caller's **own** color-mode
    * preference. Persisted (`settings.plugins.color_modes`); the caller is
    * responsible for re-deriving the effective mode afterwards
    * (`applyPluginColorMode`, registry.ts). Resolves once the value is
@@ -680,13 +680,13 @@ export interface ModeInstance {
   /** Intercept a query keystroke ahead of the regular search pipeline (true =
    * consumed). Navigate's provider drill-down filter uses this. */
   handleQuery?(q: string): boolean;
-  /** A declarative entry rule targeted this mode (P2.1) — the payload is the
+  /** A declarative entry rule targeted this mode — the payload is the
    * matched query text. Called after the mode is switched to. */
   onEnter?(info: FeatureEnterInfo): void;
   /** The mode took over the search box (`app.setSubInput`): every keystroke
-   * arrives here instead of running the mode's own search (P2.3). */
+   * arrives here instead of running the mode's own search. */
   onSubInput?(text: string): void;
-  /** The user changed this plugin's settings (P3.4); disk mode pages get the
+  /** The user changed this plugin's settings; disk mode pages get the
    * same values as a `lume.on.settings` event. */
   onSettings?(values: Record<string, unknown>): void;
   /** Consume Esc (e.g. leave multi-select); true = handled, root won't hide. */
@@ -736,11 +736,11 @@ export interface ModeInstance {
   onShow?(): void | Promise<void>;
   /** Launcher hidden with this mode active (lifecycle hook, optional). */
   onHide?(): void;
-  /** OS files were dropped on the launcher window (P2.2) — one-shot rows
+  /** OS files were dropped on the launcher window — one-shot rows
    * until the next hide/summon. */
   onFilesDropped?(paths: string[]): void;
-  /** Ask the page for its state snapshot (P6.5; frame snapshot v2 since
-   * ROADMAP #40 — detach/attach hand-off and keep-alive eviction). Resolves
+  /** Ask the page for its state snapshot (frame snapshot v2 since
+   * docs/ROADMAP_HISTORY.md #40 — detach/attach hand-off and keep-alive eviction). Resolves
    * null when the page isn't live or didn't answer in time — a dead page
    * must never block a detach/close/eviction. */
   snapshot?(): Promise<unknown | null>;
@@ -780,7 +780,7 @@ export interface ProviderResult {
   description?: string;
   /** Explicit icon: a string (data:/http(s):/asset:/blob: URI, or a file
    * path relative to the plugin dir) or a `{ light, dark }` pair of the
-   * same forms (ROADMAP #44 — the host picks by the surface theme; explicit
+   * same forms (docs/ROADMAP_HISTORY.md #44 — the host picks by the surface theme; explicit
    * variants render as-is, a plain string keeps the legacy convention).
    * Omitted → the plugin's own icon set, then the regular icon pipeline for
    * `path`. */
@@ -828,9 +828,9 @@ export interface ProviderInstance {
    * result object `search` returned comes back (extra plugin fields are
    * preserved). Exceptions are logged and isolated like search errors. */
   onEnter?(item: ProviderResult): void;
-  /** Called when a declarative entry rule of this plugin fires (P2.1). */
+  /** Called when a declarative entry rule of this plugin fires. */
   onFeature?(info: FeatureEnterInfo): void;
-  /** Drill-down (P2.4): the rows one level below `item`. Activating a row
+  /** Drill-down : the rows one level below `item`. Activating a row
    * marked `drill` calls this; its rows become the grid content and Esc
    * returns to the previous level. */
   select?(item: ProviderResult): Promise<ProviderResult[]> | ProviderResult[];
@@ -838,7 +838,7 @@ export interface ProviderInstance {
    * matching rows instead of running a normal search. Without it the box
    * keeps its usual meaning and typing leaves the drilled level. */
   filter?(item: ProviderResult, query: string): Promise<ProviderResult[]> | ProviderResult[];
-  /** The user changed this plugin's declared settings (P3.4). */
+  /** The user changed this plugin's declared settings. */
   onSettings?(values: Record<string, unknown>): void;
 }
 
@@ -870,13 +870,13 @@ export interface LauncherPlugin {
    * `modeKeywordMatches` for the tiered (exact → prefix → initials → full
    * pinyin) matching. */
   keywordsPinyin?: { full: string; initials: string }[];
-  /** Declarative entry rules (P2.1) — consumed by `featureMatches`. */
+  /** Declarative entry rules — consumed by `featureMatches`. */
   features?: PluginFeature[];
   /** Absolute plugin directory (disk plugins) — used to resolve relative
    * result icons (provider results, feature rules). */
   dir?: string;
   /** The plugin's own resolved icon set (manifest `icon` / `icon_light` /
-   * `icon_dark`, ROADMAP #44). It is the default icon for every Navigate
+   * `icon_dark`docs/ROADMAP_HISTORY.md #44). It is the default icon for every Navigate
    * row this plugin contributes that does not carry an explicit per-row
    * `icon`. */
   icon?: PluginIconSpec;

@@ -69,14 +69,14 @@ export function decorateHttpResponse(raw: HttpResponse): HttpResult {
  * composition root; every storage call is scoped by the plugin id (the Rust
  * side enforces the directory containment).
  *
- * The result is wrapped by `guardHostApi` (P3.2): every capability the
+ * The result is wrapped by `guardHostApi` : every capability the
  * permission ledger lists is refused unless the manifest declares it — for
  * the launcher-window logic path and the iframe bridge alike, since both go
  * through here. */
 export function createHostApi(
   id: string,
   services: PluginServices,
-  /** P6.5 逻辑宿主令牌：存在时注入每次 invoke（Rust 按令牌强制归属 plugin id）。
+  /** 逻辑宿主令牌：存在时注入每次 invoke（Rust 按令牌强制归属 plugin id）。
    * 视图桥与启动器内路径不携带——按窗口 label 既有规则归属。 */
   hostToken?: string
 ): PluginHostApi {
@@ -185,7 +185,7 @@ export function createHostApi(
       },
       detach: () => {
         plog.debug(id, "app.detach");
-        // P6 自助分离：插件自绘按钮的落点 —— 页面形态由插件自己决定，
+        // 自助分离：插件自绘按钮的落点 —— 页面形态由插件自己决定，
         // 宿主只负责 detach 本身（快照/建窗/回放与内置按钮同一条路）。
         services.detachMode(id);
       },
@@ -361,7 +361,7 @@ export function createHostApi(
       },
       bytes: (path: string) => {
         plog.debug(id, "fs.bytes:", path);
-        // Raw bytes, base64 (≤32 MB, Rust side). The P5 sandbox made plugin
+        // Raw bytes, base64 (≤32 MB, Rust side). The sandbox made plugin
         // pages opaque origins, so fetch(asset://) is CORS-refused there —
         // binary preview renderers (pdf.js / SheetJS) get their bytes here.
         return inv<string>("get_file_bytes", { path });

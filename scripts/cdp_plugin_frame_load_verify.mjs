@@ -1,4 +1,4 @@
-// 视图帧装载机制验证（P6.7，ROADMAP #33）——两半各一条断言：
+// 视图帧装载机制验证（docs/ROADMAP_HISTORY.md #33）——两半各一条断言：
 //
 //   node scripts/cdp_plugin_frame_load_verify.mjs [cycles] [--mode=empty|dropfirst]
 //

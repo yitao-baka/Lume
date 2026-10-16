@@ -1,5 +1,5 @@
 //! Settings — persisted in `settings/settings.toml` under the writable data
-//! root (`paths::base_dir()`, docs/SETTINGS.md, docs/NORMS.md).
+//! root (`paths::base_dir()`, docs/SETTINGS.md, docs/ARCHITECTURE.md).
 //!
 //! `<base>/settings/` holds three files:
 //! - `default.toml`  — factory defaults, written once on first run, never
@@ -30,7 +30,7 @@ pub struct Settings {
     pub hotkeys: Hotkeys,
     pub index: Index,
     pub clipboard: Clipboard,
-    /// Plugin management (ROADMAP #7) — ids switched off by the user.
+    /// Plugin management (docs/ROADMAP_HISTORY.md #7) — ids switched off by the user.
     #[serde(default)]
     pub plugins: Plugins,
     /// 自动动作 — send a hotkey when a configured program comes to the foreground.
@@ -44,7 +44,7 @@ pub struct Settings {
 pub struct Plugins {
     #[serde(default)]
     pub disabled: Vec<String>,
-    /// Ids granted **every** capability they ask for, declared or not (P3.2).
+    /// Ids granted **every** capability they ask for, declared or not .
     /// The explicit-placement trust model already says the user vouches for a
     /// plugin; this is the escape hatch for a plugin under development that
     /// starts using a new capability before its manifest catches up.
@@ -63,13 +63,13 @@ pub struct Plugins {
     /// only ever writes this flag.
     #[serde(default)]
     pub trust_all: bool,
-    /// Detached plugin windows' remembered geometry, per plugin id (P6).
+    /// Detached plugin windows' remembered geometry, per plugin id .
     /// Written silently by the window's CloseRequested handler; restored on
     /// the next `plugin_window_open`.
     #[serde(default)]
     pub window_bounds: HashMap<String, WindowBounds>,
     /// Per-plugin color mode, id → `"system" | "light" | "dark"`
-    /// (`lume.theme.set`, ROADMAP #36). `"system"` = follow the launcher;
+    /// (`lume.theme.set`docs/ROADMAP_HISTORY.md #36). `"system"` = follow the launcher;
     /// `"light"` / `"dark"` pin the plugin's own surfaces (its page canvas and
     /// its detached window's chrome) without touching the launcher. Written
     /// silently by `set_plugin_color_mode`; read back through `get_settings`,
@@ -77,7 +77,7 @@ pub struct Plugins {
     /// and on every theme flip (`appicon::apply`).
     #[serde(default)]
     pub color_modes: HashMap<String, String>,
-    /// Idle-reset exemptions (ROADMAP #46), plugin id → keep its session
+    /// Idle-reset exemptions (docs/ROADMAP_HISTORY.md #46), plugin id → keep its session
     /// state across an idle reset. Absent = follow the manifest's
     /// `keep_session` declaration; the user override always wins.
     #[serde(default)]
@@ -120,7 +120,7 @@ pub fn remember_plugin_window_bounds(app: &AppHandle, id: &str, bounds: WindowBo
     }
 }
 
-/// Remember one plugin's color mode (`lume.theme.set`, ROADMAP #36). Silent on
+/// Remember one plugin's color mode (`lume.theme.set`docs/ROADMAP_HISTORY.md #36). Silent on
 /// purpose, like the geometry write: the plugin's own surfaces are repainted by
 /// whoever made the call, and a settings-applied round-trip would refresh every
 /// page in the launcher for a value none of them reads. `Ok(())` means durable
@@ -173,11 +173,11 @@ pub struct Appearance {
     /// Start the launcher with the 「已固定」 bar expanded (default: collapsed).
     #[serde(default)]
     pub expand_pinned: bool,
-    /// 模式切换栏仅显示图标（ROADMAP #47）——默认关：胶囊显示图标 + 名称；
+    /// 模式切换栏仅显示图标（docs/ROADMAP_HISTORY.md #47）——默认关：胶囊显示图标 + 名称；
     /// 开启后只显示图标（悬停 tooltip / 无障碍名给模式名）。
     #[serde(default)]
     pub mode_switch_icons_only: bool,
-    /// 各模式独立搜索词（ROADMAP #48）——默认关：搜索框内容全局共享、以
+    /// 各模式独立搜索词（docs/ROADMAP_HISTORY.md #48）——默认关：搜索框内容全局共享、以
     /// 最新输入为准；开启后每个模式分别记住自己的查询（仅会话内存，重启
     /// 不保留；查询从不落盘）。
     #[serde(default)]
@@ -206,7 +206,7 @@ pub struct Appearance {
     /// Last clipboard category when `last_page == "clipboard"` (`"all"` | …).
     #[serde(default = "default_last_page_kind")]
     pub last_page_kind: String,
-    /// 闲置重置 (ROADMAP #46): after the launcher stayed hidden this long,
+    /// 闲置重置 (docs/ROADMAP_HISTORY.md #46): after the launcher stayed hidden this long,
     /// the next summon starts clean — home page, empty query, non-exempt
     /// pages factory-reset. On by default.
     #[serde(default = "default_true")]
@@ -227,7 +227,7 @@ fn default_last_page_kind() -> String {
     "all".into()
 }
 
-/// Default idle-reset threshold (30 minutes; ROADMAP #46).
+/// Default idle-reset threshold (30 minutes; docs/ROADMAP_HISTORY.md #46).
 fn default_idle_reset_minutes() -> u32 {
     30
 }
@@ -854,7 +854,7 @@ pub fn snapshot(state: &State<SettingsState>) -> Settings {
 }
 
 /// Enable/disable a plugin by id (light write, no apply side effects — the
-/// frontend registry re-reads on ).
+/// frontend registry re-reads on).
 #[tauri::command]
 pub fn set_plugin_enabled(
     id: String,
@@ -879,7 +879,7 @@ pub fn set_plugin_enabled(
 }
 
 /// Grant (or revoke) one plugin **all** capabilities regardless of what its
-/// manifest declares (P3.2). Light write like `set_plugin_enabled`; the
+/// manifest declares. Light write like `set_plugin_enabled`; the
 /// registry re-reads the manifest list on `settings-applied`.
 #[tauri::command]
 pub fn set_plugin_trusted(
@@ -953,7 +953,7 @@ pub fn set_plugin_trust_all(
     Ok(())
 }
 
-/// Idle-reset exemption override (ROADMAP #46) — the per-plugin switch in
+/// Idle-reset exemption override (docs/ROADMAP_HISTORY.md #46) — the per-plugin switch in
 /// 设置 → 插件, overriding the manifest's `keep_session` declaration.
 /// `true` keeps the plugin's query + page state; `false` forces the reset
 /// even when the manifest asked to keep it. Light write like the other plugin
@@ -1008,7 +1008,7 @@ mod tests {
         fs::remove_dir_all(&base).ok();
     }
 
-    /// 闲置重置 (ROADMAP #46): on by default with a 30-minute threshold, both
+    /// 闲置重置 (docs/ROADMAP_HISTORY.md #46): on by default with a 30-minute threshold, both
     /// when the settings file predates the keys and when only one key is
     /// missing; both round-trip through a light write.
     #[test]
@@ -1094,7 +1094,7 @@ mod tests {
         fs::remove_dir_all(&base).ok();
     }
 
-    /// Per-plugin color modes (`lume.theme.set`, ROADMAP #36): absent by
+    /// Per-plugin color modes (`lume.theme.set`docs/ROADMAP_HISTORY.md #36): absent by
     /// default, round-trip through a light write, and `color_mode_for` pins a
     /// plugin to its own value while every other plugin (and an unknown one)
     /// keeps following the launcher.
@@ -1207,7 +1207,7 @@ mod tests {
         fs::remove_dir_all(&base).ok();
     }
 
-    /// 各模式独立搜索词（ROADMAP #48）：默认关（= 全局共享；旧 settings.toml
+    /// 各模式独立搜索词（docs/ROADMAP_HISTORY.md #48）：默认关（= 全局共享；旧 settings.toml
     /// 缺键 → serde default），开启值走 light write 往返。
     #[test]
     fn per_mode_query_defaults_off_and_round_trips() {

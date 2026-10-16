@@ -1,5 +1,5 @@
 {
-  "//": "示例插件的类型校验（ROADMAP #32.10）：checkJs + 全局类型 plugin-api.d.ts。运行：pnpm exec tsc -p examples/tsconfig.json",
+  "//": "示例插件的类型校验（docs/ROADMAP_HISTORY.md #32.10）：checkJs + 全局类型 plugin-api.d.ts。运行：pnpm exec tsc -p examples/tsconfig.json",
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",

@@ -1,6 +1,6 @@
-// 速记 (Notes) — P3 示例（ROADMAP #26）。
+// 速记 (Notes) — 示例（docs/ROADMAP_HISTORY.md #26）。
 //
-// 这个 Provider 演示 P3 的全部新面：
+// 这个 Provider 演示 的全部新面：
 //   ctx.db.*       文档库（uTools/CouchDB 形状：_rev 乐观锁、allDocs、bulkDocs）
 //   ctx.settings.* + onSettings   声明式设置（[[settings]] 在 plugin.toml）
 //   ctx.fs.writeText / privatePath  插件私有目录（plugins/notes/files/，无需权限）

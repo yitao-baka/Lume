@@ -1,4 +1,4 @@
-//! `.lupx` 签名与验签（#32.2，ROADMAP）—— ed25519，零在线依赖。
+//! `.lupx` 签名与验签（#32.2，docs/ROADMAP_HISTORY.md）—— ed25519，零在线依赖。
 //!
 //! 包内可选条目 `LUME.SIGN`（JSON 文本）：
 //!

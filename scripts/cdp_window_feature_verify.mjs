@@ -1,4 +1,4 @@
-// 活动窗口匹配验证（P4，ROADMAP #29 / [[features]] type="window"）：
+// 活动窗口匹配验证（docs/ROADMAP_HISTORY.md #29 / [[features]] type="window"）：
 //   ① 匹配      真实前台窗口（PowerShell AppActivate 激活编辑器 → toggle_launcher
 //               呼出时 Rust 侧捕获 FocusState）→ 空查询主菜单出现「窗口工具」行
 //               （#43 起落在「推荐使用」栏，最近使用/已固定栏保持渲染，不再以

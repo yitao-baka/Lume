@@ -1,4 +1,4 @@
-// P2b 验证（P2 余项）：files 拖入、img 剪贴板图片进入、template="list" 列表模板、
+// 验证（余项）：files 拖入、img 剪贴板图片进入、template="list" 列表模板、
 // 磁贴重排改指针事件后的基本行为。
 //   ① files   拖入事件（Tauri drag-drop → tauri://drag-drop）携带真实路径 →
 //            files 规则出行（文案带命中数，只含扩展名命中的子集；#43 起落在
@@ -13,8 +13,8 @@
 //            下方是插件行——关键字/feature/provider）
 //   ④ 重排    磁贴重排（pointer events 版）：pointerdown+move+up 交换两个
 //            已固定条目并持久化（reorder_pins）。
-//   ⑤ ctx 面一致（静态，ROADMAP #38）：逻辑帧 ctx 必须与视图桥同面，
-//            且每个方法都要被 rpc.ts 的 switch 认领——P6.5 的漂移
+// ⑤ ctx 面一致（静态，docs/ROADMAP_HISTORY.md #38）：逻辑帧 ctx 必须与视图桥同面，
+// 且每个方法都要被 rpc.ts 的 switch 认领—— 的漂移
 //            （clipboard.readImage 无 case、逻辑帧缺 fs/theme/detach）就是这
 //            两层各写一份却无断言钉住导致的。
 // 说明：①的拖入用 `plugin:event|emit_to` 模拟 tauri://drag-drop —— 真实 OS
@@ -266,7 +266,7 @@ const summonBarIds = await barIds();
 check("推荐使用 section drops with the summon-scoped rows",
   !summonBarIds.includes("recommended"), JSON.stringify(summonBarIds));
 
-// ── ①b fileType（P4, ROADMAP #28）：folder / image 类别规则 ──
+// ── ①b fileType（docs/ROADMAP_HISTORY.md #28）：folder / image 类别规则 ──
 // 一次拖入 文件夹 + .png + .md：extensions 规则只报 .md（文件夹不再冒充
 // 扩展名），fileType=folder 只报文件夹，fileType=image 按类别表报 .png。
 const emit2 = await emitDrop([FIX_DIR, FIX_PNG, FIX_MD]);
@@ -404,7 +404,7 @@ check("list-demo loaded as template=list",
 check("files-img-demo loaded as provider",
   plogText.includes("registered provider proxy (entry=main.js"), "");
 
-// ── ⑤ ctx 面一致性（静态，ROADMAP #38）──
+// ── ⑤ ctx 面一致性（静态，docs/ROADMAP_HISTORY.md #38）──
 // 两个 ctx 面（视图桥 iframeBridge.tsx 的客户端、逻辑帧 public/pluginLogicFrame.js）
 // 必须方法集合一致，且每个方法都在 rpc.ts 的 switch 里有 case（否则调用会落到
 // `unknown lume rpc`）。静态比对源文件，不依赖 exe 状态。

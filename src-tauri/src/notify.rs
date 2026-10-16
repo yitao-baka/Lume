@@ -1,5 +1,5 @@
-//! Plugin host capability: system notifications (P1.2 of
-//! docs/PLUGIN_GAP_ANALYSIS.md).
+//! Plugin host capability: system notifications (of
+//! docs/PLUGIN_API.md).
 //!
 //! A plugin needs a way to reach the user when the launcher is hidden — the
 //! in-app toast only exists while the window is up. This module registers a
@@ -14,7 +14,7 @@
 //! thread (Tauri commands run on the main thread, which pumps messages).
 //!
 //! Permission: `notify` (declared in the manifest; the enforcement layer is
-//! P3.2 — until then this module is the documented ledger entry).
+//! — until then this module is the documented ledger entry).
 
 use std::sync::Mutex;
 use windows::core::PCWSTR;

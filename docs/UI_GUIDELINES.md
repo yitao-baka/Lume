@@ -37,7 +37,7 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   collapses to the search row, `.results` is hidden, and the mode's pill
   carries the feedback (label tinted to the accent `#5ac8fa`, a spinner ring
   over the icon). `ModeInstance.ready` decides; the home page is always ready.
-  See ROADMAP #30.7.
+  See docs/ARCHITECTURE.md (sizing).
 - Font: `"Segoe UI Variable Text", "Segoe UI", system-ui`; base 16px;
   antialiased; `user-select: none`.
 
@@ -98,7 +98,7 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
 - Every component should look modern and polished: clean hierarchy, restrained
   color, rounded corners, natural transitions.
 - If hand-rolled components can't meet a need, an external component library
-  may be adopted (docs/NORMS.md) — keep it consistent with the palette and the
+  may be adopted — keep it consistent with the palette and the
   "launcher is content" rule.
 
 ## Scrollbars & sliders

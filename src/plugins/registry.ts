@@ -140,7 +140,7 @@ export function setPluginServices(services: PluginServices) {
   pluginServices = services;
 }
 
-// ── 逻辑宿主中继（P6.5 进程隔离）──
+// ── 逻辑宿主中继（进程隔离）──
 //
 // entry 插件的逻辑不再 import() 进本窗口：registry 只注册**代理贡献**，hook
 // 调用经 `plugin_logic_push`（Rust emit 到共享逻辑宿主窗口）→ supervisor →
@@ -434,10 +434,10 @@ export function callHook(id: string, logic: Record<string, unknown>, name: strin
 /** Resolve a raw row/manifest icon input (a string or `{ light, dark }`
  * pair) into a spec. Re-exported under the historical name; the
  * implementation lives in `src/launcher/iconSpec.ts` so the settings pane
- * (which does not load this registry) shares it (ROADMAP #44). */
+ * (which does not load this registry) shares it (docs/ROADMAP_HISTORY.md #44). */
 export { resolveIconInput as resolvePluginIcon };
 
-/** A manifest's icon set (ROADMAP #44): explicit light/dark variants with
+/** A manifest's icon set (docs/ROADMAP_HISTORY.md #44): explicit light/dark variants with
  * the legacy single `icon` as the middle fallback. Undefined when the
  * manifest declares none. */
 export function manifestIconSpec(m: PluginManifest): PluginIconSpec | undefined {
@@ -519,7 +519,7 @@ function navBarsContribution(
   };
 }
 
-// ── Capability permissions (P3.2) ──
+// ── Capability permissions ──
 //
 // The ledger, the fail-closed check and the guard that applies it to every
 // host API live in `permissions.ts`; this module only wires the manifest
@@ -558,17 +558,17 @@ function createDiskModeInstance(
   // enter delivered while the document is still loading would be lost — and
   // a fresh document needs the payload again the way it needs query/show.
   let enterPayload: FeatureEnterInfo | null = null;
-  // Declarative settings (P3.4) delivered to this page. Kept so the ready
+  // Declarative settings delivered to this page. Kept so the ready
   // handshake can replay them: the pane may change a value while the mode is
   // not active (the srcdoc document doesn't exist yet), and a fresh document
   // needs the current values again.
   let settingsValues: Record<string, unknown> | null = null;
-  // Detached-window state pusher (P6): while the page lives in its own
+  // Detached-window state pusher : while the page lives in its own
   // window, this window's iframe is unmounted — page state travels over the
   // Rust `plugin-window` event channel instead of postMessage.
   detachedSuppliers.set(m.id, {
     push: (show, includeSnapshot = false) => {
-      // 会话快照（P6.5 → #40）：detach 前在启动器侧抓的帧快照只在 ready
+      // 会话快照（docs/ROADMAP_HISTORY.md #40）：detach 前在启动器侧抓的帧快照只在 ready
       // 握手那次推送里带过去（view + titlebar 一起，取出即删）。shown 事件
       // 的推送发生在建窗瞬间（页面尚未加载），绝不能消费快照。
       const frames = includeSnapshot ? takeSessionFrames(m.id, ["view", "titlebar"]) : null;
@@ -604,11 +604,11 @@ function createDiskModeInstance(
     },
     onShow: () => hook("onShow"),
   });
-  // Theme replays (P5 sandbox follow-up): the opaque iframe cannot read the
+  // Theme replays ( sandbox follow-up): the opaque iframe cannot read the
   // launcher document, so the host pushes the color mode — on the ready
   // handshake below and on every `data-theme` flip (see the observer at the
   // bottom of this module). The value is this plugin's **effective** mode: a
-  // `theme.set` override pins it, `"system"` follows the launcher (ROADMAP
+  // `theme.set` override pins it, `"system"` follows the launcher (docs/ROADMAP_HISTORY.md
   // #36). Only `--lume-page-bg` and `lume.on.theme` ride it — the launcher's
   // own palette never moves.
   themePosters.set(m.id, (t) => {
@@ -625,7 +625,7 @@ function createDiskModeInstance(
       postEv("theme", pluginColorMode(m.id, currentThemeMode()));
       if (enterPayload) postEv("enter", enterPayload);
       if (settingsValues) postEv("settings", settingsValues);
-      // 会话快照（P6.5 → #40）：启动器侧只消费 view 帧（titlebar 帧留给
+      // 会话快照（docs/ROADMAP_HISTORY.md #40）：启动器侧只消费 view 帧（titlebar 帧留给
       // 下一次 detach 带给独立窗口）；取出即删，重挂载的页面自己恢复。
       const ses = takeSessionFrames(m.id, ["view"]);
       if (ses?.view !== undefined) postEv("restore", ses.view);
@@ -724,7 +724,7 @@ function createDiskModeInstance(
     pageKind: () => "main",
     restorePage: () => {},
     applySettings: () => {},
-    // Detach/attach hand-off (P6.5): ask the page for its state snapshot.
+    // Detach/attach hand-off : ask the page for its state snapshot.
     snapshot: () => viewSnapshot(),
     onHide: () => {
       if (viewReady) postEv("hide");
@@ -735,7 +735,7 @@ function createDiskModeInstance(
       // 新 enter = 新用户意图：LRU 淘汰 / detach / 关闭回流遗留、还在等
       // 重放的会话帧必须作废 —— ready 握手把 view 帧放在标准重放
       // （query/show/enter）**之后**，旧快照会把刚投递的 payload 覆盖回
-      // 上一个会话（ROADMAP #42）。已经消费掉的帧（页面活着）不受影响。
+      // 上一个会话（docs/ROADMAP_HISTORY.md #42）。已经消费掉的帧（页面活着）不受影响。
       dropSessionFrames(m.id);
       if (detachedIds.has(m.id)) {
         // The page lives in its own window — the payload travels over the
@@ -759,7 +759,7 @@ function createDiskModeInstance(
   };
 }
 
-/** Unload one disk plugin's contributions (hot reload, P0.3): drop its
+/** Unload one disk plugin's contributions (hot reload): drop its
  * registrations, forget its load attempt and clear the module cache so a
  * re-import re-reads the code from disk. (The cache is global — already-
  * imported modules of other plugins stay alive; only future loads recompile.)
@@ -839,7 +839,7 @@ export async function loadDiskPlugins() {
     loadedDiskIds.add(m.id); // mark regardless of outcome — never retry-spam
     try {
       if (m.kind === "provider" && m.entry) {
-        // P6.5：逻辑在共享宿主窗口的沙箱 iframe 里 —— 这里只注册代理贡献。
+        // 逻辑在共享宿主窗口的沙箱 iframe 里 —— 这里只注册代理贡献。
         // 帧内未实现/未就绪的 hook 安全返回 undefined（search → 空结果）。
         // pushLogicLoad 先于任何 hook 拉取（navBarsContribution）：未就绪窗口
         // 内的调用走 registry 的快速失败，而不是被宿主静默丢弃后拖满 8s。
@@ -887,10 +887,10 @@ export async function loadDiskPlugins() {
         loadedAny = true;
         plog.info(m.id, `registered provider proxy (entry=${m.entry})`);
       } else if (m.kind === "mode" && m.template === "list" && m.entry) {
-        // Built-in list template (P2.5b): no view HTML — the entry logic runs
+        // Built-in list template : no view HTML — the entry logic runs
         // host-side (provider trust model) and the built-in list component
         // renders its rows.
-        // P6.5：逻辑在共享宿主的沙箱 iframe（list 模板消费的是代理 hook）。
+        // 逻辑在共享宿主的沙箱 iframe（list 模板消费的是代理 hook）。
         pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const logic = logicProxy(m.id);
         const instance = createListTemplateMode(m, logic, services!);
@@ -990,7 +990,7 @@ export async function loadDiskPlugins() {
   if (loadedAny) setManifests((prev) => [...prev]);
 }
 
-/** Load a plugin's effective settings (P3.4) and hand them to its
+/** Load a plugin's effective settings and hand them to its
  * contribution hooks. Called when a disk plugin is loaded and whenever the
  * settings window changes a value (the Rust `plugin-settings` event) — the
  * plugin instance lives in this window, the pane lives in the settings one, so
@@ -1083,7 +1083,7 @@ export function modePlugins(): {
     label?: string;
   };
   hidden: boolean;
-  /** Manifest `keep_session` (ROADMAP #46) — idle-reset exemption default;
+  /** Manifest `keep_session` (docs/ROADMAP_HISTORY.md #46) — idle-reset exemption default;
    * the composition root combines it with the per-plugin user override. */
   keepSession: boolean;
 }[] {
@@ -1098,7 +1098,7 @@ export function modePlugins(): {
     }));
 }
 
-// ── Detached plugin windows (P6) ──
+// ── Detached plugin windows ──
 //
 // A disk mode plugin declaring `detachable` can move its page into its own
 // window (label `plugin-<id>`, page plugin.html). The plugin's **logic** (the
@@ -1111,7 +1111,7 @@ export function modePlugins(): {
 //   instead of switching pages here.
 const detachedIds = new Set<string>();
 /** Per detached disk mode: a state pusher + the logic-side onShow hook.
- * `includeSnapshot` (P6.5) only on the ready handshake — the shown-event
+ * `includeSnapshot` only on the ready handshake — the shown-event
  * push fires at window creation, before the page's iframes exist. */
 const detachedSuppliers = new Map<
   string,
@@ -1122,20 +1122,20 @@ const detachedSuppliers = new Map<
   }
 >();
 
-// ── 会话帧快照（P6.5 → ROADMAP #40）──
+// ── 会话帧快照（docs/ROADMAP_HISTORY.md #40）──
 // 页面状态跨边界（detach / 关闭回灌 / keep-alive 淘汰）只走 launcher/session
 // 的帧存储：detach 前抓 view 帧随 ready 推给窗口；关闭时窗口回传全帧，
 // 启动器消费 view、保留 titlebar 给下一次 detach。没有“直投活 iframe”的
 // 旁路 —— 单一权威：任意时刻页面只有一个活副本（启动器或窗口）。
 
-// ── Theme push (P5 sandbox follow-up) ──
+// ── Theme push ( sandbox follow-up) ──
 //
 // The sandboxed mode iframe cannot read the launcher document (opaque
-// origin), so the read-the-host-palette trick plugins used pre-P5 is dead.
+// origin), so the read-the-host-palette trick plugins used pre- is dead.
 // The host owns the color mode, so it pushes it: `lume.on.theme = (mode) => …`
 // receives `"light" | "dark"` on the ready handshake and whenever the
 // launcher's `data-theme` flips (颜色模式 setting, or the OS in system mode).
-// Since ROADMAP #36 the payload is the PLUGIN's effective mode: an override
+// Since docs/ROADMAP_HISTORY.md #36 the payload is the PLUGIN's effective mode: an override
 // set through `lume.theme.set` pins it, so a pinned plugin's pushes stop
 // moving with the launcher (and the launcher never moves with the plugin).
 /** Per disk mode page: the closure that posts a theme value into its iframe
@@ -1160,7 +1160,7 @@ export function applyPluginColorPrefsFromSettings(src: unknown): void {
   postThemeEverywhere();
 }
 
-/** `lume.theme.set` (ROADMAP #36): the plugin pinned its own color mode. The
+/** `lume.theme.set` (docs/ROADMAP_HISTORY.md #36): the plugin pinned its own color mode. The
  * caller has already persisted it; this records the mirror and re-derives the
  * effective mode onto whichever surface shows the page — the launcher's
  * iframe or the detached window. The launcher's own `data-theme` is not
@@ -1243,7 +1243,7 @@ export function onPluginWindowShown(id: string): void {
 
 /** `plugin-window-closed` — the window is gone; the mode returns to the
  * normal in-launcher behaviour. For a USER-initiated close the payload carries
- * the detached page's final frame snapshot + query (P6.5; v2 envelope since
+ * the detached page's final frame snapshot + query (v2 envelope since
  * #40): frames are stored consume-once, the query lands in the mode's signal,
  * and the returned id tells the shell to re-dock (switch back to that page).
  * Programmatic closes (disable / reload / watchdog-without-user) return null —
@@ -1255,7 +1255,7 @@ export function onPluginWindowClosed(
 ): string | null {
   const id = typeof payload === "string" ? payload : payload.id;
   detachedIds.delete(id);
-  if (typeof payload === "string") return null; // pre-P6.5 emitter
+  if (typeof payload === "string") return null; // pre- emitter
   // close_report / watchdog 带 user:true；程序化 `plugin_window_close` 只有 id。
   // `"snapshot" in payload` 兜底旧版 close_report（那时没有 user 字段）。
   const userInitiated = payload.user === true || "snapshot" in payload;
@@ -1288,7 +1288,7 @@ export function onPluginWindowClosed(
   });
   return userInitiated ? id : null;
 }
-// ── Declarative entry rules (P2.1: `[[features]]` in the manifest) ──
+// ── Declarative entry rules (: `[[features]]` in the manifest) ──
 //
 // A feature matches the query text and offers an 「<label>」 row whose
 // activation enters the plugin with the text as payload. Matching happens
@@ -1370,7 +1370,7 @@ export function featureMatches(q: string): FeatureMatch[] {
   return out;
 }
 
-/** Extension → `fileType` category table (P4, ROADMAP #28). Curated, not
+/** Extension → `fileType` category table (docs/ROADMAP_HISTORY.md #28). Curated, not
  * exhaustive — anything unmapped is `others`. A plugin that needs precision
  * declares `extensions` instead. */
 const FILE_TYPE_EXTS: Record<string, string[]> = {
@@ -1391,7 +1391,7 @@ const extOf = (path: string): string => {
   return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
 };
 
-/** `type = "files"` rules (P2.2) matching a dropped file list, with P4
+/** `type = "files"` rules matching a dropped file list, with 
  * `fileType` categories and folder matching. Matching semantics per rule:
  * - `extensions` non-empty → files whose extension is listed (folders never
  *   match — a directory named `x.md` is not a markdown file);
@@ -1440,7 +1440,7 @@ export function fileFeatureMatches(paths: string[], kinds: string[]): FeatureMat
   return out;
 }
 
-/** `type = "img"` rules (P2.2) — offered on the empty-query main menu while
+/** `type = "img"` rules — offered on the empty-query main menu while
  * the clipboard holds an image (the caller probes `plugin_clipboard_has_image`
  * once per summon, never per keystroke). The plugin reads the pixels itself
  * via `clipboard.readImage()`. */
@@ -1465,7 +1465,7 @@ export function imgFeatureMatches(): FeatureMatch[] {
   return out;
 }
 
-/** `type = "window"` rules (P4, ROADMAP #29) — offered on the empty-query
+/** `type = "window"` rules (docs/ROADMAP_HISTORY.md #29) — offered on the empty-query
  * main menu when the window that had focus before the launcher appeared
  * matches the rule's declared dimensions. Matching: within one field the
  * values OR, across fields they AND; a rule with no field at all never
@@ -1555,7 +1555,7 @@ export function deliverFeature(pluginId: string, info: FeatureEnterInfo): boolea
   return false;
 }
 
-/** Deliver one keystroke to the plugin owning the search box (P2.3). */
+/** Deliver one keystroke to the plugin owning the search box. */
 export function deliverSubInput(pluginId: string, text: string): boolean {
   const p = plugins.find((x) => x.id === pluginId);
   if (!p || !isEnabled(pluginId)) return false;

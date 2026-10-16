@@ -1,4 +1,4 @@
-// 逻辑帧（P6.5）—— 一个插件逻辑的沙箱运行环境（classic script）。
+// 逻辑帧—— 一个插件逻辑的沙箱运行环境（classic script）。
 //
 // 必须是 **classic script**（不能 type=module）：沙箱 iframe 是 opaque
 // origin，module 脚本按 CORS 模式取数，Tauri 自定义协议对 Origin: null 不
@@ -61,7 +61,7 @@
 
   // ── ctx：与视图桥 window.lume 同面（工厂 create(ctx) 收到的就是它）──
   // 新增/移除 ctx 方法时三处同步：本文件、iframeBridge.tsx 的视图桥客户端、
-  // rpc.ts 的 switch（cdp_p2b_verify 有一条静态对齐断言钉住这件事，ROADMAP #38）。
+  // rpc.ts 的 switch（cdp_p2b_verify 有一条静态对齐断言钉住这件事，docs/ROADMAP_HISTORY.md #38）。
   window.lume = {
     // 宿主形态常量（§6C/Roadmap #42）：逻辑帧永远跑在启动器侧的共享逻辑
     // 宿主里（独立窗口只有 view/titlebar 帧），所以恒为 "launcher"——与视图

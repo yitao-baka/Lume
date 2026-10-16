@@ -1,4 +1,4 @@
-//! Plugin system (ROADMAP #7, v1) — discovery + registry.
+//! Plugin system (docs/ROADMAP_HISTORY.md #7, v1) — discovery + registry.
 //!
 //! A plugin is a manifest (`plugin.toml`) plus one or more *contributions*.
 //! v1 contributions live in the frontend registry (`src/plugins/`): a `mode`
@@ -33,7 +33,7 @@ pub struct KeywordPinyin {
     pub initials: String,
 }
 
-/// One declarative entry rule (uTools-style feature, ROADMAP #25): a query the
+/// One declarative entry rule (uTools-style feature, docs/ROADMAP_HISTORY.md #25): a query the
 /// rule matches offers an 「<label>」 row in Navigate whose activation enters
 /// the plugin with the query text as payload.
 ///
@@ -45,7 +45,7 @@ pub struct PluginFeature {
     /// Unique code inside the plugin; delivered on enter (payload `code`).
     #[serde(default)]
     pub code: String,
-    /// `text` (default) | `files` | `img` (P2.2). A `text` rule matches query
+    /// `text` (default) | `files` | `img`. A `text` rule matches query
     /// text (`regex`/`over`); a `files` rule matches OS drag-dropped files by
     /// `extensions` (payload `paths`); an `img` rule matches the clipboard
     /// holding an image (the plugin reads it via `clipboard.readImage()`).
@@ -57,7 +57,7 @@ pub struct PluginFeature {
     pub extensions: Vec<String>,
     /// `files` rules: a category instead of an extension list —
     /// `image` | `video` | `audio` | `document` | `text` | `folder` |
-    /// `others` (P4, ROADMAP #28; the frontend owns the extension→category
+    /// `others` (docs/ROADMAP_HISTORY.md #28; the frontend owns the extension→category
     /// table; `folder` matches directories, the rest only files). Ignored
     /// when `extensions` is non-empty.
     #[serde(
@@ -83,7 +83,7 @@ pub struct PluginFeature {
     /// Optional row icon (relative to the plugin dir; resolved like `icon`).
     #[serde(default)]
     pub icon: String,
-    /// Optional light-theme icon variant (ROADMAP #44): the artwork shown on
+    /// Optional light-theme icon variant (docs/ROADMAP_HISTORY.md #44): the artwork shown on
     /// light surfaces (usually the dark-stroked one). An explicit variant
     /// takes precedence over `icon` and is rendered as-is (no inversion).
     #[serde(
@@ -98,7 +98,7 @@ pub struct PluginFeature {
         rename(serialize = "iconDark", deserialize = "icon_dark")
     )]
     pub icon_dark: String,
-    /// `window` rules (P4, ROADMAP #29): match the foreground window at
+    /// `window` rules (docs/ROADMAP_HISTORY.md #29): match the foreground window at
     /// summon time. Within one field the values OR, across fields they AND;
     /// a rule with **no** field at all never matches. `process` matches the
     /// exe file name or its stem (case-insensitive, cf.
@@ -113,7 +113,7 @@ pub struct PluginFeature {
     pub title: Vec<String>,
 }
 
-/// One `select` choice (P3.4). `label` falls back to `value`.
+/// One `select` choice. `label` falls back to `value`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SettingsOption {
     #[serde(default)]
@@ -122,7 +122,7 @@ pub struct SettingsOption {
     pub label: String,
 }
 
-/// One declarative plugin setting (`[[settings]]` in the manifest, P3.4): the
+/// One declarative plugin setting (`[[settings]]` in the manifest): the
 /// settings pane renders these automatically and the values live in the
 /// plugin's `__settings` document. **The manifest is the schema** — a key that
 /// is not declared here can never be written (`plugin_settings_put` refuses
@@ -243,7 +243,7 @@ pub struct PluginManifest {
     #[serde(default)]
     pub detachable: bool,
     /// Mode plugins: keep this mode's query + page state across an idle reset
-    /// (ROADMAP #46) — a declarative default the user can override per plugin
+    /// (docs/ROADMAP_HISTORY.md #46) — a declarative default the user can override per plugin
     /// in 设置 → 插件 (`settings.plugins.keep_session_overrides`).
     #[serde(default)]
     pub keep_session: bool,
@@ -264,7 +264,7 @@ pub struct PluginManifest {
     /// explicit `icon`).
     #[serde(default)]
     pub icon: String,
-    /// Explicit light-theme icon variant (ROADMAP #44), relative to the
+    /// Explicit light-theme icon variant (docs/ROADMAP_HISTORY.md #44), relative to the
     /// plugin dir — shown on light surfaces and rendered as-is (explicit
     /// variants never run through the legacy `--icon-filter` inversion).
     /// Falls back to `icon`, then `icon_dark`.
@@ -278,7 +278,7 @@ pub struct PluginManifest {
     /// 「<label>」 row that enters the plugin with the query as payload.
     #[serde(default)]
     pub features: Vec<PluginFeature>,
-    /// Declarative settings (P3.4) — the settings pane renders these and the
+    /// Declarative settings — the settings pane renders these and the
     /// values live in the plugin's `__settings` document.
     #[serde(default)]
     pub settings: Vec<PluginSetting>,
@@ -326,7 +326,7 @@ pub struct PluginInfo {
     pub version: String,
     pub kind: String,
     pub description: String,
-    /// `permissions` as declared by the manifest (P3.2 enforces it: the
+    /// `permissions` as declared by the manifest ( enforces it: the
     /// frontend refuses an RPC whose permission is missing here).
     pub permissions: Vec<String>,
     /// Built into lume.exe (vs discovered under `<base>/plugins/`).
@@ -359,7 +359,7 @@ pub struct PluginInfo {
     /// Mode plugins: hidden from the mode switch bar / switch-key cycle
     /// (manifest `hidden`); the Navigate search rows stay the entry.
     pub hidden: bool,
-    /// Mode plugins: manifest `keep_session` (ROADMAP #46) — the idle-reset
+    /// Mode plugins: manifest `keep_session` (docs/ROADMAP_HISTORY.md #46) — the idle-reset
     /// exemption default; the launcher combines it with the user override map.
     #[serde(rename = "keepSession")]
     pub keep_session: bool,
@@ -383,7 +383,7 @@ pub struct PluginInfo {
     pub keywords_pinyin: Vec<KeywordPinyin>,
     /// Declarative entry rules (any plugin kind).
     pub features: Vec<PluginFeature>,
-    /// Declarative settings (P3.4) with JSON defaults.
+    /// Declarative settings with JSON defaults.
     pub settings: Vec<PluginSettingInfo>,
     /// Absolute plugin directory (disk plugins; empty for built-ins).
     pub dir: String,
@@ -656,9 +656,9 @@ pub fn reload_plugin(id: String, app: tauri::AppHandle) -> Result<(), String> {
     app.emit("plugin-reload", id).map_err(|e| e.to_string())
 }
 
-// ── Plugin data (P3.1) ──
+// ── Plugin data ──
 //
-// The v1 `storage.json` KV map and the P3 document store both live in
+// The v1 `storage.json` KV map and the document store both live in
 // `plugin_store.rs` (`<base>/data/plugin_store.db`): the commands there are
 // `plugin_storage_get/set` (the compatibility shim), `plugin_db_*` (the
 // document API) and `plugin_settings_*` (declarative settings).
@@ -754,7 +754,7 @@ height = 560
         assert!(!parse_manifest("id = \"m\"").unwrap().hidden);
         assert!(parse_manifest("id = \"m\"\nhidden = true").unwrap().hidden);
         // keep_session is optional and defaults to false; true declares the
-        // idle-reset exemption (ROADMAP #46).
+        // idle-reset exemption (docs/ROADMAP_HISTORY.md #46).
         assert!(!parse_manifest("id = \"m\"").unwrap().keep_session);
         assert!(parse_manifest("id = \"m\"\nkeep_session = true").unwrap().keep_session);
     }
@@ -778,7 +778,7 @@ height = 560
 
     #[test]
     fn themed_icon_variants_parse_and_reach_the_frontend() {
-        // ROADMAP #44: explicit light/dark variants live next to the legacy
+        // docs/ROADMAP_HISTORY.md #44: explicit light/dark variants live next to the legacy
         // single `icon`; omitted variants stay empty (legacy manifests are
         // unchanged).
         let m = parse_manifest(
@@ -1052,7 +1052,7 @@ height = 560
         assert_eq!(m.features[0].feature_type, "files");
         assert_eq!(m.features[0].extensions, vec!["md", "txt"]);
         assert_eq!(m.features[1].feature_type, "img");
-        // A feature without `type` is a text rule (unchanged P2.1 behaviour).
+        // A feature without `type` is a text rule (unchanged behaviour).
         let plain: PluginManifest =
             parse_manifest("id = \"d\"\n[[features]]\ncode = \"x\"\nover = true\n").unwrap();
         assert_eq!(plain.features[0].feature_type, "text");

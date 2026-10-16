@@ -339,7 +339,7 @@ export default function Settings() {
 
 /** The body of one section — `<Switch>/<Match>` so the branch re-runs when
  * `section` changes (a plain `switch` in the function body would freeze on
- * the first mount; the ROADMAP #13.5 SolidJS trap). */
+ * the first mount; the docs/ROADMAP_HISTORY.md #13.5 SolidJS trap). */
 function SectionBody(props: {
   section: Section;
   settings: SettingsData;

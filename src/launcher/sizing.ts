@@ -33,7 +33,7 @@ export interface SizerDeps {
   setBarCols: (v: number) => void;
   /** Plugin modes measure their own viewport (the sizer only triggers it). */
   measureModeViewport: () => void;
-  /** The active keep-alive host element (ROADMAP #40). Page-content queries
+  /** The active keep-alive host element (docs/ROADMAP_HISTORY.md #40). Page-content queries
    * are scoped to it: hidden pages stay mounted, so a document-wide query
    * could measure the wrong (invisible) page. */
   activeHost: () => HTMLElement | null;

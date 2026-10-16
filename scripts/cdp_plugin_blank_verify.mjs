@@ -1,4 +1,4 @@
-// 独立窗口空白页回归验证（P6.7，ROADMAP #33）：新建/销毁 `plugin-<id>` 窗口 N
+// 独立窗口空白页回归验证（docs/ROADMAP_HISTORY.md #33）：新建/销毁 `plugin-<id>` 窗口 N
 // 次，逐次断言**视图帧的桥接真的起来了**（`__frameStates` 里 name="" 的 ready
 // 上报 + 心跳）。
 //

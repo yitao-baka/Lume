@@ -51,7 +51,7 @@ that is what to double-click / distribute. The debug exe from
 use it for CDP and manual debugging. A plain `cargo build` debug binary loads the
 dev URL instead.
 
-### Plugin file drop / pin reorder (P2.2)
+### Plugin file drop / pin reorder
 
 1. **Real OS file drag** — the automated script simulates the `tauri://drag-drop`
    event, but the OLE drop target itself (where the real paths come from) can
@@ -162,7 +162,7 @@ dev URL instead.
 5. **DB migration** — `lume.db` lives in `<base>/data/` (portable:
    `<exe_dir>/data/`; installed: `%LOCALAPPDATA%\Lume\data\`); clipboard
    history survives the move from the old app-data location (auto-copied once).
-6. **Idle reset (ROADMAP #46)** — 设置 → 导航页：「闲置重置」默认开、阈值
+6. **Idle reset (docs/ROADMAP_HISTORY.md #46)** — 设置 → 导航页：「闲置重置」默认开、阈值
    30 分钟。把启动器呼出再隐藏，超过阈值后下次呼出应回导航页、搜索框为空，
    未豁免插件页冷启动；清单 `keep_session = true` 或 设置 → 插件 打开豁免的
    插件应保留查询与页面状态（但落地仍是导航页）；总开关关闭后不重置。
@@ -206,7 +206,7 @@ dev URL instead.
    `res/icons/` into the portable zip under
    `src-tauri/target/release/bundle/zip/`.
 
-### Elevation agent (ROADMAP #22)
+### Elevation agent (docs/ROADMAP_HISTORY.md #22)
 
 > Registering/unregistering the agent pops a UAC prompt, so those steps are
 > manual only. `cargo test` never registers the task.
@@ -266,7 +266,7 @@ dev URL instead.
    stays flat while the environment is untouched (no polling wakeups; thread
    suspended in `MsgWaitForMultipleObjectsEx`).
 
-### Recent + pinned bars (ROADMAP #10)
+### Recent + pinned bars (docs/ROADMAP_HISTORY.md #10)
 
 > `cargo test` covers the recent store (upsert / dedupe / pruning); the UI is
 > manual-only. Use either `pnpm run tauri dev` or an embedded debug/release
@@ -305,7 +305,7 @@ dev URL instead.
 
 1. **Core plugin contract** — `node scripts/cdp_plugin_verify.mjs` (provider
    rows + sandboxed mode page + plugin pane), then
-   `node scripts/cdp_plugin_v2_verify.mjs` for the expanded host API. The P2
+   `node scripts/cdp_plugin_v2_verify.mjs` for the expanded host API. The
    feature series (file drop / clipboard image / list template / tile reorder)
    plus the static ctx-surface parity checks (logic-frame ctx ≡ view bridge ≡
    rpc.ts cases) run as `node scripts/cdp_p2b_verify.mjs`; it enables its two
@@ -326,12 +326,13 @@ dev URL instead.
    layer and a 600ms-late DOM node, enter fan-out to view+titlebar frames,
    user-close re-dock restore, the titlebar frame round-trip and the
    `lume.env.form` host-form constant in all three surfaces (launcher /
-   detached view / detached titlebar). The P6.5 file-search chain is
-   `node test/_snapshot_probe.mjs`; LRU eviction semantics and the
-   new-enter-beats-stale-snapshot rule (ROADMAP #42) are
+   detached view / detached titlebar). The file-search chain has a local
+   probe at `test/_snapshot_probe.mjs` (gitignored scratch — other machines should
+   exercise it through the file-search example plugin instead); LRU eviction semantics and the
+   new-enter-beats-stale-snapshot rule (docs/ROADMAP_HISTORY.md #42) are
    `node scripts/cdp_plugin_lru_verify.mjs` (generates its own filler modes
    and asserts one victim per overflow, a stored snapshot, and that the new
-   payload wins on remount). Search-box routing across modes (ROADMAP #48) is
+   payload wins on remount). Search-box routing across modes (docs/ROADMAP_HISTORY.md #48) is
    `node scripts/cdp_mode_query_verify.mjs` (with its own keyword fixture):
    the default one shared value follows every mode switch + search, the real
    settings pane toggle restores independent per-mode queries (seeded at the

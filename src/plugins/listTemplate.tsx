@@ -1,4 +1,4 @@
-//! Built-in list template (P2.5b) — manifest `template = "list"`.
+//! Built-in list template — manifest `template = "list"`.
 //!
 //! A `kind = "mode"` plugin that declares `template = "list"` ships only its
 //! `entry` logic — no `view` HTML. The registry loads the module in the

@@ -7,7 +7,7 @@
 //! the IPC — a page that escaped the sandboxed iframe into raw `invoke`
 //! still has to name a plugin id that declared the capability.
 //!
-//! Caller attribution (P6.5 进程隔离): plugin logic no longer runs in the
+//! Caller attribution (进程隔离): plugin logic no longer runs in the
 //! launcher window but in a shared hidden host window (`plugin-logic-host`),
 //! each plugin in its own opaque-origin sandboxed iframe. Attribution is
 //! **label + token based** (`resolve_plugin_caller`):
@@ -22,7 +22,7 @@
 //! What this layer buys: plugin-private data is scoped by id, and a
 //! sandboxed/compromised page cannot exercise a capability no plugin
 //! declared. Residual (stated honestly): view pages inside the MAIN window
-//! still pass through under the `main` label — same as before P6.5.
+//! still pass through under the `main` label — same as before .
 //!
 //! Manifests are cached per id and refreshed by `get_plugins` (startup +
 //! every settings-applied) and `reload_plugin`; a check for an unseen id
@@ -46,7 +46,7 @@ struct CapsEntry {
 }
 
 /// Managed permission cache: plugin id → declared capabilities, plus the
-/// P6.5 logic-host token map (token → plugin id; issued per iframe load by
+/// logic-host token map (token → plugin id; issued per iframe load by
 /// the supervisor, registered via `plugin_logic_register_tokens`).
 #[derive(Default)]
 pub struct PluginPermState {
@@ -86,7 +86,7 @@ pub fn drop_host_tokens(state: &PluginPermState, id: &str) {
 /// The shared logic host window's label.
 pub const LOGIC_HOST_LABEL: &str = "plugin-logic-host";
 
-/// Resolve the effective plugin id of one call (P6.5 attribution). See the
+/// Resolve the effective plugin id of one call (attribution). See the
 /// module docs for the label rules. `Ok(None)` = first-party/native path.
 pub fn resolve_plugin_caller(
     state: &PluginPermState,
@@ -211,7 +211,7 @@ fn find_manifest(base: &Path, id: &str) -> Option<crate::plugins::PluginManifest
 /// (`file_search`, `trash_to_recycle`): a call **without** a plugin id is the
 /// native pipeline and is only accepted from the main window; a call **with**
 /// an id goes through the manifest check. The id is resolved by
-/// `resolve_plugin_caller` first (P6.5 attribution: token/label force).
+/// `resolve_plugin_caller` first ( attribution: token/label force).
 pub fn assert_native_or_capability(
     perms: &PluginPermState,
     settings: &SettingsState,

@@ -1,4 +1,4 @@
-// 闲置重置（ROADMAP #46）端到端验证。
+// 闲置重置（docs/ROADMAP_HISTORY.md #46）端到端验证。
 //
 // 夹具：examples/plugins/state-probe（清单 keep_session = true，豁免默认）
 //       examples/plugins/hello-mode（未声明，默认不豁免）

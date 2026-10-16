@@ -4,7 +4,7 @@
 //! the in-process fallback (`automation::send_later`, medium IL) and the
 //! elevated helper (`agent::serve`, high IL). `SendInput` is subject to UIPI,
 //! so the elevated token is what actually decides whether a key reaches a
-//! higher-integrity target — see `docs/ROADMAP.md` #22.
+//! higher-integrity target — see `docs/ROADMAP_HISTORY.md` #22.
 
 use std::str::FromStr;
 
@@ -219,7 +219,7 @@ fn push_key(inputs: &mut Vec<INPUT>, vk_code: u16, up: bool) {
         flags |= KEYEVENTF_KEYUP.0;
     }
     // The scan code is informational unless KEYEVENTF_SCANCODE is set (it is
-    // not — see ROADMAP #22 for why), but the reference implementation that
+    // not — see docs/ROADMAP_HISTORY.md #22 for why), but the reference implementation that
     // works in protected games fills it, so we match it.
     let scan = unsafe { MapVirtualKeyW(vk_code as u32, MAPVK_VK_TO_VSC) } as u16 & 0xFF;
     let mut input: INPUT = unsafe { std::mem::zeroed() };

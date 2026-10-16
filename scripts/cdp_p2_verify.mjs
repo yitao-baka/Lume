@@ -1,4 +1,4 @@
-// P2 验证（ROADMAP #25）：入口矩阵与搜索链路。
+// 验证（docs/ROADMAP_HISTORY.md #25）：入口矩阵与搜索链路。
 //   ① features：over 命中 → 「文本工具：转为大写」行；激活把查询作为 payload
 //      投递给 onFeature（剪贴板收到大写结果）；regex 命中 URL 才出行；
 //      min_length 边界不命中；catch-all 正则被忽略。

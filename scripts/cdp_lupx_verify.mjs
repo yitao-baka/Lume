@@ -1,4 +1,4 @@
-// .lupx 安装/卸载验证（ROADMAP #28 / P4 第一步）：
+// .lupx 安装/卸载验证（docs/ROADMAP_HISTORY.md）：
 //   ① inspect   合法包（plugin.toml 在根）返回 id/版本/权限/文件数；不存在的
 //               文件、无清单包、含 `../` 条目的包分别被明确拒绝
 //   ② install   安装 → get_plugins 出现该插件 → 无需重启 provider 搜索行直接

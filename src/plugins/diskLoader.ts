@@ -1,9 +1,9 @@
-//! 磁盘插件 entry 的 ESM 加载器（P6.5 从 registry.ts 抽出）。
+//! 磁盘插件 entry 的 ESM 加载器（从 registry.ts 抽出）。
 //!
 //! 同一套「取文本 → 相对导入改写为 blob URL → `import()`」机制，文件获取
 //! 方式由调用方注入：
 //! - 启动器主窗口（历史路径 / 未来复用）：`fetchDiskFile`（asset 协议）；
-//! - 逻辑宿主 iframe（P6.5）：经桥 RPC `__readPluginFile` 由 supervisor
+//! - 逻辑宿主 iframe：经桥 RPC `__readPluginFile` 由 supervisor
 //!   代理读取——opaque origin 里 `fetch(asset://)` 被 CORS 拒绝。
 //!
 //! blob URL 在创建它的 realm 内自洽：iframe 里创建、iframe 里 import，

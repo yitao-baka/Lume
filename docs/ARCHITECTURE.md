@@ -56,7 +56,7 @@ Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
 There are **three binaries**, all sitting side by side in the exe directory and
 reaching each other by path rather than by name: `lume.exe` (the launcher,
 medium integrity), `lume-svc.exe` (the SYSTEM file-index service) and
-`lume-agent.exe` (the elevated input-injection helper, ROADMAP #22).
+`lume-agent.exe` (the elevated input-injection helper, docs/ROADMAP_HISTORY.md).
 
 ## Modules
 
@@ -67,7 +67,7 @@ policy: the 窗口位置 setting (center / corners / follow-mouse / custom)
 only positions the window on its FIRST appearance in a run — later shows
 inherit the spot the launcher was last closed at, and a manual drag stops
 automatic anchoring altogether (session-scoped `PlacementState`,
-ROADMAP #41); `follow-mouse` is the exception and re-centers on the cursor
+docs/ROADMAP_HISTORY.md); `follow-mouse` is the exception and re-centers on the cursor
 on every show.
 Called by the frontend (Esc) and by `hotkey.rs`. The launcher also **auto-hides
 on focus loss**: `lib.rs` registers a `WindowEvent::Focused(false)` handler
@@ -75,7 +75,7 @@ that hides the window, so clicking elsewhere dismisses it.
 
 Window frame: the launcher panel is opaque (src/App.css `.launcher`, solid
 `--surface`) — the window has **no Acrylic backdrop** (deliberately removed;
-see ROADMAP #30.6). DWM's visible frame border strip (the ~2px non-client ring
+see docs/ROADMAP_HISTORY.md). DWM's visible frame border strip (the ~2px non-client ring
 around the client area) is **painted in that same panel color** —
 `set_panel_frame_border()` → `DWMWA_BORDER_COLOR` with the `--surface` value
 for the current 颜色模式 (re-painted from `apply_settings` and on
@@ -85,7 +85,7 @@ as a light-gray ring. Panel, strip and the default plugin-page canvas then
 read as one uniform surface, corners included (Win11 rounding is DWM's).
 `clear_dwm_border()` (COLOR_NONE) is what the settings/preview/detached-plugin
 windows use. `DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)`
-reports the strip; see ROADMAP #30.4–#30.6 for the pixel measurements.
+reports the strip; see docs/ROADMAP_HISTORY.md for the pixel measurements.
 
 ### `apps.rs`
 - **Index**: `AppIndex` state holds in-memory mirrors of the System32 and
@@ -105,7 +105,7 @@ reports the strip; see ROADMAP #30.4–#30.6 for the pixel measurements.
   chokepoint for the 最近使用 bar).
 
 ### `filesearch.rs` / `everything.rs` / `usnidx.rs`
-The whole-drive file-search stack (ROADMAP #20), surfaced as one command —
+The whole-drive file-search stack (docs/ROADMAP_HISTORY.md), surfaced as one command —
 `file_search(query)` (async: sync commands run on the main thread and the
 backends have timeouts).
 
@@ -137,7 +137,7 @@ backends have timeouts).
   the watcher builds lazily. The service cannot see user-session windows, so
   the probe is a toolhelp process-name check, not FindWindow.
 
-### `agent.rs` / `input.rs` / `pipe.rs` (ROADMAP #22)
+### `agent.rs` / `input.rs` / `pipe.rs` (docs/ROADMAP_HISTORY.md)
 
 - **The problem**: `SendInput` is subject to UIPI — only same-or-lower integrity
   windows receive synthetic input, and MSDN is explicit that a UIPI block cannot
@@ -162,7 +162,7 @@ backends have timeouts).
   effect.
 - **Failure honesty**: an injection reports the events `SendInput` actually
   inserted (`sent`), so zero is a real, visible failure — `uipi`/`blocked`/
-  `not_elevated`/`needs_agent` instead of a silent no-op. See ROADMAP #22 for the
+  `not_elevated`/`needs_agent` instead of a silent no-op. See docs/ROADMAP_HISTORY.md for the
   full reason set and the known ceiling (kernel-level anti-cheat filtering is
   out of reach).
 
@@ -248,7 +248,7 @@ already-running ones keep their original environment.
   stalling the frontend's window resizes (the loading gate's collapse among
   them). Same rationale as `get_file_thumb` / `get_file_bytes` /
   `get_video_thumb`; anything that reads files, decodes images or queries a
-  big table belongs off the main thread (see ROADMAP #30.7).
+  big table belongs off the main thread (see docs/ROADMAP_HISTORY.md).
 - **Copy back**: `copy_clipboard(id)` looks up the row — text via
   `arboard::set_text`, images via PNG-decode → `set_image`.
 - DB helpers take `&Connection`, which lets tests run against an in-memory DB.
@@ -342,7 +342,7 @@ before adding a field:
   installing user's SID** + SYSTEM only: it is a high-integrity key injector, so
   widening it would make it a local privilege-escalation primitive. The agent
   additionally refuses callers from another session or from any image other than
-  the sibling `lume.exe` (ROADMAP #22).
+  the sibling `lume.exe` (docs/ROADMAP_HISTORY.md).
 - **Nothing higher-integrity runs in the launcher process.** `lume.exe` stays at
   medium integrity; the only privileged code lives in `lume-agent.exe`, whose
   entire capability is "send one configured hotkey to the foreground window it
@@ -351,23 +351,23 @@ before adding a field:
 ## Frontend
 
 - The launcher frontend is modular. `src/App.tsx` is the **shell /
-  composition root** (2026-09-27 主窗口部件化, ROADMAP #30): it owns the
+  composition root** (2026-09-27 主窗口部件化, docs/ROADMAP_HISTORY.md): it owns the
   session lifecycle (session continuation + keep-alive host stack, mode
   switching, mount-time listeners),
   wires the `PluginServices` every page receives via a late-bound deps
   object, and composes the uTools-style surface — the `SearchBox` widget on
   top and the active page widget (`ModeInstance.View`) spliced below it,
   plus the shared overlays (toast, context menu).
-- **Session continuation / keep-alive（ROADMAP #40/#42）**：已访问页面挂载后只
+- **Session continuation / keep-alive（docs/ROADMAP_HISTORY.md）**：已访问页面挂载后只
   隐藏不卸载（`src/launcher/session.ts` 的主机栈，LRU 8 + 淘汰前 view 帧
   快照，一次溢出只淘汰应淘汰的页数）；hide/show 与模式切换不重置
   mode/query/页面状态。跨窗口（分离/回流）走 `sessionFrames` 帧存储 + 快照
   v2（键控 auto 层 + custom 钩子），分离期间启动器不留活副本（单一权威），
   用户关窗（payload `user:true`）回流到该插件页恢复。收到**新的 `enter`**
-  时该插件尚在等待重放的会话帧直接作废（新进入优先于旧快照，#42）。对标
+  时该插件尚在等待重放的会话帧直接作废（新进入优先于旧快照）。对标
   zTools 的 WebContentsView 保活/搬移；Tauri 不能搬 webview，页面自有 JS
   状态需 `lume.on.snapshot/restore`（§6C）。
-- **Idle reset（ROADMAP #46）**：Rust `window::hide_main` 是唯一隐藏收口
+- **Idle reset（docs/ROADMAP_HISTORY.md）**：Rust `window::hide_main` 是唯一隐藏收口
   （blur / 热键 / Esc / `hide_launcher`），隐藏时广播 `launcher-hidden`；
   前端在 `beginSummon` 里比较挂钟间隔（无后台定时器，睡眠/休眠照常计时），
   超阈值即 `applyIdleReset()`：回导航页、清 home 查询、逐实例
@@ -375,18 +375,18 @@ before adding a field:
   丢弃会话帧。豁免 = 清单 `keep_session` 或用户覆盖
   （`settings.plugins.keep_session_overrides`，用户值优先）；分离窗口不参与；
   `lastHiddenAt` 仅内存，跨重启恢复仍由 `remember_last_page` 决定。
-- **搜索框路由（ROADMAP #48）**：搜索框默认是**全局单值**（`App.tsx` 的
+- **搜索框路由（docs/ROADMAP_HISTORY.md）**：搜索框默认是**全局单值**（`App.tsx` 的
   `sharedQuery`，以最新输入为准）——模式切换 / 切换键把该值推入目标页的
   query 镜像并按其 `search`；插件 `app.setQuery`、输入框占用（subInput）回填
   写同一份值；打开首页条目后的下次呼出、闲置重置清空它，分离窗口回流把窗口
   最后查询并入。设置「各模式使用独立搜索词」`appearance.per_mode_query`
-  （默认关）开启后恢复 #48 之前的逐页独立 query（仍仅会话内存）。经关键字 /
+  （默认关）开启后恢复逐页独立 query（仍仅会话内存）。经关键字 /
   feature 行**进入**某模式会消耗共享值——入口触发词不是目标页的过滤条件。
-- **Bridge host-form constant（ROADMAP #42）**：`injectBridge` /
+- **Bridge host-form constant（docs/ROADMAP_HISTORY.md）**：`injectBridge` /
   `injectTitlebarBridge` pin a synchronous `lume.env.form` on every plugin
   frame — `"launcher"` (inside the launcher window) or `"window"` (a
   detached plugin window; logic frames are always `"launcher"`). Pages must
-  use it instead of counting parent-document iframes: keep-alive (#40) keeps
+  use it instead of counting parent-document iframes: keep-alive (docs/ROADMAP_HISTORY.md) keeps
   several mode pages mounted at once, so frame counting misjudges the form
   (translator lost its detach button this way). §6C/§6G.3.
 - `src/shell/SearchBox.tsx` — the search-row widget (magnifier + query input
@@ -394,8 +394,8 @@ before adding a field:
   routing (page `handleQuery` interception → `subInput` ownership → search)
   and placeholder resolution (`subInput` → page `placeholder()` → plugin
   `setPlaceholder` map). The default route is the one shared query
-  (ROADMAP #48 — see above); `appearance.per_mode_query` restores per-page
-  queries. Pill presentation is setting-driven (#47): icon +
+  (docs/ROADMAP_HISTORY.md — see above); `appearance.per_mode_query` restores per-page
+  queries. Pill presentation is setting-driven: icon +
   name by default, icons-only with `appearance.mode_switch_icons_only` on
   (`title`/`aria-label` carry the name; a mode without an icon falls back to
   `res/icons/unknow_universal.svg`).
@@ -426,7 +426,7 @@ before adding a field:
   A plugin that paints its own `html`/`body` background still wins (its rule
   comes later in the document).
   Both the default and the pushed value are the **plugin's effective** mode:
-  since ROADMAP #36 a plugin can pin its own light/dark through
+  since docs/ROADMAP_HISTORY.md a plugin can pin its own light/dark through
   `lume.theme.set` (`settings.plugins.color_modes`), and then only that
   plugin's canvas, `theme` events, detached-window chrome and taskbar icon
   follow the override — the launcher keeps its own `data-theme`, and other
@@ -457,7 +457,7 @@ before adding a field:
     Navigate row a plugin contributes defaults to the plugin's own icon set
     when the row carries no explicit `icon` (provider results, feature rows,
     keyword-entry rows). The set is the manifest `icon_light`/`icon_dark`
-    pair with the legacy single `icon` as fallback (#44); `pickIcon` chooses
+    pair with the legacy single `icon` as fallback; `pickIcon` chooses
     per the **surface's** current mode through the reactive
     `themeMode()` signal (`src/theme.ts`), so a theme flip re-renders rows,
     pills and settings cards without re-running a search. Explicit variants
@@ -472,7 +472,7 @@ before adding a field:
     preview-target decision).
   - `icons.ts` — `createIconStore()`: the in-memory icon cache mirroring the
     backend `IconCache` (batched `get_app_icons` fetches).
-  - `iconSpec.ts` — plugin icon specs (#44): `resolveIconInput` /
+  - `iconSpec.ts` — plugin icon specs: `resolveIconInput` /
     `resolveThemedIcon` / `pickIcon` (surface-theme choice, legacy flag for
     the `--icon-filter` exemption) / `resolveIconUrl` (URI pass-through +
     plugin-relative asset URLs). Shared by the registry and the settings pane.
@@ -502,7 +502,7 @@ before adding a field:
   Explorer bar), each a titled, expandable grid
   of app boxes sized like the results grid; typing shows the results grid
   with plugin-appended rows (mode keywords / features / providers) split
-  below the normal results under a 推荐使用 divider (#43). ↑/↓ cycle the
+  below the normal results under a 推荐使用 divider. ↑/↓ cycle the
   bars on the empty main menu, ←/→ move within the active bar; on a query
   the arrows walk the one linear grid across the divider; mouse hover
   selects, click launches. Context menus offer pin / launch / open location
@@ -521,9 +521,9 @@ before adding a field:
 
 - Window starts hidden (`"visible": false`), first shown by the hotkey, and
   auto-hides on focus loss (`lib.rs` window-event handler).
-- 会话续存（#40）：隐藏 / 呼出 / 模式切换都不再清 query / results / mode，
-  热键重呼出恢复上次页面与状态；只有「打开首页条目后的下次呼出」（#40 D1）
-  与闲置重置（#46）清空查询并回导航页。搜索框默认是一份全局共享值（#48，
+- 会话续存：隐藏 / 呼出 / 模式切换都不再清 query / results / mode，
+  热键重呼出恢复上次页面与状态；只有「打开首页条目后的下次呼出」（首次打开条目后的下次呼出）
+  与闲置重置清空查询并回导航页。搜索框默认是一份全局共享值（共享单值，
   见上），设置「各模式使用独立搜索词」开启后恢复逐页独立。
 - `AppIndex` mirrors the `cache.rs` SQLite DBs; it is refreshed at startup and
   hourly (differential), so search reflects new files without a manual rescan.

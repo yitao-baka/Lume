@@ -1,4 +1,4 @@
-// 沙箱验证（P5）：mode 页 iframe 变 opaque origin + Rust 命令侧权限白名单。
+// 沙箱验证：mode 页 iframe 变 opaque origin + Rust 命令侧权限白名单。
 //   ① sandbox  iframe 带 sandbox 属性（allow-scripts，无 allow-same-origin）
 //   ② 隔离    宿主读不到 iframe 内部（contentDocument=null / lume 不可达）
 //   ③ 桥内自检  sandbox-probe 插件页在 opaque origin 里自检并把结果写进
@@ -132,7 +132,7 @@ const focusBack = await m.evalJs(`document.activeElement === document.getElement
 check("③g focus hand-off after iframe mousedown", focusBack === true);
 // Tab 由脚本经 query 事件遥控探针派发（iframe 不可从宿主触达）。
 // 断言「激活的模式变了」而不是「回到导航页」：Tab 是**循环**切页，下一站是
-// 谁取决于当前启用的插件集合（曾长期红着 —— 见 ROADMAP #32.11 的记录，
+// 谁取决于当前启用的插件集合（曾长期红着 —— 见 docs/ROADMAP_HISTORY.md #32.11 的记录，
 // 当时导航页后面跟的是磁盘 mode，`.plugin-frame` 仍在）。契约是「iframe 里
 // 的 Tab 被宿主路由消费并切页」，与落点无关。
 const activePill = () => m.evalJs(`[...document.querySelectorAll(".mode-switch-item")].findIndex((b) => b.className.includes("active"))`);

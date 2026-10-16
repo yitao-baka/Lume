@@ -1,4 +1,4 @@
-# 插件开发指南（ROADMAP #7，Pre-26.10）
+# 插件开发指南（ROADMAP Pre-26.10）
 
 > **完整 API 参考**见 `docs/PLUGIN_API.md`（清单字段表、Provider 契约、
 > ModeInstance/PluginServices 逐方法时序、启停语义、安全模型、调试）。
@@ -17,24 +17,24 @@ name = "Web Search"        # 设置页显示名（可省）
 version = "1.0.0"          # 可省
 kind = "provider"          # provider（搜索提供）| mode | service
 description = "…"          # 可省
-permissions = ["network"]  # P3.2 起强制：用到的能力必须声明（见下）
+permissions = ["network"]  # 用到的能力必须声明（见下）
 entry = "main.js"          # provider 的入口 JS（相对插件目录）
 ```
 
 `kind` 决定贡献类型（**三类均已支持磁盘加载**）：
 
 - `provider` — 向搜索结果追加条目（纯对象 `{search}` 或工厂 `create(ctx)`；
-  条目支持 `description` 副行、显式 `icon`（字符串或 #44 的
+  条目支持 `description` 副行、显式 `icon`（字符串或
   `{ light, dark }` 两套）与 `enter` 动作回调（激活不打开
   文件而是回调 `onEnter(item)`），完整契约见 `docs/PLUGIN_API.md` §5.1；
   多文件入口（`entry` 指向目录）见 §5.6。示例 `examples/plugins/web-search/`
   与 `examples/plugins/actions/`）
 - `mode` — 整页模式：`view` HTML 自由 UI（沙箱 iframe）+ 可选 `entry`
   逻辑钩子 + `keywords` 全局关键字进入 + 可选 `height` 窗口高度 +
-  可选 `icon` pill 图标、`icon_light`/`icon_dark` 深浅两套（#44，也是搜索
+  可选 `icon` pill 图标、`icon_light`/`icon_dark` 深浅两套（也是搜索
   结果行/列表行的默认图标）+ `hidden = true` 不进
   模式切换栏（只能从导航页搜索结果进入，示例 `examples/plugins/hidden-mode/`）
-  + `detachable = true` 允许分离为独立窗口（P6，
+  + `detachable = true` 允许分离为独立窗口（
   见 `docs/PLUGIN_API.md` §6G；示例 `examples/plugins/hello-mode/`；
   基于宿主 `search.files` 能力的完整文件搜索模式见
   `examples/plugins/file-search/`；`template = "list"` 免 HTML 列表模式见
@@ -81,7 +81,7 @@ export default {
 - **返回条目** `{ name, path }` — 与原生结果同构：追加在原生索引结果之后
   （按 path 去重，总数封顶 20），激活时经 `launch_app` 打开（文件路径与
   URL 都可以）。**图标**：条目的显式 `icon`（URI 或相对插件目录的路径；
-  也可给 `{ light, dark }` 两套，宿主按所在表面主题选一套——#44）
+  也可给 `{ light, dark }` 两套，宿主按所在表面主题选一套）
   → 清单图标集（`icon_light`/`icon_dark`/`icon`）→ `path` 常规管线
   （取不到 → 未知图标回退）。
 - **调用时机**：Navigate 模式每次非空搜索（空查询的主菜单不触发）。
@@ -117,7 +117,7 @@ export default function create(ctx) {
 栏不可越过。每次呼出与插件刷新时重新拉取（可按 `ctx.storage` 动态返回）。
 完整示例 `examples/plugins/nav-bar/`。
 
-## 声明式进入与搜索链路（P2）
+## 声明式进入与搜索链路
 
 除关键字外，插件还能用**声明式规则**被输入自然触发（完整契约见
 `docs/PLUGIN_API.md` §6E，示例 `examples/plugins/text-tools/`）：
@@ -136,27 +136,27 @@ min_length = 2
 `select`（可选 `filter`）做二级下钻，Esc 回上一级；④ `app.redirect(插件id,
 {code, payload})` 跳到另一个插件并带数据。
 
-**文件拖入与剪贴板图片（P2.2，2026-09-22）**：规则加 `type = "files"`
+**文件拖入与剪贴板图片**：规则加 `type = "files"`
 （拖文件到启动器 → 「<label>（N 个文件）」行，payload 是命中路径数组
 `info.paths`；`extensions = ["md", "txt"]` 过滤扩展名）或 `type = "img"`
 （剪贴板有图时空查询出行，插件用 `ctx.clipboard.readImage()` 读 PNG data
-URI）。**类别匹配（P4）**：`files` 规则还可以写 `file_type = "folder"`（只
+URI）。**类别匹配**：`files` 规则还可以写 `file_type = "folder"`（只
 匹配文件夹）、`"image"`、`"video"`、`"audio"`、`"document"`、`"text"`、
 `"others"`（宿主维护扩展名类别表）；`extensions` 非空时优先且文件夹不再
 命中。示例 `examples/plugins/files-img-demo/`。
 
-**活动窗口匹配（P4，ROADMAP #29）**：`type = "window"` 规则按**呼出前的
+**活动窗口匹配**：`type = "window"` 规则按**呼出前的
 前台窗口**触发——呼出时空查询主菜单出现「<label>」行，激活投递
 `info.window = {process, className, title, path?}`。维度：`process`
 （exe 名或 stem）、`class`（Win32 窗口类）、`title`（子串或 `/…/` 正则）；
 字段内 OR、字段间 AND，三字段全空 = 永不命中。匹配不需要权限（主动读窗口
 信息才要 `window`）。示例 `examples/plugins/window-demo/`。
 
-**免 HTML 的列表模式（P2.5b）**：mode 插件声明 `template = "list"` 后不用写
+**免 HTML 的列表模式**：mode 插件声明 `template = "list"` 后不用写
 `view` —— 宿主用内置列表渲染 `search(q)` 返回的行（形状同 provider 结果），
 ↑/↓/Enter/点击走 `onEnter(item)`。示例 `examples/plugins/list-demo/`。
 
-## 数据、私有文件与插件设置（P3）
+## 数据、私有文件与插件设置
 
 三件事一起补上（完整契约见 `docs/PLUGIN_API.md` §6F，示例
 `examples/plugins/notes/`）：
@@ -206,7 +206,7 @@ const sort = await ctx.settings.get("sort");
 onSettings(values) { /* 面板一改，这里立刻拿到新值 */ }
 ```
 
-## 会话状态与独立窗口（mode 页，ROADMAP #40）
+## 会话状态与独立窗口（mode 页）
 
 - 同一会话内宿主会**保活**已访问的模式页：隐藏启动器、切模式、从独立窗口
   关闭回流都不重建页面——表单、滚动、页内 JS 状态原样保留。
@@ -217,13 +217,13 @@ onSettings(values) { /* 面板一改，这里立刻拿到新值 */ }
   `examples/plugins/state-probe`）。快照仅内存流转，永不落盘。
 - 独立窗口是**单一权威**：分离期间启动器不留活副本；用户关闭窗口后宿主回到
   该插件页并恢复。`titlebar` 槽位帧同样参与快照（在标准重放前静默恢复）。
-- **闲置重置（ROADMAP #46）**：启动器隐藏超过阈值（默认开 + 30 分钟，可在
+- **闲置重置**：启动器隐藏超过阈值（默认开 + 30 分钟，可在
   设置 → 导航页调）后的下一次呼出回到干净状态——导航页 + 空查询，未豁免的
   模式页连保活宿主一起重置（下次进入冷启动）。清单 `keep_session = true`
   声明「保留状态」的默认值，设置 → 插件 每个 mode 卡片可逐插件覆盖；
   「状态即草稿」的页面建议声明并交给用户决定。豁免只保状态、不保落地页。
 
-## 权限（P3.2 起强制）
+## 权限（强制）
 
 `permissions` 不再是预留字段：**台账里的能力没声明就调用会被明确拒绝**
 （fail-closed），设置 → 插件 每行显示声明的 chips，并提供「全部授权」
@@ -252,7 +252,7 @@ permissions = ["network", "clipboard", "fs.write"]
 chrome，启动器不受影响；见 `docs/PLUGIN_API.md` §6C「插件自身颜色模式」）。完整台账与边界（含「这是
 前端关卡、不是沙箱」的说明）见 `docs/PLUGIN_API.md` §6D.6 与 §9。
 
-## 安装与卸载（`.lupx`，P4）
+## 安装与卸载（`.lupx`）
 
 插件包是 **`.lupx`**（zip：`plugin.toml` + 资产；清单在包根或唯一顶层目录
 内皆可）。安装：**设置 → 插件 → 工具栏「安装插件…」** → 选文件 → 确认卡
@@ -262,11 +262,11 @@ chrome，启动器不受影响；见 `docs/PLUGIN_API.md` §6C「插件自身颜
 `scripts/pack_lupx.ps1 <插件目录> <输出.lupx>`；手工安装（拷目录进
 `<base>/plugins/`）依旧有效。完整语义见 `docs/PLUGIN_API.md` §6H.1。
 
-## 安全模型（v1 + P5 沙箱）
+## 安全模型（v1 + 沙箱）
 
 加载第三方 JS = 在启动器 webview 里执行任意代码。信任模型是
 **显式放置即信任**（用户自己把插件放进 plugins/ 目录）。`permissions`
-自 P3.2 起**被强制**（上表；未声明的能力调用即失败），且自 P5 起是
+**被强制**（上表；未声明的能力调用即失败），且是
 **三层防线**：
 
 1. **沙箱 iframe** — mode 页运行在 opaque-origin 沙箱里，够不到宿主与

@@ -1,4 +1,4 @@
-// P0 验证：① provider enter/description/icon 动作条目（actions 示例）；
+// 验证：① provider enter/description/icon 动作条目（actions 示例）；
 // ② 多文件入口（actions 的 dist/ 目录 + 相对导入）；③ 关键字拼音匹配
 // （ms/miao → 「秒搜」）；④ reload_plugin 热重载事件路径。
 import { spawn, execSync } from "node:child_process";

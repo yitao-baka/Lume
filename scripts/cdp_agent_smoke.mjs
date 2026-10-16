@@ -1,4 +1,4 @@
-// Dev helper: elevation-agent smoke test (docs/ROADMAP.md #22).
+// Dev helper: elevation-agent smoke test (docs/ROADMAP_HISTORY.md #22).
 //  1. 自动化 pane renders the two agent switches with the right defaults
 //     (使用提权代理 on, 登录后常驻代理 off)
 //  2. flipping a switch marks the settings window dirty

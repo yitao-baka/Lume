@@ -1,5 +1,5 @@
 //! i18n — UI strings for Lume, kept in `languages/*.json` and loaded via
-//! i18next (docs/NORMS.md).
+//! i18next (docs/ARCHITECTURE.md).
 //!
 //! Languages: English, Simplified Chinese, Traditional Chinese. The active
 //! locale is detected from the system language at startup; `setLocale`

@@ -1,4 +1,4 @@
-//! Detached plugin window (P6) — the third window entry (plugin.html), the
+//! Detached plugin window — the third window entry (plugin.html), the
 //! host page for one mode plugin's page living in its own window.
 //!
 //! Mirrors the in-launcher disk mode exactly where it can: the same
@@ -47,7 +47,7 @@ const id = new URLSearchParams(location.search).get("plugin") ?? "";
  * `EventTarget::Any`, and `emit_to`'s filter only ever consults the *listener*
  * target** (every webview is visited): an unscoped listener therefore receives
  * every other plugin's `emit_to` traffic too. That was invisible while all
- * payloads were identical — with per-plugin color modes (ROADMAP #36) the
+ * payloads were identical — with per-plugin color modes (docs/ROADMAP_HISTORY.md #36) the
  * hello-mode window was applying file-search's `themePref` and repainting
  * itself. Scope every plugin-scoped event; leave app-wide ones
  * (`settings-applied`) unscoped. */
@@ -58,7 +58,7 @@ const WINDOW_LABEL = getCurrentWindow().label;
  * refreshes it while the window is open. */
 let hostColorSetting = "system";
 
-/** Paint this window in the PLUGIN's effective color mode (ROADMAP #36): the
+/** Paint this window in the PLUGIN's effective color mode (docs/ROADMAP_HISTORY.md #36): the
  * window's document IS the plugin's surface, so its chrome (`TitleBar`, the
  * theme tokens) must not disagree with the page inside it — a dark-pinned
  * plugin on a light launcher would otherwise show a light strip above a dark
@@ -160,7 +160,7 @@ function App() {
       void getCurrentWindow().setFocus().catch((err) => plog.error(id, "focus failed:", err));
     },
     setPluginColorMode: async (pluginId, mode) => {
-      // Same contract as the launcher's services (ROADMAP #36), but the
+      // Same contract as the launcher's services (docs/ROADMAP_HISTORY.md #36), but the
       // reconvergence differs: here the durable write also updates THIS
       // window's chrome, and the launcher learns about it over the Rust
       // `plugin-color-mode` event (its mirror drives the next `theme` push).
@@ -266,7 +266,7 @@ function App() {
   slotPost = slotView.post;
   slotSnapshot = slotView.snapshot;
 
-  // ── 关闭与快照（P6.5 / v2，ROADMAP #40）──
+  // ── 关闭与快照（会话快照 v2，docs/ROADMAP_HISTORY.md #40）──
   // 用户发起的关闭（× / Esc / Rust 的 close-requested 应答）先向每个活帧要
   // 状态快照再上报销毁：启动器侧按帧入库，重新进入本模式时恢复。快照失败/
   // 超时也必须能关掉 —— close_report 失败时兜底走立即关闭。
@@ -372,7 +372,7 @@ function App() {
       // append-only history, since pushes interleave (shown vs enter).
       const w = window as unknown as { __pluginStates?: unknown[] };
       (w.__pluginStates ??= []).push(s);
-      // 会话快照（P6.5 → #40）：titlebar 帧在标准回放**之前**静默恢复
+      // 会话快照（docs/ROADMAP_HISTORY.md #40）：titlebar 帧在标准回放**之前**静默恢复
       // （它的输入通常是宿主 query 的视图，恢复值若派发 input 会被页面
       // 当成新输入经 app.setQuery 回灌、把当前 query 冲掉——实测坑）；
       // 标准重放随后把宿主驱动值写回。view 帧在标准回放**之后**投递。
@@ -399,7 +399,7 @@ function App() {
         lastState.theme = s.theme;
         fan("theme", s.theme);
       }
-      // The plugin's own preference rides every theme push (ROADMAP #36): a
+      // The plugin's own preference rides every theme push (docs/ROADMAP_HISTORY.md #36): a
       // `theme.set` from the launcher's side (the plugin's logic iframe, or a
       // hand-edited settings.toml) must repaint THIS window's chrome too —
       // and the prefs file may have moved under us.
@@ -408,7 +408,7 @@ function App() {
         setPluginColorPref(id, pref, "launcher");
         applyWindowTheme();
       }
-      // 会话快照（P6.5 → #40）：view 帧在标准回放**之后**投递 —— 页面自身
+      // 会话快照（docs/ROADMAP_HISTORY.md #40）：view 帧在标准回放**之后**投递 —— 页面自身
       // 状态最后落地，覆盖与宿主回放重叠的部分（titlebar 帧见上方 early）。
       if (s.snapshot) routeSnapshot(s.snapshot, "late");
     }, { target: WINDOW_LABEL }).then((u) => (unlisteners.push(u), undefined));
@@ -422,7 +422,7 @@ function App() {
       (u) => (unlisteners.push(u), undefined)
     );
 
-    // Rust 拦截的用户发起关闭（× / Esc / Alt+F4）：先快照再上报销毁（P6.5）。
+    // Rust 拦截的用户发起关闭（× / Esc / Alt+F4）：先快照再上报销毁。
     // 必须带 target：不带的话别的插件窗口的关闭请求也会打进本窗口，
     // 两个独立窗口并存时关一个会连带关掉另一个。
     void listen("plugin-window-close-requested", () => {

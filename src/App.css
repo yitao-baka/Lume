@@ -108,7 +108,7 @@ body,
   visibility: hidden;
 }
 
-/* Keep-alive page hosts (ROADMAP #40): visited pages stay mounted so their
+/* Keep-alive page hosts (docs/ROADMAP_HISTORY.md #40): visited pages stay mounted so their
    DOM/JS state survives mode switches and hides. The active host contributes
    no box of its own (display: contents — the page's own children splice into
    .results exactly as before); inactive hosts are display:none but alive. */
@@ -119,7 +119,7 @@ body,
   display: contents;
 }
 
-/* 分离为独立窗口（P6）— detachable mode 页右上角的悬停显现按钮。
+/* 分离为独立窗口— detachable mode 页右上角的悬停显现按钮。
    面板自身是 `--surface`（不透明）后，按钮填充必须用抬升面 `--surface-raised`
    才读得出来（原先靠半透明面板与 --surface 的色差）。插件想自定义按钮形态
    （常驻/纯图标等）时不依赖它：自绘按钮 + `app.detach` 桥接接口。 */
@@ -425,7 +425,7 @@ body,
   justify-content: center;
 }
 
-/* 失效条目 (ROADMAP #17): 内容已不存在 → 整行变灰、标题划线，复制/粘贴被拦截。 */
+/* 失效条目 (docs/ROADMAP_HISTORY.md #17): 内容已不存在 → 整行变灰、标题划线，复制/粘贴被拦截。 */
 .clip-row.clip-row-invalid {
   opacity: 0.62;
 }
@@ -663,7 +663,7 @@ body,
   color: var(--text-faint);
 }
 
-/* Built-in plugin list template (P2.5b, manifest template = "list"): a flat
+/* Built-in plugin list template (manifest template = "list"): a flat
    row list under the search box — icon + name + description, one selection. */
 .plugin-list {
   display: flex;
@@ -1101,7 +1101,7 @@ body.reorder-dragging {
   color: var(--text);
 }
 
-/* 仅图标（ROADMAP #47，设置默认关）：名称藏起，悬停 tooltip 给名。
+/* 仅图标（docs/ROADMAP_HISTORY.md #47，设置默认关）：名称藏起，悬停 tooltip 给名。
    横向内边距 10 → 8 保住点击热区，纵向不变 → 胶囊高度与带名态一致，
    切换开关时搜索行不跳动。 */
 .mode-switch.icons-only .mode-switch-item {

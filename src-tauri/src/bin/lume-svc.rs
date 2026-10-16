@@ -1,7 +1,7 @@
 //! LumeSVC — the companion SYSTEM service binary (not a Tauri app).
 //!
 //! Runs as the local system account to own the periodic index-cache refresh
-//! (docs/ROADMAP service iteration). Invocations:
+//! (docs/ROADMAP_HISTORY.md service iteration). Invocations:
 //! - `lume-svc.exe --install`    register + start (needs elevation, UAC)
 //! - `lume-svc.exe --uninstall`  stop + unregister (needs elevation, UAC)
 //! - `lume-svc.exe --foreground [--data-dir <path>]`  dev: run without SCM

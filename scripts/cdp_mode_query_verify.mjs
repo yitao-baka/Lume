@@ -1,4 +1,4 @@
-// 搜索框跨模式共享（ROADMAP #48）端到端验证。
+// 搜索框跨模式共享（docs/ROADMAP_HISTORY.md #48）端到端验证。
 //
 // 覆盖：
 //   A 默认（per_mode_query=false）：导航页输入后切剪贴板仍显示同一内容，

@@ -647,7 +647,7 @@ export function createNavigateStore(deps: NavigateDeps) {
 
   // ── Pointer-driven drag reorder for the pinned bar ───────────────────────
   // HTML5 drag-and-drop cannot reorder pins: with the Tauri drag-drop handler
-  // enabled (file drops → plugin features, P2.2) the WebView2's OLE drop
+  // enabled (file drops → plugin features) the WebView2's OLE drop
   // target answers non-file drags with DROPEFFECT_NONE, killing dragstart
   // mid-flight. Reordering therefore runs on raw pointer events: press a pin,
   // move past a small threshold (so a plain click still launches), and these

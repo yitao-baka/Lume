@@ -1,4 +1,4 @@
-//! Plugin icon specs (ROADMAP #44) — resolve raw `icon` inputs into a
+//! Plugin icon specs (docs/ROADMAP_HISTORY.md #44) — resolve raw `icon` inputs into a
 //! light/dark/legacy set and pick one per surface theme.
 //!
 //! A plugin can hand the host artwork three ways:

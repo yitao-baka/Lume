@@ -1,4 +1,4 @@
-// P3 验证（ROADMAP #26）：数据层、权限强制层、私有文件、声明式设置。
+// 验证（docs/ROADMAP_HISTORY.md #26）：数据层、权限强制层、私有文件、声明式设置。
 //   ① 文档库     notes 插件的 [[features]] 保存 → db.put；同一 _rev 写两次被
 //                `conflict:` 拒绝；bulkDocs 逐条返回；宿主端 stale rev 同样被拒；
 //                `__` 前缀（宿主内部文档）不可被插件写。
@@ -24,7 +24,7 @@ rmSync(`${BASE}/data/plugin_store.db`, { force: true });
 rmSync(`${BASE}/data/plugin_store.db-wal`, { force: true });
 rmSync(`${BASE}/data/plugin_store.db-shm`, { force: true });
 mkdirSync(legacyDir, { recursive: true });
-writeFileSync(`${legacyDir}/plugin.toml`, 'id = "p3store"\nname = "P3 Storage Migration Probe"\nkind = "service"\nentry = "main.js"\n');
+writeFileSync(`${legacyDir}/plugin.toml`, 'id = "p3store"\nname = " Storage Migration Probe"\nkind = "service"\nentry = "main.js"\n');
 writeFileSync(`${legacyDir}/main.js`, "export default {};\n");
 writeFileSync(`${legacyDir}/storage.json`, '{"legacyKey":"\\"legacy-value\\""}\n');
 

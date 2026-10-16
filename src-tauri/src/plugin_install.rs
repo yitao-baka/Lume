@@ -1,4 +1,4 @@
-//! `.lupx` plugin packages (P4, ROADMAP #28) — inspect, install, uninstall.
+//! `.lupx` plugin packages (docs/ROADMAP_HISTORY.md #28) — inspect, install, uninstall.
 //!
 //! A `.lupx` is a zip archive holding `plugin.toml` at its root (or inside a
 //! single top-level directory, so "compress this folder" produces an

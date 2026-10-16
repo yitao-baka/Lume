@@ -1,4 +1,4 @@
-// 模式切换栏仅图标（ROADMAP #47）端到端验证。
+// 模式切换栏仅图标（docs/ROADMAP_HISTORY.md #47）端到端验证。
 //
 // 夹具：scratch mode 插件 noicon-mode（plugin.toml 不声明 icon）——
 //   断言无图标回退 unknow_universal.svg；内置导航/剪贴板胶囊用于宽度对比。

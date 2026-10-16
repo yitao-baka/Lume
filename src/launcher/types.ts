@@ -9,7 +9,7 @@ import type { Messages } from "../i18n";
  * through the plugin registry (src/plugins). */
 export type Mode = string;
 
-/** A resolved plugin icon set (ROADMAP #44): explicit light/dark variants
+/** A resolved plugin icon set (docs/ROADMAP_HISTORY.md #44): explicit light/dark variants
  * plus the optional legacy single `icon`. All URLs are already resolved
  * (asset/data/http…). */
 export interface PluginIconSpec {
@@ -40,7 +40,7 @@ export interface AppEntry {
   id: number;
   name: string;
   path: string;
-  /** Provider extras (P0.2): optional second line under the name in the
+  /** Provider extras : optional second line under the name in the
    * results grid. */
   description?: string;
   /** Explicit icon (provider rows) — wins over the cached icon pipeline.
@@ -57,7 +57,7 @@ export interface AppEntry {
    * so the search box keeps feeding the drilled level. */
   providerDrill?: { pluginId: string; item: unknown; filterable: boolean };
   /** Set on declarative-entry rows (`[[features]]` / redirect): activation
-   * enters the plugin with this payload (P2.1). `files`/`img` rows (P2.2)
+   * enters the plugin with this payload. `files`/`img` rows
    * carry the dropped paths in `paths`. */
   featureEnter?: {
     pluginId: string;

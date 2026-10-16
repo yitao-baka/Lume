@@ -1,4 +1,4 @@
-//! 共享插件逻辑宿主（P6.5 进程隔离）—— 第四个窗口入口（pluginLogic.html）。
+//! 共享插件逻辑宿主（进程隔离）—— 第四个窗口入口（pluginLogic.html）。
 //!
 //! 一个隐藏窗口承载全部 entry 插件的逻辑：每插件一个 opaque-origin 沙箱
 //! iframe（`pluginLogicFrame.html`，站点隔离 → 独立 renderer 进程）。本页是
@@ -30,7 +30,7 @@ import type { SettingsData } from "./settings/types";
 /** This hidden window's copy of the launcher's color-mode setting + the
  * per-plugin preference mirror (same `__LUME_CONFIG__` snapshot every window
  * gets) — `ctx.theme.get` answers from it and `ctx.theme.set` keeps it fresh
- * (ROADMAP #36). This window draws nothing of its own, so the values only ever
+ * (docs/ROADMAP_HISTORY.md #36). This window draws nothing of its own, so the values only ever
  * travel into the plugin frames' host-API answers; a preference changed
  * elsewhere *after* this window was created is therefore up to one window
  * lifetime stale here (the launcher's own mirror, not this one, drives every
@@ -112,7 +112,7 @@ function makeServices(id: string, token: string): PluginServices {
       return true;
     },
     detachMode: () => action("detach"),
-    // `theme.set` / `theme.get` from the plugin's LOGIC (ROADMAP #36). The
+    // `theme.set` / `theme.get` from the plugin's LOGIC (docs/ROADMAP_HISTORY.md #36). The
     // write goes to Rust like any other host call: this window's label
     // (`plugin-logic-host`) is not `main`, so the command also emits
     // `plugin-color-mode` and the launcher's mirror follows; the token keeps
@@ -273,7 +273,7 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
         rec(ok, error, result);
         return;
       } catch {
-        // 不可克隆（P6.5 回归：http.request 成功也带函数）→ 剥离后重发，
+        // 不可克隆（回归：http.request 成功也带函数）→ 剥离后重发，
         // 绝不当成失败——那会把可用的结果变成假错误。
       }
       msg.__lumeRpcResult.result = jsonSafe(result);

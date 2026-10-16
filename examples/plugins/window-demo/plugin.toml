@@ -1,4 +1,4 @@
-# Window Demo — P4 活动窗口匹配示例（ROADMAP #29）。
+# Window Demo — 活动窗口匹配示例（docs/ROADMAP_HISTORY.md #29）。
 #
 # `[[features]] type = "window"` 规则按**呼出启动器前的前台窗口**匹配：
 # 呼出时空查询主菜单出现「<label>」行，激活把窗口信息投递给 onFeature
@@ -20,7 +20,7 @@ id = "window-demo"
 name = "窗口工具 (Window Demo)"
 kind = "provider"
 version = "1.0.0"
-description = "P4 示例：type=window 活动窗口匹配（process/class/title 维度）"
+description = "示例：type=window 活动窗口匹配（process/class/title 维度）"
 entry = "main.js"
 
 # 匹配是宿主侧行为，不需要权限；插件要主动读窗口信息（ctx.app.foreground()）

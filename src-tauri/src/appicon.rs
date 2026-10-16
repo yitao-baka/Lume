@@ -1,4 +1,4 @@
-//! Theme-aware application icon (docs/ROADMAP.md #31).
+//! Theme-aware application icon (docs/ROADMAP_HISTORY.md #31).
 //!
 //! The icon pair in `res/icons/` replaces the retired `software.png` artwork:
 //! `application_dark_mode.png` (white artwork) shows on the dark theme and
@@ -15,14 +15,14 @@
 //! icon). Both sizes are set here via `WM_SETICON` with an HICON built from
 //! the same decoded RGBA the tray uses.
 //!
-//! P6.8 (ROADMAP #34): a detached plugin window gets its own taskbar icon —
+//! (docs/ROADMAP_HISTORY.md #34): a detached plugin window gets its own taskbar icon —
 //! the plugin's manifest `icon`, rasterized by the launcher's webview at
 //! detach time (this crate has no SVG decoder; `image` is PNG-only) and
 //! uploaded through `plugin_window_open`. Icon-less plugins keep the Lume
 //! theme icon; the separate taskbar identity (AppUserModelID) is set in
 //! `plugin_window.rs`.
 //!
-//! Themed variants (ROADMAP #44): a plugin declaring `icon_light`/`icon_dark`
+//! Themed variants (docs/ROADMAP_HISTORY.md #44): a plugin declaring `icon_light`/`icon_dark`
 //! uploads BOTH rasterized variants; the pick is rendered as-is (no
 //! inversion), so the artwork is exactly what the author shipped. Only the
 //! legacy single-icon upload keeps the historical dark-mode inversion (the
@@ -91,7 +91,7 @@ fn themed_hicon(dark: bool) -> Option<HICON> {
 
 /// Build an HICON from raw RGBA: BGRA pixel order + inverted-alpha AND mask
 /// — the format `CreateIcon` expects (mirrors tray-icon's RGBA → HICON
-/// conversion). Shared by the theme icons and the per-plugin icons (P6.8).
+/// conversion). Shared by the theme icons and the per-plugin icons.
 fn hicon_from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<SendHicon> {
     let mut xor: Vec<u8> = rgba.to_vec();
     for px in xor.chunks_exact_mut(4) {
@@ -116,8 +116,8 @@ fn hicon_from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<SendHicon> {
     .map(SendHicon)
 }
 
-/// Per-plugin taskbar icons for detached windows (P6.8, ROADMAP #34; themed
-/// variants ROADMAP #44): the RGBA the launcher rasterized at detach, plus
+/// Per-plugin taskbar icons for detached windows (docs/ROADMAP_HISTORY.md #34; themed
+/// variants docs/ROADMAP_HISTORY.md #44): the RGBA the launcher rasterized at detach, plus
 /// the built HICONs — one per theme, so a theme flip rebuilds without
 /// another round trip.
 #[derive(Default)]
@@ -273,10 +273,10 @@ pub fn apply(app: &AppHandle<impl Runtime>, color_mode: &str) {
             set_window_icon(&win, dark);
         }
     }
-    // Detached plugin windows (P6.8): re-derive their variant on a theme
+    // Detached plugin windows: re-derive their variant on a theme
     // flip — the plugin's own icon when one was uploaded, the Lume theme
     // icon otherwise (icon-less plugins only got it at creation). Each window
-    // uses its plugin's **effective** mode (ROADMAP #36): a plugin pinned to
+    // uses its plugin's **effective** mode (docs/ROADMAP_HISTORY.md #36): a plugin pinned to
     // dark keeps the dark variant while the launcher flips to light, exactly
     // like the canvas and chrome of that window.
     let icons = app.state::<PluginIcons>();
@@ -312,7 +312,7 @@ pub fn apply_window<R: Runtime>(win: &WebviewWindow<R>, color_mode: &str) {
     set_window_icon(win, is_dark(win.app_handle(), color_mode));
 }
 
-/// Apply a detached plugin window's OWN icon (`PluginIcons`, P6.8). Returns
+/// Apply a detached plugin window's OWN icon (`PluginIcons`). Returns
 /// false when no icon was uploaded for `id` — the caller then falls back to
 /// `apply_window` (the Lume theme icon).
 pub fn apply_plugin_window<R: Runtime>(
@@ -340,7 +340,7 @@ fn set_window_icon<R: Runtime>(win: &WebviewWindow<R>, dark: bool) {
 }
 
 /// Set both icon slots on one window — shared by the theme icons and the
-/// per-plugin icons (P6.8).
+/// per-plugin icons.
 fn set_hicon<R: Runtime>(win: &WebviewWindow<R>, hicon: HICON) {
     let Ok(hwnd) = win.hwnd() else {
         return;

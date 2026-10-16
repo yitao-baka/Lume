@@ -1,4 +1,4 @@
-// LRU 淘汰语义 + 新 enter 优先 端到端验证（ROADMAP #42）：
+// LRU 淘汰语义 + 新 enter 优先 端到端验证（docs/ROADMAP_HISTORY.md #42）：
 //   ① 一次超上限只淘汰 LRU 一页（旧实现的同步淘汰循环会把候选整批淘汰）；
 //   ② 淘汰帧快照不会覆盖之后到达的新 enter payload（onEnter 作废陈旧帧）。
 //

@@ -1,4 +1,4 @@
-//! Plugin document store (P3.1, ROADMAP #26) — `<base>/data/plugin_store.db`.
+//! Plugin document store (docs/ROADMAP_HISTORY.md #26) — `<base>/data/plugin_store.db`.
 //!
 //! Its own SQLite file, deliberately NOT `lume.db`: plugin data is deletable
 //! wholesale (uninstall = drop one file) and a plugin-corrupted store can never

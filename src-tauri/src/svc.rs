@@ -1,4 +1,4 @@
-//! LumeSVC SYSTEM service (docs/ROADMAP service iteration).
+//! LumeSVC SYSTEM service (docs/docs/ROADMAP_HISTORY.md service iteration).
 //!
 //! The companion `lume-svc.exe` binary registers/unregisters the service and
 //! runs it as SYSTEM. Beyond the SCM lifecycle and the `\\.\pipe\LumeSVC`

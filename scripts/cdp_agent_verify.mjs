@@ -1,4 +1,4 @@
-// Dev helper: end-to-end verification of the elevation agent (ROADMAP #22).
+// Dev helper: end-to-end verification of the elevation agent (docs/ROADMAP_HISTORY.md #22).
 //
 // Proves the whole client → pipe → inject path works without needing UAC:
 //   1. starts lume-agent.exe --serve (unelevated — the *permission* part of the

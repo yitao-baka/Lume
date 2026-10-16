@@ -1,4 +1,4 @@
-/* Satellite preview window (ROADMAP #15) — self-contained dark theme; the
+/* Satellite preview window (docs/ROADMAP_HISTORY.md #15) — self-contained dark theme; the
  * window is always dark (a media viewer), so no theme variables are needed. */
 * {
   box-sizing: border-box;
@@ -156,7 +156,7 @@ audio {
   white-space: nowrap;
 }
 
-/* Multi-file list (ROADMAP #17): header (count + 记住勾选) + checkbox rows. */
+/* Multi-file list (docs/ROADMAP_HISTORY.md #17): header (count + 记住勾选) + checkbox rows. */
 .preview-files {
   flex: 1;
   min-height: 0;

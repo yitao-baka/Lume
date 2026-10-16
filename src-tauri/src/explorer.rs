@@ -33,7 +33,7 @@ pub struct ForegroundContext {
     pub hwnd: i32,
     pub pid: u32,
     /// Foreground process executable file name (e.g. "chrome.exe"; empty when
-    /// it could not be resolved). Window-matching features (ROADMAP #29) and
+    /// it could not be resolved). Window-matching features (docs/ROADMAP_HISTORY.md #29) and
     /// the plugin-facing variant key on this.
     pub process: String,
     #[serde(rename = "className")]

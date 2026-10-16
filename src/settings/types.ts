@@ -27,7 +27,7 @@ export interface SettingsData {
     expand_pinned: boolean;
     /** Mode pills show icons only (default off — icon + name). */
     mode_switch_icons_only: boolean;
-    /** 各模式独立搜索词 (ROADMAP #48) — default off: every mode shares one
+    /** 各模式独立搜索词 (docs/ROADMAP_HISTORY.md #48) — default off: every mode shares one
      * search-box value (the latest input wins; in-session only, never written
      * to disk). On: each mode remembers its own query like before. */
     per_mode_query: boolean;
@@ -46,7 +46,7 @@ export interface SettingsData {
     last_page: string;
     /** Last clipboard category when last_page === "clipboard". */
     last_page_kind: string;
-    /** 闲置重置 (ROADMAP #46): after the launcher stayed hidden this long, the
+    /** 闲置重置 (docs/ROADMAP_HISTORY.md #46): after the launcher stayed hidden this long, the
      * next summon starts clean (home, empty query, non-exempt pages reset). */
     idle_reset_enabled: boolean;
     /** Idle-reset threshold in minutes (UI offers 5/15/30/60/120/240). */
@@ -129,10 +129,10 @@ export interface SettingsData {
    * the launcher windows read is typed here. It is also optional, so
    * `DEFAULT_SETTINGS` (「恢复默认设置」) stays free of it. */
   plugins?: {
-    /** Per-plugin color-mode preference (`lume.theme.set`, ROADMAP #36):
+    /** Per-plugin color-mode preference (`lume.theme.set`docs/ROADMAP_HISTORY.md #36):
      * plugin id → `"system" | "light" | "dark"`. Absent = `"system"`. */
     color_modes?: Record<string, string>;
-    /** Idle-reset exemptions (ROADMAP #46): plugin id → true keeps its
+    /** Idle-reset exemptions (docs/ROADMAP_HISTORY.md #46): plugin id → true keeps its
      * session state across an idle reset, false forces a reset. Absent =
      * the manifest's `keep_session` default. */
     keep_session_overrides?: Record<string, boolean>;

@@ -11,7 +11,7 @@ import type { HostIcon, PickedIcon } from "../launcher/types";
 import settingsIcon from "../../res/icons/settings.svg";
 import unknownIcon from "../../res/icons/unknow_universal.svg";
 
-/** Fallback for a mode that declares no icon (ROADMAP #47): the bundled
+/** Fallback for a mode that declares no icon (docs/ROADMAP_HISTORY.md #47): the bundled
  * unknown icon, so an icon-only pill is never blank — and a label pill never
  * shows a broken image. `legacy` keeps the dark-mode inversion the other
  * bundled SVGs get. */

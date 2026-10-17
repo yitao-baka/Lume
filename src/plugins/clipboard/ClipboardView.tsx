@@ -2,7 +2,7 @@
 //! status bar. Pure rendering: rows and windowing come from props + the
 //! clipboard store; interactions go back out through callbacks.
 
-import { Show } from "solid-js";
+import { createEffect, Show } from "solid-js";
 import { t } from "../../i18n";
 import clipboardIcon from "../../../res/icons/clipboard.svg";
 import multifilesIcon from "../../../res/icons/multifiles.svg";
@@ -124,6 +124,47 @@ function clipTile(item: ClipboardItem, color: string | null, link: boolean) {
 export function ClipboardView(props: ClipboardViewProps) {
   const clip = props.clip;
   const services = props.services;
+  let clearButtonEl: HTMLButtonElement | undefined;
+  let confirmEl: HTMLDivElement | undefined;
+  let cancelButtonEl: HTMLButtonElement | undefined;
+  let confirmWasOpen = false;
+
+  // The confirm dialog is modal: focus starts on the safe action and returns
+  // to the trigger when the dialog closes by any path (Cancel, overlay, Esc).
+  createEffect(() => {
+    const open = clip.clearOpen();
+    if (open) {
+      confirmWasOpen = true;
+      queueMicrotask(() => cancelButtonEl?.focus());
+    } else if (confirmWasOpen) {
+      confirmWasOpen = false;
+      queueMicrotask(() => clearButtonEl?.focus());
+    }
+  });
+
+  function trapConfirmTab(e: KeyboardEvent) {
+    if (e.key !== "Tab" || !confirmEl) return;
+    const focusables = Array.from(
+      confirmEl.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  function closeClear() {
+    clip.setClearOpen(false);
+    clip.setKeepPinned(false);
+  }
 
   /** A single clipboard history row: tile, two-line body, hover actions. */
   function clipRow(item: ClipboardItem, idx: number) {
@@ -144,10 +185,11 @@ export function ClipboardView(props: ClipboardViewProps) {
         aria-selected={isSelected}
         onMouseMove={() => {
           // Hover-selection is a setting (default off — then only a click
-          // selects). It is also ignored while keyboard nav is active.
-          if (!clip.hoverSelect() || services.selectionSource() === "keyboard") return;
+          // selects). A real mouse move takes ownership back from keyboard
+          // navigation; otherwise the pointer could never select again.
+          if (!clip.hoverSelect()) return;
           services.markMouse();
-          clip.setSelected(idx);
+          if (clip.selected() !== idx) clip.setSelected(idx);
         }}
         onClick={() => {
           services.markMouse();
@@ -278,7 +320,7 @@ export function ClipboardView(props: ClipboardViewProps) {
 
   return (
     <div class="clip-page">
-      <div class="clip-cats" role="tablist" aria-label="Clipboard category">
+      <div class="clip-cats" role="tablist" aria-label={t("clipboardCategory")}>
         {CLIP_CATS.map((c) => (
           <button
             class="clip-cat"
@@ -354,34 +396,54 @@ export function ClipboardView(props: ClipboardViewProps) {
           >
             {clip.clipPaused() ? t("clipResume") : t("clipPause")}
           </button>
-          <button class="clip-clear-btn" onClick={() => clip.setClearOpen(true)}>
+          <button
+            class="clip-clear-btn"
+            ref={(el) => (clearButtonEl = el)}
+            onClick={() => clip.setClearOpen(true)}
+          >
             {t("clipClear")}
           </button>
         </div>
       </div>
 
       <Show when={clip.clearOpen()}>
-        <div class="clip-confirm">
-          <p class="clip-confirm-title">{t("clipClearConfirm")}</p>
-          <label class="clip-confirm-check">
-            <input
-              type="checkbox"
-              checked={clip.keepPinned()}
-              onChange={(e) =>
-                clip.setKeepPinned((e.currentTarget as HTMLInputElement).checked)
-              }
-            />
-            <span>{t("keepPinned")}</span>
-          </label>
-          <div class="clip-confirm-actions">
-            <button class="clip-confirm-cancel" onClick={() => clip.setClearOpen(false)}>
-              {t("cancel")}
-            </button>
-            <button class="clip-confirm-ok" onClick={clip.doClear}>
-              {t("clipClear")}
-            </button>
+        <>
+          <div class="clip-confirm-overlay" onClick={closeClear} />
+          <div
+            class="clip-confirm"
+            ref={(el) => (confirmEl = el)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clip-clear-title"
+            onKeyDown={trapConfirmTab}
+          >
+            <p class="clip-confirm-title" id="clip-clear-title">
+              {t("clipClearConfirm")}
+            </p>
+            <label class="clip-confirm-check">
+              <input
+                type="checkbox"
+                checked={clip.keepPinned()}
+                onChange={(e) =>
+                  clip.setKeepPinned((e.currentTarget as HTMLInputElement).checked)
+                }
+              />
+              <span>{t("keepPinned")}</span>
+            </label>
+            <div class="clip-confirm-actions">
+              <button
+                class="clip-confirm-cancel"
+                ref={(el) => (cancelButtonEl = el)}
+                onClick={closeClear}
+              >
+                {t("cancel")}
+              </button>
+              <button class="clip-confirm-ok" onClick={clip.doClear}>
+                {t("clipClear")}
+              </button>
+            </div>
           </div>
-        </div>
+        </>
       </Show>
     </div>
   );

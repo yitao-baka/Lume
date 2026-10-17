@@ -56,7 +56,10 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
 - Mode pills (home + plugin modes, before the gear): icon + name; 设置 →
   导航页 → `mode_switch_icons_only` switches them to icon-only (the tooltip
   carries the name). Pill height is identical in both presentations — the
-  search row must not resize on the toggle.
+  search row must not resize on the toggle. The strip owns only the width left
+  after the input and gear: when modes overflow it scrolls horizontally (no
+  visible scrollbar), long labels ellipsize, and the active pill is kept in
+  view. The search input never drops below its 120px usable floor.
 
 ## Results
 

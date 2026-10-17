@@ -9,6 +9,7 @@
 
 import type { LauncherPlugin, ModeInstance, ModeKeyContext, PluginServices } from "../../plugins/types";
 import { previewTarget } from "../../launcher/clipData";
+import { isImeComposing } from "../../launcher/keyInput";
 import clipboardIconUrl from "../../../res/icons/clipboard.svg";
 import { createClipboardStore } from "./store";
 import { ClipboardView } from "./ClipboardView";
@@ -21,6 +22,20 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
    * switch categories on an empty query; Space toggles multi-select; Del
    * deletes; Enter activates (the root calls `activate` for Enter/↑↓). */
   function onKey(e: KeyboardEvent, ctx: ModeKeyContext): boolean {
+    if (isImeComposing(e)) return false;
+    // The clear-history confirmation is modal: native button/checkbox
+    // semantics (Enter/Space/Tab) stay inside the dialog, while every other
+    // shortcut is swallowed before it can reach the history behind it.
+    if (clip.clearOpen()) {
+      if (
+        e.key === "ArrowUp" || e.key === "ArrowDown" ||
+        e.key === "ArrowLeft" || e.key === "ArrowRight" ||
+        e.key === "Home" || e.key === "End"
+      ) {
+        e.preventDefault();
+      }
+      return true;
+    }
     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
       if (clip.clipQuery() === "") {
         e.preventDefault();
@@ -30,6 +45,7 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
       return false;
     }
     if (e.key === " ") {
+      if (ctx.editing) return false; // the search box owns Space
       if (ctx.hasResults) {
         e.preventDefault();
         clip.toggleMulti(clip.selected());
@@ -38,6 +54,7 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
       return false;
     }
     if (e.key === "Delete") {
+      if (ctx.editing || !ctx.hasResults) return false;
       e.preventDefault();
       void clip.deleteSelected();
       return true;
@@ -56,6 +73,7 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
     activate: clip.activate,
     onKey,
     onEscape: clip.onEscape,
+    modal: () => clip.clearOpen(),
     previewTarget: () => previewTarget(clip.clips()[clip.selected()], clip.rememberChecks()),
     previewEnabled: clip.previewEnabled,
     measureViewport: clip.measureViewport,

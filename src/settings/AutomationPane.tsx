@@ -175,7 +175,7 @@ export default function AutomationPane(props: {
         >
           <For each={automation().actions ?? []}>
             {(action, i) => (
-              <div class="settings-row-between settings-listrow">
+              <div class="settings-row-between settings-listrow settings-automation-row">
                 <span class="settings-index-name" title={action.process}>{action.process}</span>
                 <ComboRecorder
                   value={action.combo}

@@ -21,7 +21,7 @@ import type { SettingsData } from "./settings/types";
 import "./App.css";
 import type { ClipKind, MenuState } from "./launcher/types";
 import { MIN_WINDOW_H, TOAST_MS, TOAST_UNDO_MS } from "./launcher/types";
-import type { ModeId, PageRow, PluginServices } from "./plugins/types";
+import type { MenuStateLike, ModeId, PageRow, PluginServices } from "./plugins/types";
 import { createIconStore } from "./launcher/icons";
 import { pickIcon } from "./launcher/iconSpec";
 import { createWindowSizer } from "./launcher/sizing";
@@ -219,6 +219,9 @@ function App() {
   }
 
   const [menu, setMenu] = createSignal<MenuState>(null);
+  const [menuIndex, setMenuIndex] = createSignal(0);
+  const [menuPos, setMenuPos] = createSignal({ left: 0, top: 0, ready: false });
+  let contextMenuEl: HTMLDivElement | undefined;
   // ── Shared launcher state ──
   // The toast is shared with every plugin action; pages own their
   // rows/selection/viewport internally (see src/plugins/*/).
@@ -421,7 +424,18 @@ function App() {
 
   /** Close the custom context menu. */
   function closeMenu() {
+    if (!menu()) return;
     setMenu(null);
+    // The menu is a temporary focus scope; give the caret back to the search
+    // box unless the chosen action moves focus itself.
+    queueMicrotask(() => document.getElementById("search-input")?.focus());
+  }
+
+  /** Open the menu at the pointer with a fresh keyboard selection. */
+  function openMenu(state: MenuStateLike) {
+    setMenuIndex(0);
+    setMenuPos({ left: state.x, top: state.y, ready: false });
+    setMenu(state as Exclude<MenuState, null>);
   }
 
   async function resetAndHide() {
@@ -454,7 +468,7 @@ function App() {
     nextSearchToken: () => ++requestSeq,
     selectionSource: () => selectionSource,
     markMouse,
-    openMenu: setMenu,
+    openMenu,
     mode,
     requestMode: (id) => {
       // #48: entering a mode from a row consumes the query (see below).
@@ -558,6 +572,88 @@ function App() {
   definePlugin(navigatePlugin);
   definePlugin(clipboardPlugin);
   definePlugin(preview);
+
+  /** Context-menu rows for the current target. All labels/actions are rebuilt
+   * from the same pure builder the view renders, so keyboard activation can
+   * never run a different item than the one highlighted. */
+  function menuItems(): ReturnType<typeof buildMenuItems> {
+    const m = menu();
+    if (!m) return [];
+    return buildMenuItems(
+      {
+        nav: navigatePlugin.mode!.menuActions!() as NavMenuActions,
+        clip: clipboardPlugin.mode!.menuActions!() as ClipMenuActions,
+      },
+      m
+    );
+  }
+
+  function handleMenuKey(e: KeyboardEvent) {
+    const items = menuItems();
+    if (items.length === 0) {
+      closeMenu();
+      return;
+    }
+    const last = items.length - 1;
+    const move = (next: number) => {
+      e.preventDefault();
+      setMenuIndex(Math.min(Math.max(next, 0), last));
+    };
+    if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
+      move(menuIndex() >= last ? 0 : menuIndex() + 1);
+    } else if (e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey)) {
+      move(menuIndex() <= 0 ? last : menuIndex() - 1);
+    } else if (e.key === "Home") {
+      move(0);
+    } else if (e.key === "End") {
+      move(last);
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      const item = items[menuIndex()];
+      closeMenu();
+      item?.action();
+    }
+  }
+
+  /** Measure the rendered menu and flip it around the pointer when either
+   * axis would leave the viewport. CSS caps the height; this only chooses the
+   * anchor corner using the real size, never a guessed constant. */
+  function positionContextMenu() {
+    const m = menu();
+    const el = contextMenuEl;
+    if (!m || !el) return;
+    const margin = 6;
+    const rect = el.getBoundingClientRect();
+    let left = m.x;
+    let top = m.y;
+    if (left + rect.width > window.innerWidth - margin) left = m.x - rect.width;
+    if (top + rect.height > window.innerHeight - margin) top = m.y - rect.height;
+    left = Math.max(margin, Math.min(left, window.innerWidth - rect.width - margin));
+    top = Math.max(margin, Math.min(top, window.innerHeight - rect.height - margin));
+    setMenuPos({ left, top, ready: true });
+  }
+
+  createEffect(() => {
+    const m = menu();
+    if (!m) return;
+    setMenuPos({ left: m.x, top: m.y, ready: false });
+    requestAnimationFrame(positionContextMenu);
+    const onResize = () => positionContextMenu();
+    window.addEventListener("resize", onResize);
+    onCleanup(() => window.removeEventListener("resize", onResize));
+  });
+
+  // Focus follows the keyboard highlight so screen readers and native button
+  // activation agree with the visual menu state.
+  createEffect(() => {
+    if (!menu()) return;
+    const idx = menuIndex();
+    requestAnimationFrame(() => {
+      const items = contextMenuEl?.querySelectorAll<HTMLButtonElement>(".ctx-item");
+      items?.[idx]?.focus({ preventScroll: true });
+    });
+  });
+
   void refreshPlugins().then(() => {
     void navigatePlugin.refreshBars();
     restoreLastPageOnBoot();
@@ -578,6 +674,7 @@ function App() {
       if (!v) preview.preview!.clear();
     },
     markKeyboard,
+    handleMenuKey,
     activeMode,
     gridCols: () => sizer.gridCols(),
     moveSelection,
@@ -1092,23 +1189,24 @@ function App() {
           />
           <div
             class="ctx-menu"
+            ref={(el) => (contextMenuEl = el)}
+            role="menu"
             style={{
-              left: `${Math.min(menu()!.x, window.innerWidth - 170)}px`,
-              top: `${Math.min(menu()!.y, window.innerHeight - 140)}px`,
+              left: `${menuPos().left}px`,
+              top: `${menuPos().top}px`,
+              visibility: menuPos().ready ? "visible" : "hidden",
             }}
           >
             <For
-              each={buildMenuItems(
-                {
-                  nav: navigatePlugin.mode!.menuActions!() as NavMenuActions,
-                  clip: clipboardPlugin.mode!.menuActions!() as ClipMenuActions,
-                },
-                menu()!
-              )}
+              each={menuItems()}
             >
-              {(item) => (
+              {(item, idx) => (
                 <button
                   class="ctx-item"
+                  classList={{ active: menuIndex() === idx() }}
+                  role="menuitem"
+                  tabIndex={-1}
+                  onMouseEnter={() => setMenuIndex(idx())}
                   onClick={() => {
                     item.action();
                     closeMenu();

@@ -649,6 +649,10 @@ export interface ModeKeyContext {
   gridCols: () => number;
   /** selectionSource = "keyboard" (pages call it before their own nav). */
   markKeyboard: () => void;
+  /** The key event originated in a text-editing control (the search box or a
+   * page-owned input). Page shortcuts such as clipboard Space/Delete must not
+   * steal native editing semantics in that case. */
+  editing: boolean;
 }
 
 /** A full launcher page (the uTools-style "below the search box" widget) —
@@ -691,6 +695,10 @@ export interface ModeInstance {
   onSettings?(values: Record<string, unknown>): void;
   /** Consume Esc (e.g. leave multi-select); true = handled, root won't hide. */
   onEscape(): boolean;
+  /** A modal page scope owns the keyboard (e.g. a confirm dialog). While true
+   * the root suppresses mode-switch/shared bindings and delegates every key to
+   * `onKey`, so background rows can never be activated. */
+  modal?(): boolean;
   /** Satellite preview request for the selected row (null = hide). */
   previewTarget(): PreviewReq | null;
   /** Whether this mode currently wants the satellite (设置 → 开启预览). */

@@ -10,6 +10,7 @@ import { t } from "../../i18n";
 import navigateIcon from "../../../res/icons/navigate.svg";
 import type { SettingsData } from "../../settings/types";
 import type { AppEntry, MenuState } from "../../launcher/types";
+import { isImeComposing } from "../../launcher/keyInput";
 import type {
   LauncherPlugin,
   ModeInstance,
@@ -119,6 +120,7 @@ export function createNavigatePlugin(
    * continuous section-grid navigation on the empty main menu. Enter and the
    * shared ↑/↓ fall through to the shell's generic bindings. */
   function onKey(e: KeyboardEvent, ctx: ModeKeyContext): boolean {
+    if (isImeComposing(e)) return false;
     // Empty query = the bar menu (plugin context rows live in the
     // 「推荐使用」 section, not a grid); any query = the results grid.
     const empty = search.appsQuery() === "";
@@ -165,6 +167,7 @@ export function createNavigatePlugin(
       return true;
     }
     if (e.key === "Delete") {
+      if (ctx.editing) return false; // native text deletion owns Delete
       // Remove the selected entry of a section that supports it (最近使用's
       // soft delete). In the grid zone (typing) Delete falls through to text
       // editing in the search input.

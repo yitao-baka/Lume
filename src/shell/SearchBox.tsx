@@ -4,7 +4,7 @@
 //! routing, page switching and placeholder resolution; this component only
 //! renders them and reports input/clicks back.
 
-import { For, Show } from "solid-js";
+import { createEffect, For, Show } from "solid-js";
 import { t } from "../i18n";
 import { pickIcon } from "../launcher/iconSpec";
 import type { HostIcon, PickedIcon } from "../launcher/types";
@@ -43,6 +43,21 @@ export interface SearchBoxProps {
 }
 
 export function SearchBox(props: SearchBoxProps) {
+  let modeSwitchEl: HTMLDivElement | undefined;
+
+  // The mode bar scrolls horizontally when plugins outgrow the row. Keep the
+  // active pill visible after Tab cycling / keyword jumps, even when it was
+  // clipped before the switch.
+  createEffect(() => {
+    props.pages();
+    props.iconsOnly();
+    requestAnimationFrame(() => {
+      modeSwitchEl
+        ?.querySelector<HTMLElement>(".mode-switch-item.active")
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  });
+
   return (
     // The frameless window is draggable from the search row's empty space
     // (direct clicks only — the input/pills/gear are clickable and block it,
@@ -73,8 +88,17 @@ export function SearchBox(props: SearchBoxProps) {
       <div
         class="mode-switch"
         classList={{ "icons-only": props.iconsOnly() }}
+        ref={(el) => (modeSwitchEl = el)}
         role="tablist"
-        aria-label="Search mode"
+        aria-label={t("searchMode")}
+        onWheel={(e) => {
+          // A vertical wheel over the chip strip scrolls it horizontally,
+          // matching the hidden-scrollbar treatment used elsewhere.
+          if (!modeSwitchEl || modeSwitchEl.scrollWidth <= modeSwitchEl.clientWidth) return;
+          if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+          modeSwitchEl.scrollLeft += e.deltaY;
+          e.preventDefault();
+        }}
       >
         <For each={props.pages()}>
           {(p) => {

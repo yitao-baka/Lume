@@ -65,6 +65,7 @@ body,
   align-items: center;
   gap: 12px;
   padding: 18px 20px 14px;
+  min-width: 0;
 }
 
 .search-icon {
@@ -75,8 +76,9 @@ body,
 }
 
 .search-input {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 160px;
+  /* Keep the box usable when many mode pills compete for the row. */
+  min-width: 120px;
   border: none;
   outline: none;
   background: transparent;
@@ -761,6 +763,13 @@ body,
 }
 
 /* Clear-all confirm dialog (centered modal). */
+.clip-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 69;
+  background: rgba(0, 0, 0, 0.32);
+}
+
 .clip-confirm {
   position: fixed;
   left: 50%;
@@ -823,6 +832,13 @@ body,
 .clip-confirm-ok {
   background: #f87171;
   color: #fff;
+}
+
+.clip-confirm-cancel:focus-visible,
+.clip-confirm-ok:focus-visible,
+.clip-confirm-check input:focus-visible {
+  outline: 2px solid #5ac8fa;
+  outline-offset: 2px;
 }
 
 /* Navigate main menu: grid of app boxes. */
@@ -1023,6 +1039,13 @@ body.reorder-dragging {
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  max-height: calc(100vh - 12px);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.ctx-menu::-webkit-scrollbar {
+  display: none;
 }
 
 .ctx-item {
@@ -1042,7 +1065,9 @@ body.reorder-dragging {
   cursor: pointer;
 }
 
-.ctx-item:hover {
+.ctx-item:hover,
+.ctx-item:focus,
+.ctx-item.active {
   background: rgba(90, 200, 250, 0.18);
   color: var(--text);
 }
@@ -1068,12 +1093,24 @@ body.reorder-dragging {
 
 /* Apps / Clipboard mode switch in the search row. */
 .mode-switch {
-  flex: none;
+  /* Shrink into the remaining row width instead of pushing the gear out.
+     The pills scroll horizontally when there are more than fit. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(60%, 520px);
   display: flex;
   gap: 2px;
   padding: 2px;
   border-radius: 8px;
   background: var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.mode-switch::-webkit-scrollbar {
+  display: none;
 }
 
 .mode-switch-item {
@@ -1090,6 +1127,14 @@ body.reorder-dragging {
   padding: 5px 10px;
   border-radius: 6px;
   cursor: pointer;
+  flex: none;
+  max-width: 180px;
+  white-space: nowrap;
+}
+
+.mode-switch-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mode-switch-item.active {
@@ -1304,6 +1349,23 @@ body.settings-window #root {
 /* A whole section (title + cards) — stacked when the search box filters. */
 .settings-section {
   margin-bottom: 8px;
+}
+
+/* Settings search with no matching labels. Previously this was an entirely
+   blank body, which looked like a rendering failure. */
+.settings-search-empty {
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.settings-search-empty p {
+  margin: 0;
 }
 
 .settings-footer {
@@ -1550,6 +1612,28 @@ body.settings-window #root {
   justify-content: space-between;
   gap: 12px;
   padding: 6px 0;
+}
+
+/* 自动化 rules carry six controls. Let them wrap instead of overflowing the
+   scroll container at the settings window's 560px minimum width. */
+.settings-automation-row {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.settings-automation-row .settings-index-name {
+  flex: 1 1 120px;
+  min-width: 0;
+  max-width: none;
+}
+
+.settings-automation-row .settings-hotkey-btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Chip groups right-aligned inside a labeled row. */

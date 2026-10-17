@@ -43,6 +43,11 @@ export {
 
 const plugins: LauncherPlugin[] = [];
 const [manifests, setManifests] = createSignal<PluginManifest[]>([]);
+/** Monotonic refresh generation: only the latest `get_plugins` answer may
+ * replace the manifest list or finish loading disk plugins. Startup refresh
+ * and a fast settings-applied refresh can otherwise land out of order and
+ * resurrect a stale `enabled=false` view. */
+let refreshSeq = 0;
 
 /** Register a plugin. Call once per plugin at composition time. */
 export function definePlugin(plugin: LauncherPlugin) {
@@ -61,12 +66,17 @@ export function definePlugin(plugin: LauncherPlugin) {
 /** Refresh manifests (builtin + disk) + enabled state from the backend, then
  * load any newly discovered disk plugins. */
 export async function refreshPlugins() {
+  const seq = ++refreshSeq;
   try {
     // 保存设置 = 用户出手干预：熔断状态整体复位（#32.4；用户可能刚改过
     // 出问题插件的配置或做了重载）。
     logicFailCounts.clear();
     logicOffline.clear();
     const list = await invoke<PluginManifest[]>("get_plugins");
+    if (seq !== refreshSeq) {
+      plog.debug(null, "manifests refresh superseded; dropping stale result");
+      return;
+    }
     plog.info(
       null,
       `manifests refreshed: ${list.length} (builtin ${list.filter((m) => m.builtin).length}, ` +
@@ -82,9 +92,11 @@ export async function refreshPlugins() {
       );
     }
     setManifests(list);
-    await loadDiskPlugins();
+    await loadDiskPlugins(seq);
   } catch (err) {
-    plog.error(null, "get_plugins failed — keeping previous state:", err);
+    if (seq === refreshSeq) {
+      plog.error(null, "get_plugins failed — keeping previous state:", err);
+    }
   }
 }
 
@@ -792,25 +804,32 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
  * event). Re-reads manifests so manifest edits apply too; unknown ids are
  * reported back as false. */
 export async function reloadDiskPlugin(id: string): Promise<boolean> {
+  const seq = ++refreshSeq;
   const had = await unloadDiskPlugin(id);
   // Re-read manifests first: a renamed/removed plugin must not be resurrected
   // from a stale manifest list, and new keywords/features need a fresh read.
   try {
-    setManifests(await invoke<PluginManifest[]>("get_plugins"));
+    const list = await invoke<PluginManifest[]>("get_plugins");
+    if (seq !== refreshSeq) return had;
+    setManifests(list);
   } catch (err) {
     plog.error(null, "reload: get_plugins failed:", err);
   }
-  await loadDiskPlugins();
+  if (seq === refreshSeq) await loadDiskPlugins(seq);
   return had;
 }
 
 /** Load every not-yet-loaded, enabled disk plugin from the manifests.
  * Manifests flagged `development` are unloaded first, so editing their code
  * takes effect on the next refresh (settings-applied) without a restart. */
-export async function loadDiskPlugins() {
+export async function loadDiskPlugins(seq = refreshSeq) {
   const services = pluginServices;
   let loadedAny = false;
   for (const m of manifests()) {
+    if (seq !== refreshSeq) {
+      plog.debug(null, "disk-plugin load superseded; stopping stale pass");
+      return;
+    }
     if (m.builtin || !m.enabled || !m.dir) {
       plog.debug(
         m.id,
@@ -832,7 +851,10 @@ export async function loadDiskPlugins() {
       );
       continue;
     }
-    if (m.development) await unloadDiskPlugin(m.id);
+    if (m.development) {
+      await unloadDiskPlugin(m.id);
+      if (seq !== refreshSeq) return;
+    }
     if (loadedDiskIds.has(m.id)) {
       plog.debug(m.id, "skip load: already loaded this session");
       continue;
@@ -988,7 +1010,7 @@ export async function loadDiskPlugins() {
   if (loadedAny) plog.info(null, "disk plugins loaded; manifests signal refreshed");
   // The `plugins` array is plain — clone the manifests signal so reactive
   // consumers (mode pills, provider merge) re-run after disk loads.
-  if (loadedAny) setManifests((prev) => [...prev]);
+  if (loadedAny && seq === refreshSeq) setManifests((prev) => [...prev]);
 }
 
 /** Load a plugin's effective settings and hand them to its

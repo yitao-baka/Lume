@@ -115,6 +115,14 @@ export function createClipboardStore(services: PluginServices) {
       })) as ClipboardItem[];
       if (token !== services.searchToken()) return;
       setClips(res);
+      // Hidden rows must never remain part of a merge-paste selection after a
+      // filter/category/search change.
+      const visible = new Set(res.map((item) => item.id));
+      setMultiIds((prev) => {
+        if (prev.size === 0) return prev;
+        const next = new Set([...prev].filter((id) => visible.has(id)));
+        return next.size === prev.size ? prev : next;
+      });
       setSelected(0);
       setClipScrollTop(0);
     } finally {
@@ -279,6 +287,7 @@ export function createClipboardStore(services: PluginServices) {
       .then(() => services.showToast(t("clipCleared")))
       .catch((err) => console.error("clear failed", err));
     setKeepPinned(false);
+    setMultiIds(new Set<number>());
     void services.runSearch(clipQuery());
   }
 
@@ -304,6 +313,12 @@ export function createClipboardStore(services: PluginServices) {
     try {
       const deleted = await invoke<DeletedClip>("delete_clipboard", { id });
       setUndoBuf(deleted);
+      setMultiIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       services.showToast(t("clipDeletedOne"), { undo: undoDelete, duration: TOAST_UNDO_MS });
     } catch (err) {
       console.error("delete failed", err);
@@ -402,6 +417,11 @@ export function createClipboardStore(services: PluginServices) {
     search,
     activate,
     onEscape: () => {
+      if (clearOpen()) {
+        setClearOpen(false);
+        setKeepPinned(false);
+        return true;
+      }
       if (multiIds().size > 0) {
         setMultiIds(new Set<number>()); // leave multi-select without hiding
         return true;

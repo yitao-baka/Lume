@@ -3435,3 +3435,71 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 - `cargo test` **220 passed / 9 ignored**；`cargo check`、`pnpm exec tsc
   --noEmit`、`pnpm run build`、`pnpm run tauri build --debug --no-bundle`
   干净。
+
+---
+
+## 52. UI 独立审计第三轮：输入、浮层、刷新竞态与布局（已实现）
+
+**状态：已实现（2026-10-17）。** 来源：`docs/BUG_REPORT_3.md`（基线
+`7dc0cb0`）的 12 项 UI/交互问题。修复按输入安全、状态一致性、布局与可访问性
+分组推进。
+
+### 52.1 实现
+
+- **输入边界（UI-01/02/10）**：新增 `src/launcher/keyInput.ts` 的
+  `isImeComposing` / `isTextEditingTarget`；键盘路由在组合态直接放行，并把
+  `editing` 传给页面。剪贴板页只在非编辑目标上处理 `Space`/`Delete`，搜索框
+  内的空格、前向删除与标准 Windows 编辑组合恢复原生行为。WebView2 快捷键
+  拦截器放行 `Ctrl+Backspace`、`Ctrl+Home/End`、词级方向导航等文本编辑键。
+- **浮层作用域（UI-04/05）**：`ModeInstance.modal()` 让确认框在根路由上拥有
+  独占键盘作用域；剪贴板 `onEscape` 先关确认框，对话框初始聚焦取消按钮、
+  用遮罩隔离鼠标并圈定 Tab。上下文菜单改为真实键盘菜单：方向键/Home/End/
+  Tab 移动高亮，Enter/Space 执行当前项，Esc 关闭；根路由不再把菜单按键透传
+  给后台页面。菜单位置在渲染后按 `getBoundingClientRect()` 测量并四向翻转/
+  夹取，CSS 仅负责视口内最大高度。
+- **插件清单竞态（UI-03）**：`plugins/registry.ts` 增加单调 `refreshSeq`；
+  `refreshPlugins` / `reloadDiskPlugin` / `loadDiskPlugins` 只在代际仍为最新时
+  落地清单或继续加载，旧请求返回时直接丢弃，避免启动早期启用插件后被较早
+  发出的停用响应覆盖。设置窗口常驻挂载，重新获得焦点且无脏改动时重读设置，
+  防止启动早期加载的旧工作副本在用户后来打开设置并保存时重新写入旧插件列表。
+- **布局与列表状态（UI-06/07/08/11/12）**：自动化规则行允许换行，程序名与
+  录制按钮可截断；模式栏收缩为剩余宽度并横向滚动，活动胶囊自动滚入视野，
+  搜索框保留 120px 最小可用宽度；删除/搜索/分类变化会把 `multiIds` 与当前
+  可见行求交集；设置搜索键清单补齐分组标题、开关、提示与枚举项，并增加
+  无匹配空态与清空按钮；剪贴板真实鼠标移动重新取得选择权。
+- **设置细节（UI-09 与建议项）**：快捷键录制器改为按钮级捕获并在失焦时取消，
+  异步校验用代际避免取消后回写；保存失败显示 toast 且保留脏状态；模式栏与
+  剪贴板分类的硬编码英文 aria-label 改走 `t()`。
+
+### 52.2 踩坑
+
+- 搜索框获得焦点时，**真实 keydown 的 target 就是输入框**；但 CDP
+  `window.dispatchEvent` 的 target 是 window。`editing` 只按事件 target 判断，
+  既保住真实输入语义，也让合成回归脚本可以明确选择「编辑中」或「页面快捷键」
+  两条路径。
+- 模态页必须在根路由处理模式切换键**之前**拦截；否则 `Tab` 会先触发模式轮换，
+  页面自己的焦点圈定没有机会运行。
+- 上下文菜单的焦点跟随要放在 `requestAnimationFrame` 中：`Show` 刚挂载时菜单
+  节点尚未完成布局，立即取 rect/聚焦会拿到临时尺寸或空节点。
+- debug 构建的 200 行剪贴板查询首次可能耗时数秒，UI 回归应在 IPC 可用后跑，
+  或在夹具里把 `history_cap` 降到 10 再断言虚拟列表与多选状态，避免把慢加载
+  误判成空列表。
+
+### 52.3 验证
+
+- `test/ui_audit_probe*.mjs`：搜索框 Space/Delete、IME、菜单底部定位、确认框
+  Esc、设置搜索四项与空态、快捷键失焦、540px 模式栏全部 PASS；最小客户区
+  546×412 下自动化内容与 footer 均无横向溢出。
+- `test/ui_hover_probe.mjs`：rows 10、before 1、after 3，键盘导航后悬停重新
+  选中。
+- `test/ui_many_modes_probe.mjs`：21 个模式（含 5 个长名称夹具）下
+  `modeRight=662`、`gearRight=700`、窗口 720，模式栏横向收缩，搜索框仍有
+  190px。
+- `test/q48_race_ab.mjs`：启动后 0ms 与 3000ms 启用临时 mode，后端均报告
+  `enabled=true`，胶囊与关键词行均出现。
+- `test/cdp_mode_query_verify.mjs`：**47/47**（修复前 41/47）；F 段的关键词行
+  进入、共享词消耗与模式切换全部通过，常驻设置窗口不再回写旧插件列表。
+- `test/ui_misc_verify.mjs`：菜单方向键只移动菜单焦点、Esc 只关菜单、确认框
+  Space/Enter 只作用于焦点按钮、IME Enter 不离开页面。
+- `cargo check` / `cargo test`（220 passed / 9 ignored）、
+  `pnpm exec tsc --noEmit`、`pnpm run build`、debug exe 重建均干净。

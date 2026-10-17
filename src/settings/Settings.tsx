@@ -7,8 +7,9 @@
 //! the section label) is matched case-insensitively; non-matching sections
 //! vanish from the nav and the content shows all matches stacked.
 
-import { createEffect, createMemo, createSignal, For, Match, Show, Switch, onMount } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { resolveLocale, setLocale, t, type Messages } from "../i18n";
 import { applyColorMode } from "../theme";
 import { TitleBarControls, useChromeControls } from "../components/TitleBar";
@@ -82,39 +83,83 @@ const SECTION_LABELS: Record<Section, keyof Messages> = {
 /** Localized texts each section is searched by (mirrors the Flutter exe's
  * per-section `_cardText` lists). */
 const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
-  appearance: ["settingsLanguage", "settingsColorMode"],
+  appearance: [
+    "navAppearance", "settingsLanguage", "settingsColorMode",
+    "settingsLangSystem", "settingsLangEn", "settingsLangZhCN", "settingsLangZhTW",
+    "settingsColorModeSystem", "settingsColorModeDark", "settingsColorModeLight",
+  ],
   launcher: [
-    "settingsWidth", "settingsHeight", "settingsWindowPosition",
+    "groupWindow", "groupNavBar", "groupEntryBox",
+    "settingsWidth", "settingsHeight", "settingsWindowPosition", "settingsCustom",
     "showRecent", "showExplorerBar", "expandPinned", "shiftEnterAdmin",
+    "modeSwitchIconsOnly", "perModeQuery", "perModeQueryHint",
+    "idleReset", "idleResetMinutes", "idleResetHint",
     "recentCount", "placeholderApps", "placeholderClipboard",
-    "rememberLastPage", "settingsEntrySize",
+    "rememberLastPage", "rememberLastPageHint", "settingsEntrySize",
   ],
   clipboard: [
-    "clipHistoryCap", "clipRecordImages", "clipRecordFiles", "clipMergeCopy",
-    "clipIgnoreApps", "clipDedup", "clipShowSource", "clipTimeDisplay",
-    "clipHoverSelect", "clipFavoritesTop", "clipPasteClose",
-    "settingsClipPreview", "rememberChecks",
+    "clipHistoryCap", "groupDisplay", "groupPaste", "groupPreview",
+    "clipRecordImages", "clipRecordFiles", "clipMergeCopy",
+    "clipIgnoreApps", "clipIgnoreHint", "clipIgnoreEmpty", "clipIgnorePlaceholder",
+    "clipDedup", "clipDedupHint", "clipShowSource", "clipTimeDisplay",
+    "clipTimeRelative", "clipTimeAbsolute", "clipHoverSelect", "clipFavoritesTop",
+    "clipPasteClose", "settingsClipPreview", "settingsClipPreviewHint",
+    "rememberChecks", "settingsAdd", "delete",
   ],
-  hotkeys: ["settingsHotkeys", "settingsToggleLauncher", "settingsSwitchMode"],
-  search: ["settingsIndexDirs", "settingsSystemIndex", "settingsUserIndex", "settingsCacheRefresh"],
-  system: ["settingsAutostart", "settingsSystemService", "settingsAgentGroup", "settingsImportExport"],
+  hotkeys: [
+    "settingsHotkeys", "settingsToggleLauncher", "settingsSwitchMode",
+    "hotkeyRecording", "settingsCustom",
+  ],
+  search: [
+    "settingsIndexDirs", "settingsSystemIndex", "settingsUserIndex",
+    "settingsIndexDesktop", "settingsIndexStartMenu", "settingsIndexFiles",
+    "settingsRefreshIndex", "settingsUserIndexName", "settingsUserIndexPath",
+    "settingsUserIndexEmpty", "settingsPathPlaceholder", "groupIndexCache",
+    "settingsCacheRefresh", "settingsMinutes", "settingsAdd", "delete",
+  ],
+  system: [
+    "settingsAutostart", "settingsAutostartOn", "settingsAutostartOff",
+    "settingsSystemService", "settingsRegisterService", "settingsUninstallService",
+    "settingsServiceRunning", "settingsServiceStopped", "settingsServiceNotInstalled",
+    "settingsServiceUacCanceled", "settingsAgentGroup", "settingsAgentHint",
+    "settingsAgentInstall", "settingsAgentUninstall", "settingsAgentRegistered",
+    "settingsAgentNotInstalled", "settingsAgentRunning", "settingsAgentNotElevated",
+    "settingsAgentUacCanceled", "settingsImportExport", "settingsImport",
+    "settingsExport", "settingsRestoreBackup", "settingsConfirmAction",
+    "settingsImported", "settingsExported", "settingsRestored",
+  ],
   automation: [
-    "autoEnabled",
-    "autoHint",
-    "autoProcessLabel",
-    "autoComboLabel",
-    "autoAdd",
-    "autoUseAgent",
-    "autoAgentResident",
+    "automation", "groupAutomation", "autoEnabled", "autoForceFocus",
+    "autoForceFocusHint", "autoUseAgent", "autoUseAgentHint", "autoAgentResident",
+    "autoAgentResidentHint", "autoHint", "autoProcessLabel", "autoComboLabel",
+    "autoProcessPlaceholder", "autoComboPlaceholder", "autoPick", "autoPickTitle",
+    "autoPickFilter", "autoPickEmpty", "autoPickLoading", "autoPickWindows",
+    "autoTest", "autoTestHint", "autoAdd", "autoDelayTitle", "autoDelayUnit",
+    "autoDelayHint", "autoEmpty", "autoNotice", "delete",
   ],
   plugins: [
     "plugins", "pluginKindMode", "pluginKindService", "pluginKindProvider",
+    "pluginDisk", "pluginsSummary", "pluginsFilterAll", "pluginsFilterEnabled",
+    "pluginsFilterDisabled", "pluginsFilterDisk", "pluginsFilterPlaceholder",
+    "pluginsEmpty", "pluginsInstall", "pluginsInstallTitle", "pluginsInstallConfirm",
+    "pluginsInstallCancel", "pluginsInstallStats", "pluginsInstallSignatureValid",
+    "pluginsInstallUnsigned", "pluginsInstallUpgrade", "pluginsInstallReinstall",
+    "pluginsInstallDowngrade", "pluginUninstall", "pluginUninstallHint",
     "pluginBuiltin", "pluginDetailKeywords", "pluginDetailFeatures",
-    "pluginPermissions", "pluginTrustAll", "pluginSettings", "pluginsDevMode",
+    "pluginDetailDir", "pluginPermissions", "pluginNoPermissions", "pluginTrustAll",
+    "pluginSettings", "pluginsDevMode", "pluginsDevModeHint", "pluginsTrustAllHint",
+    "pluginDetachable", "pluginHidden", "pluginKeepSession", "pluginKeepSessionHint",
+    "pluginPermEnforcedHint", "pluginReload", "pluginDev",
     "permClipboard", "permNetwork", "permNotify", "permDialog", "permScreen",
-    "permSearchFiles", "permFsRead", "permFsWrite", "permTrash",
+    "permSearchFiles", "permFsRead", "permFsWrite", "permTrash", "permWindow",
+    "permClipboardDesc", "permNetworkDesc", "permNotifyDesc", "permDialogDesc",
+    "permScreenDesc", "permSearchFilesDesc", "permFsReadDesc", "permFsWriteDesc",
+    "permTrashDesc", "permWindowDesc", "settingsConfirmAction",
   ],
-  about: ["aboutTagline", "aboutVersion", "aboutLicense", "aboutAuthor", "aboutHomepage"],
+  about: [
+    "about", "aboutTagline", "aboutVersion", "aboutLicense", "aboutAuthor",
+    "aboutHomepage",
+  ],
 };
 
 export default function Settings() {
@@ -126,15 +171,44 @@ export default function Settings() {
   const [settings, setSettings] = createSignal<SettingsData | null>(null);
   const [toast, setToast] = createSignal<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Only the latest settings read may land. The window stays alive while
+   * hidden, so a reload on re-open can overlap the startup read. */
+  let loadSeq = 0;
 
   /** Window chrome (frameless titlebar): button state + drag/dblclick
       handlers shared with the topbar row. */
   const chrome = useChromeControls();
 
-  onMount(() => {
+  function loadSettings(clearDirty = false) {
+    const seq = ++loadSeq;
     void invoke<SettingsData>("get_settings")
-      .then(setSettings)
+      .then((s) => {
+        if (seq !== loadSeq || (!clearDirty && dirty())) return;
+        setSettings(s);
+        if (clearDirty) setDirty(false);
+      })
       .catch(() => {});
+  }
+
+  onMount(() => {
+    loadSettings();
+    let disposed = false;
+    let unlistenFocus: (() => void) | undefined;
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        // The hidden settings window keeps its mounted working copy. Re-read
+        // on every re-open so plugin enable/disable or external edits made in
+        // the meantime cannot be overwritten by a stale save.
+        if (focused && !dirty()) loadSettings();
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlistenFocus = fn;
+      });
+    onCleanup(() => {
+      disposed = true;
+      unlistenFocus?.();
+    });
   });
 
   /** Apply the selected language + color mode to this window immediately
@@ -205,12 +279,7 @@ export default function Settings() {
 
   /** Re-read the persisted settings (after import / restore backup) and clear dirty. */
   function reloadSettings() {
-    void invoke<SettingsData>("get_settings")
-      .then((s) => {
-        setSettings(s);
-        setDirty(false);
-      })
-      .catch(() => {});
+    loadSettings(true);
   }
 
   /** 「恢复默认设置」— reset the working copy only (two-step, like the Flutter
@@ -229,7 +298,10 @@ export default function Settings() {
       await invoke("save_settings", { new: s });
       setDirty(false);
     } catch {
-      return; // leave dirty so the user can retry
+      // Leave the window and dirty state intact so the user can retry after
+      // fixing the underlying write/permission problem.
+      showToast(t("settingsSaveFailed"));
+      return;
     }
     try {
       await invoke("close_settings");
@@ -252,6 +324,7 @@ export default function Settings() {
             class="settings-search-input"
             type="text"
             placeholder={t("searchSettings")}
+            aria-label={t("searchSettings")}
             value={query()}
             onInput={(e) => setQuery(e.currentTarget.value)}
           />
@@ -287,20 +360,32 @@ export default function Settings() {
               <Show
                 when={!query()}
                 fallback={
-                  <For each={matchingSections()}>
-                    {(s) => (
-                      <div class="settings-section" data-section={s}>
-                        <SectionBody section={s} settings={settings()!}
-                          onUpdateAppearance={updateAppearance}
-                          onUpdateHotkeys={updateHotkeys}
-                          onUpdateIndex={updateIndex}
-                          onUpdateClipboard={updateClipboard}
-                          onUpdateAutomation={updateAutomation}
-                          onReload={reloadSettings}
-                        />
+                  <Show
+                    when={matchingSections().length > 0}
+                    fallback={
+                      <div class="settings-search-empty">
+                        <p>{t("settingsNoMatches")}</p>
+                        <button class="settings-action" onClick={() => setQuery("")}>
+                          {t("settingsSearchClear")}
+                        </button>
                       </div>
-                    )}
-                  </For>
+                    }
+                  >
+                    <For each={matchingSections()}>
+                      {(s) => (
+                        <div class="settings-section" data-section={s}>
+                          <SectionBody section={s} settings={settings()!}
+                            onUpdateAppearance={updateAppearance}
+                            onUpdateHotkeys={updateHotkeys}
+                            onUpdateIndex={updateIndex}
+                            onUpdateClipboard={updateClipboard}
+                            onUpdateAutomation={updateAutomation}
+                            onReload={reloadSettings}
+                          />
+                        </div>
+                      )}
+                    </For>
+                  </Show>
                 }
               >
                 <SectionBody

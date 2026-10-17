@@ -71,6 +71,26 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **UI 独立审计第三轮（UI-01–UI-12）** — 统一键盘输入边界：搜索框中的
+  `Space`/`Delete` 恢复原生编辑语义，IME 组合态不再触发启动器动作；
+  `Ctrl+Backspace`/`Ctrl+Home`/`Ctrl+End` 等标准编辑键放行。上下文菜单与
+  「清空剪贴板」确认框成为独立键盘作用域（菜单支持方向键/Home/End/Tab/Enter，
+  确认框初始聚焦取消、Tab 圈定、Esc 关闭）；菜单按实际 DOM 尺寸四向翻转。
+  插件清单刷新增加单调代际，启动早期启用插件的旧响应不再覆盖新状态。设置页
+  在重新获得焦点且无脏改动时重读磁盘，避免常驻隐藏窗口用启动时的旧插件启停
+  状态覆盖新值；自动化规则在最小窗口宽度下自动换行，模式栏按剩余宽度横向
+  滚动并保留搜索框/设置按钮，设置搜索覆盖全部当前文案且无命中时显示空态。
+  删除/过滤后同步清理多选集合，悬停选中可在键盘导航后重新接管，快捷键录制器
+  失焦即取消。
+  验证：`ui_audit_probe` / `ui_audit_probe2` / `ui_audit_probe3` /
+  `ui_misc_verify` 全部 PASS（含 Space/Delete 编辑、IME、菜单与确认框隔离、
+  底部菜单 170.3px 不越界、546×412 客户区无横向溢出）；`ui_hover_probe`
+  rows 10、before 1、after 3；21 个模式/长名称下 gear 右边界 700 < 720；
+  `q48_race_ab` 启动立即启用与延迟启用均能看到胶囊与关键词行；
+  `cdp_mode_query_verify` **47/47**（此前 41/47 的 keyword 入口恢复）；
+  `cargo test` 220 passed / 9 ignored，`tsc --noEmit`、`pnpm run build`、
+  debug exe 构建干净。
+
 - **`.lupx` inspect/install 移出主线程（插件搜查 B3）** — 两个命令改为
   `async` + `spawn_blocking`：大包的校验/哈希/解压/换位不再冻结主线程上的全部
   IPC 与窗口 `set_size`；`plugin_lupx_inspect` 同时补上窗口守卫

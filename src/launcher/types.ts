@@ -176,8 +176,13 @@ export const APP_KEYS = new Set([
   "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
 ]);
 
-/** Text-editing accelerators allowed inside the search input. */
-export const EDIT_KEYS = new Set(["c", "v", "x", "a", "z", "y"]);
+/** Text-editing accelerators allowed inside the search input. This covers the
+ * standard Windows edit set, not just clipboard/history commands: WebView2's
+ * accelerator blocker must never swallow word/line navigation or deletion. */
+export const EDIT_KEYS = new Set([
+  "c", "v", "x", "a", "z", "y",
+  "backspace", "delete", "home", "end", "arrowleft", "arrowright",
+]);
 
 /** Auto-sizing the launcher window to its content (height only). The smallest
  * launcher state is the search row alone: the empty home page (no bars) and a

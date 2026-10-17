@@ -491,11 +491,19 @@ before adding a field:
   - `menu.ts` — `buildMenuItems()`: right-click menu construction for
     app / folder / clipboard targets, over the narrow structural
     `NavMenuActions` / `ClipMenuActions` interfaces each page supplies via
-    `ModeInstance.menuActions()`.
+    `ModeInstance.menuActions()`. The composition root measures the rendered
+    menu and flips/clamps it on both axes; while it is open the menu owns
+    Arrow/Home/End/Tab/Enter/Escape, so page selection behind the overlay
+    cannot move.
   - `keyboard.ts` — `createKeyRouter()`: the window-level keydown routing
     (Esc layering, mode switch, shared ↑/↓/Enter fallback — per-page keys
     delegate to the active page's `onKey`) and the WebView2 accelerator
-    blocker.
+    blocker. IME composition (`isComposing` / legacy `keyCode 229`) is passed
+    through untouched; text-editing targets are exposed to pages through
+    `ModeKeyContext.editing`, and a page's `modal()` scope suppresses all
+    mode-switch/shared bindings while its dialog is open. The accelerator
+    blocker allows the native Windows edit set (Ctrl+Backspace, Ctrl+Home/End,
+    word navigation, …) inside text fields.
 - The settings window reuses the same build via the window label
   (`src/settings/`, grouped-card layout — see `docs/SETTINGS.md`); the
   satellite preview is its own entry (`src/preview.tsx`).

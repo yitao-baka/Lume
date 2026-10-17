@@ -7,6 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { APP_KEYS, EDIT_KEYS, type MenuState, type Mode, type PreviewReq } from "./types";
 import type { ModeId, ModeInstance, ModeKeyContext, PageRow } from "../plugins/types";
+import { isImeComposing, isTextEditingTarget } from "./keyInput";
 
 export interface KeyDeps {
   mode: () => Mode;
@@ -21,6 +22,9 @@ export interface KeyDeps {
   currentPreview: () => PreviewReq | null;
   setCurrentPreview: (v: PreviewReq | null) => void;
   markKeyboard: () => void;
+  /** Context-menu keys. The menu owns the keyboard while open; this callback
+   * implements arrow/Home/End/Enter navigation and may close the menu. */
+  handleMenuKey: (e: KeyboardEvent) => void;
   /** The active page — page-specific keys are delegated to it. */
   activeMode: () => ModeInstance | undefined;
   gridCols: () => number;
@@ -48,12 +52,27 @@ export function matchesSwitchKey(e: KeyboardEvent, combo: string): boolean {
 
 export function createKeyRouter(deps: KeyDeps) {
   function onKeyDown(e: KeyboardEvent) {
+    // An IME candidate list owns Enter/Space/arrows until the composition is
+    // committed. Never preventDefault here, or CJK input methods break.
+    if (isImeComposing(e)) return;
     const hasResults = deps.currentResults().length > 0;
+
+    // A context menu is a keyboard scope of its own. Escape closes it; every
+    // other key goes to the menu handler and is never routed to the page
+    // behind the overlay.
+    if (deps.menu()) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        deps.closeMenu();
+      } else {
+        deps.handleMenuKey(e);
+      }
+      return;
+    }
+
     if (e.key === "Escape") {
       e.preventDefault();
-      if (deps.menu()) {
-        deps.closeMenu();
-      } else if (deps.activeMode()?.onEscape()) {
+      if (deps.activeMode()?.onEscape()) {
         // The active page consumed Esc (a drill level popped, multi-select
         // left) — stay open.
       } else if (deps.currentPreview()) {
@@ -65,7 +84,26 @@ export function createKeyRouter(deps: KeyDeps) {
       } else {
         deps.resetAndHide();
       }
-    } else if (matchesSwitchKey(e, deps.switchKey())) {
+      return;
+    }
+
+    const inst = deps.activeMode();
+    const ctx: ModeKeyContext = {
+      hasResults,
+      moveSelection: deps.moveSelection,
+      gridCols: deps.gridCols,
+      markKeyboard: deps.markKeyboard,
+      editing: isTextEditingTarget(e.target),
+    };
+
+    // Modal page scopes must run before the mode-switch shortcut and the
+    // shared Enter/arrow fallback. The page handles Escape through onEscape.
+    if (inst?.modal?.()) {
+      inst.onKey(e, ctx);
+      return;
+    }
+
+    if (matchesSwitchKey(e, deps.switchKey())) {
       e.preventDefault();
       // Cycle through every visible page (home first, then plugin modes).
       // Hidden modes (manifest `hidden`) are not in this list; when one is
@@ -78,13 +116,6 @@ export function createKeyRouter(deps: KeyDeps) {
       // Page-owned keys first (grid arrows + bar navigation, category
       // switching, multi-select, delete), then the shared bindings (↑/↓ move,
       // Enter activates).
-      const inst = deps.activeMode();
-      const ctx: ModeKeyContext = {
-        hasResults,
-        moveSelection: deps.moveSelection,
-        gridCols: deps.gridCols,
-        markKeyboard: deps.markKeyboard,
-      };
       if (inst?.onKey(e, ctx)) return;
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         if (hasResults) {
@@ -102,10 +133,12 @@ export function createKeyRouter(deps: KeyDeps) {
    * DevTools, history navigation, …) except the keys Lume handles and text
    * editing inside the search input. */
   function blockBrowserKeys(e: KeyboardEvent) {
+    if (isImeComposing(e)) return;
     if (APP_KEYS.has(e.key)) return; // launcher's own keys
-    const input = document.getElementById("search-input");
-    const editing = e.ctrlKey && input === document.activeElement;
-    if (editing && EDIT_KEYS.has(e.key.toLowerCase())) return; // Ctrl+C/V/… in the input
+    const editing = isTextEditingTarget(e.target);
+    // Allow the full native Windows edit set (Ctrl+Backspace, Ctrl+Home/End,
+    // word navigation, …), not only clipboard/history commands.
+    if (editing && EDIT_KEYS.has(e.key.toLowerCase())) return;
     if (e.ctrlKey || e.altKey || e.metaKey || /^F\d{1,2}$/.test(e.key)) {
       e.preventDefault();
     }

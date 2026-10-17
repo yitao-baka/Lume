@@ -131,6 +131,11 @@ dev URL instead.
 7. **Delete** — `Del` on a selected entry, or the trash button on its row,
    removes it from history. Hovering a row selects it; clicking a row copies
    it back.
+   While the search input is focused, `Space` inserts a space and `Del`
+   edits the query instead of touching history. To multi-select with the
+   keyboard, leave the input (for example by clicking a row) and press
+   `Space`; deleting a selected row must immediately clear its selection
+   badge/count.
 8. **Images** — copy an image (e.g. a screenshot via Win+Shift+S): it appears
    as a thumbnail tile labelled `Image · <time>`. `Enter` pastes the original
    image back.
@@ -167,6 +172,12 @@ dev URL instead.
    未豁免插件页冷启动；清单 `keep_session = true` 或 设置 → 插件 打开豁免的
    插件应保留查询与页面状态（但落地仍是导航页）；总开关关闭后不重置。
    自动验证：`node scripts/cdp_idle_reset_verify.mjs`（需先构建 debug exe）。
+7. **Search** — queries such as 「闲置重置」「模式切换栏仅显示图标」
+   「各模式使用独立搜索词」「强制聚焦」 find their section; a nonsense query
+   shows the localized no-match state and its clear-search button.
+8. **Minimum window** — resize to the 560×420 minimum and open 自动化: rule
+   rows wrap with the delay/toggle/delete controls still visible and no
+   horizontal scrollbar.
 
 ### Service / run-as-admin / auto-start (Program Files iteration)
 

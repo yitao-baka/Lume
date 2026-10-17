@@ -3,7 +3,7 @@
 //! the only way back to the default toggle combo) plus a compact recorder
 //! button with live `validate_hotkey` validation.
 
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t, type Messages } from "../i18n";
 import type { SettingsData } from "./types";
@@ -33,39 +33,48 @@ function HotkeyControl(props: {
 }) {
   const [recording, setRecording] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  let captureSeq = 0;
+
+  function stop() {
+    captureSeq++;
+    setRecording(false);
+    setError(null);
+  }
 
   function onKeyDown(e: KeyboardEvent) {
+    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      stop();
+      return; // keep Tab as focus navigation, not a stuck capture
+    }
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape") {
-      setRecording(false);
-      setError(null);
+      stop();
       return;
     }
     const combo = comboFromEvent(e);
     if (!combo) return;
+    const seq = ++captureSeq;
     void (async () => {
-      const res = await invoke<HotkeyCheck>("validate_hotkey", {
-        combo,
-        other: props.other,
-      });
-      if (res.ok) {
-        setError(null);
-        setRecording(false);
-        props.onCommit(combo);
-      } else {
-        setError(t(REASON_KEY[res.reason ?? ""] ?? "hotkeyInvalid"));
-        // stay recording — the user can retry
+      try {
+        const res = await invoke<HotkeyCheck>("validate_hotkey", {
+          combo,
+          other: props.other,
+        });
+        if (seq !== captureSeq) return; // recording was cancelled / focus moved
+        if (res.ok) {
+          setError(null);
+          stop();
+          props.onCommit(combo);
+        } else {
+          setError(t(REASON_KEY[res.reason ?? ""] ?? "hotkeyInvalid"));
+          // stay recording — the user can retry
+        }
+      } catch {
+        if (seq === captureSeq) setError(t("hotkeyInvalid"));
       }
     })();
   }
-
-  createEffect(() => {
-    if (recording()) {
-      window.addEventListener("keydown", onKeyDown);
-      return () => window.removeEventListener("keydown", onKeyDown);
-    }
-  });
 
   const isPreset = () => props.presets.includes(props.value);
 
@@ -89,8 +98,19 @@ function HotkeyControl(props: {
           class="settings-hotkey-btn"
           classList={{ active: recording() || !isPreset() }}
           onClick={() => {
-            setRecording((r) => !r);
-            setError(null);
+            if (recording()) stop();
+            else {
+              setRecording(true);
+              setError(null);
+            }
+          }}
+          onKeyDown={(e) => {
+            // Button-scoped capture: once focus moves to the settings search
+            // or another field, it cannot intercept that field's keystrokes.
+            if (recording()) onKeyDown(e);
+          }}
+          onBlur={() => {
+            if (recording()) stop();
           }}
         >
           {recording()

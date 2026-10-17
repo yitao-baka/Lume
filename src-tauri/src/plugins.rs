@@ -432,8 +432,8 @@ pub(crate) fn manifest_id_of(dir: &Path) -> String {
 pub(crate) fn manifest_settings(base: &Path, id: &str) -> Vec<PluginSettingInfo> {
     scan_disk_plugins(base)
         .into_iter()
-        .find(|m| m.id == id)
-        .map(|m| m.settings.iter().map(|s| s.info()).collect())
+        .find(|p| p.manifest.id == id)
+        .map(|p| p.manifest.settings.iter().map(|s| s.info()).collect())
         .unwrap_or_default()
 }
 
@@ -444,10 +444,19 @@ pub(crate) fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
     toml::from_str(text).map_err(|e| format!("invalid plugin.toml: {e}"))
 }
 
+/// One scanned on-disk plugin: the parsed manifest plus the directory it was
+/// found in. The directory must travel with the manifest — the manifest `id`
+/// is the identity (`PLUGIN_API.md` §3: id ≠ directory name is legal) and
+/// deriving a path from it points at a directory that may not exist.
+struct DiskPlugin {
+    dir: std::path::PathBuf,
+    manifest: PluginManifest,
+}
+
 /// Discover on-disk plugin manifests under `<base>/plugins/*/plugin.toml`.
 /// A directory whose manifest fails to parse is skipped (bad plugins must
 /// never break the launcher); the id falls back to the directory name.
-fn scan_disk_plugins(base: &Path) -> Vec<PluginManifest> {
+fn scan_disk_plugins(base: &Path) -> Vec<DiskPlugin> {
     let dir = plugins_dir(base);
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(&dir) else {
@@ -483,7 +492,10 @@ fn scan_disk_plugins(base: &Path) -> Vec<PluginManifest> {
                     if m.version.is_empty() { "-" } else { &m.version },
                     path.display()
                 );
-                out.push(m);
+                out.push(DiskPlugin {
+                    dir: path,
+                    manifest: m,
+                });
             }
             Err(err) => {
                 eprintln!(
@@ -493,7 +505,7 @@ fn scan_disk_plugins(base: &Path) -> Vec<PluginManifest> {
             }
         }
     }
-    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out.sort_by(|a, b| a.manifest.id.cmp(&b.manifest.id));
     eprintln!("[plugins] scan: {} disk plugin(s) discovered", out.len());
     out
 }
@@ -558,8 +570,7 @@ pub fn list_plugins(
         })
         .collect();
     let disk = scan_disk_plugins(base);
-    for m in disk {
-        let dir = plugins_dir(base).join(&m.id);
+    for DiskPlugin { dir, manifest: m } in disk {
         let keywords_pinyin = m
             .keywords
             .iter()
@@ -715,7 +726,35 @@ mod tests {
 
         let found = scan_disk_plugins(&root);
         assert_eq!(found.len(), 1, "bad manifest skipped, files ignored");
-        assert_eq!(found[0].id, "demo", "id falls back to the directory name");
+        assert_eq!(
+            found[0].manifest.id, "demo",
+            "id falls back to the directory name"
+        );
+        assert_eq!(found[0].dir, good, "the real directory rides along");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn list_plugins_keeps_the_real_directory_when_id_differs() {
+        // PLUGIN_API.md §3: the manifest `id` is authoritative and need not
+        // match the directory name. `PluginInfo.dir`/`entry`/`view` must point
+        // into the directory the manifest was actually found in (a renamed
+        // hand-placed plugin used to resolve to <plugins>/<id> — a 404).
+        let root = std::env::temp_dir().join(format!("lume-plugins-renamed-{}", std::process::id()));
+        let dir = root.join("plugins").join("dir-name");
+        fs::create_dir_all(dir.join("dist")).unwrap();
+        fs::write(
+            dir.join("plugin.toml"),
+            "id = \"real-id\"\nkind = \"mode\"\nview = \"view.html\"\nentry = \"dist\"\n",
+        )
+        .unwrap();
+        fs::write(dir.join("view.html"), "<html></html>").unwrap();
+        fs::write(dir.join("dist").join("index.js"), "export default {};").unwrap();
+        let all = list_plugins(&root, &[], &[], false);
+        let p = all.iter().find(|p| p.id == "real-id").unwrap();
+        assert_eq!(p.dir, dir.to_string_lossy().into_owned());
+        assert_eq!(p.entry, "dist/index.js", "entry resolves against the real dir");
+        assert_eq!(p.view, "view.html");
         fs::remove_dir_all(&root).ok();
     }
 

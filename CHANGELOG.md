@@ -29,6 +29,30 @@ All notable changes to Lume are documented here. Format based on
   `rg "P[0-6]|ROADMAP #|NORMS|RULES"` 在活跃文档与代码注释零残留
   （归档文件与 CHANGELOG/History 内的历史记录除外）。
 
+### Security
+
+- **插件页桥接拒绝跨帧伪造消息（插件搜查 B1）** — 注入到插件页的视图桥
+  `message` 监听器补上与逻辑帧同款的首行守卫 `if (e.source !== parent) return;`。
+  keep-alive 让同一窗口同时挂多个插件页，兄弟帧跨源可枚举、可 `postMessage`：
+  插件 A 的沙箱页曾能向 B 注入 `__lumeEvent` / `__lumeRpcResult` /
+  `__lumeKeyConsumed`（query/show/hide/settings/theme/restore 事件欺骗、
+  伪造待决 RPC 回执、假快照污染恢复流程）。验证：`test/cdp_bugprobe2.mjs`——
+  evil 帧广播 `framesSeen:2, posts:2` 照旧，受害者 `seen` 保持 `[""]`
+  （修复前为 `["", "SPOOFED-FROM-EVIL"]`）；`cdp_sandbox_verify` 14/14、
+  `cdp_plugin_state_verify` 54/54、`cdp_plugin_lru_verify` 22/22、
+  `cdp_plugin_window_verify` 16/16、`cdp_plugin_frame_load_verify` 5/5、
+  `cdp_plugin_verify` 全过（宿主→页面事件/按键面不受影响）。
+
+- **`.lupx` 解压上限改为实测解压量（插件搜查 B2）** — zip 头部声明的未压缩大小
+  可伪造：约 128 KB 的包可藏 128 MiB deflate，旧实现按声明值过检后 `io::copy`
+  全量落盘。inspect 与解压现在都逐块统计**实际**解压字节（超 64 MiB/项或
+  256 MiB/包即中止），声明与实测不一致（说谎/截断）的包硬拒，解压中途失败会
+  清掉 staging 半成品。验证：`test/cdp_bomb_probe.mjs`——inspect/install 均报
+  `expands past the 67108864-byte per-file cap`，staging 0 字节（修复前落盘
+  134,217,728 字节）；`cdp_lupx_verify` 全过；`cargo test` 新增
+  `lying_entry_headers_are_measured_not_trusted` /
+  `oversized_real_entry_is_refused_by_the_cap`。
+
 ### Removed
 
 - **呼出键自动回退（ROADMAP #49）** — 废弃极早期的候选链「Alt+Space 被占用 →
@@ -46,6 +70,24 @@ All notable changes to Lume are documented here. Format based on
   现场；`cargo check` / `cargo test`（211 passed / 9 ignored）干净。
 
 ### Fixed
+
+- **`.lupx` inspect/install 移出主线程（插件搜查 B3）** — 两个命令改为
+  `async` + `spawn_blocking`：大包的校验/哈希/解压/换位不再冻结主线程上的全部
+  IPC 与窗口 `set_size`；`plugin_lupx_inspect` 同时补上窗口守卫
+  `deny_from_plugin_windows`（与 install/uninstall 一致，拒绝一切 `plugin-*`
+  窗口的调用）。验证：`test/cdp_stall_probe.mjs`——inspect 881 ms 期间
+  `get_hotkey` 只等 **4 ms**（修复前 1448 ms），页面 timer 最大间隔 17.5 ms、
+  无 >200 ms 样本。
+
+- **清单 `id` 与目录名不一致的插件恢复加载（插件搜查 B4）** — 磁盘扫描把真实
+  目录与清单成对传递（`DiskPlugin { dir, manifest }`），`PluginInfo` 的
+  `dir`/`entry`/`view`/`titlebar`（以及 `plugin_window_meta` /
+  `plugin_logic_meta`）不再用 id 反推 `<plugins>/<id>` 假路径，PLUGIN_API §3
+  「id 与目录名不一致时以清单为准」由此真正落地。验证：
+  `test/cdp_renamed_probe.mjs`——`get_plugins` 返回真实
+  `plugins\probe-renamed`，插件页渲染成功、逻辑/storage 正常（修复前
+  view/logic 双 404）；`cargo test` 新增
+  `list_plugins_keeps_the_real_directory_when_id_differs`。
 
 - **搜索框删空收尾丢失（translator 1.4.1，插件侧修复）** — translator 模式页
   激活时把搜索框 "Hello" 逐字删空，插件原文停在 "H"。CDP 定位：宿主

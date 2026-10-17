@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#49 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#50 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -3305,3 +3305,77 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   恢复现场。
 - `cargo check` / `cargo test`（**211 passed / 9 ignored**）干净；debug exe
   构建（`pnpm run tauri build --debug --no-bundle`）干净。
+
+---
+
+## 50. 插件系统缺陷修复：跨帧伪造 / 解压炸弹 / 主线程阻塞 / 重命名目录（已实现）
+
+**状态：已实现（2026-10-16）。** 来源：`docs/BUG_REPORT.md` 基线 `76a99eb` 的
+插件系统搜查报告，处理其前四项（B1–B4；B5–B8 与加固建议仍挂在报告里）。四项
+各自独立，动因如下：
+
+- **B1 跨插件消息伪造**：注入视图桥的 `message` 监听器不校验 `e.source`，
+  keep-alive 下插件 A 的沙箱页可向同窗插件 B 伪造 `__lumeEvent` /
+  `__lumeRpcResult` / `__lumeKeyConsumed`。
+- **B2 解压炸弹**：`.lupx` 的 64 MiB/256 MiB 上限只按 zip 头部声明的未压缩
+  大小判定，而 zip reader 只按压缩大小截断输入、不校验解压输出量——声明 4 KiB
+  的条目可以解出 128 MiB。
+- **B3 主线程阻塞**：`plugin_lupx_inspect` / `plugin_lupx_install` 是同步命令，
+  哈希/解压/落盘全跑在主线程，安装期间所有 IPC 与窗口 `set_size` 一起冻结。
+- **B4 重命名目录**：`scan_disk_plugins` 丢弃真实目录、`list_plugins` 用 id
+  反推 `<plugins>/<id>`；PLUGIN_API §3 允许「id ≠ 目录名」，此时 view/entry/
+  titlebar 全部 404。
+
+### 50.1 实现
+
+- **B1（`src/plugins/iframeBridge.tsx`）**：视图桥 `message` 处理器首行加
+  `if (e.source !== parent) return;`，与逻辑帧
+  （`public/pluginLogicFrame.js`）同款边界：只有宿主窗口能驱动
+  `__lumeRpcResult` / `__lumeCall` / `__lumeEvent` / `__lumeKeyConsumed`。
+- **B2（`src-tauri/src/plugin_install.rs`）**：新增 `stream_entry_capped`
+  （sink 式流拷贝，逐块统计**实测**解压字节，超 `MAX_ENTRY_BYTES` 即报错）与
+  `read_entry_text_capped`（清单 / `LUME.SIGN` 的读入同走实测上限）。inspect
+  的哈希 pass 改为实测大小并核对头部声明（不一致硬拒）、`seen_bytes` 全程累计
+  封顶 `MAX_TOTAL_BYTES`；`extract_to` 落盘同样按实测字节封顶并核对声明；
+  确认卡展示的 `totalBytes` 因此等于真实 payload；解压中途失败时
+  `install_into` 清掉 staging 半成品。
+- **B3（`src-tauri/src/plugin_install.rs`）**：两道命令改
+  `async` + `tauri::async_runtime::spawn_blocking`；`plugin_lupx_install` 的
+  `invalidate` + 双事件（`settings-applied` / `plugin-reload`）留在 await 之后
+  的主运行时执行（顺序与同步版一致）。`plugin_lupx_inspect` 顺带补
+  `window: WebviewWindow` 参数与 `deny_from_plugin_windows` 守卫
+  （`plugin_perm.rs` 文档同步）。
+- **B4（`src-tauri/src/plugins.rs`）**：`scan_disk_plugins` 返回
+  `DiskPlugin { dir, manifest }`，`list_plugins` / `manifest_settings` 消费真实
+  目录；`PluginInfo.dir`、`entry`（`resolve_entry`）、`view` / `titlebar`、
+  `plugin_window_meta`、`plugin_logic_meta` 全部随之拿到正确路径，删除
+  「id 反推目录」。
+- 文档：`docs/BUG_REPORT.md` 删除 B1–B4 段落（留 B5–B8 与加固建议）并把
+  `plugin_lupx_inspect` 从「无窗口约束」加固项中移除；`docs/PLUGIN_API.md`
+  §12 校验行改为「按实测解压字节判定」、§14 策略命令列表加入 inspect；
+  本条 + `CHANGELOG.md`。
+
+### 50.2 验证
+
+- 四项缺陷各自的原复现件（`test/`，基线报告所附）转红为绿：
+  `cdp_bugprobe2`（evil 帧 `framesSeen:2, posts:2` 照旧广播，受害者 `seen`
+  保持 `[""]`，修复前会追加 `SPOOFED-FROM-EVIL`）；
+  `cdp_bomb_probe`（inspect/install 均报
+  `expands past the 67108864-byte per-file cap`，staging 0 字节，修复前落盘
+  134,217,728 字节）；
+  `cdp_stall_probe`（inspect 881 ms 期间 `get_hotkey` 只等 **4 ms**，页面
+  timer 最大间隔 17.5 ms、无 >200 ms 样本；修复前 1448 ms / 主线程冻结）；
+  `cdp_renamed_probe`（`get_plugins` 返回真实 `plugins\probe-renamed`，
+  插件页/chrome 渲染成功、逻辑与 storage 正常，修复前 view/logic 双 404）。
+- 回归：`cdp_sandbox_verify` 14/14（含按键转发与 Tab 消费——宿主→页面消息面
+  不受 B1 守卫影响）、`cdp_plugin_state_verify` 54/54、`cdp_plugin_lru_verify`
+  22/22、`cdp_plugin_window_verify` 16/16、
+  `cdp_plugin_frame_load_verify` 5/5、`cdp_plugin_verify` OK、
+  `cdp_lupx_verify` **ALL PASS**（inspect/install/升级/私有文件保留/卸载与
+  设置页卸载按钮全链路）。
+- `cargo test`（**214 passed / 9 ignored**，新增
+  `lying_entry_headers_are_measured_not_trusted` /
+  `oversized_real_entry_is_refused_by_the_cap` /
+  `list_plugins_keeps_the_real_directory_when_id_differs`）、`cargo check`、
+  `pnpm exec tsc --noEmit`、`pnpm run build`、debug exe 重建
+  （`pnpm run tauri build --debug --no-bundle`）全部干净。

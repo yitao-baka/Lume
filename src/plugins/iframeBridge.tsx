@@ -212,6 +212,10 @@ export const BRIDGE_SCRIPT = `
     // 页面（auto 层由桥自动回放）。快照仅内存流转，不落盘。
   };
   window.addEventListener("message", function (e) {
+    // 只接受来自宿主窗口的消息：keep-alive 下同一窗口同时挂着多个插件页，
+    // 兄弟帧可跨源向本页 postMessage（伪造 __lumeEvent / __lumeRpcResult /
+    // __lumeKeyConsumed）——逻辑帧（public/pluginLogicFrame.js）同样有这道边界。
+    if (e.source !== parent) return;
     var d = e.data || {};
     if (d.__lumeRpcResult) {
       var r = d.__lumeRpcResult;

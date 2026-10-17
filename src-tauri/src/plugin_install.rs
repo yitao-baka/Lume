@@ -12,7 +12,10 @@
 //! (`\` → `/`, so PowerShell `Compress-Archive` archives pass) and validated
 //! segment by segment (the `plugin_fs.rs` `safe_name` philosophy — no
 //! absolute paths, no `..`, no reserved device names), sizes and counts are
-//! capped, and the payload lands in a staging directory under `<base>/data/`
+//! capped against the **actually decompressed** bytes (a zip header's declared
+//! size is a hint the reader never enforces, so it is attacker-controlled and
+//! can never be used for a cap, a displayed fact or a written amount), and the
+//! payload lands in a staging directory under `<base>/data/`
 //! (never under `plugins/`, where a half-extracted manifest would be
 //! discovered by the scan) before a rename swap puts it in place — the
 //! previous installation is renamed aside first and restored if the swap
@@ -23,7 +26,7 @@
 //! runtime data, not package content.
 
 use serde::Serialize;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
@@ -31,10 +34,12 @@ use crate::paths::base_dir;
 use crate::plugin_sign::{verify_sign_blob, SIGN_ENTRY};
 use crate::plugins::{parse_manifest, valid_plugin_id, PluginManifest};
 
-/// Cap on one extracted file. A plugin is view HTML + a JS bundle + icons;
-/// anything beyond this is not a plugin, it is a data dump.
+/// Cap on one extracted file, applied to the **measured** decompressed bytes
+/// (never the header's declaration). A plugin is view HTML + a JS bundle +
+/// icons; anything beyond this is not a plugin, it is a data dump.
 const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
-/// Cap on the total uncompressed payload (decompression-bomb guard).
+/// Cap on the total decompressed payload (decompression-bomb guard), also
+/// applied to the measured byte counts.
 const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Cap on archive entries (zip-file-count guard).
 const MAX_ENTRIES: usize = 4096;
@@ -96,6 +101,8 @@ struct LupxArchive {
 struct Entry {
     raw: String,
     normalized: String,
+    /// Real decompressed size — measured while hashing, never taken from the
+    /// header (which is only compared against it).
     size: u64,
     hash: [u8; 32],
 }
@@ -152,6 +159,54 @@ pub(crate) fn normalize_entry(raw: &str) -> Result<String, String> {
     Ok(parts.join("/"))
 }
 
+/// Stream one archive entry to `sink`, counting the **actually decompressed**
+/// bytes and enforcing the per-file cap on that real count. The size in the
+/// zip header (`entry.size()`) is a declaration the zip reader never enforces,
+/// so an archive can hide any amount of deflate behind a "4 KiB" header —
+/// every cap and every fact shown to the user must be measured here, with
+/// `declared` only echoed in the error text.
+fn stream_entry_capped<R: Read>(
+    entry: &mut R,
+    raw: &str,
+    declared: u64,
+    mut sink: impl FnMut(&[u8]) -> std::io::Result<()>,
+) -> Result<u64, String> {
+    let mut buf = [0u8; 64 * 1024];
+    let mut actual: u64 = 0;
+    loop {
+        let n = entry
+            .read(&mut buf)
+            .map_err(|e| format!("read \"{raw}\": {e}"))?;
+        if n == 0 {
+            break;
+        }
+        actual += n as u64;
+        if actual > MAX_ENTRY_BYTES {
+            return Err(format!(
+                "archive entry \"{raw}\" expands past the {MAX_ENTRY_BYTES}-byte per-file cap (its header declares {declared} bytes)"
+            ));
+        }
+        sink(&buf[..n]).map_err(|e| format!("archive entry \"{raw}\": {e}"))?;
+    }
+    Ok(actual)
+}
+
+/// Read one archive entry as UTF-8 text under the same real-bytes cap (the
+/// manifest and the `LUME.SIGN` block are tiny, but their headers lie just as
+/// easily as any other entry's).
+fn read_entry_text_capped(
+    entry: &mut impl Read,
+    raw: &str,
+    declared: u64,
+) -> Result<String, String> {
+    let mut bytes: Vec<u8> = Vec::new();
+    stream_entry_capped(entry, raw, declared, |chunk| {
+        bytes.extend_from_slice(chunk);
+        Ok(())
+    })?;
+    String::from_utf8(bytes).map_err(|e| format!("read \"{raw}\": {e}"))
+}
+
 /// Read + validate a `.lupx` archive without writing anything: locate the
 /// manifest, enforce the caps, collect the payload facts (counted over the
 /// entries that will actually be extracted — under the manifest's prefix —
@@ -171,8 +226,10 @@ fn read_lupx_verified(
     if zip.len() > MAX_ENTRIES {
         return Err(format!("archive has {} entries (cap {MAX_ENTRIES})", zip.len()));
     }
-    // Pass 1: validate every name, remember where each entry lives.
+    // Pass 1: validate every name, remember where each entry lives. The
+    // running byte counter bounds the whole decompression (bomb guard).
     let mut entries: Vec<Entry> = Vec::with_capacity(zip.len());
+    let mut seen_bytes: u64 = 0;
     // The signature block (#32.2) travels alongside the payload — captured
     // here, excluded from the payload facts, verified after the manifest.
     let mut sign_blob: Option<String> = None;
@@ -184,11 +241,8 @@ fn read_lupx_verified(
             continue; // the bare root entry some writers add
         }
         if normalized.eq_ignore_ascii_case(SIGN_ENTRY) {
-            let mut text = String::new();
-            entry
-                .read_to_string(&mut text)
-                .map_err(|e| format!("read {SIGN_ENTRY}: {e}"))?;
-            sign_blob = Some(text);
+            let declared = entry.size();
+            sign_blob = Some(read_entry_text_capped(&mut entry, SIGN_ENTRY, declared)?);
             continue;
         }
         let is_dir = entry.is_dir();
@@ -200,22 +254,30 @@ fn read_lupx_verified(
                 ));
             }
             // Content hash for the signature check (streamed; the entry is
-            // the reader, nothing is buffered).
+            // the reader, nothing is buffered). The real byte count comes out
+            // of the same pass — the header's number is only a claim.
             use sha2::Digest;
             let mut hasher = sha2::Sha256::new();
-            let mut buf = [0u8; 64 * 1024];
-            loop {
-                let n = entry.read(&mut buf).map_err(|e| format!("read \"{raw}\": {e}"))?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buf[..n]);
+            let real_size = stream_entry_capped(&mut entry, &raw, size, |chunk| {
+                hasher.update(chunk);
+                Ok(())
+            })?;
+            if real_size != size {
+                return Err(format!(
+                    "archive entry \"{raw}\" declares {size} bytes but holds {real_size} — refusing an archive whose headers do not match its data"
+                ));
+            }
+            seen_bytes += real_size;
+            if seen_bytes > MAX_TOTAL_BYTES {
+                return Err(format!(
+                    "archive expands to more than {MAX_TOTAL_BYTES} bytes of payload (cap)"
+                ));
             }
             let hash: [u8; 32] = hasher.finalize().into();
             entries.push(Entry {
                 raw,
                 normalized,
-                size,
+                size: real_size,
                 hash,
             });
         }
@@ -269,10 +331,8 @@ fn read_lupx_verified(
     let mut manifest_entry = zip
         .by_name(&raw_manifest)
         .map_err(|e| format!("archive entry \"{raw_manifest}\": {e}"))?;
-    let mut text = String::new();
-    manifest_entry
-        .read_to_string(&mut text)
-        .map_err(|e| format!("read plugin.toml: {e}"))?;
+    let declared = manifest_entry.size();
+    let text = read_entry_text_capped(&mut manifest_entry, "plugin.toml", declared)?;
     let manifest = parse_manifest(&text)?;
     if manifest.id.is_empty() {
         // An unpacked plugin can fall back to its directory name; a packaged
@@ -416,10 +476,28 @@ fn extract_to(source_path: &str, prefix: &str, staging: &Path) -> Result<(usize,
         if let Some(dir) = target.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("create dir: {e}"))?;
         }
+        let declared = entry.size();
         let mut out = std::fs::File::create(&target).map_err(|e| format!("create file: {e}"))?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| format!("extract \"{relative}\": {e}"))?;
+        // Copy under the caps applied to the bytes actually written: a lying
+        // header could otherwise pump gigabytes into staging before the CRC
+        // check ever noticed (docs/BUG_REPORT.md B2).
+        let wrote = stream_entry_capped(&mut entry, &relative, declared, |chunk| {
+            out.write_all(chunk)
+        })
+        .map_err(|e| format!("extract \"{relative}\": {e}"))?;
+        drop(out);
+        if wrote != declared {
+            return Err(format!(
+                "archive entry \"{relative}\" declares {declared} bytes but holds {wrote} — refusing an archive whose headers do not match its data"
+            ));
+        }
         files += 1;
-        total += entry.size();
+        total += wrote;
+        if total > MAX_TOTAL_BYTES {
+            return Err(format!(
+                "archive payload is {total} bytes (cap {MAX_TOTAL_BYTES})"
+            ));
+        }
     }
     Ok((files, total))
 }
@@ -599,10 +677,25 @@ fn install_relation(incoming: &str, existing: Option<&str>) -> &'static str {
 
 /// Inspect a `.lupx` archive: validate + report the manifest and payload
 /// facts for the confirmation card. Nothing is written.
+///
+/// Async + `spawn_blocking`: the whole archive is read, hashed and measured,
+/// which must not run on the main (UI) thread where a sync command would
+/// freeze every IPC and the window `set_size` for the duration.
 #[tauri::command]
-pub fn plugin_lupx_inspect(source_path: String) -> Result<LupxInfo, String> {
+pub async fn plugin_lupx_inspect(
+    source_path: String,
+    window: tauri::WebviewWindow,
+) -> Result<LupxInfo, String> {
+    crate::plugin_perm::deny_from_plugin_windows(&window)?;
+    tauri::async_runtime::spawn_blocking(move || inspect_lupx(&source_path))
+        .await
+        .map_err(|e| format!("inspect worker panicked: {e}"))?
+}
+
+/// The synchronous inspect body (the async command + unit tests).
+fn inspect_lupx(source_path: &str) -> Result<LupxInfo, String> {
     let base = base_dir();
-    let arch = read_lupx(&source_path)?;
+    let arch = read_lupx(source_path)?;
     let existing = existing_version(&base, &arch.manifest.id);
     let relation = install_relation(&arch.manifest.version, existing.as_deref());
     Ok(LupxInfo {
@@ -642,7 +735,15 @@ fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64, &
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let staging = staging_root.join(format!("{id}-{stamp}"));
-    let (files, total) = extract_to(source_path, &arch.prefix, &staging)?;
+    let (files, total) = match extract_to(source_path, &arch.prefix, &staging) {
+        Ok(v) => v,
+        Err(e) => {
+            // A refused extraction can leave partial files (the caps fire
+            // mid-entry) — never keep a half-extracted tree around.
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+    };
     if files == 0 {
         let _ = std::fs::remove_dir_all(&staging);
         return Err("archive holds no files for this plugin".into());
@@ -663,35 +764,49 @@ fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64, &
 /// twice: `settings-applied` refreshes the manifest list, `plugin-reload`
 /// makes an already-loaded module re-import from the new files (an upgrade
 /// takes effect without a restart).
+///
+/// Async + `spawn_blocking`: validation, extraction and the staging swap are
+/// all disk-heavy (hundreds of MiB for a large package) and would freeze the
+/// whole launcher on the main thread.
 #[tauri::command]
-pub fn plugin_lupx_install(
+pub async fn plugin_lupx_install(
     source_path: String,
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
-    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
 ) -> Result<LupxInfo, String> {
     crate::plugin_perm::deny_from_plugin_windows(&window)?;
     use tauri::Emitter;
-    let base = base_dir();
-    let (id, file_count, total_bytes, relation) = install_into(&base, &source_path)?;
+    let (id, info) = tauri::async_runtime::spawn_blocking(
+        move || -> Result<(String, LupxInfo), String> {
+            let base = base_dir();
+            let (id, file_count, total_bytes, relation) = install_into(&base, &source_path)?;
+            // Response facts from the same archive the swap consumed (the
+            // installed copy holds byte-identical content).
+            let arch = read_lupx(&source_path)?;
+            let info = LupxInfo {
+                id: arch.manifest.id,
+                name: arch.manifest.name,
+                version: arch.manifest.version,
+                kind: arch.manifest.kind,
+                description: arch.manifest.description,
+                permissions: arch.manifest.permissions,
+                file_count,
+                total_bytes,
+                existing_version: None, // installed by now; the card is gone
+                relation,               // what the swap just acted on
+                signature: if arch.signed { "valid" } else { "unsigned" },
+                sha256: arch.archive_sha256,
+            };
+            Ok((id, info))
+        },
+    )
+    .await
+    .map_err(|e| format!("install worker panicked: {e}"))??;
     crate::plugin_perm::invalidate(&perms, &id);
-    let info = read_lupx(&source_path)?;
     app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
-    app.emit("plugin-reload", id.clone()).map_err(|e| e.to_string())?;
-    Ok(LupxInfo {
-        id: info.manifest.id,
-        name: info.manifest.name,
-        version: info.manifest.version,
-        kind: info.manifest.kind,
-        description: info.manifest.description,
-        permissions: info.manifest.permissions,
-        file_count,
-        total_bytes,
-        existing_version: None, // installed by now; the card is gone
-        relation,               // what the swap just acted on
-        signature: if info.signed { "valid" } else { "unsigned" },
-        sha256: info.archive_sha256,
-    })
+    app.emit("plugin-reload", id).map_err(|e| e.to_string())?;
+    Ok(info)
 }
 
 /// Remove one installed plugin's directory (the pure part of uninstall —
@@ -799,7 +914,7 @@ mod tests {
                 ("icons/icon.svg", b"<svg/>".as_slice()),
             ],
         );
-        let info = plugin_lupx_inspect(zip).unwrap();
+        let info = inspect_lupx(&zip).unwrap();
         assert_eq!(info.id, "demo");
         assert_eq!(info.version, "1.0.0");
         assert_eq!(info.kind, "provider");
@@ -815,7 +930,7 @@ mod tests {
                 ("demo/main.js", b"export default {};".as_slice()),
             ],
         );
-        let info = plugin_lupx_inspect(zip).unwrap();
+        let info = inspect_lupx(&zip).unwrap();
         assert_eq!(info.id, "demo");
         assert_eq!(info.file_count, 2);
     }
@@ -823,24 +938,117 @@ mod tests {
     #[test]
     fn inspect_rejects_broken_and_hostile_archives() {
         let no_manifest = make_zip("nomanifest", &[("main.js", b"x".as_slice())]);
-        assert!(plugin_lupx_inspect(no_manifest).unwrap_err().contains("no plugin.toml"));
+        assert!(inspect_lupx(&no_manifest).unwrap_err().contains("no plugin.toml"));
         let no_id = make_zip("noid", &[("plugin.toml", b"name = \"no id\"\n".as_slice())]);
-        assert!(plugin_lupx_inspect(no_id).unwrap_err().contains("must declare an id"));
+        assert!(inspect_lupx(&no_id).unwrap_err().contains("must declare an id"));
         let bad_id = make_zip(
             "badid",
             &[("plugin.toml", b"id = \"..\\\\evil\"\n".as_slice())],
         );
-        assert!(plugin_lupx_inspect(bad_id).unwrap_err().contains("not usable"));
+        assert!(inspect_lupx(&bad_id).unwrap_err().contains("not usable"));
         let bad_manifest = make_zip("badtoml", &[("plugin.toml", b"not = [valid".as_slice())]);
-        assert!(plugin_lupx_inspect(bad_manifest).unwrap_err().contains("invalid plugin.toml"));
+        assert!(inspect_lupx(&bad_manifest).unwrap_err().contains("invalid plugin.toml"));
         let ambiguous = make_zip(
             "ambiguous",
             &[("a/plugin.toml", MANIFEST), ("b/plugin.toml", MANIFEST)],
         );
-        assert!(plugin_lupx_inspect(ambiguous).unwrap_err().contains("ambiguous"));
-        assert!(plugin_lupx_inspect("Z:/definitely/not/there.lupx".to_string())
+        assert!(inspect_lupx(&ambiguous).unwrap_err().contains("ambiguous"));
+        assert!(inspect_lupx("Z:/definitely/not/there.lupx")
             .unwrap_err()
             .contains("cannot open"));
+    }
+
+    /// First offset of `needle` in `hay`.
+    fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
+        hay.windows(needle.len()).position(|w| w == needle)
+    }
+
+    /// Rewrite the declared uncompressed size of one entry in an archive
+    /// produced by `make_zip` — local header (size at +22, name length at +26)
+    /// and central directory (size at +24, name length at +28). This is the
+    /// lying-header shape a decompression bomb uses: the data stays as it is,
+    /// only the claim shrinks.
+    fn patch_declared_size(path: &str, name: &[u8], fake: u32) {
+        let mut bytes = std::fs::read(path).unwrap();
+        let mut i = 0usize;
+        while let Some(pos) = find_sub(&bytes[i..], b"PK\x03\x04") {
+            let at = i + pos;
+            let nlen = u16::from_le_bytes([bytes[at + 26], bytes[at + 27]]) as usize;
+            if bytes.get(at + 30..at + 30 + nlen) == Some(name) {
+                bytes[at + 22..at + 26].copy_from_slice(&fake.to_le_bytes());
+            }
+            i = at + 4;
+        }
+        let mut i = 0usize;
+        while let Some(pos) = find_sub(&bytes[i..], b"PK\x01\x02") {
+            let at = i + pos;
+            let nlen = u16::from_le_bytes([bytes[at + 28], bytes[at + 29]]) as usize;
+            if bytes.get(at + 46..at + 46 + nlen) == Some(name) {
+                bytes[at + 24..at + 28].copy_from_slice(&fake.to_le_bytes());
+            }
+            i = at + 4;
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn lying_entry_headers_are_measured_not_trusted() {
+        // The bomb shape (docs/BUG_REPORT.md B2): `payload.bin` declares 4 KiB
+        // while its deflate stream holds 1 MiB. Every declared-size check
+        // passes; the archive must still be refused because the real bytes are
+        // counted, and the extraction path must count them too.
+        let payload = vec![0u8; 1024 * 1024];
+        let zip = make_zip(
+            "lying",
+            &[("plugin.toml", MANIFEST), ("payload.bin", payload.as_slice())],
+        );
+        patch_declared_size(&zip, b"payload.bin", 4096);
+
+        let err = inspect_lupx(&zip).unwrap_err();
+        assert!(
+            err.contains("holds 1048576") || err.contains("per-file cap"),
+            "unexpected error: {err}"
+        );
+
+        let staging = temp_base("lying-staging");
+        let err = extract_to(&zip, "", &staging).unwrap_err();
+        assert!(err.contains("holds 1048576"), "unexpected error: {err}");
+
+        let base = temp_base("lying-install");
+        let err = install_into(&base, &zip).unwrap_err();
+        assert!(
+            err.contains("holds 1048576") || err.contains("per-file cap"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !base.join("plugins").join("demo").exists(),
+            "a refused install must not land a plugin"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(base.join("data").join("install-staging"))
+            .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
+            .unwrap_or_default();
+        assert!(leftovers.is_empty(), "staging must be cleaned up: {leftovers:?}");
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::remove_dir_all(&staging).ok();
+        std::fs::remove_file(&zip).ok();
+    }
+
+    #[test]
+    fn oversized_real_entry_is_refused_by_the_cap() {
+        // Same lying header, but the real payload exceeds the per-file cap:
+        // the cap branch must fire on the measured count (a truthful header
+        // this size would already be refused by the declared-size check, so
+        // only a lying one reaches the stream cap).
+        let payload = vec![0u8; (MAX_ENTRY_BYTES + 1) as usize];
+        let zip = make_zip(
+            "cap",
+            &[("plugin.toml", MANIFEST), ("payload.bin", payload.as_slice())],
+        );
+        patch_declared_size(&zip, b"payload.bin", 4096);
+        let err = inspect_lupx(&zip).unwrap_err();
+        assert!(err.contains("per-file cap"), "unexpected error: {err}");
+        drop(payload);
+        std::fs::remove_file(&zip).ok();
     }
 
     #[test]

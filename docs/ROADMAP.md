@@ -2,7 +2,7 @@
 
 Lume 的开放事项清单：**只记录尚未开始或尚未收尾的工作**，不记录进度状态。
 历史条目的立项背景、实现细节与验证数据全部归档在
-[docs/ROADMAP_HISTORY.md](ROADMAP_HISTORY.md)（保留原 #0–#49 编号）。
+[docs/ROADMAP_HISTORY.md](ROADMAP_HISTORY.md)（保留原 #0–#50 编号）。
 
 流程约定：新功能先在本文件立项，开工时升格为一条独立迭代；完成后从本文件
 删除该条目，把实现/踩坑/验证写进 `ROADMAP_HISTORY.md`（编号顺延）并在

@@ -1621,7 +1621,7 @@ Rust 侧（`plugin_install.rs`）语义：
 
 | 环节 | 行为 |
 |---|---|
-| 校验 | 清单解析（`parse_manifest`）+ 必须显式声明 `id`（包内无目录名可回退）+ `valid_plugin_id` 字符集；entry 名逐段守卫（`\`→`/` 规范化——PowerShell 兼容、拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点、单段 ≤120 字符）；单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096 |
+| 校验 | 清单解析（`parse_manifest`）+ 必须显式声明 `id`（包内无目录名可回退）+ `valid_plugin_id` 字符集；entry 名逐段守卫（`\`→`/` 规范化——PowerShell 兼容、拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点、单段 ≤120 字符）；单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096；前两者按**实测**解压字节判定（zip 头部声明的未压缩大小可伪造——解压/哈希时逐块计数，声明与实测不一致的包直接拒绝） |
 | 换位 | 解压到 `<base>/data/install-staging/<id>-<ts>`（**不在 `plugins/` 下**——半成品不会被扫描发现）→ 旧安装 rename 到 staging 备份 → rename 到位（**失败自动还原旧安装**）→ 旧安装私有 `files/` 移入新目录（目录名常量在 `plugin_fs::PRIVATE_FILES_DIRNAME`；无则跳过，双方都有则逐项合并、**旧数据赢**同路径冲突；恢复失败把旧安装改名 `<id>-files-recovery-<pid>` 留在 `plugins/` 待手动处理——数据安全前不删备份）→ 清备份 |
 | 生效 | 双事件：`settings-applied`（清单刷新）+ `plugin-reload`（已加载模块立即从新文件重 import——**升级无需重启**） |
 | 卸载 | 删 `<plugins>/<id>/`（私有 `files/` 随目录走——它就在插件目录里；`data/plugin_store.db` 的文档**保留**）；目录不存在不算错（重复卸载幂等） |
@@ -1664,7 +1664,7 @@ Rust 侧（`plugin_install.rs`）语义：
 **归属判定**（`plugin_perm::resolve_plugin_caller`）：逻辑宿主的调用必须带
 supervisor 签发的 `host_token`，有效 id 一律以令牌映射为准（声称值被忽略，
 冒用失效）；分离视图窗口 `plugin-<id>` 的调用强制以 label 后缀为 id；策略类
-命令（启停/信任/安装）拒绝一切 `plugin-*` 窗口。逻辑帧内的裸 `invoke` 在
+命令（启停/信任/安装/inspect）拒绝一切 `plugin-*` 窗口。逻辑帧内的裸 `invoke` 在
 WebView2 IPC 层就过不去（opaque origin，无 ACAO——"Origin header is not a
 valid URL"），fail-closed。
 

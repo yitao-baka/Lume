@@ -243,7 +243,8 @@ pub fn assert_native_or_capability_resolved(
     Ok(resolved)
 }
 
-/// 策略类命令的窗口守卫：`set_plugin_*` / `plugin_lupx_install` /
+/// 策略类命令的窗口守卫：`set_plugin_*` / `plugin_lupx_inspect` /
+/// `plugin_lupx_install` /
 /// `plugin_uninstall` 只接受第一方窗口（main/settings）——任何 `plugin-*`
 /// 窗口（逻辑宿主 / 分离视图）里逃逸出沙箱的代码都不得改启停、信任清单或
 /// 安装包。

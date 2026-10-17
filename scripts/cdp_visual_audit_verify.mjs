@@ -7,7 +7,7 @@
 //   V-04 hidden clipboard row actions stay out of the Tab order
 //   V-05 the last settings nav item remains hittable at 560x420
 //   V-06 the satellite preview has a title and in-window close button
-//   V-07 narrow mode bars fall back to icons and expose overflow affordances
+//   V-07 narrow mode bars fall back to icons and scroll without edge controls
 //   V-08 icon-less app rows render deterministic letter tiles
 //   V-09 truncated result names/descriptions expose their full text
 //
@@ -289,6 +289,7 @@ try {
 
   let home = await main.evalJs(`(() => {
     const mode = document.querySelector(".mode-switch");
+    const shell = document.querySelector(".mode-switch-shell");
     const input = document.getElementById("search-input");
     const items = [...document.querySelectorAll(".mode-switch-item")];
     const mr = mode.getBoundingClientRect();
@@ -313,11 +314,15 @@ try {
         (b) => getComputedStyle(b.querySelector(".mode-switch-label")).display === "none"
       ),
       itemCount: items.length,
+      modeShellWidth: Math.round(shell.getBoundingClientRect().width),
       clipped: items.some((b) => b.getBoundingClientRect().right > mr.right + 1),
       overflowRight: mode.scrollLeft + mode.clientWidth < mode.scrollWidth - 1,
-      hasNext: !!document.querySelector(".mode-switch-scroll.next"),
+      hasScrollButtons: !!document.querySelector(".mode-switch-scroll"),
+      beforeContent: getComputedStyle(shell, "::before").content,
+      afterContent: getComputedStyle(shell, "::after").content,
       inputWidth: input.getBoundingClientRect().width,
       placeholder: input.getAttribute("placeholder"),
+      placeholderIsTitle: input.getAttribute("placeholder") === input.getAttribute("title"),
       letter: letter
         ? {
             char: letter.textContent.trim(),
@@ -376,14 +381,38 @@ try {
     JSON.stringify({ labelsHidden: home.labelsHidden, itemCount: home.itemCount })
   );
   check(
-    "V-07 overflow is exposed or every pill fits",
-    !home.clipped || (home.overflowRight && home.hasNext),
-    JSON.stringify({ clipped: home.clipped, overflowRight: home.overflowRight, hasNext: home.hasNext })
+    "V-07 narrow mode strip fits about three icons",
+    home.modeShellWidth >= 90 && home.modeShellWidth <= 110,
+    JSON.stringify({ modeShellWidth: home.modeShellWidth })
   );
   check(
-    "V-07 search input keeps a usable floor and short placeholder",
-    home.inputWidth >= 120 && /^(Search…|搜索…|搜尋…)$/.test(home.placeholder),
-    JSON.stringify({ width: home.inputWidth, placeholder: home.placeholder })
+    "V-07 clipped modes remain horizontally scrollable",
+    home.clipped && home.overflowRight,
+    JSON.stringify({
+      clipped: home.clipped,
+      overflowRight: home.overflowRight,
+    })
+  );
+  check(
+    "V-07 mode bar has no arrow or fading-edge controls",
+    !home.hasScrollButtons &&
+      home.beforeContent === "none" &&
+      home.afterContent === "none",
+    JSON.stringify({
+      hasScrollButtons: home.hasScrollButtons,
+      beforeContent: home.beforeContent,
+      afterContent: home.afterContent,
+    })
+  );
+  check(
+    "V-07 search input keeps its floor and adapts the placeholder",
+    home.inputWidth >= 120 &&
+      (home.inputWidth < 160 ? !home.placeholderIsTitle : home.placeholderIsTitle),
+    JSON.stringify({
+      width: home.inputWidth,
+      placeholder: home.placeholder,
+      placeholderIsTitle: home.placeholderIsTitle,
+    })
   );
   check(
     "V-08 missing app icon renders a deterministic letter tile",

@@ -417,10 +417,13 @@ before adding a field:
   queries. Pill presentation is setting-driven: icon +
   name by default, icons-only with `appearance.mode_switch_icons_only` on
   (`title`/`aria-label` carry the name; a mode without an icon falls back to
-  `res/icons/unknow_universal.svg`). Below 640px the strip also falls back to
-  icons-only so labels cannot consume the search input; if the icons still
-  overflow, edge fades and chevron buttons expose the hidden range, and the
-  input swaps to the short localized placeholder below 160px.
+  `res/icons/unknow_universal.svg`). The strip is capped at about three named
+  pills (`320px`), or about three icons (`104px`) in the icon-only
+  presentation. Below 640px it also falls back to icons-only so labels cannot
+  consume the search input; if the icons still overflow, the strip clips
+  without edge controls, wheel/trackpad scrolling remains available, and the
+  active pill is scrolled into view on mode changes; the input swaps to the
+  short localized placeholder below 160px.
 - **拼接几何 (the seam)**: the surface is one continuous panel — literally
   one color: the panel fill, the DWM frame strip and the default plugin-page
   canvas are all `--surface` (see Surface in docs/UI_GUIDELINES.md; do not

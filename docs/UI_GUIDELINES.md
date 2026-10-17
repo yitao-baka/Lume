@@ -77,12 +77,15 @@ contrast-safe tiers.
   search row must not resize on the toggle. The strip owns only the width left
   after the input and gear: when modes overflow it scrolls horizontally (no
   visible scrollbar), long labels ellipsize, and the active pill is kept in
-  view. The search input never drops below its 120px usable floor.
+  view. Its cap is about three named pills (`320px`); icon-only presentation
+  uses about three icons (`104px`), leaving the rest of the row to the search
+  input. The input never drops below its 120px usable floor.
 - At narrow launcher widths (`<=640px`) the strip automatically falls back to
   the same icon-only presentation even when the persistent setting is off;
   `title` / `aria-label` still carry every name. If the icon strip itself
-  overflows, a fading edge and a chevron button at each clipped side make the
-  remaining modes discoverable (wheel/trackpad scrolling still works).
+  overflows, it simply clips at its edges — no scrollbar, fade or arrow
+  control; wheel/trackpad scrolling still works, and switching modes scrolls
+  the active pill into view.
 - When the search input is narrower than 160px, its placeholder switches to
   the localized short form (`Search…` / `搜索…` / `搜尋…`); the full page
   placeholder remains available as the input's tooltip and accessible name.

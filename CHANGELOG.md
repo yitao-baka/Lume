@@ -55,6 +55,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Removed
 
+- **模式切换栏左右滚动箭头** — 删除胶囊栏溢出时贴在两侧的 `‹` / `›`
+  按钮、两侧渐隐提示及其样式与三语文案；溢出直接裁切，隐藏滚动条，
+  滚轮/触控板可横向滚动，切换模式时激活胶囊继续自动进入视野。
+  宽度上限同步收紧到约三颗胶囊（带名称 `320px`、仅图标 `104px`），
+  把搜索行剩余宽度留给输入框。
+  `docs/UI_GUIDELINES.md` / `docs/ARCHITECTURE.md` 与视觉审计同步。验证：
+  `scripts/cdp_visual_audit_verify.mjs` **26/26**（含「无箭头/渐隐控件」与
+  窄栏三图标宽度断言）、
+  `cdp_mode_bar_icons_verify` **22/22**；`pnpm exec tsc --noEmit`、
+  `pnpm run build`、debug exe 重建、`cargo check`、`cargo test`
+  （**223 passed / 9 ignored**）通过。实机 `720px`：模式栏 / 输入框约
+  `299px / 299px`，完整显示三颗胶囊并露出第四颗；`540px` 仅图标模式栏
+  `104px`，输入框 `314px`。
+
 - **呼出键自动回退（ROADMAP #49）** — 废弃极早期的候选链「Alt+Space 被占用 →
   Ctrl+Space → Ctrl+Alt+Space，取第一个系统允许的组合」：启动改为只注册设置里的
   `hotkeys.toggle`（默认 Alt+Space）一次，冲突如实写日志

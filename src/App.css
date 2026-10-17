@@ -1196,13 +1196,16 @@ body.reorder-dragging {
 }
 
 /* Apps / Clipboard mode switch in the search row. The shell owns the width
-   cap and the edge affordances; the inner strip is the actual scroller. */
+   cap; the inner strip is the actual scroller. */
 .mode-switch-shell {
-  position: relative;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: min(60%, 520px);
+  max-width: min(44%, 320px);
   display: flex;
+}
+
+.mode-switch-shell.icons-only {
+  max-width: 104px;
 }
 
 .mode-switch {
@@ -1224,62 +1227,6 @@ body.reorder-dragging {
 
 .mode-switch::-webkit-scrollbar {
   display: none;
-}
-
-.mode-switch-shell::before,
-.mode-switch-shell::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  width: 28px;
-  pointer-events: none;
-  z-index: 1;
-  opacity: 0;
-  transition: opacity 0.12s ease-out;
-}
-
-.mode-switch-shell::before {
-  left: 2px;
-  background: linear-gradient(to right, var(--surface), transparent);
-}
-
-.mode-switch-shell::after {
-  right: 2px;
-  background: linear-gradient(to left, var(--surface), transparent);
-}
-
-.mode-switch-shell.overflow-left::before,
-.mode-switch-shell.overflow-right::after {
-  opacity: 1;
-}
-
-.mode-switch-scroll {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  width: 22px;
-  z-index: 2;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: var(--surface-raised);
-  color: var(--text-secondary);
-  font: 16px/1 "Segoe UI Symbol", sans-serif;
-  cursor: pointer;
-}
-
-.mode-switch-scroll:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.mode-switch-scroll.prev {
-  left: 2px;
-}
-
-.mode-switch-scroll.next {
-  right: 2px;
 }
 
 .mode-switch-item {
@@ -1336,6 +1283,10 @@ body.reorder-dragging {
    explicit 仅图标 setting still owns the persistent preference; this is only
    the overflow fallback, and title/aria-label stay on every pill. */
 @media (max-width: 640px) {
+  .mode-switch-shell:not(.icons-only) {
+    max-width: 104px;
+  }
+
   .mode-switch:not(.icons-only) .mode-switch-item {
     padding: 5px 8px;
   }

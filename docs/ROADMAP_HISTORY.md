@@ -3591,3 +3591,68 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   一项 UAC 隐藏抑制单测）；
   `cargo check`、`pnpm exec tsc --noEmit`、`pnpm run build`、
   `pnpm run tauri build --debug --no-bundle` 均通过。
+
+---
+
+## 54. 视觉与可用性审查修复
+
+**来源：`docs/UI_VISUAL_AUDIT_2026-10-17.md`。** 修复主题对比度、键盘焦点、
+最小设置窗口、模式栏溢出、结果图标回退、预览出口与长列表滚动提示。
+
+### 54.1 实现
+
+- **主题语义层**：`src/theme.css` 新增 `--accent` / `--accent-text` /
+  `--accent-tint` / `--accent-border` / `--focus-ring`、`--icon-muted` 以及
+  按主题分层的 danger / warning / success token。浅色 accent text 为
+  `#0757b8`（对 `#fbfbfd` 6.63:1），focus ring 为 `#0969da`（5.02:1），
+  danger fill 为 `#b42318`（白字 6.57:1）。所有正文 token 在各自
+  `--surface` 上均超过 4.5:1；`App.css` 不再直接写死主题 accent。
+- **剪贴板可读性与焦点**：来源/时间提升到 12px `--text-secondary`，行内
+  操作使用 `--icon-muted`、16px 图标与 28px 点击区。只有当前选中行的
+  三个操作保留 `tabIndex=0`，其余行的操作为 `-1`；`:focus-within` 仍会把
+  操作层显形，防止选择变化后焦点落在透明容器里。
+- **设置最小窗口**：设置侧栏改为可独立滚动；`max-height: 480px` 时压缩
+  行高与内边距，九个导航项在 `560×420` 内容区内完整可见。页脚不再覆盖
+  「关于」的命中区域。
+- **模式栏**：搜索框与胶囊之间增加 `.mode-switch-shell`，负责溢出检测、
+  两侧渐隐和 `‹` / `›` 按钮；`<=640px` 自动切图标态（设置里的永久仅图标
+  偏好不变）。输入宽度低于 160px 时切短占位符，完整占位符保留在
+  `title` / `aria-label`。
+- **结果图标与悬浮全文**：新增 `src/launcher/letterTiles.ts`——用
+  `Intl.Segmenter` 取首个 grapheme（运行时无该 API 时退回 code point），
+  以路径/名称的 FNV-1a 哈希稳定映射十色深字浅底磁贴。图标加载成功覆盖
+  磁贴，加载失败保留磁贴；结果名称与描述补 `title`。
+- **预览窗**：`src/preview.tsx` 增加 36px 标题栏（文件名/类型）与右上角
+  关闭按钮，按钮调用既有 `close_preview`；窗口仍为 always-dark、
+  `WS_EX_NOACTIVATE`，并增加 1px 内描边作为浅色启动器旁的低对比边界。
+- **滚动提示**：剪贴板虚拟列表按 `scrollTop + viewportH` 计算上下是否还有
+  内容；设置页用 `ResizeObserver` + `MutationObserver` 测量滚动范围。两处
+  只在溢出侧显示渐隐，不引入常驻滚动条或右侧 gutter。
+
+### 54.2 踩坑
+
+- 模式栏在模式数量足够多时会先吃满 `max-width`，此时切到仅图标态栏宽
+  不会变小；回归应断言每颗胶囊变窄且栏不增宽，而不是栏必然变窄。
+- 不能让未选中行的 action 继续留在 Tab 序列后仅靠 `:focus-within` 提亮：
+  长列表仍会贡献大量隐藏焦点；正确契约是 roving reachability + 可见性兜底。
+- 预览窗本身不可激活，关闭按钮必须走普通 `click → invoke`，不能用依赖键盘
+  焦点的窗口 chrome；点击后仍由主窗口中转 `preview-closed` 清理 Esc 优先级。
+- 设置页内容高度是异步变化的（插件卡片、索引状态），固定挂载时测一次
+  不够；MutationObserver 只负责重新调度测量，不直接改 DOM。
+
+### 54.3 验证
+
+- `node scripts/cdp_visual_audit_verify.mjs`：**24/24**。浅色 accent/focus
+  对比度、12px 元信息、16px 操作图标、危险按钮对白字 6.57:1、真实 CDP
+  `Tab` 经过选中行三操作（均 `rowSelected=true / opacity=1`）、
+  `560×420` 下「关于」`lastBottom=330.7 < contentBottom=360.7` 且中心
+  命中 `.settings-nav`、540px 模式栏图标态 + 溢出箭头、首 grapheme 磁贴
+  （`B`）、名称/描述 `title`、预览标题含文件名、关闭按钮清空
+  `get_preview_request`。
+- `node scripts/cdp_mode_bar_icons_verify.mjs`：**22/22**；持久仅图标开关、
+  首帧注入、无图标模式回退与切换键循环均未回归。
+- `node scripts/cdp_plugin_mode_bar_verify.mjs`：**15/15**；hidden mode、
+  keyword/feature/provider 行图标不受字母磁贴改动影响。
+- `pnpm exec tsc --noEmit`、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `cargo check` 通过，`cargo test` **223 passed / 9 ignored**。

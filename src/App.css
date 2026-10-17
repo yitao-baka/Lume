@@ -84,11 +84,13 @@ body,
   background: transparent;
   color: var(--text);
   font-size: 22px;
-  caret-color: #5ac8fa;
+  caret-color: var(--accent);
+  text-overflow: ellipsis;
 }
 
 .search-input::placeholder {
-  color: var(--text-faint);
+  color: var(--text-muted);
+  text-overflow: ellipsis;
 }
 
 /* 拼接下半部：页面直贴搜索行与窗口三边（无外框内衬）。内衬由各页面自己给
@@ -137,7 +139,7 @@ body,
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-raised);
-  color: var(--text-dim);
+  color: var(--text-secondary);
   font: 12px/1.4 sans-serif;
   cursor: pointer;
   opacity: 0;
@@ -184,7 +186,7 @@ body,
 
 .result-selected {
   background: var(--selected);
-  box-shadow: inset 0 0 0 1px rgba(90, 200, 250, 0.6);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 .result-tile {
@@ -211,8 +213,8 @@ body,
 
 /* Clipboard results: muted accent tile + single-line content preview. */
 .result-tile-clip {
-  background: rgba(90, 200, 250, 0.16);
-  color: #5ac8fa;
+  background: var(--accent-tint);
+  color: var(--accent-text);
   overflow: hidden; /* keep the image thumbnail clipped to the rounded tile */
 }
 
@@ -287,7 +289,7 @@ body,
   border: none;
   outline: none;
   background: transparent;
-  color: var(--text-faint);
+  color: var(--icon-muted);
   width: 26px;
   height: 26px;
   border-radius: 6px;
@@ -296,8 +298,8 @@ body,
 }
 
 .result-copy:hover {
-  color: #60a5fa;
-  background: rgba(96, 165, 250, 0.12);
+  color: var(--accent-text);
+  background: var(--accent-tint);
 }
 
 .result-copy-icon {
@@ -314,7 +316,7 @@ body,
   border: none;
   outline: none;
   background: transparent;
-  color: var(--text-faint);
+  color: var(--icon-muted);
   width: 26px;
   height: 26px;
   border-radius: 6px;
@@ -323,8 +325,8 @@ body,
 }
 
 .result-delete:hover {
-  color: #f87171;
-  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger-text);
+  background: var(--danger-tint);
 }
 
 .result-delete-icon {
@@ -369,8 +371,8 @@ body,
 
 /* Active must be obvious but not loud. */
 .clip-cat.active {
-  background: rgba(90, 200, 250, 0.16);
-  color: #5ac8fa;
+  background: var(--accent-tint);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -404,13 +406,13 @@ body,
 
 .clip-row.result-selected {
   background: var(--selected);
-  box-shadow: inset 0 0 0 1px rgba(90, 200, 250, 0.6);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 /* Multi-select: a soft brand tint + checkmark badge. */
 .clip-row.clip-row-multi {
-  background: rgba(90, 200, 250, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(90, 200, 250, 0.45);
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 .clip-row-check {
@@ -418,8 +420,8 @@ body,
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #5ac8fa;
-  color: #06131a;
+  background: var(--accent);
+  color: var(--accent-on);
   font-size: 12px;
   font-weight: 700;
   display: flex;
@@ -467,8 +469,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(90, 200, 250, 0.14);
-  color: #5ac8fa;
+  background: var(--accent-tint);
+  color: var(--accent-text);
   overflow: hidden;
 }
 
@@ -513,8 +515,8 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
-  color: var(--text-faint);
+  font-size: 12px;
+  color: var(--text-secondary);
   line-height: 1.3;
 }
 
@@ -535,7 +537,8 @@ body,
 }
 
 .clip-row:hover .clip-row-actions,
-.clip-row.result-selected .clip-row-actions {
+.clip-row.result-selected .clip-row-actions,
+.clip-row:focus-within .clip-row-actions {
   opacity: 1;
 }
 
@@ -543,12 +546,12 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border: none;
   outline: none;
   background: transparent;
-  color: var(--text-faint);
+  color: var(--icon-muted);
   border-radius: 6px;
   cursor: pointer;
   padding: 0;
@@ -556,18 +559,18 @@ body,
 }
 
 .clip-act:hover {
-  color: #60a5fa;
-  background: rgba(96, 165, 250, 0.12);
+  color: var(--accent-text);
+  background: var(--accent-tint);
 }
 
 .clip-act-danger:hover {
-  color: #f87171;
-  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger-text);
+  background: var(--danger-tint);
 }
 
 .clip-act-icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 /* Status bar: 共 N 条 on the left, 清空 on the right. */
@@ -587,6 +590,28 @@ body,
   flex: 1;
   min-height: 0;
   display: flex;
+  position: relative;
+}
+
+/* Wheel/trackpad scrolling stays barless, but the fading edge makes hidden
+   content discoverable without reserving a scrollbar gutter. */
+.scroll-fade {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: var(--scroll-fade);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.scroll-fade.top {
+  top: 0;
+  background: linear-gradient(to bottom, var(--surface), transparent);
+}
+
+.scroll-fade.bottom {
+  bottom: 0;
+  background: linear-gradient(to top, var(--surface), transparent);
 }
 
 .clip-clear-btn {
@@ -602,8 +627,8 @@ body,
 }
 
 .clip-clear-btn:hover {
-  color: #f87171;
-  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger-text);
+  background: var(--danger-tint);
 }
 
 /* Status-bar right cluster: 暂停记录 / 清空. */
@@ -632,8 +657,8 @@ body,
 
 /* Paused: an obvious-but-subtle amber highlight. */
 .clip-status-btn.paused {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.14);
+  color: var(--warning-text);
+  background: var(--warning-tint);
 }
 
 /* Empty state: icon + title + hint. */
@@ -751,7 +776,7 @@ body,
   border: none;
   outline: none;
   background: transparent;
-  color: #5ac8fa;
+  color: var(--accent-text);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -805,7 +830,7 @@ body,
 }
 
 .clip-confirm-check input {
-  accent-color: #5ac8fa;
+  accent-color: var(--accent);
 }
 
 .clip-confirm-actions {
@@ -830,14 +855,14 @@ body,
 }
 
 .clip-confirm-ok {
-  background: #f87171;
-  color: #fff;
+  background: var(--danger-fill);
+  color: var(--danger-on);
 }
 
 .clip-confirm-cancel:focus-visible,
 .clip-confirm-ok:focus-visible,
 .clip-confirm-check input:focus-visible {
-  outline: 2px solid #5ac8fa;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -898,7 +923,7 @@ body,
 .settings select:focus-visible,
 .picker button:focus-visible,
 .picker input:focus-visible {
-  outline: 2px solid #5ac8fa;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -967,7 +992,7 @@ body,
 
 .result-box.result-selected {
   background: var(--selected);
-  border-color: rgba(90, 200, 250, 0.7);
+  border-color: var(--accent-border);
 }
 
 /* 鼠标悬停在空白处（无条目）时隐藏导航高亮：选择索引保留，回到条目或按方向
@@ -1015,12 +1040,26 @@ body.reorder-dragging {
 /* Real app icon replaces the letter tile. */
 .result-box-icon {
   background: transparent;
+  overflow: hidden;
 }
 
 .result-box-img {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.result-box-letter {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  font-size: calc(var(--entry-size, 110px) * 0.22);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.02em;
 }
 
 /* Main-menu bars (最近使用 / 已固定): a titled, expandable section on the
@@ -1051,7 +1090,7 @@ body.reorder-dragging {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 /* The 「Windows 资源管理器」 bar's action tiles stay square (like the app tiles)
@@ -1133,7 +1172,7 @@ body.reorder-dragging {
 .ctx-item:hover,
 .ctx-item:focus,
 .ctx-item.active {
-  background: rgba(90, 200, 250, 0.18);
+  background: var(--accent-tint);
   color: var(--text);
 }
 
@@ -1151,18 +1190,27 @@ body.reorder-dragging {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: 11px;
+  color: var(--text-secondary);
   margin-top: 1px;
 }
 
-/* Apps / Clipboard mode switch in the search row. */
-.mode-switch {
-  /* Shrink into the remaining row width instead of pushing the gear out.
-     The pills scroll horizontally when there are more than fit. */
+/* Apps / Clipboard mode switch in the search row. The shell owns the width
+   cap and the edge affordances; the inner strip is the actual scroller. */
+.mode-switch-shell {
+  position: relative;
   flex: 0 1 auto;
   min-width: 0;
   max-width: min(60%, 520px);
+  display: flex;
+}
+
+.mode-switch {
+  /* Shrink into the remaining row width instead of pushing the gear out.
+     The pills scroll horizontally when there are more than fit. */
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
   display: flex;
   gap: 2px;
   padding: 2px;
@@ -1176,6 +1224,62 @@ body.reorder-dragging {
 
 .mode-switch::-webkit-scrollbar {
   display: none;
+}
+
+.mode-switch-shell::before,
+.mode-switch-shell::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 28px;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.mode-switch-shell::before {
+  left: 2px;
+  background: linear-gradient(to right, var(--surface), transparent);
+}
+
+.mode-switch-shell::after {
+  right: 2px;
+  background: linear-gradient(to left, var(--surface), transparent);
+}
+
+.mode-switch-shell.overflow-left::before,
+.mode-switch-shell.overflow-right::after {
+  opacity: 1;
+}
+
+.mode-switch-scroll {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 22px;
+  z-index: 2;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: 16px/1 "Segoe UI Symbol", sans-serif;
+  cursor: pointer;
+}
+
+.mode-switch-scroll:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.mode-switch-scroll.prev {
+  left: 2px;
+}
+
+.mode-switch-scroll.next {
+  right: 2px;
 }
 
 .mode-switch-item {
@@ -1225,7 +1329,20 @@ body.reorder-dragging {
 /* Loading gate feedback (the page below is hidden until `ModeInstance.ready`):
    the mode being loaded tints to the accent and its icon carries a spinner. */
 .mode-switch-item.loading {
-  color: #5ac8fa;
+  color: var(--accent-text);
+}
+
+/* Narrow launcher rows trade labels for the compact icon presentation. The
+   explicit 仅图标 setting still owns the persistent preference; this is only
+   the overflow fallback, and title/aria-label stay on every pill. */
+@media (max-width: 640px) {
+  .mode-switch:not(.icons-only) .mode-switch-item {
+    padding: 5px 8px;
+  }
+
+  .mode-switch:not(.icons-only) .mode-switch-label {
+    display: none;
+  }
 }
 
 .mode-switch-item.loading .mode-switch-icon {
@@ -1325,7 +1442,7 @@ body.settings-window #root {
 }
 
 .settings-search:focus-within {
-  border-color: #5ac8fa;
+  border-color: var(--focus-ring);
 }
 
 .settings-search-icon {
@@ -1365,9 +1482,17 @@ body.settings-window #root {
   gap: 2px;
   padding: 10px 8px;
   border-right: 1px solid var(--border);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: none;
+}
+
+.settings-sidebar::-webkit-scrollbar {
+  display: none;
 }
 
 .settings-nav {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1396,6 +1521,7 @@ body.settings-window #root {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 
 .settings-body {
@@ -1409,6 +1535,11 @@ body.settings-window #root {
   max-width: 776px;
   margin: 0 auto;
   padding: 4px 28px 16px;
+}
+
+.settings-main > .scroll-fade {
+  left: 0;
+  right: 0;
 }
 
 /* A whole section (title + cards) — stacked when the search box filters. */
@@ -1442,6 +1573,21 @@ body.settings-window #root {
   border-top: 1px solid var(--border);
 }
 
+/* At the declared 560x420 minimum, nine 36px nav rows overflow the 308px
+   content band and the footer paints over the last one. Compact the rail only
+   at short heights; the scroll fallback still protects larger DPI/text runs. */
+@media (max-height: 480px) {
+  .settings-sidebar {
+    gap: 1px;
+    padding: 6px 8px;
+  }
+
+  .settings-nav {
+    padding: 5px 10px;
+    font-size: 13px;
+  }
+}
+
 .settings-action {
   min-width: 84px;
   padding: 7px 16px;
@@ -1458,13 +1604,13 @@ body.settings-window #root {
 }
 
 .settings-action-primary {
-  border-color: #5ac8fa;
-  background: rgba(90, 200, 250, 0.14);
-  color: #5ac8fa;
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--accent-text);
 }
 
 .settings-action-primary:hover:not(:disabled) {
-  background: rgba(90, 200, 250, 0.24);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .settings-action:disabled {
@@ -1478,7 +1624,7 @@ body.settings-window #root {
   margin: 16px 4px 6px;
   font-size: 13px;
   font-weight: 600;
-  color: #5ac8fa;
+  color: var(--accent-text);
 }
 
 /* Small sub-block title inside a card (系统索引 / 用户索引 / 忽略应用). */
@@ -1486,7 +1632,7 @@ body.settings-window #root {
   margin: 10px 0 6px;
   font-size: 13px;
   font-weight: 600;
-  color: #5ac8fa;
+  color: var(--accent-text);
 }
 
 .settings-group {
@@ -1559,9 +1705,9 @@ body.settings-window #root {
 }
 
 .settings-chip.active {
-  border-color: #5ac8fa;
-  background: rgba(90, 200, 250, 0.16);
-  color: #5ac8fa;
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--accent-text);
 }
 
 .settings-slider {
@@ -1586,7 +1732,7 @@ body.settings-window #root {
   border-radius: 2px;
   background: linear-gradient(
     to right,
-    #5ac8fa var(--fill, 50%),
+    var(--accent) var(--fill, 50%),
     var(--border-strong) var(--fill, 50%)
   );
 }
@@ -1598,7 +1744,7 @@ body.settings-window #root {
   height: 16px;
   margin-top: -6px;
   border-radius: 50%;
-  background: #5ac8fa;
+  background: var(--accent);
   border: 2px solid var(--surface);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
   transition: transform 0.12s ease;
@@ -1661,13 +1807,13 @@ body.settings-window #root {
 }
 
 .settings-toggle.on {
-  border-color: #5ac8fa;
-  background: rgba(90, 200, 250, 0.35);
+  border-color: var(--accent-border);
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .settings-toggle.on .settings-toggle-knob {
   transform: translateX(20px);
-  background: #5ac8fa;
+  background: var(--accent);
 }
 
 /* Settings content controls (6.5 系统页). */
@@ -1777,16 +1923,16 @@ body.settings-window #root {
 }
 
 .settings-hotkey-btn.active {
-  border-color: #5ac8fa;
-  background: rgba(90, 200, 250, 0.16);
-  color: #5ac8fa;
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--accent-text);
 }
 
 .settings-link {
   border: none;
   padding: 0;
   background: transparent;
-  color: #5ac8fa;
+  color: var(--accent-text);
   font-size: 13px;
   cursor: pointer;
 }
@@ -1816,11 +1962,11 @@ body.settings-window #root {
 
 .settings-text-input:focus {
   outline: none;
-  border-color: #5ac8fa;
+  border-color: var(--focus-ring);
 }
 
 .settings-text-input::placeholder {
-  color: var(--text-faint);
+  color: var(--text-muted);
 }
 
 .settings-hint {
@@ -1830,7 +1976,7 @@ body.settings-window #root {
 }
 
 .settings-hint-error {
-  color: #e5484d;
+  color: var(--danger-text);
 }
 
 /* 自动化 延迟触发 field: a narrow number input + its unit. */
@@ -1855,7 +2001,7 @@ body.settings-window #root {
 
 .settings-delay-input:focus {
   outline: none;
-  border-color: #5ac8fa;
+  border-color: var(--focus-ring);
 }
 
 .settings-delay-unit {
@@ -1877,8 +2023,8 @@ body.settings-window #root {
 }
 
 .settings-test-btn:hover {
-  border-color: #5ac8fa;
-  color: #5ac8fa;
+  border-color: var(--accent-border);
+  color: var(--accent-text);
 }
 
 /* 自动化 → 「选择」 button (opens the running-programs picker). */
@@ -2033,7 +2179,7 @@ body.settings-window #root {
 
 .settings-error {
   font-size: 12px;
-  color: #ff7b72;
+  color: var(--danger-text);
 }
 
 .settings-status {
@@ -2044,7 +2190,7 @@ body.settings-window #root {
 }
 
 .settings-status.error {
-  color: #ff7b72;
+  color: var(--danger-text);
 }
 
 /* Small inline SVG icons beside buttons / pills / menu items. */
@@ -2199,7 +2345,7 @@ body.settings-window #root {
 /* Uninstall: a regular icon button until armed — then it reads as the
    destructive action it is. */
 .plg-uninstall.armed {
-  background: rgba(229, 72, 77, 0.18);
+  background: var(--danger-tint);
 }
 
 .plg-uninstall.armed img {
@@ -2208,7 +2354,7 @@ body.settings-window #root {
 
 /* The global 全部授权 label reads as a warning-level control. */
 .settings-sub-label.warn {
-  color: #ffb020;
+  color: var(--warning-text);
 }
 
 .plg-list {
@@ -2282,18 +2428,18 @@ body.settings-window #root {
 
 /* Kind-tinted letter tiles (real plugin icons keep their own colors). */
 .plg-tile.mode {
-  background: rgba(90, 200, 250, 0.14);
-  color: #5ac8fa;
+  background: var(--accent-tint);
+  color: var(--accent-text);
 }
 
 .plg-tile.service {
-  background: rgba(177, 140, 255, 0.16);
-  color: #b18cff;
+  background: var(--service-tint);
+  color: var(--service-text);
 }
 
 .plg-tile.provider {
-  background: rgba(63, 191, 127, 0.16);
-  color: #3fbf7f;
+  background: var(--provider-tint);
+  color: var(--provider-text);
 }
 
 .plg-main {
@@ -2335,15 +2481,15 @@ body.settings-window #root {
 }
 
 .plg-badge.builtin {
-  border-color: rgba(90, 200, 250, 0.4);
-  color: #5ac8fa;
-  background: rgba(90, 200, 250, 0.08);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+  background: var(--accent-tint);
 }
 
 .plg-badge.dev {
-  border-color: rgba(255, 176, 32, 0.45);
-  color: #ffb020;
-  background: rgba(255, 176, 32, 0.08);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+  background: var(--warning-tint);
 }
 
 .plg-desc {
@@ -2452,11 +2598,11 @@ body.settings-window #root {
 
 .plg-perm-chip {
   padding: 2px 10px;
-  border: 1px solid rgba(90, 200, 250, 0.4);
+  border: 1px solid var(--accent-border);
   border-radius: 10px;
-  background: rgba(90, 200, 250, 0.08);
+  background: var(--accent-tint);
   font-size: 12px;
-  color: #5ac8fa;
+  color: var(--accent-text);
   cursor: help;
 }
 
@@ -2466,11 +2612,11 @@ body.settings-window #root {
 }
 
 .plg-note.warn {
-  color: #ffb020;
+  color: var(--warning-text);
 }
 
 .plg-note.ok {
-  color: #4cc38a;
+  color: var(--success-text);
 }
 
 /* 全部授权 row — visually flagged as the dangerous escape hatch. */
@@ -2480,9 +2626,9 @@ body.settings-window #root {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  border: 1px solid rgba(255, 176, 32, 0.35);
+  border: 1px solid var(--warning-border);
   border-radius: 10px;
-  background: rgba(255, 176, 32, 0.06);
+  background: var(--warning-tint);
 }
 
 .plg-kv {

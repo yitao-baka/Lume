@@ -35,7 +35,7 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   shrinks to search row + hint), never centered inside a tall empty page area.
 - **Loading gate**: a page that is not loaded yet is *not shown* — the window
   collapses to the search row, `.results` is hidden, and the mode's pill
-  carries the feedback (label tinted to the accent `#5ac8fa`, a spinner ring
+  carries the feedback (label tinted to `--accent-text`, a spinner ring
   over the icon). `ModeInstance.ready` decides; the home page is always ready.
   See docs/ARCHITECTURE.md (sizing).
 - Font: `"Segoe UI Variable Text", "Segoe UI", system-ui`; base 16px;
@@ -43,11 +43,29 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
 
 ## Colors
 
-- Text: `#f2f2f2`
-- Placeholder / hint text: `rgba(242, 242, 242, 0.4)`
-- Accent (caret + selected tile hues): `#5ac8fa`
-- Selection highlight: `rgba(255, 255, 255, 0.09)`
-- Hairlines: `rgba(255, 255, 255, 0.06)` / `0.08`
+Palette tokens live in `src/theme.css` and are shared by the launcher,
+settings and detached-plugin surfaces. The light theme does not reuse the
+dark theme's cyan as text: small text and focus indicators get their own
+contrast-safe tiers.
+
+| Role | Dark | Light |
+|---|---|---|
+| Surface / raised | `#1e1e20` / `rgba(38,38,40,.97)` | `#fbfbfd` / `#ffffff` |
+| Primary / secondary / muted text | `0.68` / `0.58` / `0.49` white | `0.72` / `0.66` / `0.64` ink |
+| Accent decoration / text | `#5ac8fa` / `#5ac8fa` | `#0969da` / `#0757b8` |
+| Focus ring | `#5ac8fa` | `#0969da` |
+| Danger / warning / success text | `#ff7b72` / `#ffb020` / `#4cc38a` | `#b42318` / `#9a6700` / `#1a7f37` |
+
+- Every text token clears `4.5:1` on `--surface`. The focus ring and selected
+  borders clear `3:1`; `--danger-fill` keeps white button text above `4.5:1`.
+- `--accent` is for decoration and fills, `--accent-text` for small text and
+  links, `--accent-tint` for selected backgrounds, `--accent-border` for
+  visible selection edges, and `--focus-ring` for keyboard focus.
+- Use `--icon-muted` for actionable icons. Decorative glyphs may still recede;
+  informational metadata uses `--text-secondary`.
+- Selection highlight remains `rgba(255,255,255,0.09)` in dark mode and
+  `rgba(31,35,40,0.08)` in light mode; hairlines use `--border` /
+  `--border-strong`.
 
 ## Search row
 
@@ -60,14 +78,26 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   after the input and gear: when modes overflow it scrolls horizontally (no
   visible scrollbar), long labels ellipsize, and the active pill is kept in
   view. The search input never drops below its 120px usable floor.
+- At narrow launcher widths (`<=640px`) the strip automatically falls back to
+  the same icon-only presentation even when the persistent setting is off;
+  `title` / `aria-label` still carry every name. If the icon strip itself
+  overflows, a fading edge and a chevron button at each clipped side make the
+  remaining modes discoverable (wheel/trackpad scrolling still works).
+- When the search input is narrower than 160px, its placeholder switches to
+  the localized short form (`Search…` / `搜索…` / `搜尋…`); the full page
+  placeholder remains available as the input's tooltip and accessible name.
 
 ## Results
 
-- List: thin scrollbar, `6px` inset padding.
+- List: barless scrolling with `6px` inset padding.
 - Row: 34px icon tile + 12px gap + 15px name; selected row gets the
   `0.09` white overlay highlight (rounded 8px).
 - Letter tiles: deterministic 10-color palette, dark-on-light text, rounded
-  8px — an interim stand-in for real app icons.
+  8px. The letter is the first user-perceived grapheme (not the first UTF-16
+  code unit); the palette index is a stable hash of path/name. A loaded icon
+  covers the tile, and extraction failure leaves the letter tile in place.
+- Truncated result names and descriptions expose their complete value through
+  the native `title` tooltip.
 
 ## Window chrome
 
@@ -90,6 +120,14 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   flashes the Windows caption red `#e81123`.
 - Palette tokens live in `src/theme.css`, shared by every themed surface;
   the preview window stays self-contained (always dark).
+- The satellite preview keeps a 36px header with the filename or content type
+  and an in-window close button that invokes `close_preview`. It remains
+  `WS_EX_NOACTIVATE`; clicking close does not activate the window or steal the
+  launcher's focus. A one-pixel inset edge separates the always-dark media
+  canvas from a light launcher without adding a themed native border.
+- At the settings window's `560×420` minimum, the navigation rail compacts its
+  rows and remains independently scrollable. The footer never overlaps a
+  navigation hit target; the last section stays fully visible and clickable.
 
 ## Behavior
 
@@ -117,5 +155,8 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   webkit scrollbar): containers scroll on wheel/trackpad with no visible bar,
   and content fills the full width (the native scrollbar otherwise reserves
   ~10px and leaves a right-side gap in the app grid).
-- Range sliders use a custom thin track with a rounded `#5ac8fa` thumb and a
-  filled portion (`--fill` custom property), matching the dark theme.
+- Long clipboard and settings content add a top/bottom fading edge only while
+  more rows exist beyond that edge. The fade is a discoverability cue, not a
+  persistent scrollbar and not a reserved gutter.
+- Range sliders use a custom thin track with a rounded `--accent` thumb and a
+  filled portion (`--fill` custom property).

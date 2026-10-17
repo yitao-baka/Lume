@@ -166,6 +166,11 @@ export function ClipboardView(props: ClipboardViewProps) {
     clip.setKeepPinned(false);
   }
 
+  const hasRowsAbove = () => clip.clipScrollTop() > 1;
+  const hasRowsBelow = () =>
+    clip.clips().length * CLIP_ROW_H >
+    clip.clipScrollTop() + clip.clipViewportH() + 1;
+
   /** A single clipboard history row: tile, two-line body, hover actions. */
   function clipRow(item: ClipboardItem, idx: number) {
     const isSelected = idx === clip.selected();
@@ -243,6 +248,7 @@ export function ClipboardView(props: ClipboardViewProps) {
             class="clip-act"
             title={t("copyToClipboard")}
             aria-label={t("copyToClipboard")}
+            tabIndex={isSelected ? 0 : -1}
             onClick={(e) => {
               e.stopPropagation();
               clip.copyOnly(item);
@@ -266,6 +272,7 @@ export function ClipboardView(props: ClipboardViewProps) {
             class="clip-act"
             title={t("paste")}
             aria-label={t("paste")}
+            tabIndex={isSelected ? 0 : -1}
             onClick={(e) => {
               e.stopPropagation();
               clip.pasteClip(item);
@@ -289,6 +296,7 @@ export function ClipboardView(props: ClipboardViewProps) {
             class="clip-act clip-act-danger"
             title={t("delete")}
             aria-label={t("delete")}
+            tabIndex={isSelected ? 0 : -1}
             onClick={(e) => {
               e.stopPropagation();
               clip.requestDelete(item.id);
@@ -334,6 +342,9 @@ export function ClipboardView(props: ClipboardViewProps) {
         ))}
       </div>
       <div class="clip-main">
+        <Show when={hasRowsAbove()}>
+          <div class="scroll-fade top" aria-hidden="true" />
+        </Show>
         <Show
           when={clip.clips().length > 0}
           fallback={
@@ -379,6 +390,9 @@ export function ClipboardView(props: ClipboardViewProps) {
               </div>
             </div>
           </div>
+        </Show>
+        <Show when={hasRowsBelow()}>
+          <div class="scroll-fade bottom" aria-hidden="true" />
         </Show>
       </div>
       <div class="clip-statusbar">

@@ -47,6 +47,18 @@ function basename(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
+/** The compact header label: a filename where there is one, otherwise the
+ * content type. The full value is also exposed via `title`. */
+function previewTitle(r: PreviewRequest): string {
+  if (r.kind === "filelist") {
+    return t("fileCount", { count: String(r.paths?.length ?? 0) });
+  }
+  if (r.path) return basename(r.path);
+  if (r.kind === "image") return t("imageTitle");
+  const firstLine = r.content?.trim().split(/\r?\n/, 1)[0];
+  return firstLine || t("previewUntitled");
+}
+
 /** A rendered multi-file list: paths + per-path existence + checked indices. */
 interface FileListState {
   paths: string[];
@@ -247,6 +259,22 @@ function PreviewApp() {
 
   return (
     <div class="preview-body">
+      <header class="preview-head">
+        <span class="preview-title" title={req() ? previewTitle(req()!) : t("previewUntitled")}>
+          {req() ? previewTitle(req()!) : t("previewUntitled")}
+        </span>
+        <button
+          class="preview-close"
+          title={t("previewClose")}
+          aria-label={t("previewClose")}
+          onClick={() => void invoke("close_preview")}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3.5 3.5l9 9m0-9l-9 9" />
+          </svg>
+        </button>
+      </header>
+      <div class="preview-content">
         <Show when={req()} fallback={<div class="preview-empty">—</div>}>
           <Show when={!error()} fallback={<div class="preview-error">{error()}</div>}>
             <Switch>
@@ -382,6 +410,7 @@ function PreviewApp() {
             </Switch>
           </Show>
         </Show>
+      </div>
     </div>
   );
 }

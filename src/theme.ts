@@ -1,9 +1,9 @@
 //! Color-mode application (docs/SETTINGS.md 界面页 颜色模式).
 //!
-//! The palette lives in CSS custom properties under `:root[data-theme="dark"]`
-//! / `:root[data-theme="light"]` (src/App.css). This module sets that attribute
-//! per the setting (`"system" | "dark" | "light"`); `"system"` follows the OS
-//! `prefers-color-scheme` live.
+//! The palette lives in CSS custom properties under the default `:root` (dark)
+//! and `:root[data-theme="light"]` (src/theme.css). This module sets that
+//! attribute per the setting (`"system" | "dark" | "light"`); `"system"`
+//! follows the OS `prefers-color-scheme` live.
 //!
 //! Plugin surfaces (a mode page's canvas, a detached plugin window's own
 //! chrome) additionally honour a **per-plugin** preference

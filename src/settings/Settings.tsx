@@ -178,6 +178,25 @@ export default function Settings() {
   /** Only the latest settings read may land. The window stays alive while
    * hidden, so a reload on re-open can overlap the startup read. */
   let loadSeq = 0;
+  let bodyEl: HTMLDivElement | undefined;
+  let bodyResize: ResizeObserver | undefined;
+  let bodyMutation: MutationObserver | undefined;
+  let bodyRaf = 0;
+  const [bodyCue, setBodyCue] = createSignal({ above: false, below: false });
+
+  function measureBodyCue() {
+    const el = bodyEl;
+    if (!el) return;
+    const above = el.scrollTop > 1;
+    const below = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+    const prev = bodyCue();
+    if (prev.above !== above || prev.below !== below) setBodyCue({ above, below });
+  }
+
+  function scheduleBodyCue() {
+    cancelAnimationFrame(bodyRaf);
+    bodyRaf = requestAnimationFrame(measureBodyCue);
+  }
   /** Unsaved-changes prompt: closing the window, or an instant action
    * (import / backup restore) that would replace the draft. */
   const [prompt, setPrompt] = createSignal<
@@ -265,11 +284,23 @@ export default function Settings() {
       if (disposed) fn();
       else unlistenApplied = fn;
     });
+    if (bodyEl) {
+      bodyEl.addEventListener("scroll", scheduleBodyCue, { passive: true });
+      bodyResize = new ResizeObserver(scheduleBodyCue);
+      bodyResize.observe(bodyEl);
+      bodyMutation = new MutationObserver(scheduleBodyCue);
+      bodyMutation.observe(bodyEl, { childList: true, subtree: true });
+      scheduleBodyCue();
+    }
     onCleanup(() => {
       disposed = true;
       unlistenFocus?.();
       unlistenClose?.();
       unlistenApplied?.();
+      bodyEl?.removeEventListener("scroll", scheduleBodyCue);
+      bodyResize?.disconnect();
+      bodyMutation?.disconnect();
+      cancelAnimationFrame(bodyRaf);
     });
   });
 
@@ -281,6 +312,15 @@ export default function Settings() {
       setLocale(resolveLocale(s.appearance.language));
       applyColorMode(s.appearance.color_mode);
     }
+  });
+
+  // Switching sections replaces the body's card tree; re-measure after layout
+  // settles so the fading edge reflects the new scroll range.
+  createEffect(() => {
+    section();
+    query();
+    settings();
+    requestAnimationFrame(scheduleBodyCue);
   });
 
   function showToast(text: string) {
@@ -465,7 +505,11 @@ export default function Settings() {
           </For>
         </aside>
         <main class="settings-main">
-          <div class="settings-body">
+          <div
+            class="settings-body"
+            ref={(el) => (bodyEl = el)}
+            onScroll={scheduleBodyCue}
+          >
             <Show when={settings()}>
               <Show
                 when={!query()}
@@ -513,6 +557,12 @@ export default function Settings() {
               </Show>
             </Show>
           </div>
+          <Show when={bodyCue().above}>
+            <div class="scroll-fade top" aria-hidden="true" />
+          </Show>
+          <Show when={bodyCue().below}>
+            <div class="scroll-fade bottom" aria-hidden="true" />
+          </Show>
         </main>
       </div>
       <footer class="settings-footer">

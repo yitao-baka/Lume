@@ -34,6 +34,13 @@ node scripts/cdp_plugin_verify.mjs
 is a dev build that loads `http://localhost:1420`; it is not suitable for CDP
 smoke tests unless the vite server is also running.
 
+Visual-contract regressions are covered by
+`node scripts/cdp_visual_audit_verify.mjs` (24 assertions). It launches the
+embedded debug build, snapshots/restores settings, pinned apps and text
+clipboard contents, and checks light-theme contrast, clipboard Tab order,
+minimum settings geometry and hit testing, mode-bar overflow, letter tiles,
+truncation tooltips, scroll fades, and the satellite preview title/close path.
+
 ## Manual verification
 
 Run the app:
@@ -143,6 +150,10 @@ dev URL instead.
    keyboard, leave the input (for example by clicking a row) and press
    `Space`; deleting a selected row must immediately clear its selection
    badge/count.
+   With the clipboard page focused, `Tab` traverses the category buttons, the
+   three actions of the currently selected row, then the status-bar controls.
+   Actions on unselected rows are not Tab stops; focus must never disappear
+   into an `opacity: 0` action cluster.
 8. **Images** — copy an image (e.g. a screenshot via Win+Shift+S): it appears
    as a thumbnail tile labelled `Image · <time>`. `Enter` pastes the original
    image back.
@@ -160,6 +171,16 @@ dev URL instead.
     gone), Enter copies the entry and keeps the launcher open with
     「已复制 — 没有可粘贴的目标窗口」; a paste failure keeps it open with an
     error toast instead of hiding.
+
+### Satellite preview
+
+1. **Title** — select an image/file/video preview: the 36px header shows the
+   filename, or the content type for clipboard-image rows.
+2. **Close** — click the header ×: the satellite disappears immediately, the
+   launcher stays visible, and the next selection can open a preview again.
+   The click must not activate the satellite or steal focus from the launcher.
+3. **No close button without content** — the window is hidden, never a bare
+   header floating beside the launcher.
 
 ### Settings window (设置迭代)
 
@@ -193,9 +214,10 @@ dev URL instead.
 8. **Search** — queries such as 「闲置重置」「模式切换栏仅显示图标」
    「各模式使用独立搜索词」「强制聚焦」 find their section; a nonsense query
    shows the localized no-match state and its clear-search button.
-9. **Minimum window** — resize to the 560×420 minimum and open 自动化: rule
-   rows wrap with the delay/toggle/delete controls still visible and no
-   horizontal scrollbar.
+9. **Minimum window** — resize to the 560×420 minimum. All nine navigation
+   items, including 关于, remain inside the content band and clickable; the
+   footer must not overlap the last item. Open 自动化: rule rows wrap with the
+   delay/toggle/delete controls still visible and no horizontal scrollbar.
 
 ### Service / run-as-admin / auto-start (Program Files iteration)
 

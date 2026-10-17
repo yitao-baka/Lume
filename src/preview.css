@@ -29,6 +29,74 @@ html {
 .preview-body {
   height: 100%;
   display: flex;
+  flex-direction: column;
+  /* A discreet self-contained edge keeps the always-dark media viewer
+     intentional beside a light launcher without painting a theme-colored
+     border into the satellite window. */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.preview-head {
+  flex: none;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #1e1e20;
+  position: relative;
+  z-index: 2;
+}
+
+.preview-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(242, 242, 242, 0.76);
+}
+
+.preview-close {
+  flex: none;
+  width: 28px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(242, 242, 242, 0.78);
+  cursor: pointer;
+}
+
+.preview-close:hover {
+  background: rgba(255, 255, 255, 0.13);
+  color: #f2f2f2;
+}
+
+.preview-close:focus-visible {
+  outline: 2px solid #5ac8fa;
+  outline-offset: 1px;
+}
+
+.preview-close svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+.preview-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 
 /* Text-file content — hidden scrollbar like the app. */

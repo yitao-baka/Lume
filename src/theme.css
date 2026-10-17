@@ -16,13 +16,38 @@
                                              + 插件页画布默认 + 设置窗口 */
   --surface-raised: rgba(38, 38, 40, 0.97);/* context menu */
   --text: #f2f2f2;
-  --text-secondary: rgba(242, 242, 242, 0.6);
-  --text-muted: rgba(242, 242, 242, 0.45);
-  --text-faint: rgba(242, 242, 242, 0.35);
+  /* Every text tier clears 4.5:1 on --surface; decorative glyphs can still
+     use opacity, but informational 11px text must not fall back to a faint
+     sub-threshold tint. */
+  --text-secondary: rgba(242, 242, 242, 0.68);
+  --text-muted: rgba(242, 242, 242, 0.58);
+  --text-faint: rgba(242, 242, 242, 0.49);
+  --icon-muted: rgba(242, 242, 242, 0.58);
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.16);
   --hover: rgba(255, 255, 255, 0.08);
   --selected: rgba(255, 255, 255, 0.14);
+  --accent: #5ac8fa;
+  --accent-text: #5ac8fa;
+  --accent-tint: rgba(90, 200, 250, 0.16);
+  --accent-border: rgba(90, 200, 250, 0.62);
+  --accent-on: #06131a;
+  --focus-ring: #5ac8fa;
+  --danger-text: #ff7b72;
+  --danger-fill: #c7353c;
+  --danger-on: #ffffff;
+  --danger-tint: rgba(255, 123, 114, 0.12);
+  --danger-border: rgba(255, 123, 114, 0.45);
+  --warning-text: #ffb020;
+  --warning-tint: rgba(255, 176, 32, 0.12);
+  --warning-border: rgba(255, 176, 32, 0.45);
+  --success-text: #4cc38a;
+  --success-tint: rgba(76, 195, 138, 0.12);
+  --service-text: #b18cff;
+  --service-tint: rgba(177, 140, 255, 0.16);
+  --provider-text: #3fbf7f;
+  --provider-tint: rgba(63, 191, 127, 0.16);
+  --scroll-fade: 26px;
   /* Bundled SVGs use dark `#333` strokes — invert so they read as light
      icons. Themed plugin icons (#44) render explicit variants as-is. */
   --icon-filter: invert(1);
@@ -33,13 +58,37 @@
   --surface: #fbfbfd;
   --surface-raised: #ffffff;
   --text: #1f2328;
-  --text-secondary: rgba(31, 35, 40, 0.65);
-  --text-muted: rgba(31, 35, 40, 0.5);
-  --text-faint: rgba(31, 35, 40, 0.38);
+  --text-secondary: rgba(31, 35, 40, 0.72);
+  --text-muted: rgba(31, 35, 40, 0.66);
+  --text-faint: rgba(31, 35, 40, 0.64);
+  --icon-muted: rgba(31, 35, 40, 0.66);
   --border: rgba(31, 35, 40, 0.1);
   --border-strong: rgba(31, 35, 40, 0.2);
   --hover: rgba(31, 35, 40, 0.06);
   --selected: rgba(31, 35, 40, 0.08);
+  /* The legacy cyan is unreadable on a near-white panel. Decorative accents
+     stay saturated; small text, links and selected chips use the darker
+     accent-text tier. */
+  --accent: #0969da;
+  --accent-text: #0757b8;
+  --accent-tint: rgba(9, 105, 218, 0.14);
+  --accent-border: rgba(7, 87, 184, 0.72);
+  --accent-on: #ffffff;
+  --focus-ring: #0969da;
+  --danger-text: #b42318;
+  --danger-fill: #b42318;
+  --danger-on: #ffffff;
+  --danger-tint: rgba(180, 35, 24, 0.08);
+  --danger-border: rgba(180, 35, 24, 0.42);
+  --warning-text: #9a6700;
+  --warning-tint: rgba(154, 103, 0, 0.09);
+  --warning-border: rgba(154, 103, 0, 0.38);
+  --success-text: #1a7f37;
+  --success-tint: rgba(26, 127, 55, 0.09);
+  --service-text: #6f42c1;
+  --service-tint: rgba(111, 66, 193, 0.1);
+  --provider-text: #1a7f37;
+  --provider-tint: rgba(26, 127, 55, 0.09);
   /* #333 strokes already read as dark icons on the light theme. */
   --icon-filter: none;
 }

@@ -228,7 +228,9 @@ try {
   check("C2 名称全部隐藏", !!c && c.items.every((i) => !i.labelShown));
   check("C3 title + aria-label 保留", !!c && c.items.every((i) => i.title && i.aria && i.title === i.aria));
   const wBefore = new Map((a?.items ?? []).map((i) => [i.title, i.w]));
-  check("C4 栏与每颗胶囊都变窄", !!c && c.barW < (a?.barW ?? 0) && c.items.every((i) => i.w < (wBefore.get(i.title) ?? 1e9)),
+  // The strip is width-capped, so with enough modes both presentations can
+  // saturate the same max width; what must always shrink is each pill.
+  check("C4 每颗胶囊都变窄且栏不增宽", !!c && c.barW <= (a?.barW ?? 0) && c.items.every((i) => i.w < (wBefore.get(i.title) ?? 1e9)),
     (a?.barW ?? "-") + " -> " + (c?.barW ?? "-") + " " + JSON.stringify(c?.items?.map((i) => i.w)));
   const hBefore = new Map((a?.items ?? []).map((i) => [i.title, i.h]));
   check("C5 胶囊高度不变（切换不跳行）", !!c && c.items.every((i) => Math.abs(i.h - (hBefore.get(i.title) ?? -99)) <= 1),

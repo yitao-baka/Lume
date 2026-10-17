@@ -4,7 +4,7 @@
 //! routing, page switching and placeholder resolution; this component only
 //! renders them and reports input/clicks back.
 
-import { createEffect, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { t } from "../i18n";
 import { pickIcon } from "../launcher/iconSpec";
 import type { HostIcon, PickedIcon } from "../launcher/types";
@@ -44,6 +44,31 @@ export interface SearchBoxProps {
 
 export function SearchBox(props: SearchBoxProps) {
   let modeSwitchEl: HTMLDivElement | undefined;
+  let searchInputEl: HTMLInputElement | undefined;
+  let modeRaf = 0;
+  const [shortPlaceholder, setShortPlaceholder] = createSignal(false);
+  const [modeOverflow, setModeOverflow] = createSignal({ left: false, right: false });
+
+  function measureModeOverflow() {
+    const el = modeSwitchEl;
+    if (!el) return;
+    const left = el.scrollLeft > 1;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    const prev = modeOverflow();
+    if (prev.left !== left || prev.right !== right) setModeOverflow({ left, right });
+  }
+
+  function scheduleModeOverflow() {
+    cancelAnimationFrame(modeRaf);
+    modeRaf = requestAnimationFrame(measureModeOverflow);
+  }
+
+  function scrollModes(direction: -1 | 1) {
+    const el = modeSwitchEl;
+    if (!el) return;
+    el.scrollLeft += direction * Math.max(80, el.clientWidth * 0.72);
+    scheduleModeOverflow();
+  }
 
   // The mode bar scrolls horizontally when plugins outgrow the row. Keep the
   // active pill visible after Tab cycling / keyword jumps, even when it was
@@ -55,8 +80,30 @@ export function SearchBox(props: SearchBoxProps) {
       modeSwitchEl
         ?.querySelector<HTMLElement>(".mode-switch-item.active")
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      scheduleModeOverflow();
     });
   });
+
+  onMount(() => {
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === searchInputEl) {
+          setShortPlaceholder(entry.contentRect.width < 160);
+        } else {
+          scheduleModeOverflow();
+        }
+      }
+    });
+    if (modeSwitchEl) observer.observe(modeSwitchEl);
+    if (searchInputEl) observer.observe(searchInputEl);
+    scheduleModeOverflow();
+    onCleanup(() => {
+      observer.disconnect();
+      cancelAnimationFrame(modeRaf);
+    });
+  });
+
+  const placeholder = () => (shortPlaceholder() ? t("searchPlaceholderShort") : props.placeholder());
 
   return (
     // The frameless window is draggable from the search row's empty space
@@ -78,63 +125,98 @@ export function SearchBox(props: SearchBoxProps) {
       <input
         id="search-input"
         class="search-input"
+        ref={(el) => (searchInputEl = el)}
         type="text"
         value={props.query()}
         onInput={(e) => props.onInput((e.currentTarget as HTMLInputElement).value)}
-        placeholder={props.placeholder()}
+        placeholder={placeholder()}
+        title={props.placeholder()}
+        aria-label={props.placeholder()}
         spellcheck={false}
         autocomplete="off"
       />
       <div
-        class="mode-switch"
-        classList={{ "icons-only": props.iconsOnly() }}
-        ref={(el) => (modeSwitchEl = el)}
-        role="tablist"
-        aria-label={t("searchMode")}
-        onWheel={(e) => {
-          // A vertical wheel over the chip strip scrolls it horizontally,
-          // matching the hidden-scrollbar treatment used elsewhere.
-          if (!modeSwitchEl || modeSwitchEl.scrollWidth <= modeSwitchEl.clientWidth) return;
-          if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-          modeSwitchEl.scrollLeft += e.deltaY;
-          e.preventDefault();
+        class="mode-switch-shell"
+        classList={{
+          "overflow-left": modeOverflow().left,
+          "overflow-right": modeOverflow().right,
         }}
       >
-        <For each={props.pages()}>
-          {(p) => {
-            // Theme-reactive (#44): pickIcon reads themeMode(), so a flip
-            // swaps the pill's variant live; an explicit pick opts out of
-            // the legacy `--icon-filter` inversion. No icon at all falls
-            // back to UNKNOWN_ICON (#47) in both presentations.
-            const icon = () => pickIcon(p.icon) ?? UNKNOWN_ICON;
-            return (
-              <button
-                class="mode-switch-item"
-                classList={{ active: p.active, loading: p.loading }}
-                role="tab"
-                aria-selected={p.active}
-                aria-busy={p.loading}
-                title={p.label}
-                aria-label={p.label}
-                onClick={() => props.onSwitchPage(p.id)}
-              >
-                <span class="mode-switch-icon-wrap">
-                  <img
-                    class="mode-switch-icon"
-                    classList={{ "icon-explicit": !icon().legacy }}
-                    src={icon().src}
-                    alt=""
-                    draggable={false}
-                  />
-                  <Show when={p.loading}>
-                    <span class="mode-switch-spinner" aria-hidden="true" />
-                  </Show>
-                </span>
-                <span class="mode-switch-label">{p.label}</span>
-              </button>
-            );
+        <Show when={modeOverflow().left}>
+          <button
+            class="mode-switch-scroll prev"
+            tabIndex={-1}
+            title={t("modeScrollPrev")}
+            aria-label={t("modeScrollPrev")}
+            onClick={() => scrollModes(-1)}
+          >
+            ‹
+          </button>
+        </Show>
+        <div
+          class="mode-switch"
+          classList={{ "icons-only": props.iconsOnly() }}
+          ref={(el) => (modeSwitchEl = el)}
+          role="tablist"
+          aria-label={t("searchMode")}
+          onScroll={scheduleModeOverflow}
+          onWheel={(e) => {
+            // A vertical wheel over the chip strip scrolls it horizontally,
+            // matching the hidden-scrollbar treatment used elsewhere.
+            if (!modeSwitchEl || modeSwitchEl.scrollWidth <= modeSwitchEl.clientWidth) return;
+            if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+            modeSwitchEl.scrollLeft += e.deltaY;
+            scheduleModeOverflow();
+            e.preventDefault();
           }}
-        </For>
+        >
+          <For each={props.pages()}>
+            {(p) => {
+              // Theme-reactive (#44): pickIcon reads themeMode(), so a flip
+              // swaps the pill's variant live; an explicit pick opts out of
+              // the legacy `--icon-filter` inversion. No icon at all falls
+              // back to UNKNOWN_ICON (#47) in both presentations.
+              const icon = () => pickIcon(p.icon) ?? UNKNOWN_ICON;
+              return (
+                <button
+                  class="mode-switch-item"
+                  classList={{ active: p.active, loading: p.loading }}
+                  role="tab"
+                  aria-selected={p.active}
+                  aria-busy={p.loading}
+                  title={p.label}
+                  aria-label={p.label}
+                  onClick={() => props.onSwitchPage(p.id)}
+                >
+                  <span class="mode-switch-icon-wrap">
+                    <img
+                      class="mode-switch-icon"
+                      classList={{ "icon-explicit": !icon().legacy }}
+                      src={icon().src}
+                      alt=""
+                      draggable={false}
+                    />
+                    <Show when={p.loading}>
+                      <span class="mode-switch-spinner" aria-hidden="true" />
+                    </Show>
+                  </span>
+                  <span class="mode-switch-label">{p.label}</span>
+                </button>
+              );
+            }}
+          </For>
+        </div>
+        <Show when={modeOverflow().right}>
+          <button
+            class="mode-switch-scroll next"
+            tabIndex={-1}
+            title={t("modeScrollNext")}
+            aria-label={t("modeScrollNext")}
+            onClick={() => scrollModes(1)}
+          >
+            ›
+          </button>
+        </Show>
       </div>
       <button
         class="icon-btn"

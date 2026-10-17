@@ -71,6 +71,26 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **视觉与可用性审查修复** — 主题拆出 `--accent` / `--accent-text` /
+  `--accent-tint` / `--accent-border` / `--focus-ring` 与按主题分层的
+  danger / warning / success token；所有文本层级、焦点环、选中 chip、链接、
+  accent badge 和危险按钮重新满足文字 `4.5:1`、非文本 `3:1` 对比度。
+  剪贴板元信息升到 12px 次级色，行内操作改用 `--icon-muted` 与 16px 图标；
+  未选中行的三个操作退出 Tab 序列，焦点落在行内时操作层仍同行显形。
+  设置侧栏在低于 480px 的高度下压缩导航行并允许独立滚动，`560×420`
+  最小值下「关于」完整位于内容区且可命中点击。卫星预览补文件名/类型标题
+  与调用 `close_preview` 的右上角关闭按钮，并保留 `WS_EX_NOACTIVATE`。
+  窄窗口模式栏自动退化为仅图标，图标仍溢出时显示两侧渐隐与箭头，搜索框
+  改用短占位符；结果行恢复首 grapheme + 稳定十色字母磁贴，截断名称与描述
+  补 `title`；剪贴板和设置长内容增加随滚动范围出现的上下渐隐提示，不恢复
+  常驻滚动条。
+  验证：`scripts/cdp_visual_audit_verify.mjs` **24/24**（浅色对比度、
+  真实 Tab 遍历、`560×420` 命中测试、模式栏溢出、字母磁贴、tooltip、
+  滚动渐隐、预览标题与关闭）；`cdp_mode_bar_icons_verify` **22/22**、
+  `cdp_plugin_mode_bar_verify` **15/15**；`pnpm exec tsc --noEmit`、
+  `pnpm run build`、debug exe 重建干净；`cargo check` 通过，
+  `cargo test` **223 passed / 9 ignored**。
+
 - **交互逻辑专项审计第四轮（交互-01–09）** — 统一可见范围与激活校验，
   收起栏目后不再能启动隐藏条目；设置窗改发最小差异 patch，脏草稿保存不会
   回滚期间发生的插件启停/轻量写，导入与恢复备份复用同一条运行时应用链路并

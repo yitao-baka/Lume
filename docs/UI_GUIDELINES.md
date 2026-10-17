@@ -95,10 +95,13 @@ contrast-safe tiers.
 - List: barless scrolling with `6px` inset padding.
 - Row: 34px icon tile + 12px gap + 15px name; selected row gets the
   `0.09` white overlay highlight (rounded 8px).
-- Letter tiles: deterministic 10-color palette, dark-on-light text, rounded
-  8px. The letter is the first user-perceived grapheme (not the first UTF-16
-  code unit); the palette index is a stable hash of path/name. A loaded icon
-  covers the tile, and extraction failure leaves the letter tile in place.
+- App artwork is rendered as-is by default: no circular crop, mask or tinted
+  backing tile. While extraction is pending or after it fails, the row uses
+  the shared `res/icons/unknow_universal.svg` fallback; a successful icon
+  replaces it.
+- 设置 → 导航页 → 条目框 → `round_app_icons` (default off) is the only circle
+  contract. On, `.launcher.circle-app-icons` applies a `50%` radius and clips
+  the same result artwork; off restores the unmasked presentation.
 - Truncated result names and descriptions expose their complete value through
   the native `title` tooltip.
 

@@ -4,12 +4,12 @@
 //! navigate store's section registry; interactions go back out through the
 //! section contract and callbacks.
 
-import { createSignal, For, Show } from "solid-js";
+import { For, Show } from "solid-js";
 import { t } from "../../i18n";
 import { pickIcon } from "../../launcher/iconSpec";
-import { letterTile } from "../../launcher/letterTiles";
 import type { PluginIconSpec } from "../../launcher/types";
 import type { AppEntry, MenuState } from "../../launcher/types";
+import unknownIcon from "../../../res/icons/unknow_universal.svg";
 import type { NavSection, NavigateStore } from "./store";
 
 export interface NavigateViewProps {
@@ -29,47 +29,9 @@ export interface NavigateViewProps {
   setSelected: (i: number) => void;
 }
 
-/** Result tile with a deterministic letter fallback. The letter renders for
- * the first frame and stays put when extraction fails; a successfully loaded
- * image covers it. */
-function ResultTile(props: {
-  src?: string;
-  name: string;
-  path: string;
-  mono?: boolean;
-}) {
-  const [failedSrc, setFailedSrc] = createSignal<string | null>(null);
-  const showImage = () => !!props.src && failedSrc() !== props.src;
-  const tile = () => letterTile(props.name, props.path);
-  return (
-    <span class="result-box-tile result-box-icon">
-      <Show
-        when={showImage()}
-        fallback={
-          <span
-            class="result-box-letter"
-            style={{ background: tile().background, color: "#1f2328" }}
-            aria-hidden="true"
-          >
-            {tile().char}
-          </span>
-        }
-      >
-        <img
-          class={`result-box-img${props.mono ? " folder-icon-svg" : ""}`}
-          src={props.src}
-          alt=""
-          draggable={false}
-          onError={() => setFailedSrc(props.src ?? null)}
-        />
-      </Show>
-    </span>
-  );
-}
-
 /** A single box in a bar or the results grid, with icon resolution: an
  * explicit item icon (explorer tiles / plugin bars) wins, then the cached
- * icon pipeline, then the deterministic letter tile. `selected` is an accessor —
+ * icon pipeline, then the shared unknown icon. `selected` is an accessor —
  * boxes render inside <For> callbacks (not tracking scopes), so the
  * highlight class must be read reactively at the classList position or it
  * freezes at the initial value (no selection feedback at all). */
@@ -110,7 +72,21 @@ function itemBox(
       }}
       onPointerDown={handlers.onDragPress}
     >
-      <ResultTile src={src()} name={item.name} path={item.path} mono={item.mono} />
+      <span class="result-box-tile result-box-icon">
+        <Show
+          when={src()}
+          fallback={
+            <img class="result-box-img icon-unknown" src={unknownIcon} alt="" />
+          }
+        >
+          <img
+            class={`result-box-img${item.mono ? " folder-icon-svg" : ""}`}
+            src={src()}
+            alt=""
+            draggable={false}
+          />
+        </Show>
+      </span>
       <span class="result-box-name" title={item.name}>{item.name}</span>
       <Show when={item.description}>
         <span class="result-box-desc" title={item.description}>{item.description}</span>

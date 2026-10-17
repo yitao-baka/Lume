@@ -1037,10 +1037,12 @@ body.reorder-dragging {
   color: rgba(0, 0, 0, 0.82);
 }
 
-/* Real app icon replaces the letter tile. */
+/* Real app artwork is shown as-is by default. The optional round style masks
+   it; the base size stays the same either way. */
 .result-box-icon {
   background: transparent;
-  overflow: hidden;
+  border-radius: 0;
+  overflow: visible;
 }
 
 .result-box-img {
@@ -1049,17 +1051,9 @@ body.reorder-dragging {
   object-fit: contain;
 }
 
-.result-box-letter {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 11px;
-  font-size: calc(var(--entry-size, 110px) * 0.22);
-  font-weight: 650;
-  line-height: 1;
-  letter-spacing: -0.02em;
+.launcher.circle-app-icons .result-box-icon {
+  border-radius: 50%;
+  overflow: hidden;
 }
 
 /* Main-menu bars (最近使用 / 已固定): a titled, expandable section on the

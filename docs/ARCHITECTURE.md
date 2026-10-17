@@ -178,8 +178,8 @@ backends have timeouts).
   icons it hasn't seen.
 - **Loading**: the `get_app_icons` command runs extraction on a blocking
   thread (async command) and returns cached hits immediately; the frontend
-  loads icons in batches of 20 so letter tiles render first and icons swap in
-  progressively.
+  loads icons in batches of 20. Missing/failed artwork uses the shared
+  `unknow_universal.svg` fallback until a real icon arrives.
 
 ### `tray.rs`
 Creates the system tray icon (`TrayIconBuilder`). Left-click toggles the
@@ -424,6 +424,10 @@ before adding a field:
   without edge controls, wheel/trackpad scrolling remains available, and the
   active pill is scrolled into view on mode changes; the input swaps to the
   short localized placeholder below 160px.
+- **Navigate result artwork** — `NavigateView` renders extracted icons without
+  a mask by default and uses `unknow_universal.svg` when no icon exists.
+  `appearance.round_app_icons` (default off) toggles the launcher's
+  `circle-app-icons` class; only that class applies the `50%` circular crop.
 - **拼接几何 (the seam)**: the surface is one continuous panel — literally
   one color: the panel fill, the DWM frame strip and the default plugin-page
   canvas are all `--surface` (see Surface in docs/UI_GUIDELINES.md; do not
@@ -497,9 +501,6 @@ before adding a field:
     preview-target decision).
   - `icons.ts` — `createIconStore()`: the in-memory icon cache mirroring the
     backend `IconCache` (batched `get_app_icons` fetches).
-  - `letterTiles.ts` — first-grapheme extraction and the deterministic ten-color
-    fallback used by Navigate result tiles while an icon loads or after
-    extraction fails.
   - `iconSpec.ts` — plugin icon specs: `resolveIconInput` /
     `resolveThemedIcon` / `pickIcon` (surface-theme choice, legacy flag for
     the `--icon-filter` exemption) / `resolveIconUrl` (URI pass-through +

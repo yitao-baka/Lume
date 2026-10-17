@@ -8,7 +8,8 @@
 //   V-05 the last settings nav item remains hittable at 560x420
 //   V-06 the satellite preview has a title and in-window close button
 //   V-07 narrow mode bars fall back to icons and scroll without edge controls
-//   V-08 icon-less app rows render deterministic letter tiles
+//   V-08 icon-less app rows keep the shared unknown fallback; app artwork is
+//        unclipped by default and only masked when 圆形图标 is enabled
 //   V-09 truncated result names/descriptions expose their full text
 //
 // It snapshots and restores settings, pinned apps and text clipboard content.
@@ -236,6 +237,7 @@ try {
         window_width: 540,
         entry_size: 70,
         mode_switch_icons_only: false,
+        round_app_icons: false,
       },
     },
   });
@@ -296,7 +298,8 @@ try {
     const fake = [...document.querySelectorAll(".result-box")].find(
       (b) => b.querySelector(".result-box-name")?.textContent === "Zulu Missing Icon"
     );
-    const letter = fake?.querySelector(".result-box-letter");
+    const unknown = fake?.querySelector(".result-box-img.icon-unknown");
+    const unknownTile = unknown?.closest(".result-box-icon");
     let barTitleEl = document.querySelector(".bar-title");
     let tempTitle = false;
     if (!barTitleEl) {
@@ -323,10 +326,12 @@ try {
       inputWidth: input.getBoundingClientRect().width,
       placeholder: input.getAttribute("placeholder"),
       placeholderIsTitle: input.getAttribute("placeholder") === input.getAttribute("title"),
-      letter: letter
+      unknown: unknown
         ? {
-            char: letter.textContent.trim(),
-            background: getComputedStyle(letter).backgroundColor,
+            src: unknown.getAttribute("src"),
+            radius: getComputedStyle(unknownTile).borderRadius,
+            overflow: getComputedStyle(unknownTile).overflow,
+            roundClass: document.querySelector(".launcher")?.classList.contains("circle-app-icons"),
           }
         : null,
       namesHaveTitles: [...document.querySelectorAll(".result-box-name")].every(
@@ -340,7 +345,8 @@ try {
     };
   })()`);
 
-  if (!home.letter || home.nameCount === 0) {
+  const searchedFallback = !home.unknown || home.nameCount === 0;
+  if (searchedFallback) {
     await main.evalJs(`(() => {
       const input = document.getElementById("search-input");
       input.value = "BetterGI";
@@ -349,12 +355,15 @@ try {
     })()`);
     await sleep(1400);
     const searchState = await main.evalJs(`(() => {
-      const letter = document.querySelector(".result-box-letter");
+      const unknown = document.querySelector(".result-box-img.icon-unknown");
+      const unknownTile = unknown?.closest(".result-box-icon");
       return {
-        letter: letter
+        unknown: unknown
           ? {
-              char: letter.textContent.trim(),
-              background: getComputedStyle(letter).backgroundColor,
+              src: unknown.getAttribute("src"),
+              radius: getComputedStyle(unknownTile).borderRadius,
+              overflow: getComputedStyle(unknownTile).overflow,
+              roundClass: document.querySelector(".launcher")?.classList.contains("circle-app-icons"),
             }
           : null,
         namesHaveTitles: [...document.querySelectorAll(".result-box-name")].every(
@@ -367,6 +376,48 @@ try {
       };
     })()`);
     home = { ...home, ...searchState };
+  }
+  check(
+    "V-08 icon-less app rows keep the shared unknown fallback, unclipped by default",
+    !!home.unknown &&
+      !home.unknown.roundClass &&
+      home.unknown.radius === "0px" &&
+      home.unknown.overflow === "visible",
+    JSON.stringify(home.unknown)
+  );
+  await shot(main, "results-icons-default.png");
+  await main.evalJs(
+    `window.__TAURI_INTERNALS__.invoke("save_settings_patch", ${JSON.stringify({
+      patch: { appearance: { round_app_icons: true } },
+    })})`
+  );
+  await sleep(500);
+  const roundIcons = await main.evalJs(`(() => {
+    const tile = document.querySelector(".result-box-icon");
+    if (!tile) return null;
+    const style = getComputedStyle(tile);
+    return {
+      className: document.querySelector(".launcher")?.className ?? "",
+      radius: style.borderRadius,
+      overflow: style.overflow,
+    };
+  })()`);
+  check(
+    "V-08 round-icon setting masks result artwork only when enabled",
+    !!roundIcons &&
+      roundIcons.className.includes("circle-app-icons") &&
+      roundIcons.radius === "50%" &&
+      roundIcons.overflow === "hidden",
+    JSON.stringify(roundIcons)
+  );
+  await shot(main, "results-icons-round.png");
+  await main.evalJs(
+    `window.__TAURI_INTERNALS__.invoke("save_settings_patch", ${JSON.stringify({
+      patch: { appearance: { round_app_icons: false } },
+    })})`
+  );
+  await sleep(400);
+  if (searchedFallback) {
     await main.evalJs(`(() => {
       const input = document.getElementById("search-input");
       input.value = "";
@@ -413,12 +464,6 @@ try {
       placeholder: home.placeholder,
       placeholderIsTitle: home.placeholderIsTitle,
     })
-  );
-  check(
-    "V-08 missing app icon renders a deterministic letter tile",
-    !!home.letter && /^[A-Za-z\u00c0-\uffff]$/.test(home.letter.char) &&
-      /^rgb\(/.test(home.letter.background),
-    JSON.stringify(home.letter)
   );
   check(
     "V-09 result names and descriptions expose full text",
@@ -575,6 +620,32 @@ try {
       link: link ? getComputedStyle(link).color : null,
     };
   })()`);
+  await settings.evalJs(`(() => {
+    const labels = ["导航页", "導航頁", "Navigation"];
+    const nav = [...document.querySelectorAll(".settings-nav")].find(
+      (b) => labels.some((label) => b.textContent.includes(label))
+    );
+    nav?.click();
+    return !!nav;
+  })()`);
+  await sleep(250);
+  const roundSetting = await settings.evalJs(`(() => {
+    const labels = ["应用图标圆形显示", "應用程式圖示圓形顯示", "Round app icons"];
+    const row = [...document.querySelectorAll(".settings-row-between")].find(
+      (r) => labels.some((label) => r.textContent.includes(label))
+    );
+    return row
+      ? {
+          label: row.textContent.trim(),
+          checked: row.querySelector(".settings-toggle")?.getAttribute("aria-checked"),
+        }
+      : null;
+  })()`);
+  check(
+    "V-08 round-icon setting is available and defaults off",
+    !!roundSetting && roundSetting.checked === "false",
+    JSON.stringify(roundSetting)
+  );
   const minLayout = await settings.evalJs(`(() => {
     const content = document.querySelector(".settings-content").getBoundingClientRect();
     const nav = [...document.querySelectorAll(".settings-nav")];
@@ -704,7 +775,7 @@ try {
     }
   } catch {}
   try {
-    ps(`Set-Clipboard -Value ${psQuote(originalClipboard)}`);
+    if (originalClipboard) ps(`Set-Clipboard -Value ${psQuote(originalClipboard)}`);
   } catch {}
   try {
     execSync("taskkill /F /T /IM lume.exe 2>NUL", { stdio: "ignore" });

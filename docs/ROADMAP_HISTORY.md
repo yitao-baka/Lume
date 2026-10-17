@@ -3656,3 +3656,43 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 - `pnpm exec tsc --noEmit`、`pnpm run build`、
   `pnpm run tauri build --debug --no-bundle` 通过；
   `cargo check` 通过，`cargo test` **223 passed / 9 ignored**。
+
+---
+
+## 55. 图标回退契约校正与圆形显示开关
+
+产品复核确认：导航页无图标应用回退 `res/icons/unknow_universal.svg` 是既定
+设计，不是视觉缺陷。视觉审查中的字母磁贴结论来自过期文档，实施后的字母磁贴
+路径已撤回，文档、样式与测试统一回到 unknown 回退。
+
+### 55.1 实现
+
+- **回退契约**：`NavigateView.itemBox` 在显式图标与缓存图标都缺失时重新渲染
+  `<img class="result-box-img icon-unknown" src={unknow_universal.svg}>`；
+  删除 `src/launcher/letterTiles.ts` 与 `.result-box-letter` 样式。
+- **默认不裁切**：结果图标容器 `.result-box-icon` 默认 `border-radius: 0` /
+  `overflow: visible`，小条目尺寸下也不会再把方形或透明 PNG 裁成近似圆形。
+- **圆形显示开关**：新增 `appearance.round_app_icons`（Rust `serde(default)`，
+  默认 `false`）、设置 → 导航页 → 条目框 →「应用图标圆形显示」toggle 与三语
+  hint。启动器由首帧 `__LUME_CONFIG__` 初始化 `circle-app-icons` class，
+  `settings-applied` 后实时更新；开启时 `.launcher.circle-app-icons
+  .result-box-icon` 才应用 `50%` 半径与 `overflow: hidden`。
+- `DEFAULT_SETTINGS`、Rust `Default`、设置搜索键与 `docs/SETTINGS.md` /
+  `UI_GUIDELINES.md` / `ARCHITECTURE.md` / `TESTING.md` 同步。
+
+### 55.2 踩坑
+
+- 结果 tile 的 `12px` 圆角在 `entry_size=70` 时已接近圆形；只给容器加
+  `overflow: hidden` 就会让“原图直出”变成不可见的隐式裁切。默认与圆形态必须
+  是显式互斥的两套 `border-radius` + `overflow` 契约。
+- 新设置不能只走异步 `get_settings`：首帧必须从注入配置建立 class，否则窗口
+  会先按圆形/非圆形错误绘制一次，再在事件返回后跳变。
+
+### 55.3 验证
+
+- `scripts/cdp_visual_audit_verify.mjs`：**28/28**。扩展 V-08，先断言 unknown 回退存在且
+  默认 `border-radius: 0px / overflow: visible`；通过真实
+  `save_settings_patch` 开启 `round_app_icons` 后断言
+  `.launcher.circle-app-icons`、`50%` 与 `overflow: hidden`，再恢复关闭。
+- `pnpm exec tsc --noEmit`、`cargo check`、`cargo test`、前端生产构建与
+  debug/release exe 构建通过。

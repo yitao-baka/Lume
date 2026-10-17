@@ -11,6 +11,9 @@ export interface SettingsData {
     color_mode: string;
     /** Entry-box edge length in px — the box wrapping each main-menu entry. */
     entry_size: number;
+    /** Crop Navigation result icons to a circle (default off — show the
+     * extracted artwork as-is). */
+    round_app_icons: boolean;
     /** Launcher horizontal length in px. */
     window_width: number;
     /** Launcher initial vertical length in px (auto-size cap). */
@@ -147,6 +150,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
     language: "system",
     color_mode: "system",
     entry_size: 110,
+    round_app_icons: false,
     window_width: 720,
     window_height: 520,
     window_position: "center",

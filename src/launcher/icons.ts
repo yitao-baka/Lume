@@ -20,7 +20,7 @@ export function createIconStore() {
     return cache.get(path);
   }
 
-  /** Fetch icons for the given apps in batches, swapping letter tiles as they arrive. */
+  /** Fetch icons for the given apps in batches, swapping them in as they arrive. */
   async function loadIcons(apps: AppEntry[]) {
     const missing = apps.map((a) => a.path).filter((p) => !cache.has(p));
     for (let i = 0; i < missing.length; i += ICON_BATCH) {

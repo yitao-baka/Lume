@@ -114,6 +114,8 @@
   "settingsLangZhCN": "Simplified Chinese",
   "settingsLangZhTW": "Traditional Chinese",
   "settingsEntrySize": "Entry box size",
+  "roundAppIcons": "Round app icons",
+  "roundAppIconsHint": "Off: show extracted icon artwork as-is. On: crop it to a circle.",
   "settingsWindowSize": "Window size",
   "settingsWidth": "Width",
   "settingsHeight": "Height",

@@ -35,11 +35,12 @@ is a dev build that loads `http://localhost:1420`; it is not suitable for CDP
 smoke tests unless the vite server is also running.
 
 Visual-contract regressions are covered by
-`node scripts/cdp_visual_audit_verify.mjs` (24 assertions). It launches the
+`node scripts/cdp_visual_audit_verify.mjs`. It launches the
 embedded debug build, snapshots/restores settings, pinned apps and text
 clipboard contents, and checks light-theme contrast, clipboard Tab order,
-minimum settings geometry and hit testing, mode-bar overflow, letter tiles,
-truncation tooltips, scroll fades, and the satellite preview title/close path.
+minimum settings geometry and hit testing, mode-bar overflow, the unknown-icon
+fallback, the opt-in circular icon mask, truncation tooltips, scroll fades, and
+the satellite preview title/close path.
 
 ## Manual verification
 
@@ -91,7 +92,8 @@ dev URL instead.
    features / providers) collect under the 推荐使用 divider below the normal
    results; ↑/↓/Enter walk both blocks as one linear grid.
 6. **Pinned bar** — right-click a selected app and choose 「固定」to pin it to
-   the bar above the grid (a letter tile appears first, then its icon);
+   the bar above the grid (the unknown fallback appears first, then the real
+   icon replaces it);
    「取消固定」unpins. `↑` from the grid's first row enters the bar,
    `←`/`→` move within it, `↓` returns, `Enter` launches a bar item. The bar
    shows only on the empty query; it survives a restart.
@@ -218,6 +220,10 @@ dev URL instead.
    items, including 关于, remain inside the content band and clickable; the
    footer must not overlap the last item. Open 自动化: rule rows wrap with the
    delay/toggle/delete controls still visible and no horizontal scrollbar.
+10. **Result icon shape** — 设置 → 导航页 → 条目框：「应用图标圆形显示」默认关，
+    the Navigate grid shows the extracted artwork without a circular crop. Turn
+    it on and save: only the result artwork becomes circular; turn it off and
+    save again to restore the original outline.
 
 ### Service / run-as-admin / auto-start (Program Files iteration)
 

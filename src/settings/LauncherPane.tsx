@@ -188,6 +188,13 @@ export default function LauncherPane(props: {
             onCommit={(v) => props.onChange({ entry_size: v })}
           />
         </Row>
+        <Row label={t("roundAppIcons")}>
+          <Toggle
+            checked={a().round_app_icons}
+            onChange={(v) => props.onChange({ round_app_icons: v })}
+          />
+        </Row>
+        <span class="settings-hint">{t("roundAppIconsHint")}</span>
       </div>
     </>
   );

@@ -95,12 +95,15 @@ All notable changes to Lume are documented here. Format based on
   最小值下「关于」完整位于内容区且可命中点击。卫星预览补文件名/类型标题
   与调用 `close_preview` 的右上角关闭按钮，并保留 `WS_EX_NOACTIVATE`。
   窄窗口模式栏自动退化为仅图标，图标仍溢出时显示两侧渐隐与箭头，搜索框
-  改用短占位符；结果行恢复首 grapheme + 稳定十色字母磁贴，截断名称与描述
-  补 `title`；剪贴板和设置长内容增加随滚动范围出现的上下渐隐提示，不恢复
-  常驻滚动条。
-  验证：`scripts/cdp_visual_audit_verify.mjs` **24/24**（浅色对比度、
-  真实 Tab 遍历、`560×420` 命中测试、模式栏溢出、字母磁贴、tooltip、
-  滚动渐隐、预览标题与关闭）；`cdp_mode_bar_icons_verify` **22/22**、
+  改用短占位符；无图标应用按既定设计继续回退 `unknow_universal.svg`，
+  截断名称与描述补 `title`；剪贴板和设置长内容增加随滚动范围出现的上下
+  渐隐提示，不恢复常驻滚动条。导航结果图标默认直接显示原始 artwork，
+  不再因结果 tile 的圆角而裁切；设置 → 导航页 → 条目框新增
+  `round_app_icons`「应用图标圆形显示」（默认关），开启后才应用 `50%`
+  圆形遮罩。
+  验证：`scripts/cdp_visual_audit_verify.mjs` **28/28**（浅色对比度、真实 Tab 遍历、
+  `560×420` 命中测试、模式栏溢出、unknown 回退、tooltip、滚动渐隐、
+  预览标题与关闭）；`cdp_mode_bar_icons_verify` **22/22**、
   `cdp_plugin_mode_bar_verify` **15/15**；`pnpm exec tsc --noEmit`、
   `pnpm run build`、debug exe 重建干净；`cargo check` 通过，
   `cargo test` **223 passed / 9 ignored**。

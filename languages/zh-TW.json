@@ -85,6 +85,8 @@
   "settingsLangZhCN": "简体中文",
   "settingsLangZhTW": "繁體中文",
   "settingsEntrySize": "條目框大小",
+  "roundAppIcons": "應用程式圖示圓形顯示",
+  "roundAppIconsHint": "關閉時直接顯示原始圖示；開啟後以圓形裁切。",
   "settingsWindowSize": "視窗大小",
   "settingsWidth": "寬度",
   "settingsHeight": "高度",

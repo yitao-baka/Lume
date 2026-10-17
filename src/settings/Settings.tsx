@@ -97,6 +97,7 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
     "idleReset", "idleResetMinutes", "idleResetHint",
     "recentCount", "placeholderApps", "placeholderClipboard",
     "rememberLastPage", "rememberLastPageHint", "settingsEntrySize",
+    "roundAppIcons", "roundAppIconsHint",
   ],
   clipboard: [
     "clipHistoryCap", "groupDisplay", "groupPaste", "groupPreview",

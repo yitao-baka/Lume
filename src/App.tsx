@@ -93,6 +93,9 @@ function App() {
   /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
    * so bar column measurement re-runs when it changes). */
   const [entrySize, setEntrySize] = createSignal(_a?.entry_size ?? 110);
+  /** Settings-driven: crop Navigation result artwork to a circle. Default off:
+   * render the icon exactly as extracted, without a masking radius. */
+  const [circleAppIcons, setCircleAppIcons] = createSignal(_a?.round_app_icons ?? false);
   /** Plugin-driven placeholders keyed by plugin id (app.setPlaceholder) —
    * shown while that plugin's mode page is active, "" = default text. */
   const [modePlaceholders, setModePlaceholders] = createSignal<Record<string, string>>({});
@@ -759,6 +762,7 @@ function App() {
         s.appearance.entry_size + "px"
       );
       setEntrySize(s.appearance.entry_size);
+      setCircleAppIcons(s.appearance.round_app_icons ?? false);
       setShiftEnterAdmin(s.appearance.shift_enter_admin !== false);
       setModeIconsOnly(s.appearance.mode_switch_icons_only);
       // #48: toggling 各模式独立搜索词 keeps the on-screen text stable.
@@ -1183,7 +1187,7 @@ function App() {
   });
 
   return (
-    <div class="launcher">
+    <div class="launcher" classList={{ "circle-app-icons": circleAppIcons() }}>
       <SearchBox
         query={query}
         placeholder={placeholder}

@@ -151,6 +151,10 @@ pub struct Appearance {
     /// entry (grid columns adapt to fit).
     #[serde(default = "default_entry_size")]
     pub entry_size: u32,
+    /// Crop Navigation result icons to a circle. Default off: render the
+    /// extracted artwork as-is, without masking it to a rounded shape.
+    #[serde(default)]
+    pub round_app_icons: bool,
     /// Launcher horizontal length in px.
     pub window_width: u32,
     /// Launcher initial vertical length in px — the cap the content
@@ -513,6 +517,7 @@ impl Default for Settings {
                 language: "system".into(),
                 color_mode: "system".into(),
                 entry_size: 110,
+                round_app_icons: false,
                 window_width: 720,
                 window_height: 520,
                 window_position: "center".into(),
@@ -1290,6 +1295,7 @@ mod tests {
         let s = read_settings(&base);
         assert_eq!(s.appearance.language, "system");
         assert_eq!(s.appearance.entry_size, 110);
+        assert!(!s.appearance.round_app_icons, "圆形图标默认关");
         assert_eq!(s.appearance.window_height, 520);
         assert!(!s.appearance.mode_switch_icons_only, "图标开关默认关");
         assert!(!s.appearance.per_mode_query, "各模式独立搜索词默认关");

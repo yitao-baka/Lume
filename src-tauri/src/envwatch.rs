@@ -27,7 +27,8 @@
 //!
 //! ## Semantics
 //!
-//! On a change we rebuild the effective block from the registry:
+//! At startup and on every change we rebuild the effective block from the
+//! registry:
 //! - `PATH` = system PATH + user PATH (Windows' concatenation order), replaced
 //!   wholesale so removed entries are honored.
 //! - other variables: user overrides system.
@@ -173,6 +174,12 @@ fn env_watch_thread() {
             arm_notify(k, ev_sys);
         }
 
+        // Heal an incomplete environment inherited from whatever launched
+        // Lume. This is also what guarantees the PATH merge below is applied
+        // even when the user never edits an environment variable during the
+        // launcher's lifetime.
+        refresh_env();
+
         loop {
             let wake = MsgWaitForMultipleObjectsEx(
                 Some(&handles),
@@ -256,22 +263,32 @@ fn refresh_env() {
         let system = read_env_key(HKEY_LOCAL_MACHINE, SYSTEM_KEY);
         let user = read_env_key(HKEY_CURRENT_USER, USER_KEY);
 
-        let merged_path = merge_path(
-            system.get("PATH").map(String::as_str).unwrap_or(""),
-            user.get("PATH").map(String::as_str).unwrap_or(""),
-        );
-        set_var("PATH", &merged_path);
+        // Registry value names are case-preserving (`Path` is the Windows
+        // default). Treating only an exact `PATH` as the special merge target
+        // let the later generic user-variable pass overwrite the machine PATH
+        // with the user PATH, stripping System32 from every launched process.
+        if let Some(merged_path) = effective_path(&system, &user) {
+            set_var("PATH", &merged_path);
+            eprintln!(
+                "[envwatch] environment refreshed from registry (PATH: {} entries)",
+                merged_path.split(';').count()
+            );
+        } else {
+            eprintln!("[envwatch] environment refreshed from registry (PATH unavailable)");
+        }
 
-        for (name, value) in system.iter().filter(|(n, _)| n.as_str() != "PATH") {
+        for (name, value) in system
+            .iter()
+            .filter(|(n, _)| !n.eq_ignore_ascii_case("PATH"))
+        {
             set_var(name, value);
         }
-        for (name, value) in user.iter().filter(|(n, _)| n.as_str() != "PATH") {
+        for (name, value) in user
+            .iter()
+            .filter(|(n, _)| !n.eq_ignore_ascii_case("PATH"))
+        {
             set_var(name, value);
         }
-        eprintln!(
-            "[envwatch] environment refreshed from registry (PATH: {} entries)",
-            merged_path.split(';').count()
-        );
     }
 }
 
@@ -362,6 +379,29 @@ fn merge_path(system: &str, user: &str) -> String {
     }
 }
 
+/// Look up an environment variable name case-insensitively, matching Windows'
+/// own environment-block semantics.
+fn env_value<'a>(map: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+    map.iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+/// The effective PATH, or `None` when neither registry scope has one. Missing
+/// sides collapse to the other side; both present keep Windows' system→user
+/// concatenation order.
+fn effective_path(
+    system: &HashMap<String, String>,
+    user: &HashMap<String, String>,
+) -> Option<String> {
+    let system = env_value(system, "PATH");
+    let user = env_value(user, "PATH");
+    if system.is_none() && user.is_none() {
+        return None;
+    }
+    Some(merge_path(system.unwrap_or(""), user.unwrap_or("")))
+}
+
 unsafe fn open_key(root: HKEY, subkey: &str) -> Option<HKEY> {
     let sub = wide(subkey);
     let mut hkey = HKEY(std::ptr::null_mut());
@@ -423,5 +463,23 @@ mod tests {
         assert_eq!(merge_path("", "C:\\Tools"), "C:\\Tools");
         assert_eq!(merge_path("C:\\Windows", ""), "C:\\Windows");
         assert_eq!(merge_path("", ""), "");
+    }
+
+    #[test]
+    fn path_lookup_uses_registry_case_insensitive_names() {
+        let system = HashMap::from([("Path".to_string(), "C:\\Windows\\System32".to_string())]);
+        let user = HashMap::from([("PATH".to_string(), "C:\\Tools".to_string())]);
+        assert_eq!(
+            effective_path(&system, &user).as_deref(),
+            Some("C:\\Windows\\System32;C:\\Tools")
+        );
+    }
+
+    #[test]
+    fn missing_path_scopes_do_not_clear_the_other_side() {
+        let system = HashMap::from([("Path".to_string(), "C:\\Windows".to_string())]);
+        let user = HashMap::new();
+        assert_eq!(effective_path(&system, &user).as_deref(), Some("C:\\Windows"));
+        assert_eq!(effective_path(&HashMap::new(), &HashMap::new()), None);
     }
 }

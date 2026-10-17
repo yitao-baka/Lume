@@ -765,6 +765,7 @@ function createDiskModeInstance(
  * imported modules of other plugins stay alive; only future loads recompile.)
  * Returns false when the id was never loaded from disk. */
 export async function unloadDiskPlugin(id: string): Promise<boolean> {
+  clearFeatureRegexCache(id);
   if (!registeredDiskIds.has(id)) return false;
   registeredDiskIds.delete(id);
   loadedDiskIds.delete(id);
@@ -1007,6 +1008,13 @@ export async function applyPluginSettings(id: string): Promise<void> {
   }
   plog.debug(id, "settings →", values);
   pendingLogicSettings.set(id, values); // logic-loaded 时补投（首投可能早于逻辑就绪）
+  if (logicPendingReady.has(id)) {
+    // The entry proxy rejects every hook until the logic iframe reports
+    // `logic-loaded`. Logging that expected first-apply miss as an error made
+    // startup smoke tests flaky; the pending copy above is delivered on ready.
+    plog.debug(id, "settings deferred until logic is ready");
+    return;
+  }
   try {
     p.mode?.onSettings?.(values);
     p.provider?.onSettings?.(values);
@@ -1293,13 +1301,26 @@ export function onPluginWindowClosed(
 // A feature matches the query text and offers an 「<label>」 row whose
 // activation enters the plugin with the text as payload. Matching happens
 // here (JS RegExp); the manifest only carries the pattern. Compiled patterns
-// are cached per plugin+index; a pattern matching the empty string is
+// are cached per plugin+rule+pattern; a pattern matching the empty string is
 // dropped (it would fire on every keystroke — the same rule uTools applies).
 
 const featureRegexCache = new Map<string, RegExp | null>();
 
+function featureRegexCacheKey(pluginId: string, idx: number, pattern: string): string {
+  // NUL cannot occur in a plugin id or manifest pattern, so it is a safe
+  // separator for prefix invalidation (per-plugin clear on unload/reload).
+  return `${pluginId}\u0000${idx}\u0000${pattern}`;
+}
+
+function clearFeatureRegexCache(pluginId: string): void {
+  const prefix = `${pluginId}\u0000`;
+  for (const key of featureRegexCache.keys()) {
+    if (key.startsWith(prefix)) featureRegexCache.delete(key);
+  }
+}
+
 function compileFeatureRegex(pluginId: string, idx: number, pattern: string): RegExp | null {
-  const key = `${pluginId}#${idx}`;
+  const key = featureRegexCacheKey(pluginId, idx, pattern);
   const hit = featureRegexCache.get(key);
   if (hit !== undefined) return hit;
   let out: RegExp | null = null;

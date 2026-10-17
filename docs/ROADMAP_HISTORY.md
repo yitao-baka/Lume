@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#50 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#51 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -3379,3 +3379,59 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   `list_plugins_keeps_the_real_directory_when_id_differs`）、`cargo check`、
   `pnpm exec tsc --noEmit`、`pnpm run build`、debug exe 重建
   （`pnpm run tauri build --debug --no-bundle`）全部干净。
+
+---
+
+## 51. 插件搜查剩余项与子进程 PATH 修复（已实现）
+
+**状态：已实现（2026-10-17）。** 来源：`docs/BUG_REPORT.md` 的 B5–B8 与
+`docs/BUG_REPORT_2.md` 的机器级 PATH 丢失报告。B5–B8 分别涉及规则缓存、
+按键回执、重复插件 id 与验证脚本漂移；PATH 问题的根因是注册表值名大小写。
+
+### 51.1 实现
+
+- **B5（`src/plugins/registry.ts`）**：`featureRegexCache` 的键从
+  `pluginId#ruleIndex` 改为 `pluginId\0ruleIndex\0pattern`；`unloadDiskPlugin`
+  按插件前缀清理缓存。window 规则的多个 `title` 正则因此各自命中独立缓存项，
+  热重载/重装后也不会复用旧 pattern。
+- **B6（`src/plugins/iframeBridge.tsx`）**：按键回执从对象
+  `__lumeKeyConsumed` 改为读取其数字 `seq` 后再查/删 `pendingKeys`，回执能
+  真正释放原 `KeyboardEvent`；宿主消费的键仍按回执调用 `preventDefault`。
+- **B7（`src-tauri/src/plugins.rs` / `plugin_perm.rs`）**：扫描后按「目录名 =
+  id（忽略大小写）优先，其次目录名字典序」稳定排序，按 id 保留首项；内置 id
+  优先。新增共享 `manifest_for_id`，权限层不再自己维护第二套扫描顺序。重复 id
+  只下发一份清单，贡献加载与权限校验绑定同一目录。
+- **B8（`scripts/cdp_*` + `registry.ts`）**：
+  - theme 脚本的 ⑧a 改为断言关窗回流已停在 `hello-mode`，不再调用
+    `toggle_launcher`/重新从首页进入；
+  - filesearch 脚本接受 `everything` 或 `svc`，无后端时明确 SKIP，等待
+    `building` 状态，并只忽略已由 `pendingLogicSettings` 补投的旧
+    `logic not loaded` 噪声；`applyPluginSettings` 在逻辑帧未就绪时直接延迟，
+    不再先记一次 error；
+  - window-feature 脚本用两个 ASCII 标题的 PowerShell WinForms 窗口，按 PID
+    调用 `SetForegroundWindow` 并验证前台归属；`pin_app` 增加
+    `state not managed` 重试与清理。
+- **PATH（`src-tauri/src/envwatch.rs`）**：新增大小写不敏感的 `env_value` /
+  `effective_path`；`Path`/`PATH` 都参与系统+用户合并，并从普通变量覆盖循环
+  中排除。watcher 启动即刷新一次；两侧都读不到 PATH 时不清空现有值。
+- 文档：`docs/BUG_REPORT.md` 只保留尚未实施的加固建议；
+  `docs/PLUGIN_API.md` 记录重复 id 优先级与正则缓存语义；
+  `ARCHITECTURE.md` / `TESTING.md` 同步启动刷新与大小写语义；本条 +
+  `CHANGELOG.md`。
+
+### 51.2 验证
+
+- `test/cdp_regex_probe2.mjs`：重载前 `qone=true`；重载后 `qone=false`、
+  `qtwo=true`。
+- `test/cdp_dup_probe.mjs`：`renamed-id` 只返回 1 条（canonical
+  `dup-impostor`），不再返回 mode/provider 两份。
+- `cdp_plugin_theme_verify` **28 passed / 0 failed**；⑧a 关窗回流断言通过。
+- `cdp_filesearch_smoke`：`svc ready 12 entries`，网格渲染 19 行，
+  console errors `[]`，`SMOKE OK`。
+- `cdp_window_feature_verify`：ASCII/PID 夹具 A/B、process 正负例、AND 正负例、
+  payload、推荐使用栏、权限拒绝/放行/fail-closed 全部 PASS。
+- PATH 实机：以用户级 PATH（318 字符、无 System32）启动 debug exe，由 Lume
+  打开批处理，子进程 PATH 980 字符并包含 `C:\Windows\System32`。
+- `cargo test` **220 passed / 9 ignored**；`cargo check`、`pnpm exec tsc
+  --noEmit`、`pnpm run build`、`pnpm run tauri build --debug --no-bundle`
+  干净。

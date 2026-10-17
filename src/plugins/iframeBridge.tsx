@@ -267,8 +267,8 @@ export const BRIDGE_SCRIPT = `
       // to it (Esc / mode switch / grid arrows). preventDefault on the
       // original event — for focus-moving keys the iframe default may already
       // have run (best-effort; documented in PLUGIN_API.md §6C).
-      var kb = pendingKeys.get(d.__lumeKeyConsumed);
-      pendingKeys.delete(d.__lumeKeyConsumed);
+      var kb = pendingKeys.get(d.__lumeKeyConsumed.seq);
+      pendingKeys.delete(d.__lumeKeyConsumed.seq);
       if (kb && d.__lumeKeyConsumed.consumed) {
         try { kb.preventDefault(); } catch (err) {}
       }

@@ -1,6 +1,8 @@
 // One-off verification for the unified file-search facade: direct
 // `file_search` invoke (backend selection) + the merged grid while typing.
-// Run with the debug exe + vite dev server: `npm run dev` first.
+// Run against the built debug exe (`frontendDist` is embedded); no vite server
+// is required. The backend is whatever this machine provides — Everything or
+// the LumeSVC USN index — and a machine with neither skips instead of failing.
 import { spawn, execSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -51,18 +53,23 @@ await m.evalJs(`(window.__captured = []); (function(){ const orig = console.erro
 await m.evalJs(`window.__TAURI_INTERNALS__.invoke("toggle_launcher")`);
 await sleep(1200);
 
-// 1) Direct facade invoke — backend must be "everything" on this machine
-//    (Everything is running) and hits must be real paths.
-for (let i = 0; i < 3; i++) {
-  const direct = await m.evalJs(
+// 1) Direct facade invoke — either real backend is valid. Wait briefly for a
+//    building service; an unavailable backend is an environment skip.
+let direct = null;
+for (let i = 0; i < 10; i++) {
+  direct = await m.evalJs(
     `window.__TAURI_INTERNALS__.invoke("file_search", { query: "readme" })`,
   );
   console.log(`direct #${i}:`, direct.backend, direct.status, direct.entries.length, "entries");
+  if (direct.status === "ready" || direct.backend === "none") break;
+  await sleep(1000);
 }
-const direct = await m.evalJs(
-  `window.__TAURI_INTERNALS__.invoke("file_search", { query: "readme" })`,
-);
 console.log("sample:", direct.entries.slice(0, 3).map((e) => e.path));
+const usableBackend = direct.backend === "everything" || direct.backend === "svc";
+if (!usableBackend) {
+  console.log(`SKIP: no ready file-search backend (backend=${direct.backend}, status=${direct.status})`);
+  process.exit(0);
+}
 
 // 2) Type the query and confirm the grid renders the merged rows.
 await m.evalJs(`(() => { const i = document.getElementById("search-input"); i.focus(); i.value = "readme"; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
@@ -75,6 +82,12 @@ const errs = await m.evalJs(`window.__captured`);
 console.log("console errors:", JSON.stringify(errs));
 await m.shot("filesearch_grid.png");
 
-const ok = direct.backend === "everything" && direct.entries.length > 0 && names.length > 0;
+// Older builds could log the expected "settings arrived before logic" miss
+// once at startup. The pending-settings path re-delivers it; keep the smoke
+// strict about every other console error.
+const unexpectedErrors = errs.filter(
+  (line) => !line.includes('provider onSettings failed: Error: logic not loaded'),
+);
+const ok = direct.entries.length > 0 && names.length > 0 && unexpectedErrors.length === 0;
 console.log(ok ? "SMOKE OK" : "SMOKE FAILED");
 process.exit(ok ? 0 : 1);

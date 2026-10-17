@@ -92,7 +92,7 @@ export default {
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `id` | string | **目录名** | 插件唯一 id。省略时回退为所在目录名；与目录名不一致时以清单为准（不强制相等）。启停、去重、日志都以它为键。 |
+| `id` | string | **目录名** | 插件唯一 id。省略时回退为所在目录名；与目录名不一致时以清单为准（不强制相等）。启停、去重、日志都以它为键。两个目录声明同一个 id 时只保留一个：目录名与 id 相同（不区分大小写）者优先；没有这种目录时按目录名字典序取首项。权限校验与贡献加载使用同一份 canonical 清单。磁盘插件不能占用内置 id（内置插件优先）。 |
 | `name` | string | `""` | 设置页显示名；为空时前端回退显示 id。 |
 | `version` | string | `""` | 显示用；设置页以 chip 呈现。内置插件固定为 lume 的包版本。 |
 | `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。三类均支持磁盘加载（mode 需 `view`，provider/service 需 `entry`）。 |
@@ -1237,9 +1237,10 @@ regex = "^https?://"    # 正则匹配输入（与 over 二选一；两者都有
 - **匹配时机**：导航模式（apps）每次非空查询；命中即在结果页的「推荐使用」块
   追加「<label>」行（与「进入 <插件>」关键字行、provider 结果同块；正常查询
   结果留在上方网格，两者以标题分隔行隔开）。
-- **正则语义**：大小写不敏感，**在前端编译**（按插件+规则缓存）。**匹配空串的
-  正则被忽略**（`.*`、`a?` 等——否则每次按键都出一行，uTools 同样忽略）；非法
-  正则会记 error 并跳过该条规则。`over` 与 `regex` 都没声明的规则永不命中。
+- **正则语义**：大小写不敏感，**在前端编译**（按插件 + 规则 + pattern 缓存，
+  插件卸载/重载时清除该插件的缓存）。**匹配空串的正则被忽略**（`.*`、`a?`
+  等——否则每次按键都出一行，uTools 同样忽略）；非法正则会记 error 并跳过该条
+  规则。`over` 与 `regex` 都没声明的规则永不命中。
 - **激活**：把当前查询作为 payload 投递——
   - `kind = "mode"`：先切到该模式，再调它的 `onEnter({code, type, payload})`
     （页面同时收到 `lume.on.enter`）；
@@ -1364,10 +1365,10 @@ uTools 同）；每次呼出按新前台重算，隐藏后清空（summon-scoped
 §8.1）才需要声明 `window`。
 
 示例：`examples/plugins/window-demo/`；实机脚本
-`scripts/cdp_window_feature_verify.mjs`（process/AND 维度正负例、
-payload 投递、summon-scoped 清空、权限拒绝/放行/fail-closed；Explorer 的
-class 维度与 path 解析依赖真实 Explorer 窗口激活，自动化不稳定，由示例的
-手工步骤覆盖）。
+`scripts/cdp_window_feature_verify.mjs`（process/AND 维度正负例、payload
+投递、summon-scoped 清空、权限拒绝/放行/fail-closed）。脚本用两个 ASCII
+标题的 PowerShell WinForms 窗口并按 PID 验证前台，不依赖本机 notepad /
+Notepad3 替换关系；Explorer 的 class 维度与 path 解析仍由示例的手工步骤覆盖。
 
 
 ---
@@ -1808,7 +1809,8 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
 - `cdp_mode_query_verify.mjs` — 共享查询路由（`__queryRoute` 探针）。
 - `cdp_http_probe_verify.mjs` — 视图桥 rpc 超时与 `http.request` 的
   `timeoutMs` 交互（离线，本地 echo 服务）。
-- `cdp_window_feature_verify.mjs` — `type = "window"` 规则匹配与 payload 投递。
+- `cdp_window_feature_verify.mjs` — `type = "window"` 规则匹配与 payload 投递
+  （自带 ASCII/PID 夹具，不依赖本机编辑器）。
 - `cdp_settings_smoke.mjs` — 8 分区设置冒烟。
 - `cdp_launcher_shots.mjs` — 启动器截图（前后对比）。
 

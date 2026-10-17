@@ -280,10 +280,14 @@ await w.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape
 await sleep(2000);
 check("⑦c Esc closed the detached window", !(await findWindow("plugin.html?plugin=hello-mode")));
 
-// ⑧ 回到启动器：启动器浅色、插件仍 pin 深色 → 页面画布必须是深色
-await invoke("toggle_launcher");
+// ⑧ 回到启动器：关窗回流（docs/ROADMAP_HISTORY.md #40/#42）已经把启动器带回
+//    同一个插件页，不能再 toggle（那会把刚显示的窗口藏掉）或重新从首页进入。
+//    启动器浅色、插件仍 pin 深色 → 页面画布必须是深色。
 await sleep(1800);
-check("⑧a re-entered hello-mode in the launcher", await enterHelloMode());
+const returnedMode = await m.evalJs(
+  `document.querySelector('.mode-host.active')?.dataset.mode ?? ""`,
+);
+check("⑧a detached close returned to hello-mode in the launcher", returnedMode === "hello-mode", returnedMode);
 const area8 = await pagePoint(m);
 const page8 = area8 ? await m.pixel(area8.x, area8.y) : null;
 const panel8 = await m.pixel(pp.x, pp.y);

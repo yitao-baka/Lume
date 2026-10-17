@@ -247,7 +247,8 @@ dev URL instead.
 ### Environment sync (envwatch)
 
 > Watcher logs `[envwatch] ...` to the console (dev). `cargo test` covers the
-> PATH merge logic; the Win32 watcher itself is manual-only.
+> PATH merge / case-insensitive registry-name logic; the Win32 watcher itself
+> is manual-only.
 
 1. **Dialog path** — with Lume running (dev console visible), open 设置→环境变量
    (Environment Variables dialog) and append a new entry to the user `Path`.
@@ -258,8 +259,10 @@ dev URL instead.
 2. **setx path** — in a terminal run `setx LUME_TEST 1` (no broadcast, registry
    notify path) → the same refresh log appears within a moment; a freshly
    launched `cmd.exe` from Lume sees `LUME_TEST=1`.
-3. **Startup snapshot** — restart Lume *without* changing anything: no refresh
-   logs; PATH still includes whatever the parent shell had.
+3. **Startup merge** — launch Lume with a deliberately incomplete `PATH`
+   (user scope only): the startup refresh log appears, and a `cmd.exe` launched
+   from Lume has both the machine and user PATH segments — including
+   `C:\Windows\System32`.
 4. **Already-running processes untouched** — an `cmd.exe` opened *before* the
    change keeps its old PATH until it is relaunched.
 5. **Idle cost** — with the watcher armed, the `envwatch` thread's CPU time

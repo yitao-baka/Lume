@@ -30,11 +30,11 @@
 //! Built-ins (clipboard/preview) are exempt — compiled into lume.exe.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 use crate::paths::base_dir;
-use crate::plugins::{parse_manifest, valid_plugin_id, BUILTIN_PLUGINS};
+use crate::plugins::{manifest_for_id, valid_plugin_id, BUILTIN_PLUGINS};
 use crate::settings::SettingsState;
 
 #[derive(Default)]
@@ -160,51 +160,12 @@ pub fn network_allow_for(state: &PluginPermState, id: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Locate + parse the manifest that declares `id` (or whose directory is
-/// named `id` — the id defaults to the directory name). `None` when no
-/// manifest matches.
+/// Locate the canonical manifest that declares `id` (directory-name fallback
+/// included). `None` when no manifest matches.
 fn find_manifest(base: &Path, id: &str) -> Option<crate::plugins::PluginManifest> {
-    let plugins: PathBuf = base.join("plugins");
-    // Direct hit: the directory named `id`.
-    if let Ok(text) = std::fs::read_to_string(plugins.join(id).join("plugin.toml")) {
-        if let Ok(m) = parse_manifest(&text) {
-            let resolved = if m.id.is_empty() {
-                id.to_string()
-            } else {
-                m.id.clone()
-            };
-            if resolved == id {
-                return Some(m);
-            }
-        }
-    }
-    // Manifest id ≠ directory name: scan every directory once. One bad
-    // directory must not end the search.
-    for entry in std::fs::read_dir(&plugins).ok()?.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let Ok(text) = std::fs::read_to_string(path.join("plugin.toml")) else {
-            continue;
-        };
-        let Ok(m) = parse_manifest(&text) else {
-            continue;
-        };
-        let dir_name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let resolved = if m.id.is_empty() {
-            dir_name
-        } else {
-            m.id.clone()
-        };
-        if resolved == id {
-            return Some(m);
-        }
-    }
-    None
+    // Shared with `get_plugins` so a duplicate-id scan resolves to the same
+    // directory for contribution loading and permission checks.
+    manifest_for_id(base, id)
 }
 
 /// The native-path rule for commands that also serve the launcher itself
@@ -412,6 +373,25 @@ mod tests {
         let perms = PluginPermState::default();
         assert!(assert_capability(&perms, &plugins(), &root, "real-id", "notify").is_ok());
         assert!(assert_capability(&perms, &plugins(), &root, "dir-name", "notify").is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn duplicate_ids_use_the_same_manifest_as_get_plugins() {
+        let root = std::env::temp_dir().join(format!("lume-perm-duplicate-{}", std::process::id()));
+        write_plugin(
+            &root,
+            "aaa-first",
+            "id = \"same-id\"\npermissions = [\"network\"]\n",
+        );
+        write_plugin(
+            &root,
+            "zzz-second",
+            "id = \"same-id\"\npermissions = [\"clipboard\"]\n",
+        );
+        let perms = PluginPermState::default();
+        assert!(assert_capability(&perms, &plugins(), &root, "same-id", "network").is_ok());
+        assert!(assert_capability(&perms, &plugins(), &root, "same-id", "clipboard").is_err());
         std::fs::remove_dir_all(&root).ok();
     }
 

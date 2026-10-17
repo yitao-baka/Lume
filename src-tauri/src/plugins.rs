@@ -13,6 +13,7 @@
 //! not enforce it) so a future third-party loader has the surface ready.
 
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use tauri::State;
@@ -430,11 +431,20 @@ pub(crate) fn manifest_id_of(dir: &Path) -> String {
 /// One plugin's declared settings (empty when the manifest is unreadable or
 /// declares none) — the schema `plugin_settings_*` validates against.
 pub(crate) fn manifest_settings(base: &Path, id: &str) -> Vec<PluginSettingInfo> {
+    manifest_for_id(base, id)
+        .map(|m| m.settings.iter().map(|s| s.info()).collect())
+        .unwrap_or_default()
+}
+
+/// The canonical manifest for `id`, using the same deterministic duplicate-id
+/// resolution as `get_plugins`. The permission layer must call this rather
+/// than running its own scan: otherwise plugin code and capability checks can
+/// resolve the same id to different directories.
+pub(crate) fn manifest_for_id(base: &Path, id: &str) -> Option<PluginManifest> {
     scan_disk_plugins(base)
         .into_iter()
         .find(|p| p.manifest.id == id)
-        .map(|p| p.manifest.settings.iter().map(|s| s.info()).collect())
-        .unwrap_or_default()
+        .map(|p| p.manifest)
 }
 
 /// Parse one `plugin.toml` (small standalone parse so tests don't need the
@@ -458,11 +468,11 @@ struct DiskPlugin {
 /// never break the launcher); the id falls back to the directory name.
 fn scan_disk_plugins(base: &Path) -> Vec<DiskPlugin> {
     let dir = plugins_dir(base);
-    let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(&dir) else {
-        return out; // no plugins dir yet — the quiet, normal case
+        return Vec::new(); // no plugins dir yet — the quiet, normal case
     };
     eprintln!("[plugins] scanning {}", dir.display());
+    let mut parsed = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -492,7 +502,7 @@ fn scan_disk_plugins(base: &Path) -> Vec<DiskPlugin> {
                     if m.version.is_empty() { "-" } else { &m.version },
                     path.display()
                 );
-                out.push(DiskPlugin {
+                parsed.push(DiskPlugin {
                     dir: path,
                     manifest: m,
                 });
@@ -504,6 +514,45 @@ fn scan_disk_plugins(base: &Path) -> Vec<DiskPlugin> {
                 );
             }
         }
+    }
+    // `read_dir` order is filesystem-dependent. A directory named after the
+    // manifest id is the canonical install target and wins; otherwise the
+    // lexicographically first directory wins. This guarantees that
+    // contribution loading and permission checks resolve the same manifest.
+    parsed.sort_by(|a, b| {
+        let an = a
+            .dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
+        let bn = b
+            .dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
+        let aid = a.manifest.id.to_lowercase();
+        let bid = b.manifest.id.to_lowercase();
+        (bn == bid)
+            .cmp(&(an == aid))
+            .then_with(|| an.cmp(&bn))
+            .then_with(|| a.manifest.id.cmp(&b.manifest.id))
+    });
+    let mut out = Vec::new();
+    let mut seen_ids: HashMap<String, std::path::PathBuf> = HashMap::new();
+    for plugin in parsed {
+        if let Some(kept) = seen_ids.get(&plugin.manifest.id) {
+            eprintln!(
+                "[plugins] scan: skipping duplicate id \"{}\" at {} (keeping {})",
+                plugin.manifest.id,
+                plugin.dir.display(),
+                kept.display()
+            );
+            continue;
+        }
+        seen_ids.insert(plugin.manifest.id.clone(), plugin.dir.clone());
+        out.push(plugin);
     }
     out.sort_by(|a, b| a.manifest.id.cmp(&b.manifest.id));
     eprintln!("[plugins] scan: {} disk plugin(s) discovered", out.len());
@@ -570,7 +619,16 @@ pub fn list_plugins(
         })
         .collect();
     let disk = scan_disk_plugins(base);
+    let builtin_ids: HashSet<&str> = BUILTIN_PLUGINS.iter().map(|(id, _, _)| *id).collect();
     for DiskPlugin { dir, manifest: m } in disk {
+        if builtin_ids.contains(m.id.as_str()) {
+            eprintln!(
+                "[plugins] skipping disk plugin \"{}\" at {} — built-in id wins",
+                m.id,
+                dir.display()
+            );
+            continue;
+        }
         let keywords_pinyin = m
             .keywords
             .iter()
@@ -755,6 +813,92 @@ mod tests {
         assert_eq!(p.dir, dir.to_string_lossy().into_owned());
         assert_eq!(p.entry, "dist/index.js", "entry resolves against the real dir");
         assert_eq!(p.view, "view.html");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn duplicate_ids_resolve_to_one_deterministic_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "lume-plugins-duplicate-{}",
+            std::process::id()
+        ));
+        let base = root.join("plugins");
+        fs::create_dir_all(base.join("aaa-first")).unwrap();
+        fs::create_dir_all(base.join("zzz-second")).unwrap();
+        fs::write(
+            base.join("aaa-first").join("plugin.toml"),
+            "id = \"same-id\"\nname = \"First\"\npermissions = [\"network\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("zzz-second").join("plugin.toml"),
+            "id = \"same-id\"\nname = \"Second\"\npermissions = [\"clipboard\"]\n",
+        )
+        .unwrap();
+
+        let all = list_plugins(&root, &[], &[], false);
+        let matches: Vec<_> = all.iter().filter(|p| p.id == "same-id").collect();
+        assert_eq!(matches.len(), 1, "duplicate ids must not reach the frontend");
+        assert_eq!(matches[0].name, "First", "lexical directory order wins");
+        assert_eq!(
+            matches[0].dir,
+            base.join("aaa-first").to_string_lossy().into_owned()
+        );
+
+        let canonical = manifest_for_id(&root, "same-id").unwrap();
+        assert_eq!(canonical.name, "First", "permission reads the same manifest");
+        assert_eq!(canonical.permissions, vec!["network".to_string()]);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn duplicate_id_prefers_the_directory_named_after_it() {
+        let root = std::env::temp_dir().join(format!(
+            "lume-plugins-duplicate-owner-{}",
+            std::process::id()
+        ));
+        let base = root.join("plugins");
+        fs::create_dir_all(base.join("aaa-other")).unwrap();
+        fs::create_dir_all(base.join("same-id")).unwrap();
+        fs::write(
+            base.join("aaa-other").join("plugin.toml"),
+            "id = \"same-id\"\nname = \"Stray Copy\"\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("same-id").join("plugin.toml"),
+            "id = \"same-id\"\nname = \"Installed Owner\"\n",
+        )
+        .unwrap();
+
+        let all = list_plugins(&root, &[], &[], false);
+        let found = all.iter().find(|p| p.id == "same-id").unwrap();
+        assert_eq!(found.name, "Installed Owner");
+        assert_eq!(
+            found.dir,
+            base.join("same-id").to_string_lossy().into_owned()
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn disk_plugins_cannot_shadow_builtin_ids() {
+        let root = std::env::temp_dir().join(format!(
+            "lume-plugins-builtin-id-{}",
+            std::process::id()
+        ));
+        let dir = root.join("plugins").join("clipboard");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("plugin.toml"),
+            "id = \"clipboard\"\nname = \"Impostor\"\npermissions = [\"network\"]\n",
+        )
+        .unwrap();
+
+        let all = list_plugins(&root, &[], &[], false);
+        let matches: Vec<_> = all.iter().filter(|p| p.id == "clipboard").collect();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].builtin, "the compiled-in plugin owns its id");
         fs::remove_dir_all(&root).ok();
     }
 

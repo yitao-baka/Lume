@@ -207,6 +207,35 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **插件搜查 B5–B8** — ① 功能规则正则缓存改为插件 + 规则 + pattern 键，并在
+  插件卸载/重载时按插件清理；window 规则的每个 `title` 正则各用独立缓存项，
+  不再串用第一条。② 注入桥的按键回执按数字 `seq` 查/删 `pendingKeys`，修复
+  对象键永远 miss 造成的按键事件滞留与宿主消费键无法 `preventDefault`。
+  ③ 磁盘插件按 id 确定性去重（目录名与 id 相同者优先，其次目录名字典序首项；
+  内置 id 优先），
+  `get_plugins` 与 Rust 权限校验共用同一份清单，重复 id 不再出现身份歧义。
+  ④ 验证脚本与现行契约对齐：theme 脚本断言关窗回流直接回到插件页；filesearch
+  脚本接受 Everything / LumeSVC 任一后端并过滤启动期已由 pending-settings
+  补投的旧竞态噪声（同时前端在逻辑未就绪时直接延迟 `onSettings`）；
+  window-feature 脚本改用 ASCII PowerShell WinForms 夹具 + PID 前台校验，
+  并为启动期 `pin_app` 增加重试。`docs/PLUGIN_API.md`、`ARCHITECTURE.md`、
+  `TESTING.md`、`ROADMAP_HISTORY.md` #51 同步。验证：`cdp_regex_probe2`
+  qone 由 true→false、qtwo 由 false→true；`cdp_dup_probe` 只返回 1 条
+  canonical；`cdp_plugin_theme_verify` **28/28**；`cdp_filesearch_smoke`
+  `svc ready` 12 entries / **SMOKE OK** / console errors `[]`；
+  `cdp_window_feature_verify` **ALL PASS**；`cargo test` **220 passed /
+  9 ignored**；`tsc --noEmit` / `pnpm run build` / `cargo check` / debug exe
+  重建干净。
+
+- **从 Lume 启动的进程丢失机器级 PATH** — `envwatch` 以 `PATH` 精确匹配注册表
+  值名，但 Windows 默认拼写是 `Path`：系统段被当成普通变量写入后又被用户段整体
+  覆盖，子进程只剩用户 PATH（System32 消失）。现在取值/排除均大小写不敏感，
+  系统段 + 用户段按 Windows 顺序拼接；watcher 启动时也先刷新一次，修复 Lume
+  自身继承了残缺环境的情况。验证：以仅用户级 318 字符 PATH 启动 debug exe，
+  由其启动的批处理输出 PATH 980 字符且包含 `C:\Windows\System32`；新增
+  `path_lookup_uses_registry_case_insensitive_names` /
+  `missing_path_scopes_do_not_clear_the_other_side` 单测。
+
 - **#40 副效应：陈旧会话帧覆盖新 enter + LRU 一次溢出整批清栈（ROADMAP #42）**
   — ① 模式页被 LRU 淘汰后立刻用**新文本**重进时，ready 握手回放的旧快照
   （auto + custom，含结束前终校正）会覆盖刚投递的 enter 载荷（实测 `#src`

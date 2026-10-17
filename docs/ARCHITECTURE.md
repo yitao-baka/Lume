@@ -209,9 +209,11 @@ registered, `ActiveHotkey` stays empty and nothing toggles.
 
 ### `envwatch.rs`
 Spawns one background thread (no polling) that keeps Lume's **own process
-environment block** in sync with system changes, so everything Lume launches
-afterwards (via `ShellExecuteW`, or future "run a command" features) inherits a
-fresh PATH / variables instead of the ones frozen at startup.
+environment block** in sync with the registry. It rebuilds the block once at
+startup (healing an incomplete environment inherited from the parent process)
+and again on every system change, so everything Lume launches afterwards (via
+`ShellExecuteW`, or future "run a command" features) inherits a fresh PATH /
+variables instead of the ones frozen at startup.
 
 The thread parks in `MsgWaitForMultipleObjectsEx` — a kernel wait — so it
 consumes **zero CPU while idle**. It wakes on either:
@@ -221,10 +223,12 @@ consumes **zero CPU while idle**. It wakes on either:
   environment key — this covers `setx` / direct registry edits, which never
   broadcast.
 
-On a change it re-reads the registry and merges: `PATH` = system + user
-(Windows concatenation order, replaced wholesale), other vars user-over-system,
-`REG_EXPAND_SZ` expanded. Only **newly started** processes are affected;
-already-running ones keep their original environment.
+At startup and on each change it re-reads the registry and merges: `PATH` =
+system + user (Windows concatenation order, replaced wholesale), other vars
+user-over-system, `REG_EXPAND_SZ` expanded. Registry value names are matched
+case-insensitively (the default spelling is `Path`, not `PATH`). Only **newly
+started** processes are affected; already-running ones keep their original
+environment.
 
 ### `clipboard.rs`
 - **Capture**: `spawn_listener` polls `GetClipboardSequenceNumber` every

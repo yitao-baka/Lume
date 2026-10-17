@@ -116,6 +116,12 @@ pub fn suppress_hide(focus: &FocusState, for_ms: u64) {
         Some(std::time::Instant::now() + std::time::Duration::from_millis(for_ms));
 }
 
+/// End a blur-hide suppression early (a UAC prompt returned). The next real
+/// focus loss hides the launcher normally.
+pub fn clear_hide_suppression(focus: &FocusState) {
+    *focus.suppress_hide_until.lock().unwrap() = None;
+}
+
 /// True while a blur-hide suppression is active (and not yet expired).
 pub fn is_hide_suppressed(focus: &FocusState) -> bool {
     let mut guard = focus.suppress_hide_until.lock().unwrap();
@@ -1016,6 +1022,15 @@ fn set_dwm_border(win: &WebviewWindow, rgb: Option<(u8, u8, u8)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hide_suppression_can_be_cleared_after_a_uac_prompt() {
+        let focus = FocusState::default();
+        suppress_hide(&focus, 60_000);
+        assert!(is_hide_suppressed(&focus));
+        clear_hide_suppression(&focus);
+        assert!(!is_hide_suppressed(&focus));
+    }
 
     fn wa() -> PhysicalRect<i32, u32> {
         PhysicalRect {

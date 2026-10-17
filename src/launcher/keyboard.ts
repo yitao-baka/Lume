@@ -33,6 +33,9 @@ export interface KeyDeps {
   switchMode: (m: Mode) => void;
   resetAndHide: () => void;
   closeMenu: () => void;
+  openSettings: () => void;
+  /** F6 / Shift+F6: search box → mode bar → page → settings → search. */
+  cycleFocus: (backwards: boolean) => void;
 }
 
 /** True when `e` matches a mode-switch shortcut (a single key like "Tab" or
@@ -42,12 +45,27 @@ export function matchesSwitchKey(e: KeyboardEvent, combo: string): boolean {
   const parts = combo.split("+");
   const key = parts[parts.length - 1];
   const mods = parts.slice(0, -1);
-  if (mods.length === 0) return e.key === combo;
+  if (
+    e.ctrlKey !== mods.includes("Ctrl") ||
+    e.altKey !== mods.includes("Alt") ||
+    e.shiftKey !== mods.includes("Shift") ||
+    e.metaKey !== mods.includes("Super")
+  ) {
+    return false;
+  }
+  if (mods.length === 0) return e.key.toLowerCase() === combo.toLowerCase();
   if (e.ctrlKey !== mods.includes("Ctrl")) return false;
   if (e.altKey !== mods.includes("Alt")) return false;
   if (e.shiftKey !== mods.includes("Shift")) return false;
   if (e.metaKey !== mods.includes("Super")) return false;
   return e.key.toLowerCase() === key.toLowerCase();
+}
+
+/** A combo that includes a modifier never needs the "only while typing"
+ * exemption a bare key (Tab) needs. */
+function comboHasModifier(combo: string): boolean {
+  const parts = combo.split("+");
+  return parts.length > 1 && parts.slice(0, -1).some(Boolean);
 }
 
 export function createKeyRouter(deps: KeyDeps) {
@@ -103,7 +121,51 @@ export function createKeyRouter(deps: KeyDeps) {
       return;
     }
 
-    if (matchesSwitchKey(e, deps.switchKey())) {
+    // F6 cycles focus between the search box, the mode bar, the active page
+    // and the settings gear. This gives keyboard users a way out of the
+    // search input without consuming Tab (see the plain-Tab gate below).
+    if (e.key === "F6") {
+      e.preventDefault();
+      deps.cycleFocus(e.shiftKey);
+      return;
+    }
+
+    // Standard settings shortcut. Kept independent of the configurable mode
+    // switch key so a custom combo can never make Settings unreachable.
+    if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey && e.key === ",") {
+      e.preventDefault();
+      deps.openSettings();
+      return;
+    }
+
+    // Right-click menu without a mouse: Shift+F10 / the Menu key acts on the
+    // current bar tile or result row.
+    if ((e.shiftKey && e.key === "F10") || e.key === "ContextMenu") {
+      if (inst?.openContextMenu?.()) {
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // A bare Tab is the historical mode-switch key, but it must not swallow
+    // focus traversal everywhere. Keep it while the search box is focused
+    // (the launcher's primary workflow) and accept Ctrl+Tab globally. With
+    // any other focus, Tab / Shift+Tab move focus natively.
+    const switchCombo = deps.switchKey();
+    const plainTab = switchCombo.trim().toLowerCase() === "tab";
+    const ctrlTabAlias =
+      plainTab &&
+      e.key === "Tab" &&
+      e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      !e.metaKey;
+    const searchFocused =
+      isTextEditingTarget(e.target) ||
+      document.activeElement?.id === "search-input";
+    const switchMatched =
+      matchesSwitchKey(e, switchCombo) || ctrlTabAlias;
+    if (switchMatched && (comboHasModifier(switchCombo) || ctrlTabAlias || searchFocused)) {
       e.preventDefault();
       // Cycle through every visible page (home first, then plugin modes).
       // Hidden modes (manifest `hidden`) are not in this list; when one is
@@ -122,7 +184,10 @@ export function createKeyRouter(deps: KeyDeps) {
           e.preventDefault();
           deps.moveSelection(e.key === "ArrowDown" ? 1 : -1);
         }
-      } else if (e.key === "Enter") {
+      } else if (
+        e.key === "Enter" &&
+        !(e.target instanceof Element && e.target.closest("button"))
+      ) {
         e.preventDefault();
         deps.activate({ elevated: e.shiftKey && deps.shiftEnterAdmin() });
       }

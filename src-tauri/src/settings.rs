@@ -717,6 +717,83 @@ pub fn get_settings(state: State<SettingsState>) -> Settings {
     state.0.lock().unwrap().clone()
 }
 
+/// Deep-merge a partial settings object (only the fields the user edited)
+/// onto the current settings. Arrays are values, not maps: a changed index
+/// list / automation rule list replaces the old one wholesale. This is what
+/// keeps a stale settings-window draft from overwriting light writes made in
+/// the meantime (`set_plugin_enabled`, `save_last_page`, plugin geometry…).
+fn merge_json(base: &mut serde_json::Value, patch: serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(patch)) => {
+            for (key, value) in patch {
+                if value.is_null() {
+                    continue;
+                }
+                match base.get_mut(&key) {
+                    Some(slot) => merge_json(slot, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (slot, value) => *slot = value,
+    }
+}
+
+/// Apply a frontend-computed patch to the current settings snapshot.
+fn merge_settings_patch(
+    current: &Settings,
+    patch: serde_json::Value,
+) -> Result<Settings, String> {
+    let mut value = serde_json::to_value(current).map_err(|e| e.to_string())?;
+    merge_json(&mut value, patch);
+    let mut next: Settings = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    next.index.migrate();
+    ensure_known_system_dirs(&mut next);
+    Ok(next)
+}
+
+/// Everything a persisted settings change must do to the running process.
+/// `save_settings`, import, restore-default and restore-backup all funnel
+/// through here, so a file replacement can never leave the launcher on the
+/// old width / theme / hotkey / index watcher until the next restart.
+fn apply_runtime_settings(
+    app: &AppHandle,
+    old: &Settings,
+    new: &Settings,
+) -> Result<(), String> {
+    // 内容去重 toggled → drop/recreate the text-dedup SQL unique index so the
+    // "off" state can record duplicate rows (the index would reject them).
+    if new.clipboard.dedup != old.clipboard.dedup {
+        crate::clipboard::set_dedup_enabled(app, new.clipboard.dedup);
+    }
+    // Apply the launcher width now; position is applied on its next show.
+    crate::window::apply_settings(app, new)?;
+    // Re-register the toggle hotkey when the user changed it.
+    if new.hotkeys.toggle != old.hotkeys.toggle {
+        let _ = crate::hotkey::apply(app, &new.hotkeys.toggle);
+    }
+    // Index config changed → refresh the user cache immediately, so enabling
+    // a new index takes effect now rather than on the next hourly refresh.
+    if new.index != old.index {
+        let app2 = app.clone();
+        let settings = new.clone();
+        std::thread::spawn(move || {
+            app2.state::<crate::apps::AppIndex>().refresh_user(&settings);
+        });
+        // Also rebuild the directory watcher to follow the new index dirs.
+        crate::dirwatch::rebuild(app);
+    }
+    // Dev-mode plugin watch follows plugins.dev_mode — also on an import /
+    // restore, not only a normal save.
+    crate::plugin_devwatch::rebuild(app);
+    // Tray labels follow the configured launcher language (zh-CN / zh-TW / en).
+    let _ = crate::tray::refresh_labels(app);
+    // Notify the launcher webview (language + entry-box size it renders).
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())
+}
+
 /// Save/apply: back up the current file, write `new`, then apply the window
 /// geometry and tell the launcher to re-read the live settings. Used by both
 /// the "Save" and "Apply" buttons (the frontend decides whether to close the
@@ -724,40 +801,29 @@ pub fn get_settings(state: State<SettingsState>) -> Settings {
 #[tauri::command]
 pub fn save_settings(new: Settings, app: AppHandle, state: State<SettingsState>) -> Result<(), String> {
     let mut guard = state.0.lock().unwrap();
-    let old_toggle = guard.hotkeys.toggle.clone();
-    let old_index = guard.index.clone();
-    let old_dedup = guard.clipboard.dedup;
-    write_settings(&paths::base_dir(), &new, &guard)?;
+    let old = guard.clone();
+    write_settings(&paths::base_dir(), &new, &old)?;
     *guard = new.clone();
     drop(guard);
-    // 内容去重 toggled → drop/recreate the text-dedup SQL unique index so the
-    // "off" state can record duplicate rows (the index would reject them).
-    if new.clipboard.dedup != old_dedup {
-        crate::clipboard::set_dedup_enabled(&app, new.clipboard.dedup);
-    }
-    // Apply the launcher width now; position is applied on its next show.
-    crate::window::apply_settings(&app, &new)?;
-    // Re-register the toggle hotkey when the user changed it.
-    if new.hotkeys.toggle != old_toggle {
-        let _ = crate::hotkey::apply(&app, &new.hotkeys.toggle);
-    }
-    // Index config changed → refresh the user cache immediately, so enabling
-    // a new index takes effect now rather than on the next hourly refresh.
-    if new.index != old_index {
-        let app2 = app.clone();
-        let settings = new.clone();
-        std::thread::spawn(move || {
-            app2.state::<crate::apps::AppIndex>().refresh_user(&settings);
-        });
-        // Also rebuild the directory watcher to follow the new index dirs.
-        crate::dirwatch::rebuild(&app);
-    }
-    // Dev-mode plugin watch follows plugins.dev_mode (#32.7) — runs on every
-    // save so toggling developer mode takes effect immediately.
-    crate::plugin_devwatch::rebuild(&app);
-    // Notify the launcher webview (language + entry-box size it renders).
-    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
-    Ok(())
+    apply_runtime_settings(&app, &old, &new)
+}
+
+/// Save only the fields the settings window actually edited. The patch is
+/// merged onto the CURRENT settings under the state lock, so an instant
+/// toggle made while the window held a dirty draft survives 保存并应用.
+#[tauri::command]
+pub fn save_settings_patch(
+    patch: serde_json::Value,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let old = guard.clone();
+    let next = merge_settings_patch(&old, patch)?;
+    write_settings(&paths::base_dir(), &next, &old)?;
+    *guard = next.clone();
+    drop(guard);
+    apply_runtime_settings(&app, &old, &next)
 }
 
 /// Export: write the current settings to an external path (Save-As).
@@ -769,41 +835,60 @@ pub fn export_settings(target_path: String, state: State<SettingsState>) -> Resu
 }
 
 /// Import: validate an external toml, back up the current file, then replace
-/// the effective settings with the imported ones.
+/// the effective settings with the imported ones and apply them live (width,
+/// theme, hotkey, index refresh/watcher, plugin watch, `settings-applied`).
 #[tauri::command]
-pub fn import_settings(source_path: String, state: State<SettingsState>) -> Result<(), String> {
+pub fn import_settings(
+    source_path: String,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
     let text = fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
-    let imported: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
+    let mut imported: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
+    imported.index.migrate();
+    ensure_known_system_dirs(&mut imported);
     let mut guard = state.0.lock().unwrap();
-    write_settings(&paths::base_dir(), &imported, &guard)?;
-    *guard = imported;
-    Ok(())
+    let old = guard.clone();
+    write_settings(&paths::base_dir(), &imported, &old)?;
+    *guard = imported.clone();
+    drop(guard);
+    apply_runtime_settings(&app, &old, &imported)
 }
 
 /// Restore defaults: back up the current file, then copy `default.toml` over
-/// `settings.toml` and reload.
+/// `settings.toml` and reload it into the running process.
 #[tauri::command]
-pub fn restore_default(state: State<SettingsState>) -> Result<(), String> {
+pub fn restore_default(app: AppHandle, state: State<SettingsState>) -> Result<(), String> {
     let base = paths::base_dir();
     let text = fs::read_to_string(default_path(&base)).map_err(|e| e.to_string())?;
-    let defaults: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
+    let mut defaults: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
+    defaults.index.migrate();
+    ensure_known_system_dirs(&mut defaults);
     let mut guard = state.0.lock().unwrap();
-    write_settings(&base, &defaults, &guard)?;
-    *guard = defaults;
-    Ok(())
+    let old = guard.clone();
+    write_settings(&base, &defaults, &old)?;
+    *guard = defaults.clone();
+    drop(guard);
+    apply_runtime_settings(&app, &old, &defaults)
 }
 
 /// Restore backup: read `backup.toml` straight into `settings.toml` (the
-/// backup itself is the source, so it is not overwritten).
+/// backup itself is the source, so it is not overwritten) and apply it live.
 #[tauri::command]
-pub fn restore_backup(state: State<SettingsState>) -> Result<(), String> {
+pub fn restore_backup(app: AppHandle, state: State<SettingsState>) -> Result<(), String> {
     let base = paths::base_dir();
     let text = fs::read_to_string(backup_path(&base)).map_err(|e| e.to_string())?;
-    let restored: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
-    fs::write(settings_path(&base), text).map_err(|e| e.to_string())?;
+    let mut restored: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
+    restored.index.migrate();
+    ensure_known_system_dirs(&mut restored);
     let mut guard = state.0.lock().unwrap();
-    *guard = restored;
-    Ok(())
+    let old = guard.clone();
+    // Light write: the file being restored is `backup.toml`, and
+    // `write_settings` would overwrite it with the current settings first.
+    write_settings_light(&base, &restored)?;
+    *guard = restored.clone();
+    drop(guard);
+    apply_runtime_settings(&app, &old, &restored)
 }
 
 /// 记住上次所在页面: persist the launcher's current page (mode + clipboard
@@ -992,6 +1077,70 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// A settings-window save sends only the fields it edited. Everything
+    /// else (plugin enable/disable, plugin geometry, runtime bookmarks) must
+    /// survive the merge instead of being rolled back to the window's stale
+    /// snapshot.
+    #[test]
+    fn settings_patch_preserves_concurrent_light_writes() {
+        let mut current = Settings::default();
+        current.plugins.disabled.push("preview".into());
+        current.plugins.window_bounds.insert(
+            "demo".into(),
+            WindowBounds {
+                x: 1.0,
+                y: 2.0,
+                width: 300.0,
+                height: 200.0,
+            },
+        );
+        current.appearance.last_page = "clipboard".into();
+
+        let next = merge_settings_patch(
+            &current,
+            serde_json::json!({ "appearance": { "color_mode": "light" } }),
+        )
+        .unwrap();
+
+        assert_eq!(next.appearance.color_mode, "light");
+        assert_eq!(next.appearance.last_page, "clipboard");
+        assert_eq!(next.plugins.disabled, vec!["preview".to_string()]);
+        assert!(next.plugins.window_bounds.contains_key("demo"));
+    }
+
+    /// Arrays are replacement values: editing an automation rule / index list
+    /// must not deep-merge array indices with the stale list.
+    #[test]
+    fn settings_patch_replaces_arrays_and_keeps_absent_sections() {
+        let mut current = Settings::default();
+        current.automation.actions.push(AutoAction {
+            process: "old.exe".into(),
+            combo: "Ctrl+Alt+O".into(),
+            enabled: true,
+            delay_ms: 120,
+        });
+        current.index.cache_refresh_interval_minutes = 5;
+
+        let next = merge_settings_patch(
+            &current,
+            serde_json::json!({
+                "automation": {
+                    "actions": [{
+                        "process": "new.exe",
+                        "combo": "Ctrl+Alt+N",
+                        "enabled": false,
+                        "delay_ms": 400
+                    }]
+                }
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(next.automation.actions.len(), 1);
+        assert_eq!(next.automation.actions[0].process, "new.exe");
+        assert_eq!(next.index.cache_refresh_interval_minutes, 5);
     }
 
     /// Global 全部授权 defaults to off and round-trips through a light

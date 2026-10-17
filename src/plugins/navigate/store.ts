@@ -8,7 +8,7 @@
 //! owns data refresh, app actions (launch / reveal / pin / remove-from-recent)
 //! and the pinned-bar drag-reorder listeners.
 
-import { createMemo, createSignal } from "solid-js";
+import { createEffect, createMemo, createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../../i18n";
 import copyIcon from "../../../res/icons/copy.svg";
@@ -153,8 +153,42 @@ export function createNavigateStore(deps: NavigateDeps) {
 
   const launchSectionItem = (items: NavItem[], idx: number, elevated: boolean) => {
     const item = items[idx];
-    if (item) launchApp({ id: item.id, name: item.name, path: item.path }, elevated);
+    if (item) void launchApp({ id: item.id, name: item.name, path: item.path }, elevated);
   };
+
+  /** Items a bar currently exposes to pointer/keyboard users. A collapsed
+   * expandable bar shows exactly one row; every other bar shows all items. */
+  function visibleReach(
+    items: NavItem[],
+    expandable: boolean,
+    expanded: boolean
+  ): number {
+    if (!expandable || expanded) return items.length;
+    return Math.min(items.length, Math.max(deps.barCols(), 1));
+  }
+
+  /** The reach of a live section (used by activation and list refreshes). */
+  function sectionReach(section: NavSection): number {
+    return visibleReach(section.items, section.expandable, section.expanded());
+  }
+
+  /** Keep a section's selection inside its visible items. A hidden selection
+   * returns to the first tile (collapse); `collapse = false` keeps the nearest
+   * visible tile instead (list refresh / column shrink). */
+  function clampSectionSelection(section: NavSection, collapse = false) {
+    const reach = sectionReach(section);
+    if (reach <= 0) return;
+    if (section.selected() >= reach) {
+      section.setSelected(collapse ? 0 : reach - 1);
+    }
+  }
+
+  /** Selection index activation may use — never a tile hidden by collapse. */
+  function activateIndex(section: NavSection): number {
+    const reach = sectionReach(section);
+    if (reach <= 0) return -1;
+    return Math.min(Math.max(section.selected(), 0), reach - 1);
+  }
 
   /** The 「Windows 资源管理器」 bar: action tiles (CMD / PowerShell / copy path)
    * for the folder the launcher was summoned from. */
@@ -177,7 +211,10 @@ export function createNavigateStore(deps: NavigateDeps) {
         expandable: true,
         expanded: recentExpanded,
         toggleExpanded: () => {
-          setRecentExpanded(!recentExpanded());
+          const next = !recentExpanded();
+          setRecentExpanded(next);
+          const reach = visibleReach(recentApps(), true, next);
+          if (recentSelected() >= reach) setRecentSelected(0);
           deps.invalidateWorkArea();
         },
         selected: recentSelected,
@@ -204,7 +241,10 @@ export function createNavigateStore(deps: NavigateDeps) {
         expandable: true,
         expanded: pinnedExpanded,
         toggleExpanded: () => {
-          setPinnedExpanded(!pinnedExpanded());
+          const next = !pinnedExpanded();
+          setPinnedExpanded(next);
+          const reach = visibleReach(pinnedApps(), true, next);
+          if (pinnedSelected() >= reach) setPinnedSelected(0);
           deps.invalidateWorkArea();
         },
         selected: pinnedSelected,
@@ -234,7 +274,10 @@ export function createNavigateStore(deps: NavigateDeps) {
         expandable: true,
         expanded: recommendedExpanded,
         toggleExpanded: () => {
-          setRecommendedExpanded(!recommendedExpanded());
+          const next = !recommendedExpanded();
+          setRecommendedExpanded(next);
+          const reach = visibleReach(rec.items, true, next);
+          if (recommendedSelected() >= reach) setRecommendedSelected(0);
           deps.invalidateWorkArea();
         },
         selected: recommendedSelected,
@@ -287,6 +330,14 @@ export function createNavigateStore(deps: NavigateDeps) {
   function sectionById(id: string): NavSection | undefined {
     return sections().find((s) => s.id === id);
   }
+
+  // A window-width / entry-size change can shrink a collapsed bar from two
+  // rows to one without an explicit 收起 click. Keep every selection inside
+  // what is actually rendered.
+  createEffect(() => {
+    void deps.barCols();
+    for (const section of sections()) clampSectionSelection(section, true);
+  });
 
   /** Whether any expandable bar is currently expanded (sizer work-area cap). */
   function anyExpanded(): boolean {
@@ -355,7 +406,12 @@ export function createNavigateStore(deps: NavigateDeps) {
           expandable: true,
           expanded: () => pluginExpanded()[b.id] ?? false,
           toggleExpanded: () => {
-            setPluginExpanded((prev) => ({ ...prev, [b.id]: !(prev[b.id] ?? false) }));
+            const next = !(pluginExpanded()[b.id] ?? false);
+            setPluginExpanded((prev) => ({ ...prev, [b.id]: next }));
+            const reach = visibleReach(items, true, next);
+            if ((pluginSel()[b.id] ?? 0) >= reach) {
+              setPluginSel((prev) => ({ ...prev, [b.id]: 0 }));
+            }
             deps.invalidateWorkArea();
           },
           selected: () => pluginSel()[b.id] ?? 0,
@@ -393,7 +449,8 @@ export function createNavigateStore(deps: NavigateDeps) {
     try {
       const pins = (await invoke("get_pinned_apps")) as AppEntry[];
       setPinnedApps(pins);
-      if (pinnedSelected() >= pins.length) setPinnedSelected(0);
+      const section = sectionById("pinned");
+      if (section) clampSectionSelection(section);
       reconcileZone();
       void deps.icons.loadIcons(pins);
       deps.scheduleResize();
@@ -407,7 +464,8 @@ export function createNavigateStore(deps: NavigateDeps) {
     try {
       const recents = (await invoke("get_recent_apps")) as AppEntry[];
       setRecentApps(recents);
-      if (recentSelected() >= recents.length) setRecentSelected(0);
+      const section = sectionById("recent");
+      if (section) clampSectionSelection(section);
       reconcileZone();
       void deps.icons.loadIcons(recents);
       deps.scheduleResize();
@@ -484,32 +542,30 @@ export function createNavigateStore(deps: NavigateDeps) {
     await refreshRecent();
   }
 
-  /** Launch a specific app and hide the launcher. When elevated, waits for the
-   * UAC prompt so a cancellation keeps the launcher open instead of hiding. */
-  function launchApp(app: AppEntry, elevated = false) {
+  /** Launch a specific app and hide only after the shell reports success.
+   * A failed path / cancelled UAC keeps the launcher open with a visible
+   * error instead of looking like the action worked. */
+  async function launchApp(app: AppEntry, elevated = false) {
     deps.markEntryOpened(); // 打开条目 → 首页下次呼出清查询（#40）
-    if (elevated) {
-      void (async () => {
-        try {
-          await invoke("launch_app", { path: app.path, name: app.name, elevated: true });
-          void deps.resetAndHide();
-        } catch (err) {
-          if (String(err).includes("canceled")) return; // user dismissed UAC
-          console.error("launch failed", err);
-          void deps.resetAndHide();
-        }
-      })();
-      return;
+    try {
+      await invoke("launch_app", { path: app.path, name: app.name, elevated });
+      deps.resetAndHide();
+    } catch (err) {
+      if (String(err).includes("canceled")) {
+        deps.showToast(t("launchCanceled"));
+        return;
+      }
+      console.error("launch failed", err);
+      deps.showToast(t("launchFailed", { name: app.name }));
     }
-    void invoke("launch_app", { path: app.path, name: app.name, elevated: false });
-    void deps.resetAndHide();
   }
 
   /** Reveal an app's file in Explorer, keeping the launcher open. */
   function revealInFolder(app: AppEntry) {
-    void invoke("reveal_in_folder", { path: app.path }).catch((err) =>
-      console.error("reveal failed", err)
-    );
+    void invoke("reveal_in_folder", { path: app.path }).catch((err) => {
+      console.error("reveal failed", err);
+      deps.showToast(t("revealFailed"));
+    });
   }
 
   /** Activate a tile in the 「Windows 资源管理器」 bar. `idx`: 0=CMD, 1=PowerShell,
@@ -525,15 +581,20 @@ export function createNavigateStore(deps: NavigateDeps) {
           console.error("copy failed", err);
           deps.showToast(t("copyFailed"));
         });
-      void deps.resetAndHide();
       return;
     }
     const shell = idx === 1 ? "powershell" : "cmd";
     deps.markEntryOpened(); // 打开终端即使用条目 → 首页下次呼出清查询（#40）
-    void invoke("open_terminal_in_folder", { path: ctx.path, shell, elevated }).catch((err) =>
-      console.error("open terminal failed", err),
-    );
-    void deps.resetAndHide();
+    void invoke("open_terminal_in_folder", { path: ctx.path, shell, elevated })
+      .then(() => deps.resetAndHide())
+      .catch((err) => {
+        if (String(err).includes("canceled")) {
+          deps.showToast(t("launchCanceled"));
+          return;
+        }
+        console.error("open terminal failed", err);
+        deps.showToast(t("terminalFailed"));
+      });
   }
 
   // ── Continuous section-grid keyboard navigation ─────────────────────────
@@ -814,6 +875,8 @@ export function createNavigateStore(deps: NavigateDeps) {
     sections,
     activeSection,
     sectionById,
+    sectionReach,
+    activateIndex,
     anyExpanded,
     resetSelections,
     setPluginBars,

@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#51 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#53 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -3503,3 +3503,91 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   Space/Enter 只作用于焦点按钮、IME Enter 不离开页面。
 - `cargo check` / `cargo test`（220 passed / 9 ignored）、
   `pnpm exec tsc --noEmit`、`pnpm run build`、debug exe 重建均干净。
+
+---
+
+## 53. 交互逻辑专项审计第四轮（已实现）
+
+**状态：已实现（2026-10-17）。** 来源：`docs/BUG_REPORT_4.md`（基线
+`13d7f7e`）的 9 项交互缺陷与 3 项待复核项。修复按「状态越界 → 设置一致性 →
+动作结果 → 焦点契约 → 空态与录制竞态」推进。
+
+### 53.1 实现
+
+- **栏目隐藏选择（交互-01）**：导航 store 新增统一的 `visibleReach` /
+  `activateIndex`；收起、列表刷新、窗口列数/条目框变化都会把 selection 收缩到
+  当前可见范围，激活前再校验一次。收起后第二行条目即使曾被选中也不会被
+  `Enter` 触发。
+- **设置草稿覆盖（交互-02）**：设置窗保存改走 `save_settings_patch`，前端按
+  载入快照计算最小差异 patch，Rust 在 `SettingsState` 锁内合并到当前设置；
+  未编辑字段（插件启停、dev/trust、插件几何/主题、`save_last_page`、
+  `set_remember_checks` 等）不会被旧快照回滚。数组按整组替换。脏草稿关闭时
+  弹「保存并关闭 / 丢弃并关闭 / 继续编辑」；设置窗同时监听
+  `settings-applied`，无脏改动时自动重读。
+- **导入/恢复热应用（交互-03）**：抽出 `apply_runtime_settings`，保存、导入、
+  恢复默认与恢复备份统一执行 dedup 索引、窗口宽度/边框、呼出热键、用户索引
+  刷新、目录 watcher、插件 dev watcher，并广播 `settings-applied`。导入/恢复
+  前若有脏草稿先要求确认丢弃。
+- **动作结果（交互-04）**：`launch_app` 返回结构化 `launched`；非提权启动也等
+  后端成功后才隐藏，失败保留窗口并 toast。`paste_clipboard*` 返回
+  `pasted` / `copied`（含 `no_target` / `target_gone`），Rust 仅在有目标窗口时
+  隐藏；无目标时保持打开并提示「已复制 — 没有可粘贴的目标窗口」；`SendInput`
+  失败会恢复窗口。复制路径不再隐藏；终端与剪贴板链接打开等待结果后再隐藏。
+- **焦点契约（交互-05/06）**：命令型鼠标控件在捕获阶段统一把焦点交还搜索框，
+  输入框、确认框、上下文菜单与 `[data-focus-scope]` 保留自己的焦点作用域。
+  单键 `Tab` 只在搜索框聚焦时切换模式；`Shift+Tab` 不再误匹配正向切换，
+  页面内 `Tab` / `Shift+Tab` 原生遍历，`Ctrl+Tab` 全局切换。新增
+  `F6` / `Shift+F6` 焦点环、`Ctrl+,` 打开设置、`Shift+F10` / 菜单键打开当前
+  条目的右键菜单；焦点可见样式覆盖主窗与设置窗控件。
+- **程序选择器（交互-07）**：`ProgramPicker` 改用 Portal，打开时给设置根节点
+  加 `inert`，`aria-modal` + Tab/Shift+Tab 圈定，方向键移动高亮、Enter 选择；
+  关闭（Esc/遮罩/×/选中/卸载）后焦点返回触发按钮。
+- **文件搜索空态（交互-08）**：示例页把空态拆成 `backend` / `building` /
+  `searching` / `noresult` 四种显式状态，`render()` 不再无条件覆盖后端不可用
+  提示；请求异常也落到明确提示。
+- **录制取消代次（交互-09）**：`ComboRecorder` 补 `captureSeq`，Esc、失焦、
+  再次点击和组件卸载都会递增；异步校验的成功/失败/异常分支都先校验代次。
+- **待复核项**：提权启动与提权终端在 `runas` 期间抑制失焦隐藏，命令返回后解除，
+  取消 UAC 不再留下隐藏窗口；呼出键注册/应用失败时通过系统通知提示（release
+  无控制台）；托盘菜单跟随 `appearance.language`（含繁体）并在设置应用后重建；
+  预览 PDF 的四个控件标题改走三语 `t()`。
+
+### 53.2 踩坑
+
+- 模式胶囊切换会让 Solid `<For>` 重建胶囊，`click` 冒泡到 `document` 时原
+  target 已脱离 DOM，`closest('.launcher')` 为 false。命令型控件的焦点归还
+  必须注册在**捕获阶段**，或在派发时保存 `composedPath()`。
+- 设置保存不能只按 section 合并：同一 section 内也有即时轻量写
+  （`remember_checks`、`last_page`）。最小叶子 patch 才能既保留用户编辑又
+  不回滚并发写入。
+- 剪贴板粘贴的隐藏必须留在 Rust：目标窗口需要先拿回前台再 `SendInput`；
+  前端提前隐藏或等成功后再隐藏都会让失败提示不可见或让粘贴落空。
+
+### 53.3 验证
+
+- `test/audit_collapse_activation3.mjs`：9 个固定项、收起后 rendered 6 /
+  selected 0；隐藏的第 7 项 marker 未生成。
+- `test/audit_settings_draft_probe.mjs`：颜色 light→dark 保存成功，
+  `plugins.disabled = ["preview"]` 保留，`get_plugins` 中 preview 仍 disabled。
+- `test/audit_import_apply.mjs`：import 后持久值 200、CSS 200px（修复前 CSS
+  停留 110px）；`test/audit_import_runtime.mjs` 同时验证 theme dark、
+  entry 150px、窗口宽 900。
+- `test/audit_launch_failure.mjs`：无效路径 `visibleAfter=true`，toast
+  「无法启动 AUDIT FAIL PATH」。
+- `test/audit_paste_outcome.mjs`：目标窗口关闭后直接返回
+  `{outcome:"copied",reason:"target_gone"}`，窗口保持可见，UI toast
+  「已复制 — 没有可粘贴的目标窗口」。
+- `test/audit_paste_success.mjs`：真实 Notepad 目标收到 Ctrl+V（窗口标题变为
+  已修改），启动器按 `paste_close` 隐藏，证明结构化结果没有破坏成功路径。
+- `test/audit_bug4_verify.mjs`：13/13——胶囊/分类/展开后真实键入、Shift+Tab
+  不切模式、F6 到胶囊、胶囊上 Tab 原生遍历、Shift+F10 菜单、脏关闭三种选择
+  全部 PASS。
+- `test/audit_picker_focus.mjs`：40 次 Tab 无逃逸，Esc 后焦点回到
+  `.settings-pick-btn`；`test/audit_combo_cancel_race.mjs`：8 轮快速 Esc
+  均未提交组合键。
+- 既有回归：`cdp_mode_query_verify` **47/47**、`cdp_plugin_state_verify`
+  **54/54**、`cdp_plugin_window_verify` **16/16**。
+- `cargo test` **223 passed / 9 ignored**（新增两项 settings patch 单测与
+  一项 UAC 隐藏抑制单测）；
+  `cargo check`、`pnpm exec tsc --noEmit`、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 均通过。

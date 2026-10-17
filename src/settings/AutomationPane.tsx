@@ -67,6 +67,8 @@ export default function AutomationPane(props: {
   const [delayMs, setDelayMs] = createSignal(DEFAULT_DELAY_MS);
   /** 选择 — the running-programs picker is open. */
   const [picking, setPicking] = createSignal(false);
+  /** The button that opened the picker; focus returns here on close. */
+  let pickTrigger: HTMLButtonElement | undefined;
   /** 测试 — result message for the last test press. */
   const [toast, setToast] = createSignal<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -227,7 +229,10 @@ export default function AutomationPane(props: {
           <button
             class="settings-pick-btn"
             title={t("autoPickTitle")}
-            onClick={() => setPicking(true)}
+            onClick={(e) => {
+              pickTrigger = e.currentTarget;
+              setPicking(true);
+            }}
           >
             {t("autoPick")}
           </button>
@@ -254,7 +259,11 @@ export default function AutomationPane(props: {
         <div class="settings-toast" role="status">{toast()}</div>
       </Show>
       <Show when={picking()}>
-        <ProgramPicker onPick={setProcess} onClose={() => setPicking(false)} />
+        <ProgramPicker
+          onPick={setProcess}
+          onClose={() => setPicking(false)}
+          returnFocus={() => pickTrigger ?? null}
+        />
       </Show>
     </>
   );

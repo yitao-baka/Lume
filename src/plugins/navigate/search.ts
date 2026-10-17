@@ -183,7 +183,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
                 })),
                 activate: (idx) => {
                   const item = entries[idx];
-                  if (item) activateEntry(item, false);
+                  if (item) void activateEntry(item, false);
                 },
               }
             : null
@@ -324,7 +324,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
   /** Activate one entry: a feature/keyword row, a provider action/drill row,
    * or a plain launch. Shared by the results grid and the 「推荐使用」 section
    * (the section contract calls it back with its own index). */
-  function activateEntry(item: AppEntry, elevated: boolean): void {
+  async function activateEntry(item: AppEntry, elevated: boolean): Promise<void> {
     // 声明式进入行（features/）：把查询作为 payload 投递给插件。
     // mode 目标先切页再 onEnter；provider/service 直接 onFeature。
     if (item.featureEnter) {
@@ -385,8 +385,17 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       services.requestMode(item.path.slice("lume-mode://".length));
       return;
     }
-    void invoke("launch_app", { path: item.path, name: item.name, elevated });
-    void services.resetAndHide();
+    try {
+      await invoke("launch_app", { path: item.path, name: item.name, elevated });
+      services.resetAndHide();
+    } catch (err) {
+      if (String(err).includes("canceled")) {
+        services.showToast(t("launchCanceled"));
+        return;
+      }
+      console.error("launch failed", err);
+      services.showToast(t("launchFailed", { name: item.name }));
+    }
   }
 
   /** Activate the selected entry — a bar/section tile (section contract) or
@@ -399,12 +408,16 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     // action tile, or anything else a section contract defines.
     const sec = nav.activeSection();
     if (sec) {
-      sec.activate(sec.selected(), elevated);
+      // Re-check at activation time: a collapse / column shrink may have
+      // happened since the selection was last painted, and a hidden tile must
+      // never be launched.
+      const idx = nav.activateIndex(sec);
+      if (idx >= 0) sec.activate(idx, elevated);
       return;
     }
     const item = apps()[selected()];
     if (!item) return;
-    activateEntry(item, elevated);
+    void activateEntry(item, elevated);
   }
 
   /** OS file drop : record the paths for the feature rows. The kinds

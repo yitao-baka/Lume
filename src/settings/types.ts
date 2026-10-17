@@ -202,3 +202,66 @@ export const DEFAULT_SETTINGS: SettingsData = {
     actions: [],
   },
 };
+
+/** A nested partial settings object — only the leaf values that differ. */
+export type SettingsPatch = Record<string, unknown>;
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (typeof a !== "object") return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const left = a as unknown[];
+    const right = b as unknown[];
+    return (
+      left.length === right.length &&
+      left.every((value, index) => sameValue(value, right[index]))
+    );
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(right, key) &&
+        sameValue(left[key], right[key])
+    )
+  );
+}
+
+/** Compute the minimal patch between the settings loaded into the working
+ * copy and the current draft. Untouched sections/fields are omitted, so a
+ * save can never overwrite a concurrent light write (plugin enable/disable,
+ * last-page bookmark, plugin geometry…). Arrays are replaced wholesale. */
+export function diffSettings(
+  base: Record<string, unknown>,
+  draft: Record<string, unknown>
+): SettingsPatch {
+  const patch: SettingsPatch = {};
+  for (const key of Object.keys(draft)) {
+    const next = draft[key];
+    const prev = base[key];
+    if (sameValue(prev, next)) continue;
+    if (
+      next !== null &&
+      typeof next === "object" &&
+      !Array.isArray(next) &&
+      prev !== null &&
+      typeof prev === "object" &&
+      !Array.isArray(prev)
+    ) {
+      const nested = diffSettings(
+        prev as Record<string, unknown>,
+        next as Record<string, unknown>
+      );
+      if (Object.keys(nested).length > 0) patch[key] = nested;
+    } else {
+      patch[key] = next;
+    }
+  }
+  return patch;
+}

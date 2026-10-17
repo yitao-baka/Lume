@@ -341,8 +341,8 @@ function PreviewApp() {
                       <div class="preview-pdf-toolbar">
                         <button
                           class="preview-pdf-btn"
-                          title="上一页"
-                          aria-label="上一页"
+                          title={t("previewPrevPage")}
+                          aria-label={t("previewPrevPage")}
                           disabled={pdfPage() <= 1}
                           onClick={() => setPdfPage((p) => Math.max(1, p - 1))}
                         >‹</button>
@@ -351,8 +351,8 @@ function PreviewApp() {
                         </span>
                         <button
                           class="preview-pdf-btn"
-                          title="下一页"
-                          aria-label="下一页"
+                          title={t("previewNextPage")}
+                          aria-label={t("previewNextPage")}
                           disabled={pdfPage() >= (pdfDoc()?.numPages ?? 1)}
                           onClick={() =>
                             setPdfPage((p) => Math.min(pdfDoc()?.numPages ?? 1, p + 1))
@@ -361,16 +361,16 @@ function PreviewApp() {
                         <span class="preview-pdf-sep" />
                         <button
                           class="preview-pdf-btn"
-                          title="缩小"
-                          aria-label="缩小"
+                          title={t("previewZoomOut")}
+                          aria-label={t("previewZoomOut")}
                           disabled={pdfScale() <= 0.25}
                           onClick={() => setPdfScale((s) => Math.max(0.25, s / 1.25))}
                         >−</button>
                         <span class="preview-pdf-page">{Math.round(pdfScale() * 100)}%</span>
                         <button
                           class="preview-pdf-btn"
-                          title="放大"
-                          aria-label="放大"
+                          title={t("previewZoomIn")}
+                          aria-label={t("previewZoomIn")}
                           disabled={pdfScale() >= 4}
                           onClick={() => setPdfScale((s) => Math.min(4, s * 1.25))}
                         >＋</button>

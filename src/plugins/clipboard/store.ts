@@ -19,6 +19,12 @@ import {
 } from "../../launcher/types";
 import type { PluginServices } from "../../plugins/types";
 
+/** `paste_clipboard*` reply: `copied` = no target window was available. */
+interface PasteOutcome {
+  outcome: "pasted" | "copied";
+  reason?: string | null;
+}
+
 export function createClipboardStore(services: PluginServices) {
   // ── Initial config (synchronous, injected by Rust before page load) ──
   const clipCfg = (window as any).__LUME_CONFIG__?.clipboard;
@@ -178,24 +184,27 @@ export function createClipboardStore(services: PluginServices) {
       });
   }
 
-  /** Paste a clipboard entry into the previous foreground window. Closes the
-   * launcher when 粘贴后关闭 is enabled (default). Invalid rows are blocked with
-   * a toast and keep the launcher open. */
+  /** Paste a clipboard entry into the previous foreground window. The Rust
+   * side hides the launcher only when it actually has a target; a failure or
+   * a copy-only fallback keeps it open with a visible result. */
   function pasteClip(item: ClipboardItem) {
     services.markEntryOpened(); // 粘贴即使用该条目 → 首页下次呼出清查询（#40）
     if (item.valid === false) {
       services.showToast(t("clipInvalid"));
       return;
     }
-    void invoke("paste_clipboard", { id: item.id })
-      .then(() => {
-        if (pasteClose()) services.showToast(t("pasted"));
+    void invoke<PasteOutcome>("paste_clipboard", { id: item.id })
+      .then((res) => {
+        if (res.outcome === "copied") {
+          services.showToast(t("clipCopiedNoTarget"));
+        } else if (!pasteClose()) {
+          services.showToast(t("pasted"));
+        }
       })
       .catch((err) => {
         console.error("paste failed", err);
         services.showToast(clipErrorToast(String(err), t("pasteFailed")));
       });
-    if (pasteClose()) void services.resetAndHide();
   }
   /** Merge-paste every Space-selected entry (Enter with a non-empty set). */
   function pasteClipMulti() {
@@ -204,15 +213,18 @@ export function createClipboardStore(services: PluginServices) {
       .filter((c) => multiIds().has(c.id))
       .map((c) => c.id);
     if (ids.length === 0) return;
-    void invoke("paste_clipboard_multi", { ids })
-      .then(() => {
-        if (pasteClose()) services.showToast(t("pasted"));
+    void invoke<PasteOutcome>("paste_clipboard_multi", { ids })
+      .then((res) => {
+        if (res.outcome === "copied") {
+          services.showToast(t("clipCopiedNoTarget"));
+        } else if (!pasteClose()) {
+          services.showToast(t("pasted"));
+        }
       })
       .catch((err) => {
         console.error("merge paste failed", err);
         services.showToast(t("pasteFailed"));
       });
-    if (pasteClose()) void services.resetAndHide();
   }
 
   /** Activate the selected row (Enter): merge-paste the selection, else paste
@@ -240,15 +252,20 @@ export function createClipboardStore(services: PluginServices) {
   /** Open a link row in the default browser (ShellExecuteW via launch_app). */
   function openClipLink(item: ClipboardItem) {
     services.markEntryOpened(); // 打开链接即使用条目 → 首页下次呼出清查询（#40）
-    void invoke("launch_app", { path: item.content, name: item.content, elevated: false });
-    void services.resetAndHide();
+    void invoke("launch_app", { path: item.content, name: item.content, elevated: false })
+      .then(() => services.resetAndHide())
+      .catch((err) => {
+        console.error("open link failed", err);
+        services.showToast(t("launchFailed", { name: item.content }));
+      });
   }
 
   /** Reveal the first path of a file row in Explorer (launcher stays open). */
   function revealClipFile(path: string) {
-    void invoke("reveal_in_folder", { path }).catch((err) =>
-      console.error("reveal failed", err)
-    );
+    void invoke("reveal_in_folder", { path }).catch((err) => {
+      console.error("reveal failed", err);
+      services.showToast(t("revealFailed"));
+    });
   }
 
   /** Restore the last deletion from the undo buffer. */

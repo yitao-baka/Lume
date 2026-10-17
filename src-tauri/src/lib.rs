@@ -35,7 +35,7 @@ mod tray;
 pub mod usnidx;
 mod window;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 
 /// Result of the single-instance check.
 enum InstanceGuard {
@@ -320,14 +320,13 @@ pub fn run() {
             // window, so `open_settings` can re-show the same instance.
             if let Some(win) = app.get_webview_window("settings") {
                 let keep = win.clone();
-                let app_handle = app.handle().clone();
                 win.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let _ = keep.hide();
-                        // Title-bar X bypasses the `close_settings` command —
-                        // sync the aux windows' memory target here too.
-                        window::sync_aux_memory_targets(&app_handle);
+                        // Ask the frontend first: an unsaved draft gets a
+                        // Save / Discard / Continue prompt instead of being
+                        // silently kept and later overwriting newer writes.
+                        let _ = keep.emit("settings-close-requested", ());
                     }
                 });
             }
@@ -421,6 +420,7 @@ pub fn run() {
             recent::delete_recent,
             settings::get_settings,
             settings::save_settings,
+            settings::save_settings_patch,
             settings::export_settings,
             settings::import_settings,
             settings::restore_default,

@@ -1550,6 +1550,7 @@ pub fn plugin_clipboard_paste(
         }
         set_files_to_clipboard(&files)
     })
+    .map(|_| ())
 }
 
 /// Async on purpose: **sync commands run on the main (UI) thread**, and a full
@@ -1709,35 +1710,57 @@ pub fn get_clipboard_image(id: u32, state: State<ClipboardState>) -> Result<Stri
     Ok(crate::paths::data_dir().join(rel).to_string_lossy().into_owned())
 }
 
+/// Result of a paste attempt. `copied` means no target window was available,
+/// so the entry landed on the clipboard only — the launcher stays open and
+/// the frontend reports that instead of pretending it pasted.
+#[derive(Serialize)]
+pub struct PasteOutcome {
+    pub outcome: &'static str,
+    pub reason: Option<&'static str>,
+}
+
 /// Paste flow shared by single- and multi-item paste: take ownership of the
 /// stored target HWND, let `set` put the entry onto the clipboard, hide the
 /// launcher, send Ctrl+V — and LEAVE the entry on the clipboard (the pasted
 /// content is what the user just used, so it stays; checking the system
 /// clipboard afterwards shows the pasted item, not the previous one). If no
 /// target window is recorded or the window is gone, falls back to a plain
-/// clipboard copy (`set` alone) — the launcher stays open.
+/// clipboard copy (`set` alone) — the launcher stays open and the outcome is
+/// reported as `copied`.
 fn auto_paste(
     app: &AppHandle,
     focus: &crate::window::FocusState,
     set: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    // Take ownership of the stored HWND (one-shot).
-    let maybe_hwnd = focus.last_hwnd.lock().unwrap().take();
+) -> Result<PasteOutcome, String> {
+    // Read the target first; it is cleared only after the clipboard write
+    // succeeds, so a failed set doesn't throw away a still-valid target.
+    let maybe_hwnd = *focus.last_hwnd.lock().unwrap();
 
     let Some(hwnd_raw) = maybe_hwnd else {
         // No target window recorded — fall back to a plain copy.
         eprintln!("[clipboard] paste: no target window recorded — copied without pasting");
-        return set();
+        set()?;
+        return Ok(PasteOutcome {
+            outcome: "copied",
+            reason: Some("no_target"),
+        });
     };
 
     if !unsafe { IsWindow(Some(HWND(hwnd_raw as *mut std::ffi::c_void))) }.as_bool() {
         // Window is gone — fall back to a plain copy.
         eprintln!("[clipboard] paste: target window is gone — copied without pasting");
-        return set();
+        *focus.last_hwnd.lock().unwrap() = None;
+        set()?;
+        return Ok(PasteOutcome {
+            outcome: "copied",
+            reason: Some("target_gone"),
+        });
     }
 
     // Place the entry on the system clipboard (it stays there after the paste).
     set()?;
+    // The target is one-shot only after the payload is safely on the clipboard.
+    focus.last_hwnd.lock().unwrap().take();
 
     // 粘贴后关闭: hide the launcher so focus can return to the target window.
     // When disabled, keep the launcher up and suppress the blur that the paste
@@ -1755,13 +1778,27 @@ fn auto_paste(
     // Allow time for Windows to restore focus to the previous foreground window.
     std::thread::sleep(Duration::from_millis(60));
 
-    // Send Ctrl+V to whatever window now has focus.
-    unsafe { send_ctrl_v() };
+    // Send Ctrl+V to whatever window now has focus. If the injection failed,
+    // bring the launcher back so the frontend's error toast is actually
+    // visible (SendInput's UIPI failure is otherwise silent).
+    let sent = unsafe { send_ctrl_v() };
+    if !sent {
+        if paste_close {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }
+        return Err("SendInput failed to send Ctrl+V".into());
+    }
 
     // Give the target application time to process the paste.
     std::thread::sleep(Duration::from_millis(100));
 
-    Ok(())
+    Ok(PasteOutcome {
+        outcome: "pasted",
+        reason: None,
+    })
 }
 
 /// Write the entry `id` to the clipboard and paste it (Ctrl+V via SendInput)
@@ -1774,7 +1811,7 @@ pub fn paste_clipboard(
     state: State<ClipboardState>,
     focus: State<crate::window::FocusState>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<PasteOutcome, String> {
     let conn = state.db.lock().unwrap();
     let row = get_row(&conn, id)
         .map_err(|e| e.to_string())?
@@ -1805,7 +1842,7 @@ pub fn paste_clipboard_multi(
     state: State<ClipboardState>,
     focus: State<crate::window::FocusState>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<PasteOutcome, String> {
     let conn = state.db.lock().unwrap();
     let mut texts: Vec<String> = Vec::new();
     let mut first: Option<Row> = None;
@@ -1962,8 +1999,9 @@ fn set_files_to_clipboard(paths: &[String]) -> Result<(), String> {
 }
 
 /// Send Ctrl+V (key-down / key-down / key-up / key-up) via `SendInput` so the
-/// foreground application receives a paste command.
-unsafe fn send_ctrl_v() {
+/// foreground application receives a paste command. Returns true only when
+/// all four events were inserted.
+unsafe fn send_ctrl_v() -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
         VIRTUAL_KEY, VK_CONTROL,
@@ -2011,7 +2049,7 @@ unsafe fn send_ctrl_v() {
         dwExtraInfo: 0,
     };
 
-    let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) == inputs.len() as u32
 }
 
 /// Delete a single history entry. Returns the deleted row so the frontend can

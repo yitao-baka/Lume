@@ -103,7 +103,12 @@ pub async fn plugin_foreground_context(
 /// `lpDirectory`), so we ALSO pass a `cd` command in `lpParameters` — the
 /// terminal always ends up in the target folder regardless of elevation.
 #[tauri::command]
-pub fn open_terminal_in_folder(path: String, shell: String, elevated: bool) -> Result<(), String> {
+pub fn open_terminal_in_folder(
+    path: String,
+    shell: String,
+    elevated: bool,
+    focus: tauri::State<'_, crate::window::FocusState>,
+) -> Result<(), String> {
     use windows_sys::Win32::Foundation::{ERROR_CANCELLED, HWND};
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -136,6 +141,11 @@ pub fn open_terminal_in_folder(path: String, shell: String, elevated: bool) -> R
     } else {
         verb.as_ptr()
     };
+    // Keep the launcher visible while a UAC prompt owns the foreground; a
+    // cancelled elevation must leave the error toast readable.
+    if elevated {
+        crate::window::suppress_hide(&focus, 120_000);
+    }
     let result = unsafe {
         ShellExecuteW(
             std::ptr::null_mut() as HWND,
@@ -146,6 +156,9 @@ pub fn open_terminal_in_folder(path: String, shell: String, elevated: bool) -> R
             SW_SHOWNORMAL,
         )
     };
+    if elevated {
+        crate::window::clear_hide_suppression(&focus);
+    }
     let code = result as isize;
     if code == ERROR_CANCELLED as isize {
         return Err("canceled".into());

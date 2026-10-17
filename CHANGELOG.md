@@ -71,6 +71,27 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **交互逻辑专项审计第四轮（交互-01–09）** — 统一可见范围与激活校验，
+  收起栏目后不再能启动隐藏条目；设置窗改发最小差异 patch，脏草稿保存不会
+  回滚期间发生的插件启停/轻量写，导入与恢复备份复用同一条运行时应用链路并
+  即时刷新主题、字号、宽度、热键与索引；启动/终端/粘贴/复制路径等待后端结果，
+  失败保持窗口并显示 toast，无粘贴目标时如实提示「已复制」；命令型控件点击后
+  归还搜索框焦点，`Tab` 只在搜索框聚焦时切换模式，新增 `Ctrl+Tab`、`F6`
+  焦点环、`Ctrl+,` 与 `Shift+F10`；自动化程序选择器补焦点圈定/背景 inert/
+  关闭返回，录制器补取消代次；文件搜索示例区分后端不可用/索引构建/搜索中/
+  无结果四种空态。提权启动与提权终端在 UAC 期间抑制失焦隐藏，呼出键注册失败
+  增加系统通知，托盘菜单跟随三语设置并在应用设置后即时重建，预览 PDF 控件
+  标题走三语 `t()`。
+  验证：`audit_collapse_activation3` 隐藏 marker 未生成；`audit_settings_draft_probe`
+  preview 停用保存后仍停用；`audit_import_apply` / `audit_import_runtime`
+  CSS 与 theme/宽度同步；`audit_launch_failure` 窗口保持并显示错误；
+  `audit_paste_outcome` 返回 `copied/target_gone` 且 toast 可见；
+  `audit_paste_success` 真实目标收到粘贴且启动器按设置隐藏；
+  `audit_bug4_verify` **13/13**；`cdp_mode_query_verify` **47/47**、
+  `cdp_plugin_state_verify` **54/54**、`cdp_plugin_window_verify` **16/16**；
+  `cargo test` **223 passed / 9 ignored**，`tsc --noEmit`、`pnpm run build`、
+  debug exe 构建干净。
+
 - **UI 独立审计第三轮（UI-01–UI-12）** — 统一键盘输入边界：搜索框中的
   `Space`/`Delete` 恢复原生编辑语义，IME 组合态不再触发启动器动作；
   `Ctrl+Backspace`/`Ctrl+Home`/`Ctrl+End` 等标准编辑键放行。上下文菜单与

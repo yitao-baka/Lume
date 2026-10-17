@@ -841,6 +841,71 @@ body,
   outline-offset: 2px;
 }
 
+/* Settings window: unsaved-draft prompt (close / import / restore). */
+.settings-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 79;
+  background: rgba(0, 0, 0, 0.36);
+}
+
+.settings-confirm {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(400px, 90vw);
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 80;
+  animation: toast-in 150ms ease-out;
+}
+
+.settings-confirm-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-confirm-hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.settings-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* Keyboard focus must be visible on every command control. The search boxes
+   intentionally keep their borderless caret-only treatment. */
+.launcher button:focus-visible,
+.launcher [role="tab"]:focus-visible,
+.launcher .results:focus-visible,
+.settings button:focus-visible,
+.settings input:not(.settings-search-input):focus-visible,
+.settings select:focus-visible,
+.picker button:focus-visible,
+.picker input:focus-visible {
+  outline: 2px solid #5ac8fa;
+  outline-offset: 2px;
+}
+
+.launcher .results:focus-visible {
+  outline-offset: -2px;
+}
+
 /* Navigate main menu: grid of app boxes. */
 .result-grid {
   flex: 1;
@@ -1898,7 +1963,8 @@ body.settings-window #root {
   cursor: pointer;
 }
 
-.picker-row:hover {
+.picker-row:hover,
+.picker-row.active {
   background: var(--hover);
 }
 

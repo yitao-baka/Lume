@@ -95,6 +95,13 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
 
 - The launcher is content — never the point. No decorative motion, no
   animations on open/close beyond the OS default.
+- **Focus contract**: command-style controls (mode pills, category tabs,
+  expand/collapse, pause/clear, undo) return focus to the search box after a
+  mouse click so typing can continue. Text inputs, confirm dialogs, the
+  context menu and modal scopes keep their own focus. `Tab` switches modes
+  only while the search box is focused; elsewhere it traverses natively.
+  `F6` / `Shift+F6` cycles search box → mode bar → page control → settings,
+  and every command control shows a visible `:focus-visible` outline.
 
 ## Components
 

@@ -62,6 +62,18 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
     return false;
   }
 
+  /** Shift+F10 / Menu key: open the shared context menu for the selected row. */
+  function openContextMenu(): boolean {
+    const item = clip.clips()[clip.selected()];
+    if (!item) return false;
+    const el = document.querySelector<HTMLElement>(".clip-row[aria-selected='true']");
+    const rect = el?.getBoundingClientRect();
+    const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+    services.openMenu({ kind: "clip", x, y, item });
+    return true;
+  }
+
   const instance: ModeInstance = {
     query: clip.clipQuery,
     setQuery: clip.setClipQuery,
@@ -72,6 +84,7 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
     rows: clip.clips,
     activate: clip.activate,
     onKey,
+    openContextMenu,
     onEscape: clip.onEscape,
     modal: () => clip.clearOpen(),
     previewTarget: () => previewTarget(clip.clips()[clip.selected()], clip.rememberChecks()),

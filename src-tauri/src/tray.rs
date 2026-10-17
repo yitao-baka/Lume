@@ -1,10 +1,11 @@
 //! System tray icon with a right-click menu: Restart / Exit.
 //!
 //! Left-clicking the tray toggles the launcher window. Menu labels follow the
-//! system UI language (the only Rust-side UI strings).
+//! configured launcher language, falling back to the system UI language.
 
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager};
 
 /// Fixed tray id — `appicon::apply` looks the tray up by it to swap the icon
 /// when the color mode changes.
@@ -17,9 +18,15 @@ pub fn setup(app: &tauri::App) {
         return;
     };
     let icon = icon.clone();
-    let (settings_label, restart_label, exit_label) = tray_labels();
+    let menu = match build_menu(app, tray_labels(app)) {
+        Ok(menu) => menu,
+        Err(e) => {
+            eprintln!("[tray] failed to build menu: {e}");
+            return;
+        }
+    };
 
-    if let Err(e) = build_tray(app, icon, settings_label, restart_label, exit_label) {
+    if let Err(e) = build_tray(app, icon, menu) {
         eprintln!("[tray] failed to create tray: {e}");
     }
 }
@@ -27,17 +34,8 @@ pub fn setup(app: &tauri::App) {
 fn build_tray(
     app: &tauri::App,
     icon: tauri::image::Image<'_>,
-    settings_label: &'static str,
-    restart_label: &'static str,
-    exit_label: &'static str,
+    menu: Menu<tauri::Wry>,
 ) -> tauri::Result<()> {
-    let settings = MenuItemBuilder::with_id("settings", settings_label).build(app)?;
-    let restart = MenuItemBuilder::with_id("restart", restart_label).build(app)?;
-    let exit = MenuItemBuilder::with_id("exit", exit_label).build(app)?;
-    let menu = MenuBuilder::new(app)
-        .items(&[&settings, &restart, &exit])
-        .build()?;
-
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .tooltip("Lume")
@@ -68,12 +66,54 @@ fn build_tray(
     Ok(())
 }
 
-/// Tray menu labels follow the system UI language (Chinese vs English).
-fn tray_labels() -> (&'static str, &'static str, &'static str) {
+fn build_menu(
+    manager: &impl Manager<tauri::Wry>,
+    labels: (&'static str, &'static str, &'static str),
+) -> tauri::Result<Menu<tauri::Wry>> {
+    let (settings_label, restart_label, exit_label) = labels;
+    let settings = MenuItemBuilder::with_id("settings", settings_label).build(manager)?;
+    let restart = MenuItemBuilder::with_id("restart", restart_label).build(manager)?;
+    let exit = MenuItemBuilder::with_id("exit", exit_label).build(manager)?;
+    MenuBuilder::new(manager)
+        .items(&[&settings, &restart, &exit])
+        .build()
+}
+
+/// Rebuild the tray menu after a settings save/import so its labels follow
+/// the launcher's configured language, not only the startup system language.
+pub fn refresh_labels(app: &AppHandle) -> tauri::Result<()> {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return Ok(());
+    };
+    tray.set_menu(Some(build_menu(app, tray_labels(app))?))
+}
+
+/// `appearance.language` wins when it is an explicit locale; `"system"` falls
+/// back to the Windows UI language (including the Traditional Chinese
+/// sublanguage, which the old two-way split could not distinguish).
+fn tray_labels(app: &impl Manager<tauri::Wry>) -> (&'static str, &'static str, &'static str) {
+    let configured = app
+        .try_state::<crate::settings::SettingsState>()
+        .map(|s| s.current().appearance.language)
+        .unwrap_or_else(|| "system".into());
+    if configured == "zh-CN" {
+        return ("设置", "重启", "关闭");
+    }
+    if configured == "zh-TW" {
+        return ("設定", "重新啟動", "關閉");
+    }
+    if configured == "en" {
+        return ("Settings", "Restart", "Exit");
+    }
     use windows::Win32::Globalization::GetUserDefaultUILanguage;
-    // LANGID: low 10 bits are the primary language; Chinese primary = 0x04.
     let lang = unsafe { GetUserDefaultUILanguage() };
-    if (lang & 0x3FF) == 0x04 {
+    let primary = lang & 0x3FF;
+    let sub = (lang >> 10) & 0x3F;
+    if primary == 0x04 {
+        // SUBLANG_CHINESE_TRADITIONAL / HONGKONG / MACAU.
+        if matches!(sub, 0x01 | 0x03 | 0x05) {
+            return ("設定", "重新啟動", "關閉");
+        }
         ("设置", "重启", "关闭")
     } else {
         ("Settings", "Restart", "Exit")

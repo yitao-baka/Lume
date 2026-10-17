@@ -71,7 +71,10 @@ docs/ROADMAP_HISTORY.md); `follow-mouse` is the exception and re-centers on the 
 on every show.
 Called by the frontend (Esc) and by `hotkey.rs`. The launcher also **auto-hides
 on focus loss**: `lib.rs` registers a `WindowEvent::Focused(false)` handler
-that hides the window, so clicking elsewhere dismisses it.
+that hides the window, so clicking elsewhere dismisses it. Elevated launches
+(`launch_app` / `open_terminal_in_folder` with `runas`) arm a temporary
+blur-hide suppression while the UAC prompt owns the foreground, so cancelling
+UAC leaves the launcher visible with its error toast.
 
 Window frame: the launcher panel is opaque (src/App.css `.launcher`, solid
 `--surface`) — the window has **no Acrylic backdrop** (deliberately removed;
@@ -182,7 +185,9 @@ backends have timeouts).
 Creates the system tray icon (`TrayIconBuilder`). Left-click toggles the
 launcher (reuses `window::toggle_launcher`); the right-click menu has Restart
 (`AppHandle::request_restart`) and Exit (`AppHandle::exit`). Menu labels follow
-the system UI language (`GetUserDefaultUILanguage`).
+`appearance.language` (`zh-CN` / `zh-TW` / `en`); `"system"` falls back to
+`GetUserDefaultUILanguage`, including the Traditional Chinese sublanguage. The
+menu is rebuilt on every settings apply so a language change is immediate.
 
 ### `pins.rs`
 Persists the Navigate **已固定 bar** in a `pinned_apps` table (`path` unique,
@@ -316,6 +321,16 @@ default copied on first run; `backup.toml` snapshots the previous file before
 every save / apply / import / restore-default. All fields are
 `#[serde(default)]`, so an older `settings.toml` loads unchanged and new fields
 pick up their defaults.
+
+The settings window saves a **minimal patch** (`save_settings_patch`): only
+fields that differ from the snapshot it loaded. The Rust side merges that patch
+into the current `SettingsState` under its lock, so a dirty draft cannot roll
+back plugin enable/disable, plugin geometry / theme preferences, last-page
+bookmarks or remember-checks writes made while the window was open. Import,
+restore-default and restore-backup call the same runtime-apply helper as a
+normal save (window geometry, hotkey, dedup index, index refresh + watcher,
+plugin dev watcher, `settings-applied`), so file replacement is never
+persist-only.
 
 Two distinct "missing" cases, and they resolve differently — worth knowing
 before adding a field:
@@ -523,9 +538,19 @@ before adding a field:
   with category tabs, multi-select merge paste and delete-with-undo.
 - All pages support hover-select and click-activate; the search input is
   re-focused every time the window is shown.
-- `Enter` launches an app or pastes a clipboard entry, then hides (Shift+
-  Enter = admin launch); `Esc` layers: close menu → page `onEscape` (pop a
+- `Enter` launches an app or pastes a clipboard entry after the backend
+  reports success (Shift+Enter = admin launch); a failed launch / paste keeps
+  the launcher open with a toast. Clipboard paste hides from Rust only when a
+  target window exists; the copy-only fallback returns a structured outcome
+  and keeps the launcher up. `Esc` layers: close menu → page `onEscape` (pop a
   drill level / clear multi-select) → close satellite preview → hide.
+- Keyboard focus: a bare `Tab` switch key only toggles modes while the search
+  box is focused; elsewhere `Tab` / `Shift+Tab` traverse natively and
+  `Ctrl+Tab` switches modes. `F6` / `Shift+F6` cycles search box → mode bar →
+  active page control → settings gear, `Ctrl+,` opens settings, and
+  `Shift+F10` / the Menu key opens the context menu for the selected bar tile
+  or result row. Command-button clicks hand focus back to the search box;
+  inputs and modal scopes keep their own focus.
 - **i18n**: all user-facing strings go through `t()` from `src/i18n.ts`
   (en / zh-CN / zh-TW), keyed off the system language.
 

@@ -9,6 +9,7 @@
 
 import { createEffect, createMemo, createSignal, For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { resolveLocale, setLocale, t, type Messages } from "../i18n";
 import { applyColorMode } from "../theme";
@@ -31,7 +32,7 @@ import systemIcon from "../../res/icons/system.svg";
 import automationIcon from "../../res/icons/automation.svg";
 import pluginsIcon from "../../res/icons/plugins.svg";
 import aboutIcon from "../../res/icons/about.svg";
-import { DEFAULT_SETTINGS, type SettingsData } from "./types";
+import { DEFAULT_SETTINGS, diffSettings, type SettingsData } from "./types";
 
 type Section =
   | "appearance"
@@ -169,11 +170,20 @@ export default function Settings() {
   const [dirty, setDirty] = createSignal(false);
   /** Working copy of the settings, loaded at open. */
   const [settings, setSettings] = createSignal<SettingsData | null>(null);
+  /** The snapshot this working copy was loaded from. A save sends only the
+   * fields that differ from it, so concurrent light writes survive. */
+  let baseline: SettingsData | null = null;
   const [toast, setToast] = createSignal<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   /** Only the latest settings read may land. The window stays alive while
    * hidden, so a reload on re-open can overlap the startup read. */
   let loadSeq = 0;
+  /** Unsaved-changes prompt: closing the window, or an instant action
+   * (import / backup restore) that would replace the draft. */
+  const [prompt, setPrompt] = createSignal<
+    { kind: "close" } | { kind: "discard"; resolve: (ok: boolean) => void } | null
+  >(null);
+  const [promptBusy, setPromptBusy] = createSignal(false);
 
   /** Window chrome (frameless titlebar): button state + drag/dblclick
       handlers shared with the topbar row. */
@@ -185,9 +195,43 @@ export default function Settings() {
       .then((s) => {
         if (seq !== loadSeq || (!clearDirty && dirty())) return;
         setSettings(s);
+        baseline = structuredClone(s);
         if (clearDirty) setDirty(false);
       })
       .catch(() => {});
+  }
+
+  /** Close the settings window (it stays mounted, like before). */
+  async function closeWindow() {
+    try {
+      await invoke("close_settings");
+    } catch {
+      // Window may already be gone — nothing to do.
+    }
+  }
+
+  /** X / Alt+F4 with unsaved edits: ask instead of silently keeping a stale
+   * draft that can overwrite newer light writes on the next save. */
+  function requestClose() {
+    if (prompt()?.kind === "discard") resolveDiscardPrompt(false);
+    if (dirty()) {
+      setPrompt({ kind: "close" });
+      return;
+    }
+    void closeWindow();
+  }
+
+  /** System pane asks before an instant replacement while a draft exists. */
+  function confirmDiscardDraft(): Promise<boolean> {
+    if (!dirty()) return Promise.resolve(true);
+    return new Promise((resolve) => setPrompt({ kind: "discard", resolve }));
+  }
+
+  function resolveDiscardPrompt(ok: boolean) {
+    const current = prompt();
+    if (current?.kind !== "discard") return;
+    setPrompt(null);
+    current.resolve(ok);
   }
 
   onMount(() => {
@@ -205,9 +249,27 @@ export default function Settings() {
         if (disposed) fn();
         else unlistenFocus = fn;
       });
+    // The Rust window's CloseRequested (Alt+F4 / titlebar X) now asks the
+    // frontend instead of hiding immediately, so the prompt can run.
+    let unlistenClose: (() => void) | undefined;
+    void listen("settings-close-requested", () => requestClose()).then((fn) => {
+      if (disposed) fn();
+      else unlistenClose = fn;
+    });
+    // A light write from another surface (plugin toggle, last-page bookmark…)
+    // refreshes an idle working copy without disturbing a dirty draft.
+    let unlistenApplied: (() => void) | undefined;
+    void listen("settings-applied", () => {
+      if (!dirty()) loadSettings();
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenApplied = fn;
+    });
     onCleanup(() => {
       disposed = true;
       unlistenFocus?.();
+      unlistenClose?.();
+      unlistenApplied?.();
     });
   });
 
@@ -290,23 +352,71 @@ export default function Settings() {
     showToast(t("settingsRestoreDefault"));
   }
 
-  /** 「保存并应用」: write + apply the settings, then close the window. */
-  async function saveAndClose() {
+  /** Persist the draft as a minimal patch and apply it. Returns false when
+   * the write failed (the window stays open with the draft intact). */
+  async function saveDraft(): Promise<boolean> {
     const s = settings();
-    if (!s) return;
+    if (!s) return false;
+    const base = baseline ?? structuredClone(s);
+    const patch = diffSettings(
+      base as unknown as Record<string, unknown>,
+      s as unknown as Record<string, unknown>
+    );
     try {
-      await invoke("save_settings", { new: s });
+      if (Object.keys(patch).length > 0) {
+        await invoke("save_settings_patch", { patch });
+      }
+      baseline = structuredClone(s);
       setDirty(false);
     } catch {
       // Leave the window and dirty state intact so the user can retry after
       // fixing the underlying write/permission problem.
       showToast(t("settingsSaveFailed"));
-      return;
+      return false;
     }
+    return true;
+  }
+
+  /** 「保存并应用」: save the edited fields, then close the window. */
+  async function saveAndClose() {
+    if (await saveDraft()) await closeWindow();
+  }
+
+  /** Close-prompt actions. */
+  async function saveFromPrompt() {
+    if (promptBusy()) return;
+    setPromptBusy(true);
     try {
-      await invoke("close_settings");
-    } catch {
-      // Window may already be gone — nothing to do.
+      if (await saveDraft()) {
+        setPrompt(null);
+        await closeWindow();
+      }
+    } finally {
+      setPromptBusy(false);
+    }
+  }
+
+  async function discardFromClosePrompt() {
+    setPrompt(null);
+    // Discard the draft by re-reading the persisted settings on the next
+    // open; the window itself is only hidden here.
+    setDirty(false);
+    baseline = null;
+    await closeWindow();
+  }
+
+  /** Import / backup restore with unsaved edits: explicit discard first. */
+  async function discardAndContinue() {
+    const current = prompt();
+    if (current?.kind !== "discard") return;
+    setPromptBusy(true);
+    try {
+      // Keep the draft dirty until the caller's import/restore actually
+      // lands; `onReload` then clears it. A failed command leaves the draft
+      // recoverable instead of silently losing it.
+      resolveDiscardPrompt(true);
+    } finally {
+      setPromptBusy(false);
     }
   }
 
@@ -331,7 +441,7 @@ export default function Settings() {
         </div>
         <TitleBarControls
           controls={chrome}
-          onClose={() => void invoke("close_settings").catch(() => {})}
+          onClose={requestClose}
         />
       </header>
       <div class="settings-content">
@@ -381,6 +491,7 @@ export default function Settings() {
                             onUpdateClipboard={updateClipboard}
                             onUpdateAutomation={updateAutomation}
                             onReload={reloadSettings}
+                            confirmDiscard={confirmDiscardDraft}
                           />
                         </div>
                       )}
@@ -397,6 +508,7 @@ export default function Settings() {
                   onUpdateClipboard={updateClipboard}
                   onUpdateAutomation={updateAutomation}
                   onReload={reloadSettings}
+                  confirmDiscard={confirmDiscardDraft}
                 />
               </Show>
             </Show>
@@ -418,6 +530,59 @@ export default function Settings() {
       <Show when={toast()}>
         <div class="settings-toast" role="status">{toast()}</div>
       </Show>
+      <Show when={prompt()}>
+        <div
+          class="settings-confirm-overlay"
+          onClick={() => {
+            if (prompt()?.kind === "close") setPrompt(null);
+            else resolveDiscardPrompt(false);
+          }}
+        />
+        <div
+          class="settings-confirm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-confirm-title"
+        >
+          <p class="settings-confirm-title" id="settings-confirm-title">
+            {t(prompt()?.kind === "close" ? "settingsUnsavedTitle" : "settingsDiscardTitle")}
+          </p>
+          <p class="settings-confirm-hint">
+            {t(prompt()?.kind === "close" ? "settingsUnsavedHint" : "settingsDiscardHint")}
+          </p>
+          <div class="settings-confirm-actions">
+            <Show when={prompt()?.kind === "close"}>
+              <button
+                class="settings-action"
+                disabled={promptBusy()}
+                onClick={() => void saveFromPrompt()}
+              >
+                {t("settingsSaveAndClose")}
+              </button>
+            </Show>
+            <button
+              class="settings-action"
+              disabled={promptBusy()}
+              onClick={() => {
+                if (prompt()?.kind === "close") void discardFromClosePrompt();
+                else void discardAndContinue();
+              }}
+            >
+              {t(prompt()?.kind === "close" ? "settingsDiscardAndClose" : "settingsDiscardAndContinue")}
+            </button>
+            <button
+              class="settings-action settings-action-primary"
+              disabled={promptBusy()}
+              onClick={() => {
+                if (prompt()?.kind === "close") setPrompt(null);
+                else resolveDiscardPrompt(false);
+              }}
+            >
+              {t(prompt()?.kind === "close" ? "settingsContinueEditing" : "cancel")}
+            </button>
+          </div>
+        </div>
+      </Show>
     </div>
   );
 }
@@ -434,6 +599,7 @@ function SectionBody(props: {
   onUpdateClipboard: (patch: Partial<SettingsData["clipboard"]>) => void;
   onUpdateAutomation: (patch: Partial<SettingsData["automation"]>) => void;
   onReload: () => void;
+  confirmDiscard: () => Promise<boolean>;
 }) {
   return (
     <Switch>
@@ -453,7 +619,11 @@ function SectionBody(props: {
         <SearchPane settings={props.settings} onChangeIndex={props.onUpdateIndex} />
       </Match>
       <Match when={props.section === "system"}>
-        <SystemPane settings={props.settings} onReload={props.onReload} />
+        <SystemPane
+          settings={props.settings}
+          onReload={props.onReload}
+          confirmDiscard={props.confirmDiscard}
+        />
       </Match>
       <Match when={props.section === "automation"}>
         <AutomationPane settings={props.settings} onChange={props.onUpdateAutomation} />

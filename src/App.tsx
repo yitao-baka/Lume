@@ -682,6 +682,8 @@ function App() {
     switchMode,
     resetAndHide: () => void resetAndHide(),
     closeMenu,
+    openSettings: () => void openSettings(),
+    cycleFocus,
   });
   // Handle navigation keys at the window level so they work regardless of
   // which element inside the launcher has focus (e.g. after a stray click).
@@ -916,6 +918,46 @@ function App() {
     inst.setSelected(Math.min(Math.max(inst.selected() + delta, 0), len - 1));
   }
 
+  /** Focus the search box (the launcher's primary keyboard target). */
+  function focusSearch() {
+    document.getElementById("search-input")?.focus();
+  }
+
+  /** First tabbable control inside an element, for the F6 ring. */
+  function firstFocusable(root: Element | null): HTMLElement | null {
+    if (!root) return null;
+    return root.querySelector<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+        'textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    );
+  }
+
+  /** F6 / Shift+F6: search box → mode bar → page controls → settings gear.
+   * This is the keyboard path to every command control without consuming
+   * Tab everywhere in the launcher. */
+  function cycleFocus(backwards: boolean) {
+    const search = document.getElementById("search-input");
+    const activePill =
+      document.querySelector<HTMLElement>(".mode-switch-item.active") ??
+      document.querySelector<HTMLElement>(".mode-switch-item");
+    const page = document.querySelector<HTMLElement>(".mode-host.active");
+    const pageControl =
+      firstFocusable(page) ?? document.querySelector<HTMLElement>(".results");
+    const gear = document.querySelector<HTMLElement>(".search > .icon-btn");
+    const regions = [search, activePill, pageControl, gear].filter(
+      (el): el is HTMLElement => !!el
+    );
+    if (regions.length === 0) return;
+    const active = document.activeElement as HTMLElement | null;
+    let current = regions.findIndex(
+      (el) => el === active || (!!active && el.contains(active))
+    );
+    if (current < 0) current = backwards ? 0 : regions.length - 1;
+    const next =
+      (current + (backwards ? -1 : 1) + regions.length) % regions.length;
+    regions[next].focus({ preventScroll: true });
+  }
+
   // The loading gate changes the height model (search row alone vs the page's
   // own height): re-measure whenever it flips — into the loading state AND
   // back out of it, so the page appears at its proper size (disk pages push
@@ -940,6 +982,30 @@ function App() {
   onMount(async () => {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
     document.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Mouse command controls (mode pills, clipboard categories, expand,
+    // pause / clear, undo…) must hand the caret back to the search box so
+    // "click then type" keeps working. Inputs / open dialogs / the context
+    // menu keep their own focus scope.
+    // Capture phase: a mode switch re-renders the pill strip, detaching the
+    // clicked button before the event bubbles to document. The original
+    // target must still be connected when we decide whether this was a command
+    // control.
+    document.addEventListener("click", (e) => {
+      const target = e.target as Element | null;
+      if (!(target instanceof Element) || !target.closest(".launcher")) return;
+      if (
+        target.closest(
+          'input, textarea, select, [contenteditable="true"], .ctx-menu, .clip-confirm, [data-focus-scope]'
+        )
+      ) {
+        return;
+      }
+      if (!target.closest('button, [role="tab"], [role="option"]')) return;
+      queueMicrotask(() => {
+        if (document.querySelector(".clip-confirm")) return;
+        focusSearch();
+      });
+    }, true);
 
     // Apply persisted settings FIRST — CSS variables and signals must be
     // ready before the bars render, otherwise the initial paint shows wrong
@@ -1127,7 +1193,7 @@ function App() {
         onSwitchPage={(id) => void switchMode(id)}
         onOpenSettings={() => void openSettings()}
       />
-      <div class="results" classList={{ "results-loading": pageLoading() }}>
+      <div class="results" tabIndex={-1} classList={{ "results-loading": pageLoading() }}>
         {/* Keep-alive pages (#40): every visited mode stays mounted; only the
             active host is laid out (display:contents), the rest are hidden. */}
         <For each={hostStack.hosts()}>

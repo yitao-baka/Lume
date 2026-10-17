@@ -12,6 +12,14 @@ use tauri::{Manager, State};
 use crate::cache::{self, AppEntry};
 use crate::settings::{Settings, SettingsState};
 
+/// Outcome of `launch_app`. A structured value (instead of `()`) lets the
+/// frontend distinguish a real launch from a UAC cancellation / shell failure
+/// before it hides the launcher.
+#[derive(serde::Serialize)]
+pub struct LaunchOutcome {
+    pub outcome: &'static str,
+}
+
 /// Maximum results returned for a typed query.
 const MAX_RESULTS: usize = 8;
 /// Cap for the empty-query browse.
@@ -221,7 +229,8 @@ pub fn launch_app(
     name: Option<String>,
     recent: State<crate::recent::RecentState>,
     settings: State<SettingsState>,
-) -> Result<(), String> {
+    focus: State<crate::window::FocusState>,
+) -> Result<LaunchOutcome, String> {
     use windows_sys::Win32::Foundation::{ERROR_CANCELLED, HWND};
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -251,6 +260,13 @@ pub fn launch_app(
     } else {
         dir_wide.as_ptr()
     };
+    // The UAC consent window takes the foreground while ShellExecuteW blocks.
+    // Without this suppression the launcher's blur handler would hide it before
+    // the user answers — and a cancellation would leave only an invisible
+    // error. Suppression ends as soon as the shell call returns.
+    if elevated {
+        crate::window::suppress_hide(&focus, 120_000);
+    }
     let result = unsafe {
         ShellExecuteW(
             std::ptr::null_mut() as HWND, // hwnd
@@ -261,6 +277,9 @@ pub fn launch_app(
             SW_SHOWNORMAL,                // nShowCmd
         )
     };
+    if elevated {
+        crate::window::clear_hide_suppression(&focus);
+    }
     // ShellExecuteW returns a HINSTANCE; values <= 32 are error codes. When the
     // user dismisses the UAC prompt the result is ERROR_CANCELLED (1223).
     let code = result as isize;
@@ -276,7 +295,9 @@ pub fn launch_app(
     let max = settings.current().appearance.recent_count.max(1) as usize;
     let conn = recent.lock();
     let _ = crate::recent::record_recent(&conn, &path, &display, max);
-    Ok(())
+    Ok(LaunchOutcome {
+        outcome: "launched",
+    })
 }
 
 /// Reveal a file in Explorer: open its containing folder and select it

@@ -10,6 +10,7 @@
   #meta { position: fixed; right: 14px; top: 12px; font-size: 11px;
           opacity: .45; pointer-events: none; }
   #building { padding: 6px 24px 0; font-size: 12px; opacity: .7; }
+  #list .empty { padding: 20px 24px; opacity: .55; line-height: 1.7; }
   #list { position: absolute; top: 30px; bottom: 0; left: 0; right: 0;
           overflow-y: auto; padding-bottom: 10px; }
   .row { display: flex; align-items: center; gap: 12px; padding: 6px 18px 6px 14px;
@@ -39,6 +40,7 @@
   <script>
     var list = document.getElementById("list");
     var hint = document.getElementById("hint");
+    var hintDefault = hint.innerHTML;
     var meta = document.getElementById("meta");
     var building = document.getElementById("building");
     var rows = [];        // [{name, path, isFolder}]
@@ -46,6 +48,10 @@
     var seq = 0;          // stale-response guard
     var timer = null;
     var lastQuery = "";
+    // Explicit empty-state reason. Never infer it from an empty row list:
+    // "backend unavailable", "index building", "searching" and "no match"
+    // are four different user-facing outcomes.
+    var emptyState = null; // null | "backend" | "building" | "searching" | "noresult"
 
     function esc(s) {
       var d = document.createElement("div");
@@ -62,13 +68,26 @@
       building.style.display = "none";
       if (!lastQuery) {
         list.innerHTML = "";
+        hint.innerHTML = hintDefault;
         hint.style.display = "block";
         meta.textContent = "";
         return;
       }
+      if (emptyState === "backend") {
+        list.innerHTML = "";
+        hint.innerHTML = "文件搜索后端不可用 — 需要正在运行的 Everything，"
+          + "或已安装并启动 LumeSVC 服务";
+        hint.style.display = "block";
+        return;
+      }
       hint.style.display = "none";
       if (!rows.length) {
-        list.innerHTML = '<div id="hint" style="padding:20px 24px;opacity:.5">无结果</div>';
+        var text = emptyState === "searching"
+          ? "搜索中…"
+          : emptyState === "building"
+            ? "LumeSVC 正在建立索引，完成前可能还搜不到文件"
+            : "无结果";
+        list.innerHTML = '<div class="empty">' + text + "</div>";
         return;
       }
       var html = "";
@@ -89,7 +108,11 @@
     function search(q) {
       lastQuery = q;
       var token = ++seq;
-      if (!q) { rows = []; sel = 0; render(); return; }
+      if (!q) { rows = []; sel = 0; emptyState = null; render(); return; }
+      emptyState = "searching";
+      rows = [];
+      sel = 0;
+      render();
       lume.search.files(q, 50).then(function (out) {
         if (token !== seq) return; // a newer query already landed
         rows = (out && out.entries) || [];
@@ -97,11 +120,20 @@
         meta.textContent = (out ? out.backend : "") + " · " + rows.length + " 项";
         if (out && out.status === "building") building.style.display = "block";
         if (out && out.backend === "none") {
-          hint.style.display = "block";
-          hint.innerHTML = "文件搜索后端不可用 — 需要正在运行的 Everything，"
-            + "或已安装并启动 LumeSVC 服务";
+          emptyState = "backend";
           rows = [];
+        } else if (!rows.length && out && out.status === "building") {
+          emptyState = "building";
+        } else if (!rows.length) {
+          emptyState = "noresult";
+        } else {
+          emptyState = null;
         }
+        render();
+      }).catch(function () {
+        if (token !== seq) return;
+        rows = [];
+        emptyState = "backend";
         render();
       });
     }

@@ -191,6 +191,54 @@ export function createNavigatePlugin(
     nav.setNavHidden(false); // fresh show always starts with the nav box visible
   }
 
+  /** Shift+F10 / Menu key: open the shared context menu for the selected bar
+   * tile or result row, anchored to its painted box. */
+  function openContextMenu(): boolean {
+    const anchor = (selector: string) => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (el) {
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      }
+      return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    };
+    // On the empty-query menu the zone may still be "grid" right after the
+    // user clears the search box. Fall back to the first bar so the keyboard
+    // entry always has a concrete target.
+    const section =
+      nav.activeSection() ??
+      (search.appsQuery() === "" ? nav.sections()[0] : undefined);
+    if (section) {
+      nav.setZone(section.id);
+      const idx = nav.activateIndex(section);
+      if (idx < 0) return false;
+      const item = section.items[idx];
+      if (!item) return false;
+      const pos = anchor(
+        `.bar-grid[data-bar-id="${section.id}"] .result-box[aria-selected="true"]`
+      );
+      if (section.id === "folder") {
+        services.openMenu({ kind: "folder", ...pos, idx });
+      } else {
+        services.openMenu({
+          kind: "app",
+          ...pos,
+          app: { id: item.id, name: item.name, path: item.path },
+          fromRecent: section.id === "recent",
+        });
+      }
+      return true;
+    }
+    const item = search.apps()[search.selected()];
+    if (!item) return false;
+    services.openMenu({
+      kind: "app",
+      ...anchor(".result-grid .result-box[aria-selected='true']"),
+      app: item,
+    });
+    return true;
+  }
+
   const instance: ModeInstance = {
     query: search.appsQuery,
     setQuery: search.setAppsQuery,
@@ -204,6 +252,7 @@ export function createNavigatePlugin(
     rows: search.apps,
     activate: search.activate,
     onKey,
+    openContextMenu,
     handleQuery: search.handleQuery,
     onEscape: () => search.popDrill(),
     previewTarget: () => null,

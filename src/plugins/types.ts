@@ -640,6 +640,9 @@ export interface MenuStateLike {
   x: number;
   y: number;
   item?: unknown;
+  app?: { id: number; name: string; path: string };
+  idx?: number;
+  fromRecent?: boolean;
 }
 
 export interface ModeKeyContext {
@@ -734,6 +737,9 @@ export interface ModeInstance {
   /** Actions for the shared context menu (structural — menu.ts declares the
    * narrow interface it needs). */
   menuActions?: () => unknown;
+  /** Keyboard entry for the shared context menu (Shift+F10 / Menu key).
+   * Returns true when the page had a selected target to open it for. */
+  openContextMenu?: () => boolean;
   /** 记住上次所在页面: the mode's current page kind + restore. */
   pageKind(): string;
   restorePage(kind: string): void;

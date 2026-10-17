@@ -95,17 +95,24 @@ dev URL instead.
    launcher; right-click shows 「重启」/「关闭」(or Restart / Exit on English
    systems). 「关闭」exits the app; 「重启」starts a fresh instance.
 9. **Esc** — pressing `Esc` hides without launching.
-10. **Blocked shortcuts** — Ctrl+F, Ctrl+P, Ctrl+R, F12 and Alt+←/→ do nothing
+10. **Focus and keyboard commands** — click a mode pill / clipboard category /
+    bar 展开; typing immediately continues in the search box. With focus in
+    the search box, `Tab` still switches modes; move focus to a pill or page
+    control and `Tab` / `Shift+Tab` traverse normally. `Ctrl+Tab` switches
+    modes from anywhere, `F6` / `Shift+F6` cycle search box → mode bar → page
+    control → settings gear, `Ctrl+,` opens settings, and `Shift+F10` (or the
+    Menu key) opens the context menu for the selected tile / row.
+11. **Blocked shortcuts** — Ctrl+F, Ctrl+P, Ctrl+R, F12 and Alt+←/→ do nothing
     (no Find bar, no print, no reload, no DevTools). Ctrl+C/V/X/A still work
     for editing the search box, and the launcher's own keys (Tab, arrows,
     Enter, Esc, Del) are unaffected.
-11. **Auto-sizing** — the window height fits the results: the full app grid
+12. **Auto-sizing** — the window height fits the results: the full app grid
     caps at 520px (scrolls internally), a few results shrink it (e.g. "no" →
     ~300px), and it stays anchored (centered / cornered per the preset until
     you drag it — see 13); the clipboard list sizes to its items.
-12. **Fresh state** — re-showing the launcher clears the previous query and
+13. **Fresh state** — re-showing the launcher clears the previous query and
     returns to the Navigate grid.
-13. **Position memory** — drag the launcher somewhere, then Esc + summon
+14. **Position memory** — drag the launcher somewhere, then Esc + summon
     again: it reopens at the dragged spot instead of jumping back to the
     窗口位置 preset, and typing / clearing the query (content resizes) does
     not move it either. Picking another preset in 设置 → 导航页 positions it
@@ -149,6 +156,10 @@ dev URL instead.
     Traditional Chinese, English). On a zh-CN system the pills read "导航 /
     剪贴板" and the footer "Del 删除"; on English systems the
     original English strings appear.
+13. **Paste outcome** — with no live target window (or after the target is
+    gone), Enter copies the entry and keeps the launcher open with
+    「已复制 — 没有可粘贴的目标窗口」; a paste failure keeps it open with an
+    error toast instead of hiding.
 
 ### Settings window (设置迭代)
 
@@ -159,6 +170,9 @@ dev URL instead.
    「保存并应用」 is disabled until a change is made.
 3. **Save** — 「保存并应用」 writes `settings.toml`, applies immediately and
    closes the window. The previous file is copied to `backup.toml` first.
+   Make a color-mode change dirty, switch to 插件 and disable a plugin, then
+   save: the plugin stays disabled (the save only patches the appearance field
+   it edited).
 4. **Settings files** — live under the writable base dir: portable is the exe
    dir (dev: `src-tauri/target/debug/`), installed (exe under `Program Files`)
    is `%LOCALAPPDATA%\Lume\`; `settings/settings.toml` is created from
@@ -167,15 +181,19 @@ dev URL instead.
 5. **DB migration** — `lume.db` lives in `<base>/data/` (portable:
    `<exe_dir>/data/`; installed: `%LOCALAPPDATA%\Lume\data\`); clipboard
    history survives the move from the old app-data location (auto-copied once).
-6. **Idle reset (docs/ROADMAP_HISTORY.md #46)** — 设置 → 导航页：「闲置重置」默认开、阈值
+6. **Dirty close / import** — change a setting, then press the title-bar X or
+   Alt+F4: choose 保存并关闭 / 丢弃并关闭 / 继续编辑. 继续编辑 keeps the
+   draft; the other two clear it. Import / restore backup while dirty asks
+   before replacing the draft.
+7. **Idle reset (docs/ROADMAP_HISTORY.md #46)** — 设置 → 导航页：「闲置重置」默认开、阈值
    30 分钟。把启动器呼出再隐藏，超过阈值后下次呼出应回导航页、搜索框为空，
    未豁免插件页冷启动；清单 `keep_session = true` 或 设置 → 插件 打开豁免的
    插件应保留查询与页面状态（但落地仍是导航页）；总开关关闭后不重置。
    自动验证：`node scripts/cdp_idle_reset_verify.mjs`（需先构建 debug exe）。
-7. **Search** — queries such as 「闲置重置」「模式切换栏仅显示图标」
+8. **Search** — queries such as 「闲置重置」「模式切换栏仅显示图标」
    「各模式使用独立搜索词」「强制聚焦」 find their section; a nonsense query
    shows the localized no-match state and its clear-search button.
-8. **Minimum window** — resize to the 560×420 minimum and open 自动化: rule
+9. **Minimum window** — resize to the 560×420 minimum and open 自动化: rule
    rows wrap with the delay/toggle/delete controls still visible and no
    horizontal scrollbar.
 

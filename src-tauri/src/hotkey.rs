@@ -25,6 +25,24 @@ impl Default for ActiveHotkey {
     }
 }
 
+/// A release build has no console, so a registration conflict must reach the
+/// user through the shell. Keep the wording to the system's primary language
+/// (the tray uses the same simple split).
+fn notify_unavailable(combo: &str) {
+    use windows::Win32::Globalization::GetUserDefaultUILanguage;
+    let zh = unsafe { (GetUserDefaultUILanguage() & 0x3FF) == 0x04 };
+    let body = if zh {
+        format!(
+            "呼出快捷键 {combo} 被其他程序占用。请从托盘打开设置 → 快捷键，或先释放该组合键。"
+        )
+    } else {
+        format!(
+            "The shortcut {combo} is already in use. Open Settings → Hotkeys from the tray, or free the combo."
+        )
+    };
+    let _ = crate::notify::notify("Lume", &body);
+}
+
 /// True when `shortcut` is the one we successfully registered.
 fn is_active(app: &AppHandle, shortcut: &Shortcut) -> bool {
     let active = app.state::<ActiveHotkey>().0.lock().unwrap().clone();
@@ -61,6 +79,7 @@ pub fn register(app: &tauri::App, combo: &str) {
         Err(e) => {
             eprintln!("[hotkey] {combo} unavailable: {e}");
             eprintln!("[hotkey] no toggle shortcut — free the combo or change it in Settings");
+            notify_unavailable(combo);
         }
     }
 }
@@ -131,6 +150,7 @@ pub fn apply(app: &AppHandle, combo: &str) -> bool {
             if let Some(cur) = active.as_deref() {
                 let _ = app.global_shortcut().register(cur);
             }
+            notify_unavailable(combo);
             false
         }
     }

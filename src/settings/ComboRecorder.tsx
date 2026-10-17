@@ -5,7 +5,7 @@
 //! the neighbouring program field. Button-scoped capture + cancel-on-blur means
 //! the recorder can never interfere with another input.
 
-import { createSignal, Show } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t, type Messages } from "../i18n";
 import { comboFromEvent } from "./hotkeyCapture";
@@ -31,12 +31,20 @@ export function ComboRecorder(props: {
 }) {
   const [recording, setRecording] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  /** Generation guard (same as HotkeysPane): a slow validation response must
+   * never commit after Esc / blur / a second click / unmount cancelled it. */
+  let captureSeq = 0;
 
   /** Re-arm or disarm; the button keeps focus so it receives the next keys. */
   function stop() {
+    captureSeq++;
     setRecording(false);
     setError(null);
   }
+
+  onCleanup(() => {
+    captureSeq++;
+  });
 
   function onKeyDown(e: KeyboardEvent) {
     e.preventDefault();
@@ -47,18 +55,22 @@ export function ComboRecorder(props: {
     }
     const combo = comboFromEvent(e);
     if (!combo) return; // modifier alone — keep waiting
+    const seq = ++captureSeq;
     void (async () => {
       try {
         const res = await invoke<AutoComboCheck>("validate_auto_combo", { combo });
+        if (seq !== captureSeq) return; // cancelled while validating
         if (res.ok) {
           stop();
           props.onCommit(combo);
         } else {
-          setError(t(REASON_KEY[res.reason ?? ""] ?? "autoComboInvalid"));
+          if (seq === captureSeq) {
+            setError(t(REASON_KEY[res.reason ?? ""] ?? "autoComboInvalid"));
+          }
           // stay recording — the user can retry
         }
       } catch {
-        setError(t("autoComboInvalid"));
+        if (seq === captureSeq) setError(t("autoComboInvalid"));
       }
     })();
   }
@@ -72,8 +84,12 @@ export function ComboRecorder(props: {
           // Focus explicitly: the keydown capture lives on the button, so it
           // must hold focus to receive the combination.
           e.currentTarget.focus();
-          setRecording((r) => !r);
-          setError(null);
+          if (recording()) stop();
+          else {
+            captureSeq++;
+            setRecording(true);
+            setError(null);
+          }
         }}
         onKeyDown={(e) => {
           if (recording()) onKeyDown(e);

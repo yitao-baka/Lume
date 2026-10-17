@@ -58,6 +58,8 @@ function ConfirmButton(props: {
 export default function SystemPane(props: {
   settings: SettingsData;
   onReload: () => void;
+  /** False = the user kept their unsaved draft; skip the instant change. */
+  confirmDiscard: () => Promise<boolean>;
 }) {
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
 
@@ -228,6 +230,7 @@ export default function SystemPane(props: {
       filters: [{ name: "TOML", extensions: ["toml"] }],
     });
     if (typeof file !== "string") return;
+    if (!(await props.confirmDiscard())) return;
     try {
       await invoke("import_settings", { sourcePath: file });
       setStatus({ ok: true, text: t("settingsImported") });
@@ -252,6 +255,7 @@ export default function SystemPane(props: {
   }
 
   async function restoreBackup() {
+    if (!(await props.confirmDiscard())) return;
     try {
       await invoke("restore_backup");
       setStatus({ ok: true, text: t("settingsRestored") });

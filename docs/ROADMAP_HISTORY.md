@@ -3696,3 +3696,73 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   `.launcher.circle-app-icons`、`50%` 与 `overflow: hidden`，再恢复关闭。
 - `pnpm exec tsc --noEmit`、`cargo check`、`cargo test`、前端生产构建与
   debug/release exe 构建通过。
+
+---
+
+## 56. 设置面板体验审计修复
+
+**来源：`docs/UX_SETTINGS_AUDIT_2026-10-18.md`。** 审计覆盖设置窗口的保存
+模型、键盘/读屏、快捷键、索引目录、搜索、自动化、系统服务、安全开关、错误
+呈现、剪贴板语义和点击目标。
+
+### 56.1 实现
+
+- **提交模型与脏状态**：设置页保留经典字段的工作副本，同时把插件、系统集成、
+  索引刷新等即时写显式标为「立即生效」；关闭/导入提示改用「丢弃未保存的草稿」
+  并说明即时写不会回滚。dirty 从单向布尔值改为
+  `diffSettings(baseline, draft)` 的叶子差异，改回原值会重新禁用保存。
+- **键盘与辅助技术**：共享 toggle 必填 `aria-label`，chip 输出
+  `aria-pressed`，range/切换槽/tabpanel 补名称与关联；导航 tablist 使用
+  roving tabindex 和方向键/Home/End。`setLocale()` 同步
+  `documentElement.lang`。确认框打开时背景 `inert`、焦点进入「继续编辑」、
+  Tab/Shift+Tab 圈定、Esc 关闭并归还触发点。插件卡片头支持 Enter/Space 与
+  `aria-expanded` / `aria-controls`。
+- **快捷键**：录制器在失焦或点击外部控件时取消；呼出键继续使用全局
+  `validate_hotkey`，切换模式新增 `validate_mode_hotkey`，允许单键、只检查
+  Lume 槽冲突与启动器保留键，不再尝试系统级注册。
+- **索引目录**：新增 `validate_index_dir`，校验存在性/目录/可读性并返回规范化
+  路径；设置页增加文件夹选择、大小写不敏感去重、行内错误、已保存条目复检与
+  原位修复，以及可见的「索引文件」标签。刷新索引改为
+  `async + spawn_blocking`，命令完成扫描与缓存写入后才返回，按钮运行期间禁用。
+- **搜索**：静态 i18n 索引补齐位置/合并窗口/索引文件等可见文案；插件名称、
+  描述、关键词、声明式设置 label/选项从 `get_plugins` 加入索引。命中分区后
+  滚动并高亮首条可见行，插件设置自动展开对应卡片并高亮具体行。
+- **自动化与系统**：重复规则显示 `role="alert"` 与「跳转到现有规则」；延迟输入
+  在编辑中保留空串，失焦/Enter 时校验并格式化；补列标题、switch/recorder/
+  delay 的可访问名称，并在关闭提权代理时禁用常驻开关。系统服务增加启动/重启
+  动作、轮询稳定状态、卸载二次确认与 `role="status"`。
+- **安全与反馈**：恢复默认改名「恢复应用默认值」并显示作用域 hint；开发者模式
+  每次切换都清空全部授权，重新开启需再次确认，生效时持续显示警示条；插件会话
+  豁免提供「恢复清单默认」。所有设置操作错误经统一本地化 helper 呈现，原始
+  detail 只写日志；设置初次加载失败显示错误与重试；关于页主页打开失败可见。
+- **剪贴板与目标尺寸**：忽略应用支持运行中程序选择，手输/选择均归一化为后台
+  采集使用的显示名，重复项行内提示；历史上限、最近使用和停用剪贴板页面补语义
+  hint。toggle/图标按钮/链接命中高度分别至少 24/30/24px；近期条数、历史上限、
+  闲置重置提供「更多…」自由输入，保留原档位。
+
+### 56.2 踩坑
+
+- `settingsCustom` 同时被位置选项和快捷键录制按钮复用；改文案会把录制按钮
+  错写成「手动位置」。两者拆成 `settingsCustom` 与 `hotkeyCustomButton`。
+- CDP 对隐藏/非激活窗口调用 `element.focus()` 不保证派发原生 `blur`；录制取消
+  除 `onBlur` 外还需要 pointerdown 外部点击收口，回归脚本分别验证点击取消与
+  `blur` 处理。
+- 「合并窗口」等依赖开关的行若完全条件卸载，搜索虽然命中分区也无法定位；
+  控件保持可见但在依赖关闭时禁用，搜索与键盘仍可到达。
+- 恢复默认只覆盖经典设置工作副本，不能宣称恢复插件/系统状态；作用域必须在
+  按钮名和页脚 hint 同时说清。
+
+### 56.3 验证
+
+- `node scripts/cdp_settings_ux_audit_verify.mjs`：**35/35**。覆盖语言、
+  switch/chip 语义、tablist、dirty 回退、确认框焦点/inert/Esc、静态与插件动态
+  搜索、插件卡片键盘、trust-all 清空、单键切换、录制取消、索引非法/重复路径、
+  完成态刷新、自动化重复/延迟、剪贴板忽略归一化、即时写标记与命中区。
+- `node scripts/cdp_visual_audit_verify.mjs`：**28/28**；
+  `node scripts/cdp_plugins_pane_verify.mjs` 全部 PASS（插件卡片、详情、
+  开发者选项与声明式设置）。
+- `cargo test`：**226 passed / 9 ignored**；`cargo check`、
+  `pnpm exec tsc --noEmit`、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 通过。
+- 服务/代理注册、UAC 取消、停止服务后的启动/重启恢复属于手工项，按
+  `docs/TESTING.md` 验证；本轮未触发真实系统服务或计划任务变更。

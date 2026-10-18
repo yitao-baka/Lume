@@ -130,7 +130,7 @@ export interface SettingsData {
    * section is mostly Rust-owned (`disabled` / `trusted` / `window_bounds`
    * are consumed by the backend and the settings pane), and only the field
    * the launcher windows read is typed here. It is also optional, so
-   * `DEFAULT_SETTINGS` (「恢复默认设置」) stays free of it. */
+   * `DEFAULT_SETTINGS` (「恢复应用默认值」) stays free of it. */
   plugins?: {
     /** Per-plugin color-mode preference (`lume.theme.set`docs/ROADMAP_HISTORY.md #36):
      * plugin id → `"system" | "light" | "dark"`. Absent = `"system"`. */
@@ -143,7 +143,7 @@ export interface SettingsData {
 }
 
 /** Mirrors the Rust `impl Default for Settings` (src-tauri/src/settings.rs) —
- * the working copy 「恢复默认设置」 resets to. */
+ * the working copy 「恢复应用默认值」 resets to. */
 export const DEFAULT_SETTINGS: SettingsData = {
   meta: { version: 1 },
   appearance: {

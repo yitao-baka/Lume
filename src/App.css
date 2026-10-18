@@ -1512,10 +1512,19 @@ body.settings-window #root {
 .settings-footer {
   flex: none;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 18px;
   border-top: 1px solid var(--border);
+}
+
+.settings-footer-hint {
+  min-width: 0;
+  margin-right: auto;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
 }
 
 /* At the declared 560x420 minimum, nine 36px nav rows overflow the 308px
@@ -1599,6 +1608,7 @@ body.settings-window #root {
 .settings-title-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .settings-title-row .settings-title {
@@ -1619,6 +1629,62 @@ body.settings-window #root {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   animation: lume-toast-in 0.18s ease-out;
+}
+
+.settings-toast.error {
+  border: 1px solid var(--danger-border, var(--border-strong));
+  color: var(--danger-text);
+}
+
+.settings-immediate {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border: 1px solid var(--warning-border);
+  border-radius: 999px;
+  background: var(--warning-tint);
+  color: var(--warning-text);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.settings-warning,
+.settings-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 4px;
+  padding: 9px 12px;
+  border: 1px solid var(--warning-border);
+  border-radius: 10px;
+  background: var(--warning-tint);
+  color: var(--warning-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-warning {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-load-state {
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.settings-load-error {
+  border-color: var(--danger-border, var(--border-strong));
+  background: color-mix(in srgb, var(--danger-text) 8%, transparent);
+  color: var(--danger-text);
 }
 @keyframes lume-toast-in {
   from { opacity: 0; transform: translate(-50%, 6px); }
@@ -1655,12 +1721,33 @@ body.settings-window #root {
   color: var(--accent-text);
 }
 
+.settings-chip-more {
+  padding-inline: 10px;
+  color: var(--text-muted);
+}
+
+.settings-number-input {
+  width: 86px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .settings-slider {
   display: flex;
   align-items: center;
   gap: 12px;
   flex: 1;
   min-width: 220px;
+}
+
+.settings-slider.muted {
+  opacity: 0.45;
 }
 
 .settings-slider-input {
@@ -1730,11 +1817,11 @@ body.settings-window #root {
 }
 
 .settings-toggle {
-  width: 42px;
-  height: 22px;
+  width: 44px;
+  height: 26px;
   padding: 0;
   border: 1px solid var(--border-strong);
-  border-radius: 11px;
+  border-radius: 13px;
   background: var(--hover);
   position: relative;
   cursor: pointer;
@@ -1744,8 +1831,8 @@ body.settings-window #root {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: var(--text);
   transition: transform 0.15s ease;
@@ -1757,8 +1844,13 @@ body.settings-window #root {
 }
 
 .settings-toggle.on .settings-toggle-knob {
-  transform: translateX(20px);
+  transform: translateX(18px);
   background: var(--accent);
+}
+
+.settings-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* Settings content controls (6.5 系统页). */
@@ -1792,6 +1884,36 @@ body.settings-window #root {
   white-space: nowrap;
 }
 
+.settings-automation-head {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.5fr) minmax(110px, 1fr) 52px 92px 70px 30px;
+  gap: 8px;
+  padding: 4px 0 2px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.settings-automation-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-automation-row.search-hit,
+.plg-setting.search-hit,
+.settings-search-hit {
+  border-radius: 8px;
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+@media (max-width: 700px) {
+  .settings-automation-head,
+  .settings-footer-hint {
+    display: none;
+  }
+}
+
 /* Chip groups right-aligned inside a labeled row. */
 .settings-row-chips {
   justify-content: flex-end;
@@ -1806,6 +1928,27 @@ body.settings-window #root {
 .settings-listrow .settings-path {
   flex: 1;
   min-width: 0;
+}
+
+.settings-listitem {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-listitem > .settings-error {
+  padding: 0 0 5px 34px;
+}
+
+.settings-index-files-label {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.settings-service-actions {
+  justify-content: flex-end;
 }
 
 .settings-listadd {
@@ -1875,7 +2018,10 @@ body.settings-window #root {
 
 .settings-link {
   border: none;
-  padding: 0;
+  min-height: 24px;
+  padding: 2px 0;
+  display: inline-flex;
+  align-items: center;
   background: transparent;
   color: var(--accent-text);
   font-size: 13px;
@@ -1930,6 +2076,18 @@ body.settings-window #root {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.settings-delay-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-automation-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .settings-delay-input {
@@ -2096,8 +2254,8 @@ body.settings-window #root {
 
 .settings-icon-btn {
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   border: none;
   border-radius: 7px;
   background: transparent;
@@ -2105,6 +2263,14 @@ body.settings-window #root {
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
+}
+
+.settings-icon-btn.refreshing img {
+  animation: settings-spin 0.8s linear infinite;
+}
+
+@keyframes settings-spin {
+  to { transform: rotate(360deg); }
 }
 
 .settings-icon-btn:hover {
@@ -2349,6 +2515,11 @@ body.settings-window #root {
   background: var(--hover);
 }
 
+.plg-head:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .plg-tile {
   flex: none;
   width: 40px;
@@ -2444,6 +2615,14 @@ body.settings-window #root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.plg-capture-note {
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--warning-text);
+  white-space: normal;
 }
 
 .plg-sub {
@@ -2609,6 +2788,8 @@ body.settings-window #root {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 3px 5px;
+  margin: 0 -5px;
 }
 
 .plg-default-hint {

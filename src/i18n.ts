@@ -50,10 +50,23 @@ void i18n.init({
   },
 });
 
+function syncDocumentLanguage(locale: string) {
+  if (typeof document !== "undefined") {
+    document.documentElement.lang = locale;
+  }
+}
+
 // Bump a Solid signal on every language change so reactive `t()` callers
 // (JSX, effects) re-evaluate when the locale switches.
 const [localeTick, bumpLocale] = createSignal(0);
-i18n.on("languageChanged", () => bumpLocale((n) => n + 1));
+i18n.on("languageChanged", (locale) => {
+  syncDocumentLanguage(locale);
+  bumpLocale((n) => n + 1);
+});
+
+// `init()` resolves synchronously for the bundled resources in practice, but
+// syncing here also covers a deferred initialization without blocking render.
+syncDocumentLanguage(i18n.language || detectLocale());
 
 /** Current active locale. */
 export function getLocale(): Locale {
@@ -62,6 +75,7 @@ export function getLocale(): Locale {
 
 /** Override the active locale (used by the settings page). */
 export function setLocale(locale: Locale) {
+  syncDocumentLanguage(locale);
   void i18n.changeLanguage(locale);
 }
 

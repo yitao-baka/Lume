@@ -47,6 +47,7 @@ export default function LauncherPane(props: {
             onCommit={(v) => props.onChange({ window_height: v })}
           />
         </Row>
+        <span class="settings-hint">{t("settingsHeightHint")}</span>
         <Row label={t("settingsWindowPosition")}>
           <div class="settings-row settings-row-chips">
             <For each={POSITIONS}>
@@ -68,6 +69,7 @@ export default function LauncherPane(props: {
             />
           </div>
         </Row>
+        <span class="settings-hint">{t("settingsCustomHint")}</span>
       </div>
 
       <h2 class="settings-grouptitle">{t("groupNavBar")}</h2>
@@ -75,30 +77,36 @@ export default function LauncherPane(props: {
         <Row label={t("showRecent")}>
           <Toggle
             checked={a().show_recent}
+            label={t("showRecent")}
             onChange={(v) => props.onChange({ show_recent: v })}
           />
         </Row>
+        <span class="settings-hint">{t("settingsShowRecentHint")}</span>
         <Row label={t("showExplorerBar")}>
           <Toggle
             checked={a().show_explorer_bar}
+            label={t("showExplorerBar")}
             onChange={(v) => props.onChange({ show_explorer_bar: v })}
           />
         </Row>
         <Row label={t("expandPinned")}>
           <Toggle
             checked={a().expand_pinned}
+            label={t("expandPinned")}
             onChange={(v) => props.onChange({ expand_pinned: v })}
           />
         </Row>
         <Row label={t("modeSwitchIconsOnly")}>
           <Toggle
             checked={a().mode_switch_icons_only}
+            label={t("modeSwitchIconsOnly")}
             onChange={(v) => props.onChange({ mode_switch_icons_only: v })}
           />
         </Row>
         <Row label={t("shiftEnterAdmin")}>
           <Toggle
             checked={a().shift_enter_admin}
+            label={t("shiftEnterAdmin")}
             onChange={(v) => props.onChange({ shift_enter_admin: v })}
           />
         </Row>
@@ -112,6 +120,7 @@ export default function LauncherPane(props: {
               { label: "50", value: 50 },
             ]}
             onCommit={(v) => props.onChange({ recent_count: v })}
+            custom={{ min: 5, max: 200, step: 5, label: t("recentCount") }}
           />
         </Row>
         <Row label={t("placeholderApps")}>
@@ -139,6 +148,7 @@ export default function LauncherPane(props: {
         <Row label={t("rememberLastPage")}>
           <Toggle
             checked={a().remember_last_page}
+            label={t("rememberLastPage")}
             onChange={(v) => props.onChange({ remember_last_page: v })}
           />
         </Row>
@@ -146,6 +156,7 @@ export default function LauncherPane(props: {
         <Row label={t("perModeQuery")}>
           <Toggle
             checked={a().per_mode_query}
+            label={t("perModeQuery")}
             onChange={(v) => props.onChange({ per_mode_query: v })}
           />
         </Row>
@@ -153,6 +164,7 @@ export default function LauncherPane(props: {
         <Row label={t("idleReset")}>
           <Toggle
             checked={a().idle_reset_enabled}
+            label={t("idleReset")}
             onChange={(v) => props.onChange({ idle_reset_enabled: v })}
           />
         </Row>
@@ -169,6 +181,7 @@ export default function LauncherPane(props: {
                 { label: "240", value: 240 },
               ]}
               onCommit={(v) => props.onChange({ idle_reset_minutes: v })}
+              custom={{ min: 1, max: 10080, step: 1, label: t("idleResetMinutes") }}
             />
           </Row>
         </Show>
@@ -191,6 +204,7 @@ export default function LauncherPane(props: {
         <Row label={t("roundAppIcons")}>
           <Toggle
             checked={a().round_app_icons}
+            label={t("roundAppIcons")}
             onChange={(v) => props.onChange({ round_app_icons: v })}
           />
         </Row>

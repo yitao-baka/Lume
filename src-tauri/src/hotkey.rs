@@ -91,11 +91,11 @@ pub fn get_hotkey(state: State<ActiveHotkey>) -> String {
 }
 
 /// Result of validating a custom hotkey in the settings page.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct HotkeyCheck {
     pub ok: bool,
-    /// Machine key for a localized message: `need_modifier` | `conflict_lume`
-    /// | `taken` | `invalid`.
+/// Machine key for a localized message: `need_modifier` | `conflict_lume`
+/// | `taken` | `reserved` | `invalid`.
     pub reason: Option<String>,
 }
 
@@ -129,6 +129,40 @@ pub fn validate_hotkey(combo: String, other: String, app: AppHandle) -> HotkeyCh
     }
 }
 
+/// Validate the in-launcher mode-switch shortcut. Unlike the global toggle,
+/// this one may be a bare key (the default is Tab) and never touches the
+/// system-wide RegisterHotKey namespace. It only needs to parse, stay free of
+/// the other Lume slot, and avoid keys the launcher already reserves.
+#[tauri::command]
+pub fn validate_mode_hotkey(combo: String, other: String) -> HotkeyCheck {
+    if Shortcut::from_str(&combo).is_err() {
+        return HotkeyCheck { ok: false, reason: Some("invalid".into()) };
+    }
+    if combo.eq_ignore_ascii_case(&other) {
+        return HotkeyCheck { ok: false, reason: Some("conflict_lume".into()) };
+    }
+    let bare = combo.trim().to_ascii_lowercase();
+    if matches!(
+        bare.as_str(),
+        "escape"
+            | "enter"
+            | "f6"
+            | "arrowup"
+            | "arrowdown"
+            | "arrowleft"
+            | "arrowright"
+            | "home"
+            | "end"
+            | "pageup"
+            | "pagedown"
+            | "backspace"
+            | "delete"
+    ) {
+        return HotkeyCheck { ok: false, reason: Some("reserved".into()) };
+    }
+    HotkeyCheck { ok: true, reason: None }
+}
+
 /// Apply a new toggle hotkey (used on settings save). Unregisters the current
 /// one and registers `combo`; on failure it reverts to the previous shortcut.
 pub fn apply(app: &AppHandle, combo: &str) -> bool {
@@ -153,5 +187,28 @@ pub fn apply(app: &AppHandle, combo: &str) -> bool {
             notify_unavailable(combo);
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_hotkey_accepts_a_bare_key() {
+        let check = validate_mode_hotkey("K".into(), "Alt+Space".into());
+        assert!(check.ok, "single-key mode switch must be valid: {check:?}");
+    }
+
+    #[test]
+    fn mode_hotkey_rejects_reserved_and_duplicate_keys() {
+        assert_eq!(
+            validate_mode_hotkey("Escape".into(), "Alt+Space".into()).reason.as_deref(),
+            Some("reserved"),
+        );
+        assert_eq!(
+            validate_mode_hotkey("Alt+Space".into(), "Alt+Space".into()).reason.as_deref(),
+            Some("conflict_lume"),
+        );
     }
 }

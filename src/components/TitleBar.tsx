@@ -76,7 +76,7 @@ export function useChromeControls(): ChromeControls {
 export function TitleBarControls(props: {
   controls: ChromeControls;
   pin?: boolean;
-  onClose: () => void;
+  onClose: (trigger?: HTMLElement) => void;
 }) {
   const c = props.controls;
   return (
@@ -115,7 +115,7 @@ export function TitleBarControls(props: {
         class="titlebar-btn titlebar-close"
         title={t("winClose")}
         aria-label={t("winClose")}
-        onClick={() => props.onClose()}
+        onClick={(event) => props.onClose(event.currentTarget)}
       >
         <CloseIcon />
       </button>

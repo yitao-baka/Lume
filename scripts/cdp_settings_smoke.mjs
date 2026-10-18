@@ -1,7 +1,7 @@
 // Dev helper: settings re-layout smoke test (2026-08-30 grouped-card layout).
 //  1. 7 nav sections render in the Flutter-aligned order
-//  2. footer has 恢复默认设置 + 保存并应用 (disabled until dirty)
-//  3. 恢复默认设置 is two-step: click → save button enables (nothing written)
+//  2. footer has 恢复应用默认值 + 保存并应用 (disabled until dirty)
+//  3. 恢复应用默认值 is two-step: click → save button enables (nothing written)
 //  4. search box filters nav + stacks matching sections
 //  5. user index empty state + refresh-index button present
 // Screenshots: test/settings_*.png
@@ -10,7 +10,7 @@ import { spawn, execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 const CDP_PORT = 9222;
-const APP = "src-tauri/target/release/lume.exe";
+const APP = "src-tauri/target/debug/lume.exe";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 const check = (name, cond, extra = "") => {
@@ -81,7 +81,7 @@ check("9 nav sections in order", JSON.stringify(nav) === JSON.stringify(["外观
 
 // 2. Footer buttons
 const footer = await s.evalJs(`Array.from(document.querySelectorAll('.settings-footer .settings-action')).map((b) => ({ text: b.textContent.trim(), disabled: b.disabled }))`);
-check("footer = 恢复默认设置 + 保存并应用(disabled)", footer.length === 2 && footer[0].text.includes("恢复默认") && footer[1].text.includes("保存并应用") && footer[1].disabled === true, JSON.stringify(footer));
+check("footer = 恢复应用默认值 + 保存并应用(disabled)", footer.length === 2 && footer[0].text.includes("恢复应用默认值") && footer[1].text.includes("保存并应用") && footer[1].disabled === true, JSON.stringify(footer));
 
 // 3. Two-step restore default
 await s.evalJs(`Array.from(document.querySelectorAll('.settings-footer .settings-action'))[0].click(); "ok"`);
@@ -117,7 +117,7 @@ check("搜索 section: refresh button + user-index empty state", hasRefresh === 
 shot = await s.send("Page.captureScreenshot", { format: "png" });
 writeFileSync("test/settings_search.png", Buffer.from(shot.result.data, "base64"));
 
-// 6. 剪贴板 section (merge slider gated off, ignore editor, remember checks)
+// 6. 剪贴板 section (merge slider visible but disabled, ignore editor, remember checks)
 await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).find((b) => b.textContent.includes("剪贴板"))?.click(); "ok"`);
 await sleep(300);
 const clip = await s.evalJs(`({
@@ -125,9 +125,10 @@ const clip = await s.evalJs(`({
   blocktitle: Array.from(document.querySelectorAll('.settings-blocktitle')).map((h) => h.textContent.trim()),
   rememberChecks: Array.from(document.querySelectorAll('.settings-sub-label')).some((l) => l.textContent === "记住勾选"),
   mergeSlider: !!document.querySelector('.settings-slider-input'),
+  mergeDisabled: document.querySelector('.settings-slider-input')?.disabled === true,
 })`);
-check("剪贴板 section: blocktitles + remember-checks + no slider while merge off",
-  clip.blocktitle.includes("忽略应用") && clip.rememberChecks === true && clip.mergeSlider === false, JSON.stringify(clip));
+check("剪贴板 section: blocktitles + remember-checks + disabled merge slider while merge off",
+  clip.blocktitle.includes("忽略应用") && clip.rememberChecks === true && clip.mergeSlider && clip.mergeDisabled, JSON.stringify(clip));
 shot = await s.send("Page.captureScreenshot", { format: "png" });
 writeFileSync("test/settings_clipboard.png", Buffer.from(shot.result.data, "base64"));
 

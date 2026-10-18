@@ -722,6 +722,60 @@ pub fn get_settings(state: State<SettingsState>) -> Settings {
     state.0.lock().unwrap().clone()
 }
 
+/// Result of checking a user-index path before it enters the draft. A result
+/// (instead of a command error) keeps missing/inaccessible/not-a-directory
+/// distinct for localized inline feedback.
+#[derive(Debug, Serialize)]
+pub struct IndexDirValidation {
+    pub ok: bool,
+    pub path: String,
+    /// `missing` | `not_dir` | `inaccessible` | `invalid`.
+    pub reason: Option<&'static str>,
+}
+
+/// Validate and normalize a user-index directory. Windows paths are compared
+/// case-insensitively by the UI after this returns; the canonical form removes
+/// duplicate separators and the verbatim long-path prefix where safe.
+#[tauri::command]
+pub fn validate_index_dir(path: String) -> IndexDirValidation {
+    fn reject(path: &str, reason: &'static str) -> IndexDirValidation {
+        IndexDirValidation { ok: false, path: path.to_string(), reason: Some(reason) }
+    }
+
+    let raw = path.trim().trim_matches('"');
+    if raw.is_empty() {
+        return reject(raw, "invalid");
+    }
+    let candidate = PathBuf::from(raw);
+    let meta = match fs::metadata(&candidate) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return reject(raw, "missing");
+        }
+        Err(_) => return reject(raw, "inaccessible"),
+    };
+    if !meta.is_dir() {
+        return reject(raw, "not_dir");
+    }
+    if fs::read_dir(&candidate).is_err() {
+        return reject(raw, "inaccessible");
+    }
+
+    let canonical = fs::canonicalize(&candidate).unwrap_or(candidate);
+    let mut normalized = canonical.to_string_lossy().into_owned();
+    if let Some(rest) = normalized.strip_prefix(r"\\?\UNC\") {
+        normalized = format!(r"\\{rest}");
+    } else if let Some(rest) = normalized.strip_prefix(r"\\?\") {
+        normalized = rest.to_string();
+    }
+    while normalized.ends_with(|c| c == '\\' || c == '/')
+        && !(normalized.len() == 3 && normalized.as_bytes()[1] == b':')
+    {
+        normalized.pop();
+    }
+    IndexDirValidation { ok: true, path: normalized, reason: None }
+}
+
 /// Deep-merge a partial settings object (only the fields the user edited)
 /// onto the current settings. Arrays are values, not maps: a changed index
 /// list / automation rule list replaces the old one wholesale. This is what
@@ -1011,6 +1065,10 @@ pub fn set_plugin_dev_mode(
     let mut guard = state.0.lock().unwrap();
     let mut next = guard.clone();
     next.plugins.dev_mode = enabled;
+    // Turning developer mode off disables the global escape hatch. Turning it
+    // back on also requires an explicit new trust-all acknowledgement rather
+    // than silently restoring a stale privileged value.
+    next.plugins.trust_all = false;
     write_settings_light(&paths::base_dir(), &next)?;
     *guard = next;
     drop(guard);
@@ -1060,6 +1118,25 @@ pub fn set_plugin_keep_session(
     let mut guard = state.0.lock().unwrap();
     let mut next = guard.clone();
     next.plugins.keep_session_overrides.insert(id, keep);
+    write_settings_light(&paths::base_dir(), &next)?;
+    *guard = next;
+    drop(guard);
+    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Remove the user override so the mode follows its manifest default again.
+#[tauri::command]
+pub fn clear_plugin_keep_session(
+    id: String,
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: State<SettingsState>,
+) -> Result<(), String> {
+    crate::plugin_perm::deny_from_plugin_windows(&window)?;
+    let mut guard = state.0.lock().unwrap();
+    let mut next = guard.clone();
+    next.plugins.keep_session_overrides.remove(&id);
     write_settings_light(&paths::base_dir(), &next)?;
     *guard = next;
     drop(guard);
@@ -1538,6 +1615,35 @@ mod tests {
         assert_eq!(huge.effective_delay_ms(), MAX_ACTION_DELAY_MS);
         let zero = AutoAction { delay_ms: 0, ..legacy };
         assert_eq!(zero.effective_delay_ms(), 0, "0 = inject immediately");
+    }
+
+    #[test]
+    fn user_index_validation_normalizes_existing_directories() {
+        let suffix = format!(
+            "lume_index_validation_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        );
+        let dir = std::env::temp_dir().join(suffix);
+        fs::create_dir_all(&dir).unwrap();
+        let raw = format!("{}{}", dir.display(), std::path::MAIN_SEPARATOR);
+        let check = validate_index_dir(raw);
+        assert!(check.ok, "existing directory rejected: {check:?}");
+        assert!(!check.path.ends_with('\\') && !check.path.ends_with('/'));
+
+        let missing = validate_index_dir(format!("{}\\__lume_missing__", dir.display()));
+        assert!(!missing.ok);
+        assert_eq!(missing.reason, Some("missing"));
+
+        let file = dir.join("file.txt");
+        fs::write(&file, b"x").unwrap();
+        let not_dir = validate_index_dir(file.to_string_lossy().into_owned());
+        assert!(!not_dir.ok);
+        assert_eq!(not_dir.reason, Some("not_dir"));
+        fs::remove_dir_all(&dir).ok();
     }
 
 }

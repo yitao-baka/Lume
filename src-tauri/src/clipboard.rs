@@ -1288,6 +1288,20 @@ pub fn set_clipboard_text(text: String) -> Result<(), String> {
     cb.set_text(text).map_err(|e| e.to_string())
 }
 
+/// Normalize a manually entered or picked ignore-list value to the same
+/// display name the capture path stores (`chrome.exe` / a full path →
+/// `Chrome`). The settings pane keeps this logic out of the webview so the
+/// comparison in `is_ignored` cannot drift from the picker.
+#[tauri::command]
+pub fn normalize_clipboard_ignore_app(app_name: String) -> Result<String, String> {
+    let name = process_display_name(app_name.trim());
+    if name.is_empty() {
+        Err("invalid app name".into())
+    } else {
+        Ok(name)
+    }
+}
+
 // ── Plugin host clipboard surface (docs/PLUGIN_API.md §8.1) ──
 //
 // Plugins could already read/write text; these add the other two payload kinds
@@ -2837,6 +2851,8 @@ mod tests {
         assert_eq!(process_display_name(r"C:\Windows\explorer.exe"), "Explorer");
         assert_eq!(process_display_name(r"C:\Program Files\7-Zip\7zFM.exe"), "7zFM");
         assert_eq!(process_display_name(""), "");
+        assert_eq!(normalize_clipboard_ignore_app("chrome.exe".into()).unwrap(), "Chrome");
+        assert!(normalize_clipboard_ignore_app("   ".into()).is_err());
     }
 
     #[test]

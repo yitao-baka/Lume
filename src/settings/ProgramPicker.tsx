@@ -29,6 +29,7 @@ export function ProgramPicker(props: {
   const [items, setItems] = createSignal<WindowProgram[]>([]);
   const [filter, setFilter] = createSignal("");
   const [loading, setLoading] = createSignal(true);
+  const [loadError, setLoadError] = createSignal<string | null>(null);
   const [active, setActive] = createSignal(0);
   let filterRef: HTMLInputElement | undefined;
   let pickerRef: HTMLDivElement | undefined;
@@ -49,16 +50,22 @@ export function ProgramPicker(props: {
     props.onClose();
   }
 
+  function loadPrograms() {
+    setLoading(true);
+    setLoadError(null);
+    void invoke<WindowProgram[]>("list_window_programs")
+      .then((list) => setItems(Array.isArray(list) ? list : []))
+      .catch(() => setLoadError(t("settingsPickerLoadFailed")))
+      .finally(() => setLoading(false));
+  }
+
   onMount(() => {
     // The picker is portaled outside `.settings`; the settings page behind it
     // is inert, so Tab / assistive navigation cannot escape the modal.
     const settingsRoot = document.querySelector<HTMLElement>(".settings");
     settingsRoot?.setAttribute("inert", "");
     filterRef?.focus();
-    void invoke<WindowProgram[]>("list_window_programs")
-      .then((list) => setItems(Array.isArray(list) ? list : []))
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
+    loadPrograms();
     // Esc closes; Tab / Shift+Tab wrap inside the dialog; arrows move the
     // list selection (keeping the filter usable); Enter picks.
     const onKey = (e: KeyboardEvent) => {
@@ -147,6 +154,7 @@ export function ProgramPicker(props: {
               class="settings-text-input picker-filter"
               type="text"
               placeholder={t("autoPickFilter")}
+              aria-label={t("autoPickFilter")}
               value={filter()}
               onInput={(e) => {
                 setFilter(e.currentTarget.value);
@@ -155,6 +163,7 @@ export function ProgramPicker(props: {
             />
             <button
               class="settings-icon-btn"
+              type="button"
               title={t("cancel")}
               aria-label={t("cancel")}
               onClick={props.onClose}
@@ -164,9 +173,21 @@ export function ProgramPicker(props: {
           </div>
           <div class="picker-list" role="listbox" aria-label={t("autoPickTitle")}>
             <Show when={!loading()} fallback={<span class="picker-empty">{t("autoPickLoading")}</span>}>
+              <Show when={loadError()}>
+                <div class="picker-empty" role="alert">
+                  <span>{loadError()}</span>
+                  <button class="settings-link" type="button" onClick={loadPrograms}>
+                    {t("settingsRetry")}
+                  </button>
+                </div>
+              </Show>
               <Show
-                when={filtered().length > 0}
-                fallback={<span class="picker-empty">{t("autoPickEmpty")}</span>}
+                when={!loadError() && filtered().length > 0}
+                fallback={
+                  <Show when={!loadError()}>
+                    <span class="picker-empty">{t("autoPickEmpty")}</span>
+                  </Show>
+                }
               >
                 <For each={filtered()}>
                   {(p, i) => (

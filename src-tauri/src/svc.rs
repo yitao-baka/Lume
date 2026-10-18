@@ -244,25 +244,48 @@ fn query_bin_path(hservice: windows::Win32::System::Services::SC_HANDLE) -> Opti
     None
 }
 
-/// Ask Windows to run `lume-svc.exe --install` elevated (`runas` → UAC). The
-/// elevated process does the actual `CreateServiceW` work and exits.
-#[tauri::command]
-pub fn svc_install() -> Result<(), String> {
+/// Ask Windows to run one of `lume-svc.exe`'s elevated verbs (`--install`,
+/// `--uninstall`, `--start`, `--restart`). The elevated process does the SCM
+/// work and exits.
+fn launch_svc_verb(arg: &'static str) -> Result<(), String> {
     let svc_exe = crate::paths::exe_dir().join("lume-svc.exe");
     if !svc_exe.exists() {
         return Err("lume-svc.exe not found next to the launcher".into());
     }
-    launch_elevated(&svc_exe, "--install")
+    launch_elevated(&svc_exe, arg)
+}
+
+#[tauri::command]
+pub async fn svc_install() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| launch_svc_verb("--install"))
+        .await
+        .map_err(|e| format!("service install worker panicked: {e}"))?
 }
 
 /// Ask Windows to run `lume-svc.exe --uninstall` elevated.
 #[tauri::command]
-pub fn svc_uninstall() -> Result<(), String> {
-    let svc_exe = crate::paths::exe_dir().join("lume-svc.exe");
-    if !svc_exe.exists() {
-        return Err("lume-svc.exe not found next to the launcher".into());
-    }
-    launch_elevated(&svc_exe, "--uninstall")
+pub async fn svc_uninstall() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| launch_svc_verb("--uninstall"))
+        .await
+        .map_err(|e| format!("service uninstall worker panicked: {e}"))?
+}
+
+/// Start an already-installed service elevated (UAC). Used when the service is
+/// installed but stopped, so recovery no longer requires uninstall/reinstall.
+#[tauri::command]
+pub async fn svc_start() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| launch_svc_verb("--start"))
+        .await
+        .map_err(|e| format!("service start worker panicked: {e}"))?
+}
+
+/// Restart the installed service elevated (UAC), waiting for STOPPED before
+/// starting it again.
+#[tauri::command]
+pub async fn svc_restart() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| launch_svc_verb("--restart"))
+        .await
+        .map_err(|e| format!("service restart worker panicked: {e}"))?
 }
 
 /// Launch a program elevated via `ShellExecuteW("runas")`. The UAC prompt is
@@ -441,6 +464,109 @@ pub fn uninstall() -> Result<(), String> {
     }
     let _ = reg_delete_value(HKEY_LOCAL_MACHINE, REG_KEY, REG_VALUE);
     Ok(())
+}
+
+/// Start an existing service and wait until SCM reports RUNNING.
+pub fn start() -> Result<(), String> {
+    ensure_elevated()?;
+    use windows::Win32::System::Services::{
+        CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceStatus, StartServiceW,
+        SERVICE_QUERY_STATUS, SERVICE_RUNNING, SERVICE_START, SERVICE_STATUS,
+    };
+    unsafe {
+        let scm = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), 1 /* SC_MANAGER_CONNECT */)
+            .map_err(win_err)?;
+        let name = wide(SERVICE_NAME);
+        let svc = OpenServiceW(
+            scm,
+            PCWSTR(name.as_ptr()),
+            SERVICE_START | SERVICE_QUERY_STATUS,
+        );
+        let svc = match svc {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = CloseServiceHandle(scm);
+                return Err(format!("OpenServiceW failed: {e}"));
+            }
+        };
+        // StartServiceW reports ERROR_SERVICE_ALREADY_RUNNING; the status poll
+        // below turns that into the same successful outcome.
+        let _ = StartServiceW(svc, None);
+        let mut st = SERVICE_STATUS::default();
+        let mut running = false;
+        for _ in 0..150 {
+            if QueryServiceStatus(svc, &mut st).is_ok() && st.dwCurrentState == SERVICE_RUNNING {
+                running = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let _ = CloseServiceHandle(svc);
+        let _ = CloseServiceHandle(scm);
+        if running {
+            Ok(())
+        } else {
+            Err("LumeSVC did not reach the running state".into())
+        }
+    }
+}
+
+/// Stop an existing service (when needed), wait for STOPPED, then start it and
+/// wait for RUNNING.
+pub fn restart() -> Result<(), String> {
+    ensure_elevated()?;
+    use windows::Win32::System::Services::{
+        CloseServiceHandle, ControlService, OpenSCManagerW, OpenServiceW, QueryServiceStatus,
+        StartServiceW, SERVICE_CONTROL_STOP, SERVICE_QUERY_STATUS, SERVICE_RUNNING,
+        SERVICE_START, SERVICE_STATUS, SERVICE_STOP, SERVICE_STOPPED,
+    };
+    unsafe {
+        let scm = OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), 1 /* SC_MANAGER_CONNECT */)
+            .map_err(win_err)?;
+        let name = wide(SERVICE_NAME);
+        let svc = OpenServiceW(
+            scm,
+            PCWSTR(name.as_ptr()),
+            SERVICE_START | SERVICE_STOP | SERVICE_QUERY_STATUS,
+        );
+        let svc = match svc {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = CloseServiceHandle(scm);
+                return Err(format!("OpenServiceW failed: {e}"));
+            }
+        };
+        let mut st = SERVICE_STATUS::default();
+        let running = QueryServiceStatus(svc, &mut st).is_ok()
+            && st.dwCurrentState != SERVICE_STOPPED;
+        if running {
+            ControlService(svc, SERVICE_CONTROL_STOP, &mut st).map_err(win_err)?;
+            for _ in 0..150 {
+                if QueryServiceStatus(svc, &mut st).is_ok()
+                    && st.dwCurrentState == SERVICE_STOPPED
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+        StartServiceW(svc, None).map_err(win_err)?;
+        let mut started = false;
+        for _ in 0..150 {
+            if QueryServiceStatus(svc, &mut st).is_ok() && st.dwCurrentState == SERVICE_RUNNING {
+                started = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let _ = CloseServiceHandle(svc);
+        let _ = CloseServiceHandle(scm);
+        if started {
+            Ok(())
+        } else {
+            Err("LumeSVC did not reach the running state".into())
+        }
+    }
 }
 
 /// Refuse to run install/uninstall unless the token is elevated. Shared with

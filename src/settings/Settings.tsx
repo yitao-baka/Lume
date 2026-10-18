@@ -1,13 +1,13 @@
 //! Settings window — Chrome-style top bar (title + 设置搜索框), a 7-section
 //! nav (外观 / 导航页 / 剪贴板 / 快捷键 / 搜索 / 系统 / 关于), grouped cards
-//! and a footer of 恢复默认设置 + 保存并应用 (docs/SETTINGS.md).
+//! and a footer of 恢复应用默认值 + 保存并应用 (docs/SETTINGS.md).
 //!
 //! The search box filters sections the same way the Flutter settings exe
 //! does: each section carries a list of i18n keys whose localized text (plus
 //! the section label) is matched case-insensitively; non-matching sections
 //! vanish from the nav and the content shows all matches stacked.
 
-import { createEffect, createMemo, createSignal, For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, For, Match, Show, Switch, onCleanup, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -33,6 +33,8 @@ import automationIcon from "../../res/icons/automation.svg";
 import pluginsIcon from "../../res/icons/plugins.svg";
 import aboutIcon from "../../res/icons/about.svg";
 import { DEFAULT_SETTINGS, diffSettings, type SettingsData } from "./types";
+import type { PluginManifest } from "../plugins/types";
+import { settingsError } from "./errors";
 
 type Section =
   | "appearance"
@@ -92,17 +94,25 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
   launcher: [
     "groupWindow", "groupNavBar", "groupEntryBox",
     "settingsWidth", "settingsHeight", "settingsWindowPosition", "settingsCustom",
+    "settingsHeightHint", "settingsCustomHint", "settingsShowRecentHint",
+    "settingsPosCenter", "settingsPosFollowMouse", "settingsPosTopLeft",
+    "settingsPosTopRight", "settingsPosBottomLeft", "settingsPosBottomRight",
     "showRecent", "showExplorerBar", "expandPinned", "shiftEnterAdmin",
     "modeSwitchIconsOnly", "perModeQuery", "perModeQueryHint",
     "idleReset", "idleResetMinutes", "idleResetHint",
     "recentCount", "placeholderApps", "placeholderClipboard",
+    "searchApps", "searchClipboard", "settingsSizeSmall", "settingsSizeMedium",
+    "settingsSizeLarge",
     "rememberLastPage", "rememberLastPageHint", "settingsEntrySize",
     "roundAppIcons", "roundAppIconsHint",
   ],
   clipboard: [
     "clipHistoryCap", "groupDisplay", "groupPaste", "groupPreview",
     "clipRecordImages", "clipRecordFiles", "clipMergeCopy",
+    "clipMergeWindow", "settingsHistoryCapHint",
     "clipIgnoreApps", "clipIgnoreHint", "clipIgnoreEmpty", "clipIgnorePlaceholder",
+    "settingsClipIgnorePicker", "settingsClipIgnorePickerHint", "settingsClipIgnoreDuplicate",
+    "settingsClipIgnoreInvalid",
     "clipDedup", "clipDedupHint", "clipShowSource", "clipTimeDisplay",
     "clipTimeRelative", "clipTimeAbsolute", "clipHoverSelect", "clipFavoritesTop",
     "clipPasteClose", "settingsClipPreview", "settingsClipPreviewHint",
@@ -110,14 +120,19 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
   ],
   hotkeys: [
     "settingsHotkeys", "settingsToggleLauncher", "settingsSwitchMode",
-    "hotkeyRecording", "settingsCustom",
+    "hotkeyRecording", "hotkeyCustomButton", "hotkeyModeHint", "hotkeyReserved",
+    "hotkeyInvalid",
   ],
   search: [
     "settingsIndexDirs", "settingsSystemIndex", "settingsUserIndex",
     "settingsIndexDesktop", "settingsIndexStartMenu", "settingsIndexFiles",
+    "settingsIndexFilesShort", "settingsIndexFilesHint", "settingsChooseFolder", "settingsPathMissing",
+    "settingsPathNotDir", "settingsPathInaccessible", "settingsPathDuplicate",
+    "settingsPathInvalid",
     "settingsRefreshIndex", "settingsUserIndexName", "settingsUserIndexPath",
     "settingsUserIndexEmpty", "settingsPathPlaceholder", "groupIndexCache",
     "settingsCacheRefresh", "settingsMinutes", "settingsAdd", "delete",
+    "settingsRefreshRunning", "settingsRefreshFailed", "settingsRefreshed",
   ],
   system: [
     "settingsAutostart", "settingsAutostartOn", "settingsAutostartOff",
@@ -129,6 +144,10 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
     "settingsAgentUacCanceled", "settingsImportExport", "settingsImport",
     "settingsExport", "settingsRestoreBackup", "settingsConfirmAction",
     "settingsImported", "settingsExported", "settingsRestored",
+    "settingsStartService", "settingsRestartService", "settingsServiceStarting",
+    "settingsServiceRestarting", "settingsServiceStarted", "settingsServiceRestarted",
+    "settingsServiceActionFailed", "settingsImportFailed", "settingsExportFailed",
+    "settingsRestoreFailed",
   ],
   automation: [
     "automation", "groupAutomation", "autoEnabled", "autoForceFocus",
@@ -138,6 +157,8 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
     "autoPickFilter", "autoPickEmpty", "autoPickLoading", "autoPickWindows",
     "autoTest", "autoTestHint", "autoAdd", "autoDelayTitle", "autoDelayUnit",
     "autoDelayHint", "autoEmpty", "autoNotice", "delete",
+    "autoDuplicate", "autoJumpExisting", "autoDelayInvalid",
+    "autoAgentResidentDependency", "autoRuleEnabledLabel", "autoTestSent",
   ],
   plugins: [
     "plugins", "pluginKindMode", "pluginKindService", "pluginKindProvider",
@@ -151,7 +172,12 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
     "pluginDetailDir", "pluginPermissions", "pluginNoPermissions", "pluginTrustAll",
     "pluginSettings", "pluginsDevMode", "pluginsDevModeHint", "pluginsTrustAllHint",
     "pluginDetachable", "pluginHidden", "pluginKeepSession", "pluginKeepSessionHint",
+    "pluginKeepSessionReset", "pluginToggleLabel", "pluginSettingToggleLabel",
     "pluginPermEnforcedHint", "pluginReload", "pluginDev",
+    "pluginsTrustAllBanner", "settingsClipboardPluginHint", "pluginsActionFailed",
+    "pluginFeatureTypeText", "pluginFeatureTypeFiles", "pluginFeatureTypeImg",
+    "pluginSettingDefault", "pluginToastSettingsSaved", "pluginToastReloaded",
+    "pluginsInstallDone", "pluginUninstalled",
     "permClipboard", "permNetwork", "permNotify", "permDialog", "permScreen",
     "permSearchFiles", "permFsRead", "permFsWrite", "permTrash", "permWindow",
     "permClipboardDesc", "permNetworkDesc", "permNotifyDesc", "permDialogDesc",
@@ -160,7 +186,7 @@ const SECTION_SEARCH_KEYS: Record<Section, (keyof Messages)[]> = {
   ],
   about: [
     "about", "aboutTagline", "aboutVersion", "aboutLicense", "aboutAuthor",
-    "aboutHomepage",
+    "aboutHomepage", "settingsAboutOpenFailed",
   ],
 };
 
@@ -173,8 +199,15 @@ export default function Settings() {
   const [settings, setSettings] = createSignal<SettingsData | null>(null);
   /** The snapshot this working copy was loaded from. A save sends only the
    * fields that differ from it, so concurrent light writes survive. */
-  let baseline: SettingsData | null = null;
+  const [baseline, setBaseline] = createSignal<SettingsData | null>(null);
+  const [loading, setLoading] = createSignal(true);
+  const [loadError, setLoadError] = createSignal<string | null>(null);
+  /** Plugin labels/options are data, not static strings; keep them in the
+   * settings-search index so a declared setting like "列表前缀" is findable. */
+  const [pluginSearchTerms, setPluginSearchTerms] = createSignal<string[]>([]);
+  let searchHitEl: HTMLElement | null = null;
   const [toast, setToast] = createSignal<string | null>(null);
+  const [toastOk, setToastOk] = createSignal(true);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   /** Only the latest settings read may land. The window stays alive while
    * hidden, so a reload on re-open can overlap the startup read. */
@@ -204,6 +237,12 @@ export default function Settings() {
     { kind: "close" } | { kind: "discard"; resolve: (ok: boolean) => void } | null
   >(null);
   const [promptBusy, setPromptBusy] = createSignal(false);
+  let topbarEl: HTMLElement | undefined;
+  let contentEl: HTMLDivElement | undefined;
+  let footerEl: HTMLElement | undefined;
+  let dialogEl: HTMLDivElement | undefined;
+  let promptCancelButton: HTMLButtonElement | undefined;
+  let promptTrigger: HTMLElement | null = null;
 
   /** Window chrome (frameless titlebar): button state + drag/dblclick
       handlers shared with the topbar row. */
@@ -211,14 +250,25 @@ export default function Settings() {
 
   function loadSettings(clearDirty = false) {
     const seq = ++loadSeq;
+    if (!settings()) setLoading(true);
+    setLoadError(null);
     void invoke<SettingsData>("get_settings")
       .then((s) => {
         if (seq !== loadSeq || (!clearDirty && dirty())) return;
-        setSettings(s);
-        baseline = structuredClone(s);
-        if (clearDirty) setDirty(false);
+        batch(() => {
+          setSettings(s);
+          setBaseline(structuredClone(s));
+          if (clearDirty) setDirty(false);
+        });
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (seq === loadSeq) {
+          setLoadError(settingsError(err, "settingsLoadFailed"));
+        }
+      })
+      .finally(() => {
+        if (seq === loadSeq) setLoading(false);
+      });
   }
 
   /** Close the settings window (it stays mounted, like before). */
@@ -232,10 +282,10 @@ export default function Settings() {
 
   /** X / Alt+F4 with unsaved edits: ask instead of silently keeping a stale
    * draft that can overwrite newer light writes on the next save. */
-  function requestClose() {
+  function requestClose(trigger?: HTMLElement) {
     if (prompt()?.kind === "discard") resolveDiscardPrompt(false);
     if (dirty()) {
-      setPrompt({ kind: "close" });
+      presentPrompt({ kind: "close" }, trigger);
       return;
     }
     void closeWindow();
@@ -244,18 +294,49 @@ export default function Settings() {
   /** System pane asks before an instant replacement while a draft exists. */
   function confirmDiscardDraft(): Promise<boolean> {
     if (!dirty()) return Promise.resolve(true);
-    return new Promise((resolve) => setPrompt({ kind: "discard", resolve }));
+    return new Promise((resolve) => presentPrompt({ kind: "discard", resolve }));
+  }
+
+  function presentPrompt(
+    next: Exclude<ReturnType<typeof prompt>, null>,
+    trigger?: HTMLElement,
+  ) {
+    if (!prompt()) {
+      promptTrigger = trigger ?? (document.activeElement as HTMLElement | null);
+    }
+    setPrompt(next);
+  }
+
+  function closePrompt() {
+    setPrompt(null);
   }
 
   function resolveDiscardPrompt(ok: boolean) {
     const current = prompt();
     if (current?.kind !== "discard") return;
-    setPrompt(null);
+    closePrompt();
     current.resolve(ok);
   }
 
   onMount(() => {
     loadSettings();
+    void invoke<PluginManifest[]>("get_plugins")
+      .then((plugins) => {
+        setPluginSearchTerms(
+          plugins.flatMap((p) => [
+            p.name,
+            p.id,
+            p.description,
+            ...p.keywords,
+            ...p.settings.flatMap((s) => [
+              s.label,
+              s.key,
+              ...s.options.flatMap((o) => [o.label, o.value]),
+            ]),
+          ]),
+        );
+      })
+      .catch((err) => console.error("[settings] plugin search index", err));
     let disposed = false;
     let unlistenFocus: (() => void) | undefined;
     void getCurrentWindow()
@@ -315,6 +396,47 @@ export default function Settings() {
     }
   });
 
+  // Dirty is a comparison against the load snapshot, not a one-way latch:
+  // changing a value and then changing it back disables Save and removes the
+  // close prompt again.
+  createEffect(() => {
+    const s = settings();
+    const base = baseline();
+    if (!s || !base) {
+      setDirty(false);
+      return;
+    }
+    setDirty(
+      Object.keys(
+        diffSettings(
+          base as unknown as Record<string, unknown>,
+          s as unknown as Record<string, unknown>,
+        ),
+      ).length > 0,
+    );
+  });
+
+  // Modal focus contract: background regions are inert, focus starts on the
+  // safe "continue editing" action, and closing returns it to the trigger.
+  let promptWasOpen = false;
+  createEffect(() => {
+    const open = !!prompt();
+    for (const el of [topbarEl, contentEl, footerEl]) {
+      if (!el) continue;
+      el.toggleAttribute("inert", open);
+      if (open) el.setAttribute("aria-hidden", "true");
+      else el.removeAttribute("aria-hidden");
+    }
+    if (open) {
+      requestAnimationFrame(() => promptCancelButton?.focus());
+    } else if (promptWasOpen) {
+      const trigger = promptTrigger;
+      promptTrigger = null;
+      requestAnimationFrame(() => trigger?.focus());
+    }
+    promptWasOpen = open;
+  });
+
   // Switching sections replaces the body's card tree; re-measure after layout
   // settles so the fading edge reflects the new scroll range.
   createEffect(() => {
@@ -324,7 +446,8 @@ export default function Settings() {
     requestAnimationFrame(scheduleBodyCue);
   });
 
-  function showToast(text: string) {
+  function showToast(text: string, ok = true) {
+    setToastOk(ok);
     setToast(text);
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => setToast(null), 2000);
@@ -336,9 +459,52 @@ export default function Settings() {
     if (!needle) return SECTIONS;
     return SECTIONS.filter((s) => {
       if (t(SECTION_LABELS[s]).toLowerCase().includes(needle)) return true;
+      if (
+        s === "plugins" &&
+        pluginSearchTerms().some((term) => term.toLowerCase().includes(needle))
+      ) {
+        return true;
+      }
       return SECTION_SEARCH_KEYS[s].some((key) =>
         t(key).toLowerCase().includes(needle)
       );
+    });
+  });
+
+  /** Only pass a query into the plugin pane when it came from plugin-specific
+   * data. Searching the section name "Plugins" should show the whole manager,
+   * not an empty filter. */
+  const pluginSearchQuery = createMemo(() => {
+    const q = query().trim();
+    if (!q) return "";
+    const needle = q.toLowerCase();
+    return pluginSearchTerms().some((term) => term.toLowerCase().includes(needle))
+      ? q
+      : "";
+  });
+
+  // The section list is already filtered semantically; once it renders, move
+  // the viewport to the first row/hint whose visible text contains the query
+  // and mark it, instead of leaving the user to scan a whole card.
+  createEffect(() => {
+    query();
+    settings();
+    matchingSections();
+    searchHitEl?.classList.remove("settings-search-hit");
+    searchHitEl = null;
+    const needle = query().trim().toLowerCase();
+    if (!needle || !bodyEl) return;
+    requestAnimationFrame(() => {
+      const candidates = bodyEl?.querySelectorAll<HTMLElement>(
+        ".settings-row-between, .settings-hint, .settings-blocktitle, .plg-card",
+      );
+      const hit = Array.from(candidates ?? []).find((el) =>
+        el.textContent?.toLowerCase().includes(needle),
+      );
+      if (!hit) return;
+      searchHitEl = hit;
+      hit.classList.add("settings-search-hit");
+      hit.scrollIntoView({ block: "nearest" });
     });
   });
 
@@ -347,7 +513,6 @@ export default function Settings() {
     setSettings((s) =>
       s ? { ...s, appearance: { ...s.appearance, ...patch } } : s
     );
-    setDirty(true);
   }
 
   /** Update the working copy of hotkeys and mark the settings dirty. */
@@ -355,13 +520,11 @@ export default function Settings() {
     setSettings((s) =>
       s ? { ...s, hotkeys: { ...s.hotkeys, ...patch } } : s
     );
-    setDirty(true);
   }
 
   /** Update the working copy of the index and mark the settings dirty. */
   function updateIndex(patch: Partial<SettingsData["index"]>) {
     setSettings((s) => (s ? { ...s, index: { ...s.index, ...patch } } : s));
-    setDirty(true);
   }
 
   /** Update the working copy of the clipboard settings and mark dirty. */
@@ -369,7 +532,6 @@ export default function Settings() {
     setSettings((s) =>
       s ? { ...s, clipboard: { ...s.clipboard, ...patch } } : s
     );
-    setDirty(true);
   }
 
   /** Update the working copy of the 自动化 settings and mark dirty. */
@@ -377,7 +539,6 @@ export default function Settings() {
     setSettings((s) =>
       s ? { ...s, automation: { ...s.automation, ...patch } } : s
     );
-    setDirty(true);
   }
 
   /** Re-read the persisted settings (after import / restore backup) and clear dirty. */
@@ -385,12 +546,11 @@ export default function Settings() {
     loadSettings(true);
   }
 
-  /** 「恢复默认设置」— reset the working copy only (two-step, like the Flutter
+  /** 「恢复应用默认值」— reset the working copy only (two-step, like the Flutter
    * settings); nothing is written until 保存并应用. */
   function restoreDefaults() {
     setSettings(structuredClone(DEFAULT_SETTINGS));
-    setDirty(true);
-    showToast(t("settingsRestoreDefault"));
+    showToast(t("settingsRestoreAppDefaultsHint"));
   }
 
   /** Persist the draft as a minimal patch and apply it. Returns false when
@@ -398,7 +558,7 @@ export default function Settings() {
   async function saveDraft(): Promise<boolean> {
     const s = settings();
     if (!s) return false;
-    const base = baseline ?? structuredClone(s);
+    const base = baseline() ?? structuredClone(s);
     const patch = diffSettings(
       base as unknown as Record<string, unknown>,
       s as unknown as Record<string, unknown>
@@ -407,12 +567,14 @@ export default function Settings() {
       if (Object.keys(patch).length > 0) {
         await invoke("save_settings_patch", { patch });
       }
-      baseline = structuredClone(s);
-      setDirty(false);
+      batch(() => {
+        setBaseline(structuredClone(s));
+        setDirty(false);
+      });
     } catch {
       // Leave the window and dirty state intact so the user can retry after
       // fixing the underlying write/permission problem.
-      showToast(t("settingsSaveFailed"));
+      showToast(t("settingsSaveFailed"), false);
       return false;
     }
     return true;
@@ -429,7 +591,7 @@ export default function Settings() {
     setPromptBusy(true);
     try {
       if (await saveDraft()) {
-        setPrompt(null);
+        closePrompt();
         await closeWindow();
       }
     } finally {
@@ -438,11 +600,11 @@ export default function Settings() {
   }
 
   async function discardFromClosePrompt() {
-    setPrompt(null);
+    closePrompt();
     // Discard the draft by re-reading the persisted settings on the next
     // open; the window itself is only hidden here.
     setDirty(false);
-    baseline = null;
+    setBaseline(null);
     await closeWindow();
   }
 
@@ -461,13 +623,46 @@ export default function Settings() {
     }
   }
 
+  function dismissPrompt() {
+    if (prompt()?.kind === "close") closePrompt();
+    else resolveDiscardPrompt(false);
+  }
+
+  function onPromptKeyDown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      dismissPrompt();
+      return;
+    }
+    if (e.key !== "Tab" || !dialogEl) return;
+    const focusable = Array.from(
+      dialogEl.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !dialogEl.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !dialogEl.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <div class="settings">
       {/* The frameless window's chrome row: dragging from the empty space
           (direct clicks only — input/buttons block it, per Tauri's
           data-tauri-drag-region semantics, which also owns the built-in
           double-click maximize) + the window-control cluster. */}
-      <header class="settings-topbar" data-tauri-drag-region>
+      <header
+        class="settings-topbar"
+        data-tauri-drag-region
+        ref={(el) => (topbarEl = el)}
+      >
         <span class="settings-appname" data-tauri-drag-region>Lume</span>
         <div class="settings-search">
           <img class="settings-search-icon" src={searchIcon} alt="" draggable={false} />
@@ -485,15 +680,47 @@ export default function Settings() {
           onClose={requestClose}
         />
       </header>
-      <div class="settings-content">
+      <div class="settings-content" ref={(el) => (contentEl = el)}>
         <aside class="settings-sidebar" role="tablist" aria-label={t("settings")}>
           <For each={matchingSections()}>
             {(s) => (
               <button
                 class="settings-nav"
                 classList={{ active: !query() && section() === s }}
+                type="button"
+                id={`settings-tab-${s}`}
+                data-section={s}
                 role="tab"
                 aria-selected={!query() && section() === s}
+                aria-controls="settings-active-panel"
+                tabIndex={
+                  (!query() && section() === s) ||
+                  (!!query() && matchingSections()[0] === s)
+                    ? 0
+                    : -1
+                }
+                onKeyDown={(e) => {
+                  const list = matchingSections();
+                  const current = list.indexOf(s);
+                  let next = -1;
+                  if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                    next = (current + 1) % list.length;
+                  } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                    next = (current - 1 + list.length) % list.length;
+                  } else if (e.key === "Home") {
+                    next = 0;
+                  } else if (e.key === "End") {
+                    next = list.length - 1;
+                  }
+                  if (next < 0) return;
+                  e.preventDefault();
+                  const target = list[next];
+                  setSection(target);
+                  setQuery("");
+                  requestAnimationFrame(() =>
+                    document.getElementById(`settings-tab-${target}`)?.focus(),
+                  );
+                }}
                 onClick={() => {
                   setSection(s);
                   setQuery("");
@@ -505,13 +732,54 @@ export default function Settings() {
             )}
           </For>
         </aside>
-        <main class="settings-main">
+        <main
+          class="settings-main"
+          id="settings-active-panel"
+          role="tabpanel"
+          aria-labelledby={query() ? undefined : `settings-tab-${section()}`}
+          aria-label={query() ? t("settingsSearchResults") : undefined}
+        >
           <div
             class="settings-body"
             ref={(el) => (bodyEl = el)}
             onScroll={scheduleBodyCue}
           >
-            <Show when={settings()}>
+            <Show
+              when={settings()}
+              fallback={
+                <div class="settings-load-state">
+                  <Show
+                    when={loadError()}
+                    fallback={
+                      <span class="settings-hint" role="status">
+                        {t(loading() ? "settingsLoading" : "settingsLoadFailed")}
+                      </span>
+                    }
+                  >
+                    <span class="settings-error" role="alert">{loadError()}</span>
+                    <button
+                      class="settings-action"
+                      type="button"
+                      onClick={() => loadSettings(true)}
+                    >
+                      {t("settingsRetry")}
+                    </button>
+                  </Show>
+                </div>
+              }
+            >
+              <Show when={loadError()}>
+                <div class="settings-load-error" role="alert">
+                  <span>{loadError()}</span>
+                  <button
+                    class="settings-action"
+                    type="button"
+                    onClick={() => loadSettings(true)}
+                  >
+                    {t("settingsRetry")}
+                  </button>
+                </div>
+              </Show>
               <Show
                 when={!query()}
                 fallback={
@@ -537,6 +805,7 @@ export default function Settings() {
                             onUpdateAutomation={updateAutomation}
                             onReload={reloadSettings}
                             confirmDiscard={confirmDiscardDraft}
+                            searchQuery={pluginSearchQuery()}
                           />
                         </div>
                       )}
@@ -554,6 +823,7 @@ export default function Settings() {
                   onUpdateAutomation={updateAutomation}
                   onReload={reloadSettings}
                   confirmDiscard={confirmDiscardDraft}
+                  searchQuery={pluginSearchQuery()}
                 />
               </Show>
             </Show>
@@ -566,12 +836,19 @@ export default function Settings() {
           </Show>
         </main>
       </div>
-      <footer class="settings-footer">
-        <button class="settings-action" onClick={restoreDefaults}>
+      <footer class="settings-footer" ref={(el) => (footerEl = el)}>
+        <span class="settings-footer-hint">{t("settingsRestoreAppDefaultsHint")}</span>
+        <button
+          class="settings-action"
+          type="button"
+          title={t("settingsRestoreAppDefaultsHint")}
+          onClick={restoreDefaults}
+        >
           {t("settingsRestoreDefault")}
         </button>
         <button
           class="settings-action settings-action-primary"
+          type="button"
           disabled={!dirty()}
           onClick={() => void saveAndClose()}
         >
@@ -579,26 +856,32 @@ export default function Settings() {
         </button>
       </footer>
       <Show when={toast()}>
-        <div class="settings-toast" role="status">{toast()}</div>
+        <div
+          class="settings-toast"
+          classList={{ error: !toastOk() }}
+          role={toastOk() ? "status" : "alert"}
+        >
+          {toast()}
+        </div>
       </Show>
       <Show when={prompt()}>
         <div
           class="settings-confirm-overlay"
-          onClick={() => {
-            if (prompt()?.kind === "close") setPrompt(null);
-            else resolveDiscardPrompt(false);
-          }}
+          onClick={dismissPrompt}
         />
         <div
           class="settings-confirm"
+          ref={(el) => (dialogEl = el)}
           role="dialog"
           aria-modal="true"
           aria-labelledby="settings-confirm-title"
+          aria-describedby="settings-confirm-hint"
+          onKeyDown={onPromptKeyDown}
         >
           <p class="settings-confirm-title" id="settings-confirm-title">
             {t(prompt()?.kind === "close" ? "settingsUnsavedTitle" : "settingsDiscardTitle")}
           </p>
-          <p class="settings-confirm-hint">
+          <p class="settings-confirm-hint" id="settings-confirm-hint">
             {t(prompt()?.kind === "close" ? "settingsUnsavedHint" : "settingsDiscardHint")}
           </p>
           <div class="settings-confirm-actions">
@@ -623,10 +906,11 @@ export default function Settings() {
             </button>
             <button
               class="settings-action settings-action-primary"
+              type="button"
+              ref={(el) => (promptCancelButton = el)}
               disabled={promptBusy()}
               onClick={() => {
-                if (prompt()?.kind === "close") setPrompt(null);
-                else resolveDiscardPrompt(false);
+                dismissPrompt();
               }}
             >
               {t(prompt()?.kind === "close" ? "settingsContinueEditing" : "cancel")}
@@ -651,6 +935,7 @@ function SectionBody(props: {
   onUpdateAutomation: (patch: Partial<SettingsData["automation"]>) => void;
   onReload: () => void;
   confirmDiscard: () => Promise<boolean>;
+  searchQuery: string;
 }) {
   return (
     <Switch>
@@ -680,7 +965,7 @@ function SectionBody(props: {
         <AutomationPane settings={props.settings} onChange={props.onUpdateAutomation} />
       </Match>
       <Match when={props.section === "plugins"}>
-        <PluginsPane />
+        <PluginsPane searchQuery={props.searchQuery} />
       </Match>
       <Match when={props.section === "about"}>
         <AboutPane />

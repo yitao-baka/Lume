@@ -1,5 +1,5 @@
 //! 「系统」页 — auto-start, the LumeSVC service and import/export (with the
-//! backup restore that the Flutter settings dropped). 恢复默认设置 lives in
+//! backup restore that the Flutter settings dropped). 恢复应用默认值 lives in
 //! the footer now (two-step: reset working copy → 保存并应用).
 
 import { createSignal, Show, onCleanup, onMount } from "solid-js";
@@ -7,7 +7,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { t } from "../i18n";
 import type { SettingsData } from "./types";
-import { Row, Toggle } from "./controls";
+import { ImmediateBadge, Row, Toggle } from "./controls";
+import { settingsError } from "./errors";
 
 /** Status of the LumeSVC service as reported by the Rust `svc_status` command. */
 interface SvcStatus {
@@ -34,6 +35,7 @@ function ConfirmButton(props: {
   label: string;
   confirm?: boolean;
   onAction: () => Promise<void>;
+  disabled?: boolean;
 }) {
   const [arming, setArming] = createSignal(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -49,7 +51,12 @@ function ConfirmButton(props: {
     await props.onAction();
   }
   return (
-    <button class="settings-action" onClick={() => void handle()}>
+    <button
+      class="settings-action"
+      type="button"
+      disabled={props.disabled}
+      onClick={() => void handle()}
+    >
       {props.confirm && arming() ? t("settingsConfirmAction") : props.label}
     </button>
   );
@@ -94,17 +101,17 @@ export default function SystemPane(props: {
       try {
         setAutostart(await invoke<boolean>("autostart_get"));
       } catch (err) {
-        console.error("autostart_get failed", err);
+        setAutostartMsg({ ok: false, text: settingsError(err) });
       }
       try {
         setSvc(await invoke<SvcStatus>("svc_status"));
       } catch (err) {
-        setSvcMsg({ ok: false, text: String(err) });
+        setSvcMsg({ ok: false, text: settingsError(err) });
       }
       try {
         setAgent(await invoke<AgentStatus>("agent_status"));
       } catch (err) {
-        setAgentMsg({ ok: false, text: String(err) });
+        setAgentMsg({ ok: false, text: settingsError(err) });
       }
     })();
   });
@@ -115,54 +122,80 @@ export default function SystemPane(props: {
       setAutostart(v);
       setAutostartMsg({ ok: true, text: t(v ? "settingsAutostartOn" : "settingsAutostartOff") });
     } catch (err) {
-      setAutostartMsg({ ok: false, text: String(err) });
+      setAutostartMsg({ ok: false, text: settingsError(err) });
     }
   }
 
-  async function toggleService() {
+  type ServiceAction = "install" | "uninstall" | "start" | "restart";
+
+  async function waitForService(
+    expected: (status: SvcStatus) => boolean,
+  ): Promise<SvcStatus> {
+    for (let i = 0; i < 160; i++) {
+      try {
+        const next = await invoke<SvcStatus>("svc_status");
+        setSvc(next);
+        if (expected(next)) return next;
+      } catch {
+        // SCM can briefly reject queries while the service entry is changing;
+        // keep polling until the stable state or timeout.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error("service state did not settle");
+  }
+
+  async function runServiceAction(action: ServiceAction) {
     if (svcBusy()) return;
     setSvcBusy(true);
-    setSvcMsg(null);
-    const installing = !svc().installed;
-    let accepted = false;
+    setSvcMsg({
+      ok: true,
+      text: t(
+        action === "install"
+          ? "settingsServiceInstalling"
+          : action === "uninstall"
+            ? "settingsServiceUninstalling"
+            : action === "start"
+              ? "settingsServiceStarting"
+              : "settingsServiceRestarting",
+      ),
+    });
     try {
-      // Blocks through the UAC prompt; returns "canceled" when dismissed.
-      await invoke(installing ? "svc_install" : "svc_uninstall");
-      accepted = true;
+      await invoke(`svc_${action}`);
+      const expected =
+        action === "uninstall"
+          ? (s: SvcStatus) => !s.installed
+          : action === "install"
+            ? (s: SvcStatus) => s.installed && s.running
+            : (s: SvcStatus) => s.installed && s.running;
+      await waitForService(expected);
       setSvcMsg({
         ok: true,
-        text: t(installing ? "settingsServiceInstalling" : "settingsServiceUninstalling"),
+        text: t(
+          action === "install"
+            ? "settingsServiceInstalled"
+            : action === "uninstall"
+              ? "settingsServiceUninstalled"
+              : action === "start"
+                ? "settingsServiceStarted"
+                : "settingsServiceRestarted",
+        ),
       });
     } catch (err) {
-      const msg = String(err);
       setSvcMsg({
         ok: false,
-        text: msg.includes("canceled") ? t("settingsServiceUacCanceled") : msg,
+        text: settingsError(
+          err,
+          action === "install"
+            ? "settingsServiceInstallFailed"
+            : action === "uninstall"
+              ? "settingsServiceUninstallFailed"
+              : "settingsServiceActionFailed",
+        ),
       });
+    } finally {
+      setSvcBusy(false);
     }
-    // The elevated lume-svc.exe works after UAC is accepted. Re-query and
-    // report a definitive result so the transient "registering/uninstalling"
-    // message does not linger on screen.
-    setTimeout(() => {
-      void (async () => {
-        try {
-          const s = await invoke<SvcStatus>("svc_status");
-          setSvc(s);
-          if (accepted) {
-            const ok = installing ? s.installed && s.running : !s.installed;
-            setSvcMsg({
-              ok,
-              text: installing
-                ? t(ok ? "settingsServiceInstalled" : "settingsServiceInstallFailed")
-                : t(ok ? "settingsServiceUninstalled" : "settingsServiceUninstallFailed"),
-            });
-          }
-        } catch (err) {
-          setSvcMsg({ ok: false, text: String(err) });
-        }
-        setSvcBusy(false);
-      })();
-    }, 2000);
   }
 
   const svcText = () => {
@@ -184,44 +217,47 @@ export default function SystemPane(props: {
     setAgentBusy(true);
     setAgentMsg(null);
     const installing = !agent().installed;
-    let accepted = false;
     try {
       // Blocks through the UAC prompt; returns "canceled" when dismissed.
       await invoke(installing ? "agent_install" : "agent_uninstall");
-      accepted = true;
       setAgentMsg({
         ok: true,
         text: t(installing ? "settingsAgentInstalling" : "settingsAgentUninstalling"),
       });
     } catch (err) {
-      const msg = String(err);
       setAgentMsg({
         ok: false,
-        text: msg.includes("canceled") ? t("settingsAgentUacCanceled") : msg,
+        text: settingsError(
+          err,
+          installing ? "settingsAgentInstallFailed" : "settingsAgentUninstallFailed",
+        ),
       });
+      setAgentBusy(false);
+      return;
     }
-    // The elevated lume-agent.exe works after UAC is accepted. Re-query and
-    // report a definitive result so the transient message does not linger.
-    setTimeout(() => {
-      void (async () => {
-        try {
-          const a = await invoke<AgentStatus>("agent_status");
-          setAgent(a);
-          if (accepted) {
-            const ok = installing ? a.installed : !a.installed;
-            setAgentMsg({
-              ok,
-              text: installing
-                ? t(ok ? "settingsAgentInstalled" : "settingsAgentInstallFailed")
-                : t(ok ? "settingsAgentUninstalled" : "settingsAgentUninstallFailed"),
-            });
-          }
-        } catch (err) {
-          setAgentMsg({ ok: false, text: String(err) });
-        }
-        setAgentBusy(false);
-      })();
-    }, 2000);
+    // agent_install/agent_uninstall already wait for the elevated worker's
+    // real result, so a single status read is the stable value here.
+    try {
+      const a = await invoke<AgentStatus>("agent_status");
+      setAgent(a);
+      const ok = installing ? a.installed : !a.installed;
+      setAgentMsg({
+        ok,
+        text: t(
+          installing
+            ? ok
+              ? "settingsAgentInstalled"
+              : "settingsAgentInstallFailed"
+            : ok
+              ? "settingsAgentUninstalled"
+              : "settingsAgentUninstallFailed",
+        ),
+      });
+    } catch (err) {
+      setAgentMsg({ ok: false, text: settingsError(err) });
+    } finally {
+      setAgentBusy(false);
+    }
   }
 
   async function importSettings() {
@@ -236,7 +272,7 @@ export default function SystemPane(props: {
       setStatus({ ok: true, text: t("settingsImported") });
       props.onReload();
     } catch (err) {
-      setStatus({ ok: false, text: String(err) });
+      setStatus({ ok: false, text: settingsError(err, "settingsImportFailed") });
     }
   }
 
@@ -250,7 +286,7 @@ export default function SystemPane(props: {
       await invoke("export_settings", { targetPath: file });
       setStatus({ ok: true, text: t("settingsExported") });
     } catch (err) {
-      setStatus({ ok: false, text: String(err) });
+      setStatus({ ok: false, text: settingsError(err, "settingsExportFailed") });
     }
   }
 
@@ -261,55 +297,102 @@ export default function SystemPane(props: {
       setStatus({ ok: true, text: t("settingsRestored") });
       props.onReload();
     } catch (err) {
-      setStatus({ ok: false, text: String(err) });
+      setStatus({ ok: false, text: settingsError(err, "settingsRestoreFailed") });
     }
   }
 
   return (
     <>
-      <h2 class="settings-grouptitle">{t("settingsAutostart")}</h2>
+      <div class="settings-title-row">
+        <h2 class="settings-grouptitle">{t("settingsAutostart")}</h2>
+        <ImmediateBadge />
+      </div>
       <div class="settings-group">
         <Row label={t("settingsAutostart")}>
-          <Toggle checked={autostart()} onChange={(v) => void toggleAutostart(v)} />
+          <Toggle
+            checked={autostart()}
+            label={t("settingsAutostart")}
+            onChange={(v) => void toggleAutostart(v)}
+          />
         </Row>
         <Show when={autostartMsg()}>
           <span
             classList={{ "settings-status": true, error: !autostartMsg()!.ok }}
+            role={autostartMsg()!.ok ? "status" : "alert"}
           >
             {autostartMsg()!.text}
           </span>
         </Show>
       </div>
 
-      <h2 class="settings-grouptitle">{t("settingsSystemService")}</h2>
+      <div class="settings-title-row">
+        <h2 class="settings-grouptitle">{t("settingsSystemService")}</h2>
+        <ImmediateBadge />
+      </div>
       <div class="settings-group">
         <div class="settings-row-between">
-          <span class="settings-path">{svcText()}</span>
-          <button
-            class="settings-action"
-            disabled={svcBusy()}
-            onClick={() => void toggleService()}
-          >
-            {svc().installed
-              ? t("settingsUninstallService")
-              : t("settingsRegisterService")}
-          </button>
+          <span class="settings-path" role="status" aria-live="polite">{svcText()}</span>
+          <div class="settings-row settings-service-actions">
+            <Show
+              when={svc().installed}
+              fallback={
+                <button
+                  class="settings-action"
+                  type="button"
+                  disabled={svcBusy()}
+                  onClick={() => void runServiceAction("install")}
+                >
+                  {t("settingsRegisterService")}
+                </button>
+              }
+            >
+              <Show when={!svc().running}>
+                <button
+                  class="settings-action"
+                  type="button"
+                  disabled={svcBusy()}
+                  onClick={() => void runServiceAction("start")}
+                >
+                  {t("settingsStartService")}
+                </button>
+              </Show>
+              <button
+                class="settings-action"
+                type="button"
+                disabled={svcBusy()}
+                onClick={() => void runServiceAction("restart")}
+              >
+                {t("settingsRestartService")}
+              </button>
+              <ConfirmButton
+                label={t("settingsUninstallService")}
+                confirm
+                disabled={svcBusy()}
+                onAction={() => runServiceAction("uninstall")}
+              />
+            </Show>
+          </div>
         </div>
         <Show when={svcMsg()}>
           <span
             classList={{ "settings-status": true, error: !svcMsg()!.ok }}
+            role={svcMsg()!.ok ? "status" : "alert"}
           >
             {svcMsg()!.text}
           </span>
         </Show>
       </div>
 
-      <h2 class="settings-grouptitle">{t("settingsAgentGroup")}</h2>
+      <div class="settings-title-row">
+        <h2 class="settings-grouptitle">{t("settingsAgentGroup")}</h2>
+        <ImmediateBadge />
+      </div>
       <div class="settings-group">
         <div class="settings-row-between">
-          <span class="settings-path">{agentText()}</span>
+          <span class="settings-path" role="status" aria-live="polite">{agentText()}</span>
           <button
             class="settings-action"
+            type="button"
             disabled={agentBusy()}
             onClick={() => void toggleAgent()}
           >
@@ -322,13 +405,17 @@ export default function SystemPane(props: {
         <Show when={agentMsg()}>
           <span
             classList={{ "settings-status": true, error: !agentMsg()!.ok }}
+            role={agentMsg()!.ok ? "status" : "alert"}
           >
             {agentMsg()!.text}
           </span>
         </Show>
       </div>
 
-      <h2 class="settings-grouptitle">{t("settingsImportExport")}</h2>
+      <div class="settings-title-row">
+        <h2 class="settings-grouptitle">{t("settingsImportExport")}</h2>
+        <ImmediateBadge />
+      </div>
       <div class="settings-group">
         <div class="settings-row">
           <ConfirmButton label={t("settingsExport")} onAction={exportSettings} />
@@ -338,6 +425,7 @@ export default function SystemPane(props: {
         <Show when={status()}>
           <span
             classList={{ "settings-status": true, error: !status()!.ok }}
+            role={status()!.ok ? "status" : "alert"}
           >
             {status()!.text}
           </span>

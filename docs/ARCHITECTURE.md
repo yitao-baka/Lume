@@ -94,6 +94,9 @@ reports the strip; see docs/ROADMAP_HISTORY.md for the pixel measurements.
 - **Index**: `AppIndex` state holds in-memory mirrors of the System32 and
   Desktop/user entries loaded from the `cache.rs` SQLite DBs (see Data
   management), refreshed at startup and hourly (rule: never block startup).
+  Manual `refresh_index` is an async command using `spawn_blocking`; it
+  resolves only after the scan/cache write and returns the real error, so the
+  settings button cannot report success at task start.
 - **Search**: `search_apps(query)` scores each entry with a case-insensitive
   fuzzy subsequence matcher (`fuzzy_score`). Rewards prefix, word-boundary and
   consecutive-run matches; penalizes name length. Chinese names additionally
@@ -332,6 +335,15 @@ normal save (window geometry, hotkey, dedup index, index refresh + watcher,
 plugin dev watcher, `settings-applied`), so file replacement is never
 persist-only.
 
+The window's dirty flag is recomputed from `diffSettings(baseline, draft)` on
+every edit, so reverting a value clears Save and the close prompt. Plugin
+enable/disable, developer/trust switches, declarative plugin settings,
+autostart and system integration actions remain immediate light writes; their
+groups carry an “immediate effect” badge and the draft-discard prompt says they
+will not be rolled back. `set_plugin_dev_mode` clears `trust_all` on every
+transition, requiring a fresh acknowledgement after developer mode is turned
+back on.
+
 Two distinct "missing" cases, and they resolve differently — worth knowing
 before adding a field:
 
@@ -530,7 +542,12 @@ before adding a field:
     blocker allows the native Windows edit set (Ctrl+Backspace, Ctrl+Home/End,
     word navigation, …) inside text fields.
 - The settings window reuses the same build via the window label
-  (`src/settings/`, grouped-card layout — see `docs/SETTINGS.md`); the
+  (`src/settings/`, grouped-card layout — see `docs/SETTINGS.md`). Its search
+  indexes static localized labels plus live plugin manifest/setting metadata;
+  the dirty flag is baseline-diff based, the confirm dialog owns a focus trap
+  with inert background, and all shared switches/chips expose accessible names
+  and selected state. `setLocale()` also synchronizes `documentElement.lang`.
+  The
   satellite preview is its own entry (`src/preview.tsx`). Its compact header
   names the current file/content type and owns the in-window `close_preview`
   action; the window itself stays non-activating.

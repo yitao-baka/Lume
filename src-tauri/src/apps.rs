@@ -72,12 +72,29 @@ impl AppIndex {
         }
     }
 
-    /// Differentially refresh the user cache and reload its entries. Called at
-    /// startup and on the hourly timer.
+    /// Differentially refresh the user cache and reload its entries. Returns
+    /// the actual scan/write result so the settings button can report success
+    /// only after the background work really finished.
+    pub fn refresh_user_checked(&self, settings: &Settings) -> Result<(), String> {
+        match cache::refresh_user_db(settings) {
+            Ok(entries) => {
+                *self.user.lock().unwrap() = Some(entries);
+                Ok(())
+            }
+            Err(e) => {
+                if self.user.lock().unwrap().is_none() {
+                    if let Ok(entries) = cache::load_user_entries() {
+                        *self.user.lock().unwrap() = Some(entries);
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Fire-and-forget refresh used by startup and the hourly timer.
     pub fn refresh_user(&self, settings: &Settings) {
-        if let Ok(entries) = cache::refresh_user_db(settings) {
-            *self.user.lock().unwrap() = Some(entries);
-        } else if self.user.lock().unwrap().is_none() {
+        if self.refresh_user_checked(settings).is_err() && self.user.lock().unwrap().is_none() {
             // Refresh failed on the very first load — at least read whatever
             // is on disk so search has something.
             if let Ok(entries) = cache::load_user_entries() {
@@ -173,17 +190,20 @@ fn filter_files(apps: &[AppEntry], query: &str) -> Vec<AppEntry> {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Manually refresh the index immediately (Desktop + user dirs + Start Menu).
-/// Runs on a background thread so the settings window never blocks.
+/// Manually refresh the index (Desktop + user dirs + Start Menu). The command
+/// resolves only after the blocking scan and cache write complete, so the
+/// settings page cannot announce success early; `spawn_blocking` keeps the
+/// WebView IPC thread responsive throughout.
 #[tauri::command]
-pub fn refresh_index(app: tauri::AppHandle) -> Result<(), String> {
-    crate::dirwatch::rebuild(&app);
-    std::thread::spawn(move || {
+pub async fn refresh_index(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::dirwatch::rebuild(&app);
         let index = app.state::<AppIndex>();
         let settings = app.state::<SettingsState>().current();
-        index.refresh_user(&settings);
-    });
-    Ok(())
+        index.refresh_user_checked(&settings)
+    })
+    .await
+    .map_err(|e| format!("index refresh worker panicked: {e}"))?
 }
 
 /// Search the enabled index directories for files matching `query`.

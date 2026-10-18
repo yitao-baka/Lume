@@ -42,6 +42,17 @@ minimum settings geometry and hit testing, mode-bar overflow, the unknown-icon
 fallback, the opt-in circular icon mask, truncation tooltips, scroll fades, and
 the satellite preview title/close path.
 
+Settings interaction/accessibility regressions are covered by
+`node scripts/cdp_settings_ux_audit_verify.mjs`. It opens the embedded debug
+settings window and checks document language, switch/chip semantics, tablist
+arrow navigation, baseline-diff dirty state, confirm-dialog focus trap/inert/
+Esc restoration, visible-label and plugin-setting search, keyboard plugin-card
+expansion, trust-all reset, single-key mode recording, blur/click cancellation,
+user-index validation/normalization, completion-gated index refresh,
+automation duplicate/delay feedback, clipboard ignore normalization, immediate
+write labeling, and click-target floors. The probe discards its draft and
+restores temporary developer/trust state.
+
 ## Manual verification
 
 Run the app:
@@ -237,28 +248,32 @@ dev URL instead.
    to the exe.
 2. **Register service** — 设置→系统→「注册服务」→ accept UAC → `sc query
    LumeSVC` shows RUNNING with start type AUTO; the button flips to
-   「卸载服务」 and the status line reads 服务运行中.
+   「启动服务 / 重启服务 / 卸载服务」 and the status line reads 服务运行中.
    `reg query HKLM\Software\Lume\DataDir` points at `%LOCALAPPDATA%\Lume`.
-3. **UAC cancel** — click 注册服务 then choose 否 in the prompt → the UI shows
+3. **Stopped recovery** — stop LumeSVC in `services.msc`, reopen 设置→系统:
+   the status reads 服务已安装，未运行 and 「启动服务」 appears. Accept UAC and
+   verify the status changes to 服务运行中 only after SCM reports RUNNING.
+   Repeat with 「重启服务」; the status must settle back to RUNNING.
+4. **UAC cancel** — click 注册服务 then choose 否 in the prompt → the UI shows
    操作已取消 and the state is unchanged.
-4. **File-search service** — with the service running, query a file that is
+5. **File-search service** — with the service running, query a file that is
    not in the local index. With Everything stopped, Lume should answer through
    `\\.\pipe\LumeSVC` (the self-hosted USN/MFT backend) and return the path.
    The launcher's own cache refresh remains independent of the service.
-5. **Portable / no service** — without the service, while Lume runs, change a
+6. **Portable / no service** — without the service, while Lume runs, change a
    Desktop file and it appears after ~one interval (in-process loop). Behavior
    is identical with or without the service registered.
-6. **Run as administrator** — right-click a grid or pinned-bar app →
+7. **Run as administrator** — right-click a grid or pinned-bar app →
    「以管理员身份启动」→ UAC → the target runs elevated (verify with `whoami`
    in a launched cmd.exe). Dismissing the UAC prompt neither crashes nor hides
    the launcher. Note the `.lnk` + runas behavior for each target type.
-7. **Auto-start** — enable 「开机自启动」 → `reg query
+8. **Auto-start** — enable 「开机自启动」 → `reg query
    HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Lume` shows the quoted
    exe path; after a reboot/logon Lume starts by itself. Disabling deletes the
    value.
-8. **Dev loopback** — `lume-svc.exe --foreground` starts the service in a
+9. **Dev loopback** — `lume-svc.exe --foreground` starts the service in a
    console (Ctrl+C quits) and exposes `\\.\pipe\LumeSVC` for `search`/`status`.
-9. **Bundle** — `pnpm run package:zip` runs the release Tauri build and
+10. **Bundle** — `pnpm run package:zip` runs the release Tauri build and
    assembles `lume.exe` + `lume-svc.exe` + `lume-agent.exe` + `languages/` +
    `res/icons/` into the portable zip under
    `src-tauri/target/release/bundle/zip/`.

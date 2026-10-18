@@ -4,6 +4,8 @@
 //! (docs/ROADMAP_HISTORY.md service iteration). Invocations:
 //! - `lume-svc.exe --install`    register + start (needs elevation, UAC)
 //! - `lume-svc.exe --uninstall`  stop + unregister (needs elevation, UAC)
+//! - `lume-svc.exe --start`      start an installed service (needs elevation)
+//! - `lume-svc.exe --restart`    stop + start an installed service (needs elevation)
 //! - `lume-svc.exe --foreground [--data-dir <path>]`  dev: run without SCM
 //! - `lume-svc.exe` (no args)    run as a service via the SCM dispatcher
 //!
@@ -17,6 +19,8 @@ fn main() {
     let result = match args.first().map(String::as_str) {
         Some("--install") => lume_lib::svc::install(),
         Some("--uninstall") => lume_lib::svc::uninstall(),
+        Some("--start") => lume_lib::svc::start(),
+        Some("--restart") => lume_lib::svc::restart(),
         Some("--foreground") => {
             let dir = args
                 .iter()

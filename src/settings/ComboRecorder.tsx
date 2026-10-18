@@ -27,6 +27,8 @@ export function ComboRecorder(props: {
   value: string;
   /** Shown on the button when `value` is empty and not recording. */
   placeholder: string;
+  /** Accessible name for the recorder (the visible text is the current key). */
+  label?: string;
   onCommit: (combo: string) => void;
 }) {
   const [recording, setRecording] = createSignal(false);
@@ -80,6 +82,8 @@ export function ComboRecorder(props: {
       <button
         class="settings-hotkey-btn"
         classList={{ active: recording() }}
+        type="button"
+        aria-label={props.label ?? props.placeholder}
         onClick={(e) => {
           // Focus explicitly: the keydown capture lives on the button, so it
           // must hold focus to receive the combination.
@@ -103,7 +107,7 @@ export function ComboRecorder(props: {
         {recording() ? t("hotkeyRecording") : props.value || props.placeholder}
       </button>
       <Show when={error()}>
-        <span class="settings-error">{error()}</span>
+        <span class="settings-error" role="alert">{error()}</span>
       </Show>
     </>
   );

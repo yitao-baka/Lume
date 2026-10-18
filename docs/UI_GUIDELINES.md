@@ -147,6 +147,27 @@ contrast-safe tiers.
   `F6` / `Shift+F6` cycles search box → mode bar → page control → settings,
   and every command control shows a visible `:focus-visible` outline.
 
+## Accessibility & targets
+
+- Every switch carries a non-empty accessible name derived from its visible
+  row label. Selectable option pills expose `aria-pressed`; range inputs have
+  labels; settings navigation uses tab/tabpanel relationships, roving
+  tabindex and arrow/Home/End navigation. The document `lang` follows the
+  resolved UI locale.
+- Confirm dialogs are real keyboard scopes: focus enters on the safe
+  “continue editing” action, background regions become `inert`, Tab and
+  Shift+Tab cycle inside, Esc dismisses, and focus returns to the trigger.
+- Plugin card headers are Enter/Space-expandable buttons with
+  `aria-expanded` and an `aria-controls` detail panel; their inner controls
+  remain independently reachable.
+- Immediate-write controls and groups carry a visible “immediate effect”
+  badge. The unsaved prompt explicitly says these values survive a draft
+  discard and uses scoped wording such as “discard unsaved draft”.
+- Click targets meet accessibility floors: switches are at least 24px high,
+  icon buttons at least 30px, and text links at least 24px high. Numeric
+  presets may reveal a free-form input without shrinking the preset hit
+  targets.
+
 ## Components
 
 - Every component should look modern and polished: clean hierarchy, restrained

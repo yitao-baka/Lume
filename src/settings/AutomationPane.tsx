@@ -10,13 +10,14 @@
 //! the wait after the window takes the foreground before the key is pressed,
 //! so slow-starting programs have time to build their UI.
 
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import type { SettingsData } from "./types";
 import { Row, Toggle } from "./controls";
 import { ComboRecorder } from "./ComboRecorder";
 import { ProgramPicker } from "./ProgramPicker";
+import { settingsError } from "./errors";
 import deleteIcon from "../../res/icons/delete.svg";
 import plusIcon from "../../res/icons/plus.svg";
 
@@ -34,23 +35,77 @@ const MAX_DELAY_MS = 60_000;
 
 type Action = SettingsData["automation"]["actions"][number];
 
-/** A compact 延迟触发 number field (milliseconds, clamped to the supported range). */
-function DelayInput(props: { value: number; onChange: (ms: number) => void }) {
+/** A compact 延迟触发 number field (milliseconds, clamped to the supported
+ * range). While editing, the raw string is preserved so clearing the field does
+ * not immediately become `0`; validation runs on blur / Enter. */
+function DelayInput(props: {
+  value: number;
+  onChange: (ms: number) => void;
+  label: string;
+  onValidityChange?: (valid: boolean) => void;
+}) {
+  const [text, setText] = createSignal(String(props.value));
+  const [editing, setEditing] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    if (!editing()) setText(String(props.value));
+  });
+
+  function commit() {
+    const raw = text().trim();
+    const n = Number(raw);
+    if (!raw || !Number.isFinite(n) || n < 0 || n > MAX_DELAY_MS) {
+      setError(t("autoDelayInvalid"));
+      props.onValidityChange?.(false);
+      return;
+    }
+    const value = Math.round(n);
+    setError(null);
+    props.onValidityChange?.(true);
+    setText(String(value));
+    props.onChange(value);
+  }
+
   return (
-    <span class="settings-delay" title={t("autoDelayTitle")}>
-      <input
-        class="settings-delay-input"
-        type="number"
-        min={0}
-        max={MAX_DELAY_MS}
-        step={50}
-        value={props.value}
-        onInput={(e) => {
-          const n = Math.round(e.currentTarget.valueAsNumber);
-          props.onChange(Number.isFinite(n) ? Math.min(Math.max(n, 0), MAX_DELAY_MS) : 0);
-        }}
-      />
-      <span class="settings-delay-unit">{t("autoDelayUnit")}</span>
+    <span class="settings-delay-wrap">
+      <span class="settings-delay" title={t("autoDelayTitle")}>
+        <input
+          class="settings-delay-input"
+          type="number"
+          min={0}
+          max={MAX_DELAY_MS}
+          step={50}
+          value={text()}
+          aria-label={props.label}
+          aria-invalid={!!error()}
+          onFocus={() => setEditing(true)}
+          onInput={(e) => {
+            setText(e.currentTarget.value);
+            setError(null);
+            const raw = e.currentTarget.value.trim();
+            const n = Number(raw);
+            props.onValidityChange?.(
+              raw !== "" && Number.isFinite(n) && n >= 0 && n <= MAX_DELAY_MS,
+            );
+          }}
+          onBlur={() => {
+            commit();
+            setEditing(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit();
+              e.currentTarget.blur();
+            }
+          }}
+        />
+        <span class="settings-delay-unit">{t("autoDelayUnit")}</span>
+      </span>
+      <Show when={error()}>
+        <span class="settings-error" role="alert">{error()}</span>
+      </Show>
     </span>
   );
 }
@@ -65,16 +120,21 @@ export default function AutomationPane(props: {
   const [process, setProcess] = createSignal("");
   const [combo, setCombo] = createSignal("");
   const [delayMs, setDelayMs] = createSignal(DEFAULT_DELAY_MS);
+  const [delayValid, setDelayValid] = createSignal(true);
   /** 选择 — the running-programs picker is open. */
   const [picking, setPicking] = createSignal(false);
   /** The button that opened the picker; focus returns here on close. */
   let pickTrigger: HTMLButtonElement | undefined;
   /** 测试 — result message for the last test press. */
-  const [toast, setToast] = createSignal<string | null>(null);
+  const [toast, setToast] = createSignal<{ ok: boolean; text: string } | null>(null);
+  const [addError, setAddError] = createSignal<string | null>(null);
+  const [duplicateIndex, setDuplicateIndex] = createSignal<number | null>(null);
+  const [highlightIndex, setHighlightIndex] = createSignal<number | null>(null);
+  let rowRefs: Record<string, HTMLDivElement | undefined> = {};
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function showToast(text: string) {
-    setToast(text);
+  function showToast(text: string, ok = true) {
+    setToast({ ok, text });
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => setToast(null), 4000);
   }
@@ -107,9 +167,9 @@ export default function AutomationPane(props: {
                   : res.reason === "focus_moved"
                     ? "autoTestFocusMoved"
                     : "autoTestInvalid";
-      showToast(t(key, { process: res.detail, combo: action.combo }));
+      showToast(t(key, { process: res.detail, combo: action.combo }), false);
     } catch (err) {
-      showToast(String(err));
+      showToast(settingsError(err, "autoTestFailed"), false);
     }
   }
 
@@ -117,15 +177,39 @@ export default function AutomationPane(props: {
     const p = process().trim();
     const c = combo();
     if (!p || !c) return;
+    if (!delayValid()) {
+      setAddError(t("autoDelayInvalid"));
+      return;
+    }
     const actions = automation().actions ?? [];
-    // De-duplicate by process so a rule never silently duplicates.
-    if (actions.some((a) => a.process.toLowerCase() === p.toLowerCase())) return;
+    const duplicate = actions.findIndex(
+      (a) => a.process.toLowerCase() === p.toLowerCase(),
+    );
+    if (duplicate >= 0) {
+      setDuplicateIndex(duplicate);
+      setAddError(t("autoDuplicate", { process: p }));
+      jumpToRule(duplicate);
+      return;
+    }
     props.onChange({
       actions: [...actions, { process: p, combo: c, enabled: true, delay_ms: delayMs() }],
     });
+    setAddError(null);
+    setDuplicateIndex(null);
     setProcess("");
     setCombo("");
     setDelayMs(DEFAULT_DELAY_MS);
+    setDelayValid(true);
+  }
+
+  function jumpToRule(index: number) {
+    setHighlightIndex(index);
+    const action = automation().actions?.[index];
+    if (action) {
+      rowRefs[action.process.toLowerCase()]?.scrollIntoView({ block: "nearest" });
+      rowRefs[action.process.toLowerCase()]?.focus({ preventScroll: true });
+    }
+    setTimeout(() => setHighlightIndex(null), 1800);
   }
 
   function updateAction(idx: number, patch: Partial<Action>) {
@@ -144,12 +228,14 @@ export default function AutomationPane(props: {
         <Row label={t("autoEnabled")}>
           <Toggle
             checked={automation().enabled ?? true}
+            label={t("autoEnabled")}
             onChange={(v) => props.onChange({ enabled: v })}
           />
         </Row>
         <Row label={t("autoForceFocus")}>
           <Toggle
             checked={automation().force_focus ?? false}
+            label={t("autoForceFocus")}
             onChange={(v) => props.onChange({ force_focus: v })}
           />
         </Row>
@@ -157,6 +243,7 @@ export default function AutomationPane(props: {
         <Row label={t("autoUseAgent")}>
           <Toggle
             checked={automation().use_agent ?? true}
+            label={t("autoUseAgent")}
             onChange={(v) => props.onChange({ use_agent: v })}
           />
         </Row>
@@ -164,24 +251,46 @@ export default function AutomationPane(props: {
         <Row label={t("autoAgentResident")}>
           <Toggle
             checked={automation().agent_resident ?? false}
+            label={t("autoAgentResident")}
+            disabled={!(automation().use_agent ?? true)}
             onChange={(v) => props.onChange({ agent_resident: v })}
           />
         </Row>
-        <p class="settings-hint">{t("autoAgentResidentHint")}</p>
+        <p class="settings-hint">
+          {t(
+            (automation().use_agent ?? true)
+              ? "autoAgentResidentHint"
+              : "autoAgentResidentDependency",
+          )}
+        </p>
         <p class="settings-hint">{t("autoHint")}</p>
 
         <div class="settings-blocktitle">{t("groupAutomation")}</div>
+        <div class="settings-automation-head" aria-hidden="true">
+          <span>{t("autoProcessLabel")}</span>
+          <span>{t("autoComboLabel")}</span>
+          <span>{t("autoTest")}</span>
+          <span>{t("autoDelayTitle")}</span>
+          <span>{t("autoEnabled")}</span>
+          <span />
+        </div>
         <Show
           when={(automation().actions ?? []).length > 0}
           fallback={<span class="settings-empty">{t("autoEmpty")}</span>}
         >
           <For each={automation().actions ?? []}>
             {(action, i) => (
-              <div class="settings-row-between settings-listrow settings-automation-row">
+              <div
+                ref={(el) => (rowRefs[action.process.toLowerCase()] = el)}
+                class="settings-row-between settings-listrow settings-automation-row"
+                classList={{ "search-hit": highlightIndex() === i() }}
+                tabIndex={-1}
+              >
                 <span class="settings-index-name" title={action.process}>{action.process}</span>
                 <ComboRecorder
                   value={action.combo}
                   placeholder={t("autoComboPlaceholder")}
+                  label={`${t("autoComboLabel")}: ${action.process}`}
                   onCommit={(v) => updateAction(i(), { combo: v })}
                 />
                 <button
@@ -193,10 +302,12 @@ export default function AutomationPane(props: {
                 </button>
                 <DelayInput
                   value={action.delay_ms ?? DEFAULT_DELAY_MS}
+                  label={`${t("autoDelayTitle")}: ${action.process}`}
                   onChange={(ms) => updateAction(i(), { delay_ms: ms })}
                 />
                 <Toggle
                   checked={action.enabled}
+                  label={t("autoRuleEnabledLabel", { process: action.process })}
                   onChange={(v) => updateAction(i(), { enabled: v })}
                 />
                 <button
@@ -218,7 +329,12 @@ export default function AutomationPane(props: {
             type="text"
             placeholder={t("autoProcessPlaceholder")}
             value={process()}
-            onInput={(e) => setProcess(e.currentTarget.value)}
+            aria-label={t("autoProcessLabel")}
+            onInput={(e) => {
+              setProcess(e.currentTarget.value);
+              setAddError(null);
+              setDuplicateIndex(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -241,22 +357,50 @@ export default function AutomationPane(props: {
             placeholder={t("autoComboPlaceholder")}
             onCommit={setCombo}
           />
-          <DelayInput value={delayMs()} onChange={setDelayMs} />
+          <DelayInput
+            value={delayMs()}
+            label={t("autoDelayTitle")}
+            onValidityChange={setDelayValid}
+            onChange={setDelayMs}
+          />
           <button
             class="settings-icon-btn"
             title={t("autoAdd")}
             aria-label={t("autoAdd")}
-            disabled={!process().trim() || !combo()}
+            disabled={!process().trim() || !combo() || !delayValid()}
             onClick={addAction}
           >
             <img class="settings-icon-btn-icon" src={plusIcon} alt="" draggable={false} />
           </button>
         </div>
+        <Show when={addError()}>
+          <span class="settings-error settings-automation-error" role="alert">
+            {addError()}
+            <Show when={duplicateIndex() !== null}>
+              <button
+                type="button"
+                class="settings-link"
+                onClick={() => {
+                  const index = duplicateIndex();
+                  if (index !== null) jumpToRule(index);
+                }}
+              >
+                {t("autoJumpExisting")}
+              </button>
+            </Show>
+          </span>
+        </Show>
         <p class="settings-hint">{t("autoDelayHint")}</p>
         <p class="settings-hint">{t("autoNotice")}</p>
       </div>
       <Show when={toast()}>
-        <div class="settings-toast" role="status">{toast()}</div>
+        <div
+          class="settings-toast"
+          classList={{ error: !toast()!.ok }}
+          role={toast()!.ok ? "status" : "alert"}
+        >
+          {toast()!.text}
+        </div>
       </Show>
       <Show when={picking()}>
         <ProgramPicker

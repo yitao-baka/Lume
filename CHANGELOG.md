@@ -85,6 +85,34 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **设置面板体验审计修复（UX-01–UX-15）** — 设置窗口现在区分
+  「保存并应用」草稿与「立即生效」轻量写：插件启停/开发者选项/声明式设置、
+  自启动、服务/代理与导入导出均带即时标记，关闭提示改用「丢弃未保存的草稿」并
+  说明即时改动不会回滚；dirty 改为工作副本与载入快照的实时差异，改回原值即
+  清除。共享控件补必填可访问名称，选项胶囊补 `aria-pressed`，range 与导航
+  tabpanel 补关联，导航支持 roving tabindex/方向键，`documentElement.lang`
+  跟随语言；确认框接管焦点、圈定 Tab/Shift+Tab、支持 Esc 并归还触发点，背景
+  `inert`。插件卡片头改为 Enter/Space 可展开的 `role="button"`；快捷键录制补
+  失焦/点击取消，切换模式使用独立 `validate_mode_hotkey`（允许单键、不占系统
+  全局键）。用户索引新增目录选择、Rust 侧存在性/目录/可读性校验、规范化与
+  大小写不敏感去重，失效行可原位修复并显示「索引文件」标签；刷新索引改为等待
+  后台扫描与缓存写入完成后才报成功，并显示忙碌态。设置搜索覆盖可见枚举/
+  插件声明式设置并滚动高亮命中项；自动化补重复规则提示/跳转、可清空后再提交的
+  延迟输入、代理依赖禁用与列标题；系统页补启动/重启服务、稳定状态轮询和状态
+  播报；恢复默认改为「恢复应用默认值」并明确不覆盖插件/系统集成；全部授权在
+  开发者模式每次切换时清空并持续警示；剪贴板忽略应用支持运行中程序选择、显示名
+  归一化与重复反馈，历史上限、最近使用与停用剪贴板页面均补语义说明；关于页链接
+  失败可见。错误统一走本地化 fallback，原始细节只进日志；开关/图标按钮/链接
+  命中区分别提升到至少 24/30/24px，数值档位增加「更多…」自由输入。
+  验证：`node scripts/cdp_settings_ux_audit_verify.mjs` **35/35**（语言、ARIA、
+  tablist、dirty 回退、模态焦点/Esc、静态与插件动态搜索、插件卡片键盘、
+  trust-all 清空、单键切换、录制取消、索引校验/刷新、自动化/剪贴板反馈、
+  命中区）；`cdp_visual_audit_verify` **28/28**、
+  `cdp_plugins_pane_verify` 全过；`cargo test` **226 passed / 9 ignored**，
+  `cargo check`、`pnpm exec tsc --noEmit`、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 通过。服务/代理注册、停止后恢复
+  与 UAC 取消仍按 `docs/TESTING.md` 手工验证，未在本轮触发真实系统变更。
+
 - **视觉与可用性审查修复** — 主题拆出 `--accent` / `--accent-text` /
   `--accent-tint` / `--accent-border` / `--focus-ring` 与按主题分层的
   danger / warning / success token；所有文本层级、焦点环、选中 chip、链接、

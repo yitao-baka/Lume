@@ -578,7 +578,10 @@ before adding a field:
   `Ctrl+Tab` switches modes. `F6` / `Shift+F6` cycles search box → mode bar →
   active page control → settings gear, `Ctrl+,` opens settings, and
   `Shift+F10` / the Menu key opens the context menu for the selected bar tile
-  or result row. Command-button clicks hand focus back to the search box;
+  or result row. The `.results` shell can receive focus from a blank-area click
+  or as the `F6` fallback on a page without controls, but it paints no
+  container-wide focus ring; the selected row/tile border carries the
+  page-level cue. Command-button clicks hand focus back to the search box;
   inputs and modal scopes keep their own focus.
 - **i18n**: all user-facing strings go through `t()` from `src/i18n.ts`
   (en / zh-CN / zh-TW), keyed off the system language.

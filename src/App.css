@@ -103,6 +103,10 @@ body,
   min-height: 0;
   padding: 0;
   position: relative;
+  /* Focusable as the F6 fallback on pages without controls, but the page
+     shell is not a command control: the selected row/tile is its visual
+     position. A container-wide focus ring reads as a stray window border. */
+  outline: none;
 }
 
 /* Loading gate: the active page isn't ready yet — keep everything below the
@@ -917,7 +921,6 @@ body,
    intentionally keep their borderless caret-only treatment. */
 .launcher button:focus-visible,
 .launcher [role="tab"]:focus-visible,
-.launcher .results:focus-visible,
 .settings button:focus-visible,
 .settings input:not(.settings-search-input):focus-visible,
 .settings select:focus-visible,
@@ -925,10 +928,6 @@ body,
 .picker input:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
-}
-
-.launcher .results:focus-visible {
-  outline-offset: -2px;
 }
 
 /* Navigate main menu: grid of app boxes. */

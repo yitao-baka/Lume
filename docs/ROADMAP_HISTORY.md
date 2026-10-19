@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#53 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#57 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -3766,3 +3766,34 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   `pnpm run tauri build --debug --no-bundle` 通过。
 - 服务/代理注册、UAC 取消、停止服务后的启动/重启恢复属于手工项，按
   `docs/TESTING.md` 验证；本轮未触发真实系统服务或计划任务变更。
+
+---
+
+## 57. 结果区容器焦点环移除
+
+### 57.1 实现
+
+- `.results` 保留 `tabindex="-1"`，空白区域点击与 `F6` 在无页内控件时仍可
+  将焦点落到页面容器，页面滚动与键盘导航不变。
+- 容器固定 `outline: none`；通用 `:focus-visible` 规则不再包含
+  `.launcher .results`，原先的内缩 `outline-offset: -2px` 一并删除。键盘
+  位置由 `.result-box.result-selected` / 行选中边框表达，按钮等命令控件继续
+  使用各自的可见焦点环。
+
+### 57.2 踩坑
+
+- 只删自定义焦点环选择器会让 WebView2 回落到 UA 默认轮廓；焦点本身是
+  `F6` 回退与空白点击的既定行为，必须显式清掉容器轮廓。
+- `outline-style: none` 时 computed `outline-width` 仍可能是默认的
+  `2.66667px`，回归判据要看 `outline-style`，不能以宽度为零作为已移除的
+  证据。
+
+### 57.3 验证
+
+- debug exe + CDP：空白点击后 `document.activeElement === .results`，
+  `results.matches(":focus-visible") === true`，computed
+  `outline-style: none`；按下 `↓` 后当前条目仍保持
+  `rgba(90, 200, 250, 0.62)` 选中边框，截图无容器外圈。
+- `pnpm run build`、`pnpm exec tsc --noEmit`、`cargo check`、`cargo test`
+  （**226 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过。

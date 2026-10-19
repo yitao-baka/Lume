@@ -145,7 +145,11 @@ contrast-safe tiers.
   context menu and modal scopes keep their own focus. `Tab` switches modes
   only while the search box is focused; elsewhere it traverses natively.
   `F6` / `Shift+F6` cycles search box → mode bar → page control → settings,
-  and every command control shows a visible `:focus-visible` outline.
+  and every command control shows a visible `:focus-visible` outline. The
+  `.results` page shell can receive blank-area clicks and serves as the `F6`
+  fallback when a page has no controls, but it stays borderless — no
+  container-wide focus ring. The selected row/tile border is the page-level
+  position cue.
 
 ## Accessibility & targets
 

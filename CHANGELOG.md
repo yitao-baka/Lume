@@ -85,6 +85,14 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **结果区外圈焦点框移除** — `.results` 仍承接空白点击与 `F6` 的页面回退焦点，
+  但不再绘制容器级 `:focus-visible` 外圈；键盘位置继续由当前条目/行的选中边框
+  表达，按钮等实际命令控件仍各自显示焦点环。验证：真实 CDP 在空白处点击后按
+  `↓`，焦点落在 `.results` 且匹配 `:focus-visible`，computed
+  `outline-style: none`，选中条目边框仍为 `rgba(90, 200, 250, 0.62)`；
+  `pnpm run build`、`pnpm exec tsc --noEmit`、`cargo check`、`cargo test`
+  （226 passed / 9 ignored）与 debug exe 构建通过。
+
 - **设置面板体验审计修复（UX-01–UX-15）** — 设置窗口现在区分
   「保存并应用」草稿与「立即生效」轻量写：插件启停/开发者选项/声明式设置、
   自启动、服务/代理与导入导出均带即时标记，关闭提示改用「丢弃未保存的草稿」并

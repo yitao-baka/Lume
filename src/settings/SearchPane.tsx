@@ -26,6 +26,12 @@ const PATH_REASON_KEY: Record<string, keyof Messages> = {
   invalid: "settingsPathInvalid",
 };
 
+const SYSTEM_DIR_HINT: Record<string, keyof Messages> = {
+  Desktop: "settingsIndexDesktopHint",
+  System32: "settingsIndexSystem32Hint",
+  StartMenu: "settingsIndexStartMenuHint",
+};
+
 /** A directory path's last segment (the default user-index name). */
 function basename(path: string): string {
   const norm = path.replace(/[\\/]+$/, "");
@@ -244,7 +250,7 @@ export default function SearchPane(props: {
               <SettingRow
                 id={`index.system_dirs.${d.path}`}
                 label={label}
-                summary={t("settingsSystemIndexHint")}
+                summary={t(SYSTEM_DIR_HINT[d.path] ?? "settingsSystemIndexHint")}
               >
                 <Toggle
                   checked={d.enabled}

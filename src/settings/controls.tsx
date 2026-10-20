@@ -4,9 +4,11 @@
 //! structure and accessibility.
 
 import { createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { Portal } from "solid-js/web";
 import { t } from "../i18n";
 
 let helpRowSeq = 0;
+const HELP_TOOLTIP_WIDTH = 320;
 
 /** A small selectable chip used across the settings panes. */
 export function Chip(props: {
@@ -187,60 +189,171 @@ export function SegmentedControl(props: {
   );
 }
 
-/** Inline, one-at-a-time help disclosure. The caller supplies already-localized
- * detail blocks; opening a row closes any other open help band in the page. */
+/** One-at-a-time help: hover/focus shows a positioned tooltip without taking
+ * layout space; click opens a modal so long explanations stay readable and the
+ * settings row never reflows. */
 export function HelpDisclosure(props: {
   label: string;
   details: string[];
 }) {
   const id = `settings-help-${++helpRowSeq}`;
   const [open, setOpen] = createSignal(false);
+  const [tooltip, setTooltip] = createSignal<DOMRect | null>(null);
+  let triggerEl: HTMLButtonElement | undefined;
+  let suppressFocusTooltip = false;
   onMount(() => {
     const closeOther = (event: Event) => {
       if ((event as CustomEvent<string>).detail !== id) setOpen(false);
     };
+    const hideTooltip = () => setTooltip(null);
     document.addEventListener("settings-help-open", closeOther);
-    onCleanup(() => document.removeEventListener("settings-help-open", closeOther));
+    window.addEventListener("resize", hideTooltip);
+    document.addEventListener("scroll", hideTooltip, true);
+    onCleanup(() => {
+      document.removeEventListener("settings-help-open", closeOther);
+      window.removeEventListener("resize", hideTooltip);
+      document.removeEventListener("scroll", hideTooltip, true);
+    });
   });
-  function toggle() {
-    const next = !open();
-    if (next) {
-      document.dispatchEvent(new CustomEvent("settings-help-open", { detail: id }));
-    }
-    setOpen(next);
+  function showTooltip() {
+    if (open() || !triggerEl) return;
+    setTooltip(triggerEl.getBoundingClientRect());
   }
+  function openDialog() {
+    setTooltip(null);
+    document.dispatchEvent(new CustomEvent("settings-help-open", { detail: id }));
+    setOpen(true);
+  }
+  function closeDialog() {
+    suppressFocusTooltip = true;
+    setOpen(false);
+  }
+  const tooltipStyle = () => {
+    const rect = tooltip();
+    if (!rect) return {};
+    const fitsRight = rect.right + 10 + HELP_TOOLTIP_WIDTH <= window.innerWidth - 12;
+    const left = fitsRight
+      ? rect.right + 10
+      : Math.max(12, rect.left - HELP_TOOLTIP_WIDTH - 10);
+    const top = Math.max(
+      12,
+      Math.min(rect.top - 4, window.innerHeight - Math.min(232, window.innerHeight - 24)),
+    );
+    return { left: `${left}px`, top: `${top}px` };
+  };
   return (
     <>
       <button
+        ref={(el) => (triggerEl = el)}
         class="settings-help-btn"
         type="button"
         aria-label={`${props.label}: ${t("settingsHelp")}`}
         aria-expanded={open()}
-        aria-controls={id}
-        title={t("settingsHelp")}
-        onClick={toggle}
+        aria-haspopup="dialog"
+        aria-controls={open() ? id : undefined}
+        aria-describedby={tooltip() ? `${id}-tooltip` : undefined}
+        onPointerEnter={showTooltip}
+        onPointerLeave={() => setTooltip(null)}
+        onFocus={() => {
+          if (suppressFocusTooltip) {
+            suppressFocusTooltip = false;
+            return;
+          }
+          showTooltip();
+        }}
+        onBlur={() => setTooltip(null)}
+        onClick={openDialog}
       >
         i
       </button>
-      <div
-        id={id}
-        class="settings-help"
-        hidden={!open()}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.stopPropagation();
-            setOpen(false);
-            requestAnimationFrame(() =>
-              document.querySelector<HTMLButtonElement>(`[aria-controls='${id}']`)?.focus(),
-            );
-          }
-        }}
-      >
-        <For each={props.details}>
-          {(detail) => <p>{detail}</p>}
-        </For>
-      </div>
+      <Show when={tooltip() && !open()}>
+        <Portal>
+          <div
+            id={`${id}-tooltip`}
+            class="settings-help-tooltip"
+            role="tooltip"
+            style={tooltipStyle()}
+          >
+            <For each={props.details}>{(detail) => <p>{detail}</p>}</For>
+          </div>
+        </Portal>
+      </Show>
+      <Show when={open()}>
+        <HelpDialog
+          id={id}
+          label={props.label}
+          details={props.details}
+          returnFocus={() => triggerEl ?? null}
+          onClose={closeDialog}
+        />
+      </Show>
     </>
+  );
+}
+
+function HelpDialog(props: {
+  id: string;
+  label: string;
+  details: string[];
+  returnFocus: () => HTMLElement | null;
+  onClose: () => void;
+}) {
+  const titleId = `${props.id}-title`;
+  const bodyId = `${props.id}-body`;
+  let closeEl: HTMLButtonElement | undefined;
+  onMount(() => {
+    const settingsRoot = document.querySelector<HTMLElement>(".settings");
+    const wasInert = settingsRoot?.hasAttribute("inert") ?? false;
+    settingsRoot?.setAttribute("inert", "");
+    closeEl?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        props.onClose();
+      } else if (event.key === "Tab") {
+        event.preventDefault();
+        closeEl?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    onCleanup(() => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      if (!wasInert) settingsRoot?.removeAttribute("inert");
+      props.returnFocus()?.focus();
+    });
+  });
+  return (
+    <Portal>
+      <div class="settings-help-backdrop" onClick={props.onClose}>
+        <section
+          id={props.id}
+          class="settings-help-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={bodyId}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <header class="settings-help-dialog-head">
+            <span class="settings-help-dialog-title" id={titleId}>{props.label}</span>
+            <button
+              ref={(el) => (closeEl = el)}
+              class="settings-icon-btn"
+              type="button"
+              aria-label={t("settingsHelpClose")}
+              title={t("settingsHelpClose")}
+              onClick={props.onClose}
+            >
+              ✕
+            </button>
+          </header>
+          <div class="settings-help-dialog-body" id={bodyId}>
+            <For each={props.details}>{(detail) => <p>{detail}</p>}</For>
+          </div>
+        </section>
+      </div>
+    </Portal>
   );
 }
 

@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#58 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#59 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -3858,3 +3858,56 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   `pnpm run tauri build --debug --no-bundle` 通过。
 - 服务/代理注册、UAC、200% 缩放和真实快捷键录制仍按
   `docs/TESTING.md` 手工验证；本轮未触发真实系统集成变更。
+
+---
+
+## 59. 设置窗可见性、开关、帮助与插件双栏修复
+
+### 59.1 实现
+
+- 启动器 → 窗口位置：每个预设格改为 `20×12px` 标记、较粗的高对比描边；
+  选中格同时显示整格 `--settings-selected` 背景和外圈结构色，浅色 / 深色与
+  Quiet / Chromatic 下都能直接辨认。
+- 共享设置开关：保留 44×36px 命中盒，滑块固定为 16×16px；关闭态
+  `left: 6px`、开启态 `left: 22px`，始终位于 22px 高的轨道内。
+- 行内帮助：`i` 悬浮或键盘聚焦时显示 fixed 定位气泡，滚动/缩放即收起，
+  不参与行布局；点击改为 Portal 模态详情，设置主体 `inert`，Tab 不逃逸，
+  Esc/背景关闭并归还触发点焦点。
+- 插件页主从视图：主从框高度按 `100vh - topbar - 页面固定开销` 收敛；左右两栏
+  各自 `overflow-y: auto`、隐藏滚动条并启用 `overscroll-behavior: contain`，
+  列表滚动不再带动详情。
+- 外观主题与设置窗皮肤预览卡删除右上角 `✓`，选中态只由边框和底部强调线表达。
+- 搜索页系统索引改为三份文案：桌面文件/快捷方式、System32 系统工具、开始菜单
+  已安装应用；`en` / `zh-CN` / `zh-TW` 同步。
+- 新增 `settingsHelpClose` 文案；`cdp_settings_skin_verify.mjs` 扩展帮助交互、
+  开关几何、位置标记、索引文案与插件双栏滚动断言，并保留截图产物。
+
+### 59.2 踩坑
+
+- 旧 `src/App.css` 中 `.settings-toggle .settings-toggle-knob` 与
+  `.settings-toggle.on` 的选择器优先级高于新皮肤基础规则，继续为按钮整块上色，
+  并把滑块压到 `top: 2px` / `left: 2px`。新规则必须用
+  `button.settings-toggle…` 提高优先级，同时显式清掉按钮自身的边框与背景；
+  只改 `transform` 或只改开启态并不能修好关闭态。
+- 帮助气泡若作为 `.settings-setting-label-row` 的普通 flex 子项，会挤压标签并
+  把开关推出行外；若用 absolute 又会被 `.settings-group-panel` 的
+  `overflow: hidden` 裁切。Portal + fixed 坐标同时解决回流与裁切。
+- 插件主从框只设置 `min-height` 时，外页仍会继续增长，内部 `overflow-y` 没有
+  可滚动高度；必须给主从框明确的视口约束和 `min-height: 0` 才能让左右栏真正
+  独立滚动。
+- 主题预览的勾选符号会与选中边框形成重复编码，并且在不同皮肤底色上像额外
+  控件；选中态保留边框/底边即可。
+
+### 59.3 验证
+
+- `node scripts/cdp_settings_skin_verify.mjs`：**58/58 PASS**。覆盖 Quiet /
+  Chromatic × `system` 解析的明暗组合、首帧皮肤、帮助悬浮零回流与模态焦点、
+  开关两态几何（`left 6/22`, `top 10`, `16×16`）、窗口位置标记尺寸、系统索引
+  三行文案、插件双栏高度与独立 `overflow-y`、九页 `1040×720` / `560×420`
+  无横向溢出。
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  （**227 passed / 9 ignored**）、`pnpm run tauri build --debug --no-bundle`
+  通过。
+- 视觉检查：`test/settings-skin-verify/launcher-position.png`、
+  `automation-switches.png`、`plugins-master-detail.png`、`help-dialog.png`、
+  `chromatic-appearance.png` 与 `narrow-about.png`。

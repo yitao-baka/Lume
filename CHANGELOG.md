@@ -120,6 +120,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **设置窗可见性、开关与帮助交互修复** — 窗口位置网格改用更大的
+  `20×12px` 位置标记、双主题高对比描边与整格选中环；设置开关恢复固定
+  `44×36px` 命中盒与轨道内 `16×16px` 滑块（关闭 `left: 6px`、开启
+  `left: 22px`），修掉旧 `App.css` 高优先级选择器造成的滑块上移/越界。
+  行内 `i` 帮助改为悬浮 fixed 气泡、点击 Portal 模态详情：不再插入行内撑高
+  布局，模态打开时设置主体 `inert`，Esc 关闭并归还焦点。插件主从视图按视口
+  限高，左侧列表与右侧详情各自滚动；主题/皮肤预览卡移除右上角勾选标记；
+  搜索页桌面、System32、开始菜单三行改为各自的范围说明，并同步 en / zh-CN /
+  zh-TW。验证：`node scripts/cdp_settings_skin_verify.mjs` **58/58 PASS**
+  （帮助气泡零回流、模态焦点、开关几何、位置标记、三行文案、插件双栏滚动及
+  双皮肤六种明暗组合）；`pnpm exec tsc --noEmit`、`pnpm run build`、
+  `cargo check`、`cargo test`（**227 passed / 9 ignored**）与
+  `pnpm run tauri build --debug --no-bundle` 通过。
+
 - **结果区外圈焦点框移除** — `.results` 仍承接空白点击与 `F6` 的页面回退焦点，
   但不再绘制容器级 `:focus-visible` 外圈；键盘位置继续由当前条目/行的选中边框
   表达，按钮等实际命令控件仍各自显示焦点环。验证：真实 CDP 在空白处点击后按

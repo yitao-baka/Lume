@@ -185,6 +185,40 @@ check("navigation exposes tab/tabpanel relationships", a11y.tabs.every((tab) => 
 check("segmented controls expose radio checked state", a11y.radios.length > 0 && a11y.radios.every((value) => value === "true" || value === "false"), JSON.stringify(a11y.radios));
 check("switches and help disclosures expose ARIA state", a11y.switches.every((item) => item.role === "switch" && (item.checked === "true" || item.checked === "false")) && a11y.help.every((value) => value === "true" || value === "false"), JSON.stringify({ switches: a11y.switches.length, help: a11y.help.length }));
 
+const helpInteraction = await settings.evalJs(`(async () => {
+  const button = document.querySelector('.settings-help-btn');
+  const row = button.closest('.settings-setting-row');
+  const before = row.getBoundingClientRect();
+  button.dispatchEvent(new PointerEvent('pointerenter', { bubbles: false }));
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const tooltip = document.querySelector('.settings-help-tooltip');
+  const tooltipPositioned = tooltip ? getComputedStyle(tooltip).position : '';
+  const during = row.getBoundingClientRect();
+  button.click();
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const dialog = document.querySelector('.settings-help-dialog[role="dialog"]');
+  const inert = !!document.querySelector('.settings[inert]');
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  return {
+    tooltip: !!tooltip,
+    tooltipPositioned,
+    reflow: Math.abs(during.height - before.height),
+    dialog: !!dialog,
+    inert,
+    closed: !document.querySelector('.settings-help-dialog'),
+    focusReturned: document.activeElement === button,
+    inlineHelp: !!document.querySelector('.settings-help'),
+  };
+})()`);
+check("help hover uses a fixed tooltip without reflowing the row", helpInteraction.tooltip && helpInteraction.tooltipPositioned === "fixed" && helpInteraction.reflow === 0 && !helpInteraction.inlineHelp, JSON.stringify(helpInteraction));
+check("help click opens an inert modal and Escape restores focus", helpInteraction.dialog && helpInteraction.inert && helpInteraction.closed && helpInteraction.focusReturned, JSON.stringify(helpInteraction));
+await settings.evalJs(`document.querySelector('.settings-help-btn')?.click(); true`);
+await sleep(120);
+await settings.shot("help-dialog");
+await settings.evalJs(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`);
+await sleep(120);
+
 await settings.evalJs(`document.querySelector('[data-setting-id="appearance.settings_skin"]').__stable = 42; document.querySelector('.settings-body').scrollTop = 24; true`);
 await clickSkin("chromatic");
 const switched = await settings.evalJs(`(async () => ({
@@ -235,6 +269,63 @@ const systemCombo = async (skin, darkBg, lightBg) => {
 await systemCombo("quiet", "rgb(25, 26, 29)", "rgb(245, 246, 248)");
 await systemCombo("chromatic", "rgb(30, 30, 32)", "rgb(243, 239, 230)");
 
+await go("launcher");
+const positionPreview = await settings.evalJs(`(() => {
+  const grid = document.querySelector('.settings-position-grid');
+  const cells = Array.from(document.querySelectorAll('.settings-position-cell'));
+  const marks = cells.map((cell) => cell.querySelector('span').getBoundingClientRect());
+  const active = document.querySelector('.settings-position-cell.active span');
+  return {
+    count: cells.length,
+    markSizes: marks.map((r) => [Math.round(r.width), Math.round(r.height)]),
+    activeBorder: active ? getComputedStyle(active).borderTopColor : '',
+    gridBackground: getComputedStyle(grid).backgroundColor,
+  };
+})()`);
+check("window-position presets use large visible marks in every slot", positionPreview.count === 5 && positionPreview.markSizes.every(([w, h]) => w >= 20 && h >= 12) && !!positionPreview.activeBorder, JSON.stringify(positionPreview));
+await settings.shot("launcher-position");
+
+await go("search");
+const indexHints = await settings.evalJs(`Array.from(document.querySelectorAll('[data-setting-id^="index.system_dirs."] .settings-row-summary')).map((el) => el.textContent.trim())`);
+check("system index rows explain Desktop, System32, and Start Menu separately", indexHints.length === 3 && new Set(indexHints).size === 3, JSON.stringify(indexHints));
+
+await go("automation");
+await sleep(300);
+const switchGeometry = await settings.evalJs(`(() => {
+  const toggles = Array.from(document.querySelectorAll('.settings-toggle'));
+  const measure = (toggle) => {
+    const box = toggle.getBoundingClientRect();
+    const knob = toggle.querySelector('.settings-toggle-knob').getBoundingClientRect();
+    return { left: knob.left - box.left, top: knob.top - box.top, width: knob.width, height: knob.height, boxWidth: box.width, boxHeight: box.height };
+  };
+  const on = toggles.find((toggle) => toggle.classList.contains('on'));
+  const off = toggles.find((toggle) => !toggle.classList.contains('on'));
+  return { on: on ? measure(on) : null, off: off ? measure(off) : null };
+})()`);
+const near = (value, expected) => Math.abs(value - expected) <= 1;
+check("switches keep their knobs centered inside the track in both states", !!switchGeometry.on && !!switchGeometry.off && near(switchGeometry.off.left, 6) && near(switchGeometry.on.left, 22) && near(switchGeometry.off.top, 10) && near(switchGeometry.on.top, 10) && near(switchGeometry.on.width, 16) && near(switchGeometry.on.height, 16), JSON.stringify(switchGeometry));
+await settings.shot("automation-switches");
+
+await go("plugins");
+await sleep(500);
+const pluginLayout = await settings.evalJs(`(() => {
+  const master = document.querySelector('.plg-master-detail');
+  const list = document.querySelector('.plg-list');
+  const detail = document.querySelector('.plg-detail-pane');
+  const m = master?.getBoundingClientRect();
+  const l = list?.getBoundingClientRect();
+  return {
+    masterHeight: Math.round(m?.height ?? 0),
+    listHeight: Math.round(l?.height ?? 0),
+    listOverflow: list ? getComputedStyle(list).overflowY : '',
+    detailOverflow: detail ? getComputedStyle(detail).overflowY : '',
+    columns: master ? getComputedStyle(master).gridTemplateColumns : '',
+  };
+})()`);
+check("plugin list and detail scroll independently inside the master-detail frame", pluginLayout.masterHeight > 300 && Math.abs(pluginLayout.listHeight - pluginLayout.masterHeight) <= 4 && pluginLayout.listOverflow === "auto" && pluginLayout.detailOverflow === "auto" && pluginLayout.columns.split(" ").length >= 2, JSON.stringify(pluginLayout));
+await settings.shot("plugins-master-detail");
+
+await go("appearance");
 await typeSearch("设置窗皮肤");
 const search = await settings.evalJs(`({
   count: document.querySelectorAll('.settings-search-result').length,

@@ -49,7 +49,10 @@ first-paint `data-settings-skin`, grouped tab semantics, focus and scroll
 preservation while switching skins, catalog search (including a disk plugin's
 declarative setting), autosave persistence, save failure/rollback with a
 read-only `settings.toml`, real confirmation dialogs, and all nine pages at
-`1040×720` and `560×420` without horizontal overflow. The lighter
+`1040×720` and `560×420` without horizontal overflow. It also asserts the
+hover tooltip/click dialog help path without row reflow, switch knob geometry in
+both states, high-contrast position marks, distinct system-index hints, and
+independent list/detail scrolling in the plugin manager. The lighter
 `node scripts/cdp_settings_smoke.mjs` covers the grouped navigation, command
 search, autosave status bar, restore confirmation, clipboard disabled-slider
 dependency, keycap shortcuts, and page screenshots. The former
@@ -242,6 +245,15 @@ dev URL instead.
     the Navigate grid shows the extracted artwork without a circular crop. Turn
     it on: only the result artwork becomes circular; turn it off to restore the
     original outline.
+12. **Help and switches** — every `i` button shows its explanation beside the
+    label on hover/focus without moving the row; clicking opens a modal, Esc
+    closes it, and focus returns to the button. 设置 → 自动化：all switches use
+    the same 44×36px track with the knob fully inside it in both states.
+13. **Search index copy** — 设置 → 搜索：桌面、System32、开始菜单三行分别显示
+    不同的范围说明。
+14. **Plugin pane scrolling** — at 1040×720 open 设置 → 插件: scroll the left
+    list to its end; the right detail stays fixed. Select a plugin and scroll its
+    detail; the left list does not move.
 
 ### Service / run-as-admin / auto-start (Program Files iteration)
 

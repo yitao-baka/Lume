@@ -75,7 +75,6 @@ function RadioCards(props: {
             <Show when={option.description}>
               <span class="settings-preview-description">{option.description}</span>
             </Show>
-            <span class="settings-preview-check" aria-hidden="true">✓</span>
           </button>
         )}
       </For>

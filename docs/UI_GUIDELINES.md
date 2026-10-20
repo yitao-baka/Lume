@@ -141,6 +141,15 @@ contrast-safe tiers.
   under `.settings` / `html[data-settings-skin]`; they must never change the
   launcher surface, plugin canvases, detached windows, tray, or DWM border.
   Switching skin preserves focus, DOM identity, and scroll position.
+- Settings help buttons never expand inline: hover/focus shows a fixed-position
+  tooltip without changing row geometry, and click opens a portaled modal with
+  the full explanation. The modal makes the settings body inert, traps focus on
+  its controls, closes on Esc/backdrop, and returns focus to the `i` button.
+- The plugin manager's master/detail frame is bounded by the available viewport;
+  the list and detail panes each scroll independently with hidden scrollbars.
+  A long plugin list must never move the selected detail off-screen.
+- Position preset marks and every help/tooltip surface must remain legible in
+  both Quiet/Chromatic and light/dark combinations.
 
 ## Behavior
 
@@ -175,9 +184,10 @@ contrast-safe tiers.
   Service/agent registration, import, backup restore, default restore, plugin
   uninstall, and trust-all are explicit commands with confirmation and real
   progress/results instead of sharing the autosave path.
-- Click targets meet accessibility floors: settings switches use at least a
-  44×36px hit box, icon buttons at least 30px, and text links at least 24px. Numeric
-  presets may reveal a free-form input without shrinking the preset hit
+- Click targets meet accessibility floors: settings switches use a fixed 44×36px
+  hit box with a 16×16px knob centered inside the track (`left: 6px` off,
+  `left: 22px` on), icon buttons at least 30px, and text links at least 24px.
+  Numeric presets may reveal a free-form input without shrinking the preset hit
   targets.
 
 ## Components

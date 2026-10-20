@@ -1,6 +1,9 @@
 //! Shared settings types — mirrors the Rust `Settings` struct
 //! (src-tauri/src/settings.rs) for the frontend.
 
+/** Settings-window-only visual language (docs/SETTINGS_SKIN_SWITCH.md). */
+export type SettingsSkin = "quiet" | "chromatic";
+
 /** The full settings surface, matching the schema in `docs/SETTINGS.md`. */
 export interface SettingsData {
   meta: { version: number };
@@ -9,6 +12,8 @@ export interface SettingsData {
     language: string;
     /** `"system"` | `"dark"` | `"light"` — launcher + settings theme. */
     color_mode: string;
+    /** `"quiet"` | `"chromatic"` — settings window only. */
+    settings_skin: SettingsSkin;
     /** Entry-box edge length in px — the box wrapping each main-menu entry. */
     entry_size: number;
     /** Crop Navigation result icons to a circle (default off — show the
@@ -149,6 +154,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
   appearance: {
     language: "system",
     color_mode: "system",
+    settings_skin: "quiet",
     entry_size: 110,
     round_app_icons: false,
     window_width: 720,

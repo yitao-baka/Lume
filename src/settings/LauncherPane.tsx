@@ -1,20 +1,96 @@
-//! 「导航页」页 — window size/position, the nav-bar behavior toggles and the
-//! entry-box size (docs/SETTINGS.md). Edits drive the working copy via
-//! `onChange`, which marks the settings dirty and enables 保存并应用.
+//! 「启动器」页 — window geometry, home bars, session behavior, search
+//! placeholders, and entry-box appearance.
 
-import { For, Show } from "solid-js";
-import { t, type Messages } from "../i18n";
+import { For } from "solid-js";
+import { t } from "../i18n";
 import type { SettingsData } from "./types";
-import { Chip, NumberPreset, Row, Toggle } from "./controls";
+import { NumberPreset, SettingGroup, SettingRow, Toggle } from "./controls";
 
-const POSITIONS: { value: string; label: keyof Messages }[] = [
-  { value: "center", label: "settingsPosCenter" },
-  { value: "follow-mouse", label: "settingsPosFollowMouse" },
-  { value: "top-left", label: "settingsPosTopLeft" },
-  { value: "top-right", label: "settingsPosTopRight" },
-  { value: "bottom-left", label: "settingsPosBottomLeft" },
-  { value: "bottom-right", label: "settingsPosBottomRight" },
-];
+const POSITION_GRID = [
+  { value: "top-left", label: "settingsPosTopLeft", column: 1, row: 1 },
+  { value: "center", label: "settingsPosCenter", column: 2, row: 1 },
+  { value: "top-right", label: "settingsPosTopRight", column: 3, row: 1 },
+  { value: "bottom-left", label: "settingsPosBottomLeft", column: 1, row: 2 },
+  { value: "bottom-right", label: "settingsPosBottomRight", column: 3, row: 2 },
+] as const;
+
+function PositionGrid(props: {
+  value: string;
+  manual: boolean;
+  onChange: (patch: { window_position?: string; remember_position?: boolean }) => void;
+}) {
+  return (
+    <div class="settings-position-wrap">
+      <div class="settings-position-grid" role="radiogroup" aria-label={t("settingsWindowPosition")}>
+        <For each={POSITION_GRID}>
+          {(position) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!props.manual && props.value === position.value}
+              aria-label={t(position.label)}
+              title={t(position.label)}
+              class="settings-position-cell"
+              classList={{ active: !props.manual && props.value === position.value }}
+              style={{ "grid-column": String(position.column), "grid-row": String(position.row) }}
+              onClick={() =>
+                props.onChange({ window_position: position.value, remember_position: false })
+              }
+            >
+              <span aria-hidden="true" />
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="settings-position-extra">
+        <button
+          class="settings-position-choice"
+          classList={{ active: !props.manual && props.value === "follow-mouse" }}
+          type="button"
+          aria-pressed={!props.manual && props.value === "follow-mouse"}
+          onClick={() => props.onChange({ window_position: "follow-mouse", remember_position: false })}
+        >
+          {t("settingsPosFollowMouse")}
+        </button>
+        <button
+          class="settings-position-choice"
+          classList={{ active: props.manual }}
+          type="button"
+          aria-pressed={props.manual}
+          onClick={() => props.onChange({ remember_position: true })}
+        >
+          {t("settingsCustom")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EntrySizeControl(props: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const sizes = [70, 110, 150];
+  return (
+    <div class="settings-entry-size" role="radiogroup" aria-label={t("settingsEntrySize")}>
+      <For each={sizes}>
+        {(size, index) => (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={props.value === size}
+            class="settings-entry-option"
+            classList={{ active: props.value === size }}
+            onClick={() => props.onChange(size)}
+          >
+            <span class={`settings-entry-sample size-${index()}`} aria-hidden="true" />
+            <span>{t(["settingsSizeSmall", "settingsSizeMedium", "settingsSizeLarge"][index()] as any)}</span>
+          </button>
+        )}
+      </For>
+    </div>
+  );
+}
 
 export default function LauncherPane(props: {
   settings: SettingsData;
@@ -23,9 +99,12 @@ export default function LauncherPane(props: {
   const a = () => props.settings.appearance;
   return (
     <>
-      <h2 class="settings-grouptitle">{t("groupWindow")}</h2>
-      <div class="settings-group">
-        <Row label={t("settingsWidth")}>
+      <SettingGroup title={t("groupWindow")} number="02.1">
+        <SettingRow
+          id="appearance.window_width"
+          label={t("settingsWidth")}
+          class="settings-window-size-row"
+        >
           <NumberPreset
             value={a().window_width}
             presets={[
@@ -35,8 +114,18 @@ export default function LauncherPane(props: {
             ]}
             onCommit={(v) => props.onChange({ window_width: v })}
           />
-        </Row>
-        <Row label={t("settingsHeight")}>
+          <span class="settings-launcher-preview" aria-hidden="true">
+            <span class="settings-preview-search" />
+            <span class="settings-preview-grid">
+              <i /><i /><i /><i />
+            </span>
+          </span>
+        </SettingRow>
+        <SettingRow
+          id="appearance.window_height"
+          label={t("settingsHeight")}
+          summary={t("settingsHeightHint")}
+        >
           <NumberPreset
             value={a().window_height}
             presets={[
@@ -46,71 +135,142 @@ export default function LauncherPane(props: {
             ]}
             onCommit={(v) => props.onChange({ window_height: v })}
           />
-        </Row>
-        <span class="settings-hint">{t("settingsHeightHint")}</span>
-        <Row label={t("settingsWindowPosition")}>
-          <div class="settings-row settings-row-chips">
-            <For each={POSITIONS}>
-              {(p) => (
-                <Chip
-                  label={t(p.label)}
-                  active={!a().remember_position && a().window_position === p.value}
-                  onClick={() =>
-                    props.onChange({ window_position: p.value, remember_position: false })
-                  }
-                />
-              )}
-            </For>
-            {/* 自定义 = 首次出现也不套用预设：窗口停在当前/上次的位置。 */}
-            <Chip
-              label={t("settingsCustom")}
-              active={a().remember_position}
-              onClick={() => props.onChange({ remember_position: true })}
-            />
-          </div>
-        </Row>
-        <span class="settings-hint">{t("settingsCustomHint")}</span>
-      </div>
+        </SettingRow>
+        <SettingRow
+          id="appearance.window_position"
+          label={t("settingsWindowPosition")}
+          summary={t("settingsWindowPositionHint")}
+          details={[t("settingsWindowPositionDetail")]}
+        >
+          <PositionGrid
+            value={a().window_position}
+            manual={a().remember_position}
+            onChange={(patch) => props.onChange(patch)}
+          />
+        </SettingRow>
+      </SettingGroup>
 
-      <h2 class="settings-grouptitle">{t("groupNavBar")}</h2>
-      <div class="settings-group">
-        <Row label={t("showRecent")}>
+      <SettingGroup title={t("groupNavBar")} number="02.2">
+        <SettingRow
+          id="appearance.show_recent"
+          label={t("showRecent")}
+          summary={t("settingsShowRecentHint")}
+        >
           <Toggle
             checked={a().show_recent}
             label={t("showRecent")}
             onChange={(v) => props.onChange({ show_recent: v })}
           />
-        </Row>
-        <span class="settings-hint">{t("settingsShowRecentHint")}</span>
-        <Row label={t("showExplorerBar")}>
+        </SettingRow>
+        <SettingRow
+          id="appearance.show_explorer_bar"
+          label={t("showExplorerBar")}
+          summary={t("settingsShowExplorerHint")}
+        >
           <Toggle
             checked={a().show_explorer_bar}
             label={t("showExplorerBar")}
             onChange={(v) => props.onChange({ show_explorer_bar: v })}
           />
-        </Row>
-        <Row label={t("expandPinned")}>
+        </SettingRow>
+        <SettingRow
+          id="appearance.expand_pinned"
+          label={t("expandPinned")}
+          summary={t("settingsExpandPinnedHint")}
+        >
           <Toggle
             checked={a().expand_pinned}
             label={t("expandPinned")}
             onChange={(v) => props.onChange({ expand_pinned: v })}
           />
-        </Row>
-        <Row label={t("modeSwitchIconsOnly")}>
+        </SettingRow>
+        <SettingRow
+          id="appearance.mode_switch_icons_only"
+          label={t("modeSwitchIconsOnly")}
+          summary={t("settingsModeIconsHint")}
+        >
           <Toggle
             checked={a().mode_switch_icons_only}
             label={t("modeSwitchIconsOnly")}
             onChange={(v) => props.onChange({ mode_switch_icons_only: v })}
           />
-        </Row>
-        <Row label={t("shiftEnterAdmin")}>
+        </SettingRow>
+        <SettingRow
+          id="appearance.shift_enter_admin"
+          label={t("shiftEnterAdmin")}
+          summary={t("settingsShiftEnterHint")}
+          details={[t("settingsShiftEnterDetail")]}
+        >
           <Toggle
             checked={a().shift_enter_admin}
             label={t("shiftEnterAdmin")}
             onChange={(v) => props.onChange({ shift_enter_admin: v })}
           />
-        </Row>
-        <Row label={t("recentCount")}>
+        </SettingRow>
+      </SettingGroup>
+
+      <SettingGroup title={t("groupSession")} number="02.3">
+        <SettingRow
+          id="appearance.remember_last_page"
+          label={t("rememberLastPage")}
+          summary={t("settingsRememberPageHint")}
+        >
+          <Toggle
+            checked={a().remember_last_page}
+            label={t("rememberLastPage")}
+            onChange={(v) => props.onChange({ remember_last_page: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          id="appearance.per_mode_query"
+          label={t("perModeQuery")}
+          summary={t("settingsPerModeQuerySummary")}
+          details={[t("perModeQueryHint")]}
+        >
+          <Toggle
+            checked={a().per_mode_query}
+            label={t("perModeQuery")}
+            onChange={(v) => props.onChange({ per_mode_query: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          id="appearance.idle_reset_enabled"
+          label={t("idleReset")}
+          summary={t("settingsIdleResetSummary")}
+          details={[t("idleResetHint")]}
+        >
+          <Toggle
+            checked={a().idle_reset_enabled}
+            label={t("idleReset")}
+            onChange={(v) => props.onChange({ idle_reset_enabled: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          id="appearance.idle_reset_minutes"
+          label={t("idleResetMinutes")}
+          summary={t("settingsIdleMinutesHint")}
+          disabled={!a().idle_reset_enabled}
+        >
+          <NumberPreset
+            value={a().idle_reset_minutes}
+            presets={[
+              { label: "5", value: 5 },
+              { label: "15", value: 15 },
+              { label: "30", value: 30 },
+              { label: "60", value: 60 },
+              { label: "120", value: 120 },
+              { label: "240", value: 240 },
+            ]}
+            onCommit={(v) => props.onChange({ idle_reset_minutes: v })}
+            custom={{ min: 1, max: 10080, step: 1, label: t("idleResetMinutes") }}
+            disabled={!a().idle_reset_enabled}
+          />
+        </SettingRow>
+        <SettingRow
+          id="appearance.recent_count"
+          label={t("recentCount")}
+          summary={t("settingsRecentCountHint")}
+        >
           <NumberPreset
             value={a().recent_count}
             presets={[
@@ -122,19 +282,25 @@ export default function LauncherPane(props: {
             onCommit={(v) => props.onChange({ recent_count: v })}
             custom={{ min: 5, max: 200, step: 5, label: t("recentCount") }}
           />
-        </Row>
-        <Row label={t("placeholderApps")}>
+        </SettingRow>
+        <SettingRow
+          id="appearance.search_placeholder_apps"
+          label={t("placeholderApps")}
+          summary={t("settingsPlaceholderHint")}
+        >
           <input
             class="settings-text-input settings-input-fixed"
             type="text"
             placeholder={t("searchApps")}
             value={a().search_placeholder_apps}
-            onInput={(e) =>
-              props.onChange({ search_placeholder_apps: e.currentTarget.value })
-            }
+            onInput={(e) => props.onChange({ search_placeholder_apps: e.currentTarget.value })}
           />
-        </Row>
-        <Row label={t("placeholderClipboard")}>
+        </SettingRow>
+        <SettingRow
+          id="appearance.search_placeholder_clipboard"
+          label={t("placeholderClipboard")}
+          summary={t("settingsPlaceholderHint")}
+        >
           <input
             class="settings-text-input settings-input-fixed"
             type="text"
@@ -144,72 +310,28 @@ export default function LauncherPane(props: {
               props.onChange({ search_placeholder_clipboard: e.currentTarget.value })
             }
           />
-        </Row>
-        <Row label={t("rememberLastPage")}>
-          <Toggle
-            checked={a().remember_last_page}
-            label={t("rememberLastPage")}
-            onChange={(v) => props.onChange({ remember_last_page: v })}
-          />
-        </Row>
-        <span class="settings-hint">{t("rememberLastPageHint")}</span>
-        <Row label={t("perModeQuery")}>
-          <Toggle
-            checked={a().per_mode_query}
-            label={t("perModeQuery")}
-            onChange={(v) => props.onChange({ per_mode_query: v })}
-          />
-        </Row>
-        <span class="settings-hint">{t("perModeQueryHint")}</span>
-        <Row label={t("idleReset")}>
-          <Toggle
-            checked={a().idle_reset_enabled}
-            label={t("idleReset")}
-            onChange={(v) => props.onChange({ idle_reset_enabled: v })}
-          />
-        </Row>
-        <Show when={a().idle_reset_enabled}>
-          <Row label={t("idleResetMinutes")}>
-            <NumberPreset
-              value={a().idle_reset_minutes}
-              presets={[
-                { label: "5", value: 5 },
-                { label: "15", value: 15 },
-                { label: "30", value: 30 },
-                { label: "60", value: 60 },
-                { label: "120", value: 120 },
-                { label: "240", value: 240 },
-              ]}
-              onCommit={(v) => props.onChange({ idle_reset_minutes: v })}
-              custom={{ min: 1, max: 10080, step: 1, label: t("idleResetMinutes") }}
-            />
-          </Row>
-        </Show>
-        <span class="settings-hint">{t("idleResetHint")}</span>
-      </div>
+        </SettingRow>
+      </SettingGroup>
 
-      <h2 class="settings-grouptitle">{t("groupEntryBox")}</h2>
-      <div class="settings-group">
-        <Row label={t("settingsEntrySize")}>
-          <NumberPreset
+      <SettingGroup title={t("groupEntryBox")} number="02.4">
+        <SettingRow id="appearance.entry_size" label={t("settingsEntrySize")}>
+          <EntrySizeControl
             value={a().entry_size}
-            presets={[
-              { label: t("settingsSizeSmall"), value: 70 },
-              { label: t("settingsSizeMedium"), value: 110 },
-              { label: t("settingsSizeLarge"), value: 150 },
-            ]}
-            onCommit={(v) => props.onChange({ entry_size: v })}
+            onChange={(value) => props.onChange({ entry_size: value })}
           />
-        </Row>
-        <Row label={t("roundAppIcons")}>
+        </SettingRow>
+        <SettingRow
+          id="appearance.round_app_icons"
+          label={t("roundAppIcons")}
+          summary={t("roundAppIconsHint")}
+        >
           <Toggle
             checked={a().round_app_icons}
             label={t("roundAppIcons")}
             onChange={(v) => props.onChange({ round_app_icons: v })}
           />
-        </Row>
-        <span class="settings-hint">{t("roundAppIconsHint")}</span>
-      </div>
+        </SettingRow>
+      </SettingGroup>
     </>
   );
 }

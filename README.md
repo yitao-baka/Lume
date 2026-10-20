@@ -40,9 +40,9 @@ The goal is:
 - System tray icon — left-click toggles, right-click Restart / Exit
 - Auto-sizing window — height fits the results, stays centered (fixed
   height in clipboard mode)
-- Settings window — appearance / navigation / clipboard / hotkeys / search
-  / automation / plugins / about (grouped-card layout with a settings search
-  box)
+- Settings window — grouped personalization / efficiency / management
+  navigation, command-style search, autosave with undo, layered help, and
+  Quiet / Chromatic skins (settings-window only)
 - Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows
 - Whole-drive file search — Everything IPC first, then the LumeSVC

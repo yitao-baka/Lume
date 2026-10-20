@@ -14,12 +14,11 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import type { SettingsData } from "./types";
-import { Row, Toggle } from "./controls";
+import { SettingGroup, SettingRow, Toggle } from "./controls";
 import { ComboRecorder } from "./ComboRecorder";
 import { ProgramPicker } from "./ProgramPicker";
 import { settingsError } from "./errors";
 import deleteIcon from "../../res/icons/delete.svg";
-import plusIcon from "../../res/icons/plus.svg";
 
 /** Result of 自动化 → 「测试」 (mirrors `TestRuleResult` in automation.rs). */
 interface TestRuleResult {
@@ -113,6 +112,7 @@ function DelayInput(props: {
 export default function AutomationPane(props: {
   settings: SettingsData;
   onChange: (patch: Partial<SettingsData["automation"]>) => void;
+  onOpenSystem: () => void;
 }) {
   const automation = () => props.settings.automation;
 
@@ -130,7 +130,8 @@ export default function AutomationPane(props: {
   const [addError, setAddError] = createSignal<string | null>(null);
   const [duplicateIndex, setDuplicateIndex] = createSignal<number | null>(null);
   const [highlightIndex, setHighlightIndex] = createSignal<number | null>(null);
-  let rowRefs: Record<string, HTMLDivElement | undefined> = {};
+  const [expandedRules, setExpandedRules] = createSignal<Record<number, boolean>>({});
+  let rowRefs: Record<string, HTMLElement | undefined> = {};
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   function showToast(text: string, ok = true) {
@@ -224,175 +225,258 @@ export default function AutomationPane(props: {
 
   return (
     <>
-      <div class="settings-group">
-        <Row label={t("autoEnabled")}>
+      <SettingGroup title={t("groupAutomation")} number="06.1">
+        <SettingRow
+          id="automation.enabled"
+          label={t("autoEnabled")}
+          summary={t("autoHint")}
+        >
           <Toggle
             checked={automation().enabled ?? true}
             label={t("autoEnabled")}
-            onChange={(v) => props.onChange({ enabled: v })}
+            onChange={(value) => props.onChange({ enabled: value })}
           />
-        </Row>
-        <Row label={t("autoForceFocus")}>
+        </SettingRow>
+        <SettingRow
+          id="automation.force_focus"
+          label={t("autoForceFocus")}
+          summary={t("settingsForceFocusSummary")}
+          details={[t("autoForceFocusHint")]}
+        >
           <Toggle
             checked={automation().force_focus ?? false}
             label={t("autoForceFocus")}
-            onChange={(v) => props.onChange({ force_focus: v })}
+            onChange={(value) => props.onChange({ force_focus: value })}
           />
-        </Row>
-        <p class="settings-hint">{t("autoForceFocusHint")}</p>
-        <Row label={t("autoUseAgent")}>
+        </SettingRow>
+        <SettingRow
+          id="automation.use_agent"
+          label={t("autoUseAgent")}
+          summary={t("settingsUseAgentSummary")}
+          details={[t("autoUseAgentHint")]}
+        >
           <Toggle
             checked={automation().use_agent ?? true}
             label={t("autoUseAgent")}
-            onChange={(v) => props.onChange({ use_agent: v })}
+            onChange={(value) => props.onChange({ use_agent: value })}
           />
-        </Row>
-        <p class="settings-hint">{t("autoUseAgentHint")}</p>
-        <Row label={t("autoAgentResident")}>
+        </SettingRow>
+        <SettingRow
+          id="automation.agent_resident"
+          label={t("autoAgentResident")}
+          summary={
+            (automation().use_agent ?? true)
+              ? t("settingsResidentSummary")
+              : t("autoAgentResidentDependency")
+          }
+          details={[t("autoAgentResidentHint")]}
+          disabled={!(automation().use_agent ?? true)}
+        >
           <Toggle
             checked={automation().agent_resident ?? false}
             label={t("autoAgentResident")}
             disabled={!(automation().use_agent ?? true)}
-            onChange={(v) => props.onChange({ agent_resident: v })}
+            onChange={(value) => props.onChange({ agent_resident: value })}
           />
-        </Row>
-        <p class="settings-hint">
-          {t(
-            (automation().use_agent ?? true)
-              ? "autoAgentResidentHint"
-              : "autoAgentResidentDependency",
-          )}
-        </p>
-        <p class="settings-hint">{t("autoHint")}</p>
+        </SettingRow>
+      </SettingGroup>
 
-        <div class="settings-blocktitle">{t("groupAutomation")}</div>
-        <div class="settings-automation-head" aria-hidden="true">
-          <span>{t("autoProcessLabel")}</span>
-          <span>{t("autoComboLabel")}</span>
-          <span>{t("autoTest")}</span>
-          <span>{t("autoDelayTitle")}</span>
-          <span>{t("autoEnabled")}</span>
-          <span />
-        </div>
-        <Show
-          when={(automation().actions ?? []).length > 0}
-          fallback={<span class="settings-empty">{t("autoEmpty")}</span>}
+      <SettingGroup title={t("autoRulesGroup")} number="06.2">
+        <SettingRow
+          id="automation.actions"
+          label={t("settingsAutomationRulesHint")}
+          summary={t("autoNotice")}
+          class="settings-editor-row"
         >
-          <For each={automation().actions ?? []}>
-            {(action, i) => (
-              <div
-                ref={(el) => (rowRefs[action.process.toLowerCase()] = el)}
-                class="settings-row-between settings-listrow settings-automation-row"
-                classList={{ "search-hit": highlightIndex() === i() }}
-                tabIndex={-1}
-              >
-                <span class="settings-index-name" title={action.process}>{action.process}</span>
-                <ComboRecorder
-                  value={action.combo}
-                  placeholder={t("autoComboPlaceholder")}
-                  label={`${t("autoComboLabel")}: ${action.process}`}
-                  onCommit={(v) => updateAction(i(), { combo: v })}
+          <div class="settings-rule-list">
+            <Show
+              when={(automation().actions ?? []).length > 0}
+              fallback={<div class="settings-empty">{t("autoEmpty")}</div>}
+            >
+              <For each={automation().actions ?? []}>
+                {(action, index) => {
+                  const expanded = () => expandedRules()[index()] === true;
+                  return (
+                    <article
+                      ref={(el) => (rowRefs[action.process.toLowerCase()] = el)}
+                      class="settings-rule-card"
+                      classList={{
+                        expanded: expanded(),
+                        disabled: !action.enabled,
+                        "search-hit": highlightIndex() === index(),
+                      }}
+                      tabIndex={-1}
+                    >
+                      <div class="settings-rule-summary-row">
+                        <button
+                          class="settings-rule-toggle"
+                          type="button"
+                          aria-expanded={expanded()}
+                          aria-controls={`automation-rule-${index()}`}
+                          onClick={() =>
+                            setExpandedRules((current) => ({
+                              ...current,
+                              [index()]: !expanded(),
+                            }))
+                          }
+                        >
+                          <span class="settings-rule-title">{action.process}</span>
+                          <span class="settings-rule-sentence">
+                            {action.combo} · {action.delay_ms ?? DEFAULT_DELAY_MS}{" "}
+                            {t("autoDelayUnit")}
+                          </span>
+                          <span class="settings-rule-chevron" aria-hidden="true">
+                            {expanded() ? "−" : "+"}
+                          </span>
+                        </button>
+                        <div class="settings-rule-actions">
+                          <button
+                            class="settings-test-btn"
+                            type="button"
+                            title={t("autoTestHint")}
+                            onClick={() => void testRule(action)}
+                          >
+                            {t("autoTest")}
+                          </button>
+                          <Toggle
+                            checked={action.enabled}
+                            label={t("autoRuleEnabledLabel", { process: action.process })}
+                            onChange={(value) => updateAction(index(), { enabled: value })}
+                          />
+                          <button
+                            class="settings-icon-btn settings-rule-delete"
+                            type="button"
+                            title={t("delete")}
+                            aria-label={`${t("delete")}: ${action.process}`}
+                            onClick={() => removeAction(index())}
+                          >
+                            <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
+                          </button>
+                        </div>
+                      </div>
+                      <Show when={expanded()}>
+                        <div class="settings-rule-detail" id={`automation-rule-${index()}`}>
+                          <label class="settings-rule-field">
+                            <span>{t("autoProcessLabel")}</span>
+                            <input
+                              class="settings-text-input"
+                              value={action.process}
+                              onChange={(event) =>
+                                updateAction(index(), { process: event.currentTarget.value.trim() })
+                              }
+                            />
+                          </label>
+                          <label class="settings-rule-field">
+                            <span>{t("autoComboLabel")}</span>
+                            <ComboRecorder
+                              value={action.combo}
+                              placeholder={t("autoComboPlaceholder")}
+                              label={`${t("autoComboLabel")}: ${action.process}`}
+                              onCommit={(value) => updateAction(index(), { combo: value })}
+                            />
+                          </label>
+                          <label class="settings-rule-field settings-rule-delay">
+                            <span>{t("autoDelayTitle")}</span>
+                            <DelayInput
+                              value={action.delay_ms ?? DEFAULT_DELAY_MS}
+                              label={`${t("autoDelayTitle")}: ${action.process}`}
+                              onChange={(ms) => updateAction(index(), { delay_ms: ms })}
+                            />
+                          </label>
+                        </div>
+                      </Show>
+                    </article>
+                  );
+                }}
+              </For>
+            </Show>
+
+            <details class="settings-rule-add">
+              <summary>{t("autoAdd")}</summary>
+              <div class="settings-rule-add-grid">
+                <input
+                  class="settings-text-input"
+                  type="text"
+                  placeholder={t("autoProcessPlaceholder")}
+                  value={process()}
+                  aria-label={t("autoProcessLabel")}
+                  onInput={(event) => {
+                    setProcess(event.currentTarget.value);
+                    setAddError(null);
+                    setDuplicateIndex(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addAction();
+                    }
+                  }}
                 />
                 <button
-                  class="settings-test-btn"
-                  title={t("autoTestHint")}
-                  onClick={() => void testRule(action)}
+                  class="settings-pick-btn"
+                  type="button"
+                  title={t("autoPickTitle")}
+                  onClick={(event) => {
+                    pickTrigger = event.currentTarget;
+                    setPicking(true);
+                  }}
                 >
-                  {t("autoTest")}
+                  {t("autoPick")}
                 </button>
-                <DelayInput
-                  value={action.delay_ms ?? DEFAULT_DELAY_MS}
-                  label={`${t("autoDelayTitle")}: ${action.process}`}
-                  onChange={(ms) => updateAction(i(), { delay_ms: ms })}
+                <ComboRecorder
+                  value={combo()}
+                  placeholder={t("autoComboPlaceholder")}
+                  onCommit={setCombo}
                 />
-                <Toggle
-                  checked={action.enabled}
-                  label={t("autoRuleEnabledLabel", { process: action.process })}
-                  onChange={(v) => updateAction(i(), { enabled: v })}
+                <DelayInput
+                  value={delayMs()}
+                  label={t("autoDelayTitle")}
+                  onValidityChange={setDelayValid}
+                  onChange={setDelayMs}
                 />
                 <button
-                  class="settings-icon-btn"
-                  title={t("delete")}
-                  aria-label={t("delete")}
-                  onClick={() => removeAction(i())}
+                  class="settings-action settings-action-primary"
+                  type="button"
+                  disabled={!process().trim() || !combo() || !delayValid()}
+                  onClick={addAction}
                 >
-                  <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
+                  {t("autoAdd")}
                 </button>
               </div>
-            )}
-          </For>
-        </Show>
+              <Show when={addError()}>
+                <span class="settings-inline-error" role="alert">
+                  {addError()}
+                  <Show when={duplicateIndex() !== null}>
+                    <button
+                      type="button"
+                      class="settings-link"
+                      onClick={() => {
+                        const index = duplicateIndex();
+                        if (index !== null) jumpToRule(index);
+                      }}
+                    >
+                      {t("autoJumpExisting")}
+                    </button>
+                  </Show>
+                </span>
+              </Show>
+            </details>
+          </div>
+        </SettingRow>
+      </SettingGroup>
 
-        <div class="settings-row settings-listadd">
-          <input
-            class="settings-text-input"
-            type="text"
-            placeholder={t("autoProcessPlaceholder")}
-            value={process()}
-            aria-label={t("autoProcessLabel")}
-            onInput={(e) => {
-              setProcess(e.currentTarget.value);
-              setAddError(null);
-              setDuplicateIndex(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addAction();
-              }
-            }}
-          />
-          <button
-            class="settings-pick-btn"
-            title={t("autoPickTitle")}
-            onClick={(e) => {
-              pickTrigger = e.currentTarget;
-              setPicking(true);
-            }}
-          >
-            {t("autoPick")}
+      <SettingGroup title={t("settingsAgentGroup")} number="06.3">
+        <SettingRow
+          id="action.agent_status"
+          label={t("settingsAgentGroup")}
+          summary={t("settingsAgentStatusHint")}
+        >
+          <button class="settings-action" type="button" onClick={props.onOpenSystem}>
+            {t("settingsOpenSystem")}
           </button>
-          <ComboRecorder
-            value={combo()}
-            placeholder={t("autoComboPlaceholder")}
-            onCommit={setCombo}
-          />
-          <DelayInput
-            value={delayMs()}
-            label={t("autoDelayTitle")}
-            onValidityChange={setDelayValid}
-            onChange={setDelayMs}
-          />
-          <button
-            class="settings-icon-btn"
-            title={t("autoAdd")}
-            aria-label={t("autoAdd")}
-            disabled={!process().trim() || !combo() || !delayValid()}
-            onClick={addAction}
-          >
-            <img class="settings-icon-btn-icon" src={plusIcon} alt="" draggable={false} />
-          </button>
-        </div>
-        <Show when={addError()}>
-          <span class="settings-error settings-automation-error" role="alert">
-            {addError()}
-            <Show when={duplicateIndex() !== null}>
-              <button
-                type="button"
-                class="settings-link"
-                onClick={() => {
-                  const index = duplicateIndex();
-                  if (index !== null) jumpToRule(index);
-                }}
-              >
-                {t("autoJumpExisting")}
-              </button>
-            </Show>
-          </span>
-        </Show>
-        <p class="settings-hint">{t("autoDelayHint")}</p>
-        <p class="settings-hint">{t("autoNotice")}</p>
-      </div>
+        </SettingRow>
+      </SettingGroup>
+
       <Show when={toast()}>
         <div
           class="settings-toast"

@@ -134,6 +134,13 @@ contrast-safe tiers.
 - At the settings window's `560×420` minimum, the navigation rail compacts its
   rows and remains independently scrollable. The footer never overlaps a
   navigation hit target; the last section stays fully visible and clickable.
+- The settings window opens at `1040×720` and uses one of two complete skins
+  from `appearance.settings_skin`: Quiet Control Deck (rounded cards, two quiet
+  planes) or Chromatic Edge (square 1.5px panels, numbered pages). Both share
+  the same semantic components and responsive geometry. Skin tokens are scoped
+  under `.settings` / `html[data-settings-skin]`; they must never change the
+  launcher surface, plugin canvases, detached windows, tray, or DWM border.
+  Switching skin preserves focus, DOM identity, and scroll position.
 
 ## Behavior
 
@@ -154,21 +161,22 @@ contrast-safe tiers.
 ## Accessibility & targets
 
 - Every switch carries a non-empty accessible name derived from its visible
-  row label. Selectable option pills expose `aria-pressed`; range inputs have
-  labels; settings navigation uses tab/tabpanel relationships, roving
-  tabindex and arrow/Home/End navigation. The document `lang` follows the
-  resolved UI locale.
+  row label. Launcher option pills expose `aria-pressed`; settings segmented
+  controls use radio semantics with arrow/Home/End navigation. Range inputs
+  have labels; settings navigation uses tab/tabpanel relationships and roving
+  tabindex. The document `lang` follows the resolved UI locale.
 - Confirm dialogs are real keyboard scopes: focus enters on the safe
-  “continue editing” action, background regions become `inert`, Tab and
+  cancel action, background regions become `inert`, Tab and
   Shift+Tab cycle inside, Esc dismisses, and focus returns to the trigger.
 - Plugin card headers are Enter/Space-expandable buttons with
   `aria-expanded` and an `aria-controls` detail panel; their inner controls
   remain independently reachable.
-- Immediate-write controls and groups carry a visible “immediate effect”
-  badge. The unsaved prompt explicitly says these values survive a draft
-  discard and uses scoped wording such as “discard unsaved draft”.
-- Click targets meet accessibility floors: switches are at least 24px high,
-  icon buttons at least 30px, and text links at least 24px high. Numeric
+- Reversible settings autosave and show status/undo in the settings footer.
+  Service/agent registration, import, backup restore, default restore, plugin
+  uninstall, and trust-all are explicit commands with confirmation and real
+  progress/results instead of sharing the autosave path.
+- Click targets meet accessibility floors: settings switches use at least a
+  44×36px hit box, icon buttons at least 30px, and text links at least 24px. Numeric
   presets may reveal a free-form input without shrinking the preset hit
   targets.
 

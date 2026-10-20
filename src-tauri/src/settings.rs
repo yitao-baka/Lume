@@ -38,6 +38,15 @@ pub struct Settings {
     pub automation: Automation,
 }
 
+impl Settings {
+    /// Enforce cross-field value normalization after any deserialization
+    /// boundary (read, patch merge, import, restore, full save).
+    fn normalize(&mut self) {
+        self.appearance.settings_skin =
+            normalize_settings_skin(&self.appearance.settings_skin).to_string();
+    }
+}
+
 /// Plugin enable/disable state. Plugins not listed are enabled; the ids here
 /// are matched against the built-in registry and  manifests.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -147,6 +156,12 @@ pub struct Appearance {
     /// `"system"` | `"dark"` | `"light"` — launcher + settings theme.
     #[serde(default = "default_color_mode")]
     pub color_mode: String,
+    /// Settings-window visual skin: `"quiet"` (default) | `"chromatic"`.
+    /// Unknown values normalize back to `quiet` at every deserialization
+    /// boundary, so a hand-edited/imported file can never leave the settings
+    /// webview unstyled.
+    #[serde(default = "default_settings_skin")]
+    pub settings_skin: String,
     /// Entry-box edge length in px — the square box wrapping each main-menu
     /// entry (grid columns adapt to fit).
     #[serde(default = "default_entry_size")]
@@ -244,6 +259,20 @@ fn default_entry_size() -> u32 {
 /// Default theme: follow the OS light/dark preference.
 fn default_color_mode() -> String {
     "system".into()
+}
+
+fn default_settings_skin() -> String {
+    "quiet".into()
+}
+
+/// Normalize the settings-window skin. Kept as a string (not a strict enum)
+/// so future skin names in external files degrade to the default instead of
+/// failing the whole settings document.
+pub fn normalize_settings_skin(value: &str) -> &'static str {
+    match value {
+        "chromatic" => "chromatic",
+        _ => "quiet",
+    }
 }
 
 /// Default max/initial window height (the old fixed 520px auto-size cap).
@@ -516,6 +545,7 @@ impl Default for Settings {
             appearance: Appearance {
                 language: "system".into(),
                 color_mode: "system".into(),
+                settings_skin: "quiet".into(),
                 entry_size: 110,
                 round_app_icons: false,
                 window_width: 720,
@@ -651,6 +681,7 @@ fn read_settings(base: &Path) -> Settings {
         .and_then(|text| {
             let mut s: Settings = toml::from_str(&text).ok()?;
             s.index.migrate();
+            s.normalize();
             Some(s)
         })
         .unwrap_or_default()
@@ -719,10 +750,12 @@ fn ensure_known_system_dirs(settings: &mut Settings) {
 /// Current effective settings.
 #[tauri::command]
 pub fn get_settings(state: State<SettingsState>) -> Settings {
-    state.0.lock().unwrap().clone()
+    let mut settings = state.0.lock().unwrap().clone();
+    settings.normalize();
+    settings
 }
 
-/// Result of checking a user-index path before it enters the draft. A result
+/// Result of checking a user-index path before it enters the working copy. A result
 /// (instead of a command error) keeps missing/inaccessible/not-a-directory
 /// distinct for localized inline feedback.
 #[derive(Debug, Serialize)]
@@ -779,7 +812,7 @@ pub fn validate_index_dir(path: String) -> IndexDirValidation {
 /// Deep-merge a partial settings object (only the fields the user edited)
 /// onto the current settings. Arrays are values, not maps: a changed index
 /// list / automation rule list replaces the old one wholesale. This is what
-/// keeps a stale settings-window draft from overwriting light writes made in
+/// keeps a settings-window autosave snapshot from overwriting light writes made in
 /// the meantime (`set_plugin_enabled`, `save_last_page`, plugin geometry…).
 fn merge_json(base: &mut serde_json::Value, patch: serde_json::Value) {
     match (base, patch) {
@@ -809,6 +842,7 @@ fn merge_settings_patch(
     merge_json(&mut value, patch);
     let mut next: Settings = serde_json::from_value(value).map_err(|e| e.to_string())?;
     next.index.migrate();
+    next.normalize();
     ensure_known_system_dirs(&mut next);
     Ok(next)
 }
@@ -858,7 +892,8 @@ fn apply_runtime_settings(
 /// the "Save" and "Apply" buttons (the frontend decides whether to close the
 /// window).
 #[tauri::command]
-pub fn save_settings(new: Settings, app: AppHandle, state: State<SettingsState>) -> Result<(), String> {
+pub fn save_settings(mut new: Settings, app: AppHandle, state: State<SettingsState>) -> Result<(), String> {
+    new.normalize();
     let mut guard = state.0.lock().unwrap();
     let old = guard.clone();
     write_settings(&paths::base_dir(), &new, &old)?;
@@ -869,7 +904,7 @@ pub fn save_settings(new: Settings, app: AppHandle, state: State<SettingsState>)
 
 /// Save only the fields the settings window actually edited. The patch is
 /// merged onto the CURRENT settings under the state lock, so an instant
-/// toggle made while the window held a dirty draft survives 保存并应用.
+/// toggle made while the window had pending/queued edits survives autosave.
 #[tauri::command]
 pub fn save_settings_patch(
     patch: serde_json::Value,
@@ -905,6 +940,7 @@ pub fn import_settings(
     let text = fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
     let mut imported: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
     imported.index.migrate();
+    imported.normalize();
     ensure_known_system_dirs(&mut imported);
     let mut guard = state.0.lock().unwrap();
     let old = guard.clone();
@@ -922,6 +958,7 @@ pub fn restore_default(app: AppHandle, state: State<SettingsState>) -> Result<()
     let text = fs::read_to_string(default_path(&base)).map_err(|e| e.to_string())?;
     let mut defaults: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
     defaults.index.migrate();
+    defaults.normalize();
     ensure_known_system_dirs(&mut defaults);
     let mut guard = state.0.lock().unwrap();
     let old = guard.clone();
@@ -939,6 +976,7 @@ pub fn restore_backup(app: AppHandle, state: State<SettingsState>) -> Result<(),
     let text = fs::read_to_string(backup_path(&base)).map_err(|e| e.to_string())?;
     let mut restored: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
     restored.index.migrate();
+    restored.normalize();
     ensure_known_system_dirs(&mut restored);
     let mut guard = state.0.lock().unwrap();
     let old = guard.clone();
@@ -1223,6 +1261,49 @@ mod tests {
         assert_eq!(next.automation.actions.len(), 1);
         assert_eq!(next.automation.actions[0].process, "new.exe");
         assert_eq!(next.index.cache_refresh_interval_minutes, 5);
+    }
+
+    /// Settings-window skin: old files default to quiet, unknown values are
+    /// normalized at every read/merge boundary, and the two known values
+    /// round-trip without disturbing other appearance fields.
+    #[test]
+    fn settings_skin_defaults_normalizes_and_round_trips() {
+        let base = temp_base("settings-skin");
+        ensure_settings_files(&base).unwrap();
+
+        // Missing key (pre-skin settings.toml) → quiet.
+        let full = fs::read_to_string(settings_path(&base)).unwrap();
+        let legacy = full
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("settings_skin ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), legacy).unwrap();
+        assert_eq!(read_settings(&base).appearance.settings_skin, "quiet");
+
+        // Unknown value must not fail deserialization; it normalizes to quiet.
+        let unknown = full.replace(
+            "settings_skin = \"quiet\"",
+            "settings_skin = \"neon-from-the-future\"",
+        );
+        fs::write(settings_path(&base), unknown).unwrap();
+        let loaded = read_settings(&base);
+        assert_eq!(loaded.appearance.settings_skin, "quiet");
+
+        // Known optional skin round-trips, and a patch with an unknown value
+        // is normalized before it can reach the settings window.
+        let mut next = loaded;
+        next.appearance.settings_skin = "chromatic".into();
+        write_settings_light(&base, &next).unwrap();
+        assert_eq!(read_settings(&base).appearance.settings_skin, "chromatic");
+        let merged = merge_settings_patch(
+            &next,
+            serde_json::json!({ "appearance": { "settings_skin": "not-a-skin" } }),
+        )
+        .unwrap();
+        assert_eq!(merged.appearance.settings_skin, "quiet");
+        assert_eq!(merged.appearance.color_mode, next.appearance.color_mode);
+        fs::remove_dir_all(&base).ok();
     }
 
     /// Global 全部授权 defaults to off and round-trips through a light

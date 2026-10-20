@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#57 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#58 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -3797,3 +3797,64 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 - `pnpm run build`、`pnpm exec tsc --noEmit`、`cargo check`、`cargo test`
   （**226 passed / 9 ignored**）、
   `pnpm run tauri build --debug --no-bundle` 通过。
+
+---
+
+## 58. 设置面板 Quiet / Chromatic 重构与自动保存
+
+### 58.1 实现
+
+- 设置窗默认尺寸改为 `1040×720`，保留 `560×420` 最小尺寸；按主显示器工作区
+  收敛并重新居中。
+- 左侧九分区重排为「个性化 / 效率 / 管理」三组，`导航页` 更名为 `启动器`；
+  宽度低于 `760px` 时折叠为 56px 图标栏。
+- 新增共享语义组件：页面头、设置组、设置行、分段选择、帮助带、状态票券和确认
+  对话框；导航、搜索、页面和控件共用稳定 DOM。
+- 新增 `appearance.settings_skin`（`quiet` / `chromatic`，默认 `quiet`）：
+  - Rust `Appearance` 增加 serde 默认字段，并在读取、patch 合并、导入、恢复默认、
+    恢复备份和整表保存后统一规范化未知值。
+  - `src/settings/skin.ts` 是 `data-settings-skin` 的唯一写入器；`src/index.tsx`
+    在 `render()` 前从 `__LUME_CONFIG__` 应用首帧皮肤。
+  - Quiet token / 几何与 Chromatic Mineral Paper / Charcoal Blush 色板分别作用域化
+    在 `src/settings/skins/*.css`，不修改启动器共享 token。
+- 设置窗改为自动保存：单写者队列、文本 500ms / 滑块 200ms 合并、字段级最小
+  patch、失败回滚、底栏重试、6 秒撤销；关闭前 flush，失败时保持窗口打开。
+- 搜索从字段目录构建：覆盖标题、摘要、详情、关键词、当前值与动态插件设置；
+  结果逐行跳转并把焦点放在目标行容器。
+- 各页面改为任务分组：主题预览、位置网格、条目预览、剪贴板五组、用户索引表、
+  keycap 快捷键、自动化规则票券、插件主从视图、系统状态票券和关于品牌表。
+- 服务卸载、提权代理注销、导入、恢复备份、恢复默认、插件卸载和全部授权改用
+  共享确认对话框；不再使用“再次点击确认”。
+- 新增 `scripts/cdp_settings_skin_verify.mjs`。原
+  `cdp_settings_ux_audit_verify.mjs` 入口转发到新的双皮肤回归；旧
+  `cdp_settings_smoke.mjs` 更新到新 DOM 与自动保存契约。
+
+### 58.2 踩坑
+
+- 旧 `App.css` 的 `.settings-sidebar { width: 160px }` 会在窄布局继续生效，
+  导致 56px 图标栏中的图标被压在 160px 背景上。设置皮肤必须显式覆盖
+  `width: 100%`，不能只改 grid 列宽。
+- 皮肤切换后浏览器可能因内容高度变化钳制 `scrollTop`；DOM 身份与焦点仍应
+  保持，滚动位置恢复到新内容允许的范围。
+- Tauri `__TAURI_INTERNALS__.invoke` 是只读且不可配置，无法在 CDP 中 monkey
+  patch 来模拟写失败；可靠做法是在 debug 设置目录临时给 `settings.toml` 加
+  Windows 只读属性，验证后恢复。
+- WebView2 在高 DPI 下把 authored `1.5px` 计算为 `1.33333px`；Chromatic 回归
+  应断言 CSS 变量 `--settings-line-width` 为 `1.5px`，不要只比较 computed
+  border width。
+- 自身 `save_settings_patch` 触发的 `settings-applied` 可能晚于保存 Promise
+  完成；设置窗需要短时自写窗口，避免把自身写入误判为外部刷新并重读整页。
+
+### 58.3 验证
+
+- `node scripts/cdp_settings_skin_verify.mjs`：**52/52 PASS**。覆盖 Quiet /
+  Chromatic × 明暗组合、分组导航、ARIA、首帧属性、焦点/滚动/DOM 稳定、字段
+  搜索、插件动态设置、自动保存持久化、只读文件失败回滚与重试、确认对话框、
+  以及九页在 `1040×720` 和 `560×420` 下无横向溢出。
+- `node scripts/cdp_settings_smoke.mjs`：**9/9 PASS**，覆盖分组导航、命令搜索、
+  自动保存底栏、恢复确认、剪贴板禁用依赖、keycap 与页面截图。
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、
+  `cargo test`（**227 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过。
+- 服务/代理注册、UAC、200% 缩放和真实快捷键录制仍按
+  `docs/TESTING.md` 手工验证；本轮未触发真实系统集成变更。

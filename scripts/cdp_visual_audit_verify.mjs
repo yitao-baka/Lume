@@ -155,7 +155,11 @@ async function findPreview() {
       if (!page.url.includes("preview.html")) continue;
       try {
         const client = await connect(page.webSocketDebuggerUrl);
-        if (await client.evalJs(`!!document.querySelector(".preview-body")`)) return client;
+        if (
+          await client.evalJs(
+            `!!document.querySelector(".preview-body .preview-title") && !!document.querySelector(".preview-body .preview-close")`,
+          )
+        ) return client;
         client.ws.close();
       } catch {}
     }
@@ -610,18 +614,17 @@ try {
     mobile: false,
   });
   await sleep(400);
-  const settingsAccent = await settings.evalJs(`(() => {
-    const chip = document.querySelector(".settings-chip.active");
+  const settingsVisual = await settings.evalJs(`(() => {
+    const radio = document.querySelector('[role="radio"][aria-checked="true"]');
     const group = document.querySelector(".settings-grouptitle");
-    const link = document.querySelector(".settings-link");
     return {
-      chip: chip ? getComputedStyle(chip).color : null,
+      radioBackground: radio ? getComputedStyle(radio).backgroundColor : null,
+      radioColor: radio ? getComputedStyle(radio).color : null,
       group: group ? getComputedStyle(group).color : null,
-      link: link ? getComputedStyle(link).color : null,
     };
   })()`);
   await settings.evalJs(`(() => {
-    const labels = ["导航页", "導航頁", "Navigation"];
+    const labels = ["启动器", "啟動器", "Launcher"];
     const nav = [...document.querySelectorAll(".settings-nav")].find(
       (b) => labels.some((label) => b.textContent.includes(label))
     );
@@ -630,10 +633,7 @@ try {
   })()`);
   await sleep(250);
   const roundSetting = await settings.evalJs(`(() => {
-    const labels = ["应用图标圆形显示", "應用程式圖示圓形顯示", "Round app icons"];
-    const row = [...document.querySelectorAll(".settings-row-between")].find(
-      (r) => labels.some((label) => r.textContent.includes(label))
-    );
+    const row = document.querySelector('[data-setting-id="appearance.round_app_icons"]');
     return row
       ? {
           label: row.textContent.trim(),
@@ -647,7 +647,7 @@ try {
     JSON.stringify(roundSetting)
   );
   const minLayout = await settings.evalJs(`(() => {
-    const content = document.querySelector(".settings-content").getBoundingClientRect();
+    const content = document.querySelector(".settings-main").getBoundingClientRect();
     const nav = [...document.querySelectorAll(".settings-nav")];
     const last = nav.at(-1);
     const r = last.getBoundingClientRect();
@@ -684,20 +684,20 @@ try {
   );
   check("V-05 About is reachable with a real center click", /关于|關於|About/.test(aboutActive), aboutActive);
 
-  const afterAboutAccent = await settings.evalJs(`(() => {
-    const group = document.querySelector(".settings-grouptitle");
-    const link = document.querySelector(".settings-link");
+  const afterAboutSelection = await settings.evalJs(`(() => {
+    const active = document.querySelector(".settings-nav.active");
     return {
-      group: group ? getComputedStyle(group).color : null,
-      link: link ? getComputedStyle(link).color : null,
+      background: active ? getComputedStyle(active).backgroundColor : null,
+      color: active ? getComputedStyle(active).color : null,
     };
   })()`);
   check(
-    "V-01 selected chips / group titles / links all use accent text",
-    Object.values({ ...settingsAccent, ...afterAboutAccent })
-      .filter(Boolean)
-      .every((c) => c === "rgb(7, 87, 184)"),
-    JSON.stringify({ ...settingsAccent, ...afterAboutAccent })
+    "V-01 settings selection uses a visible surface and neutral group titles",
+    !!settingsVisual.radioBackground &&
+      settingsVisual.radioBackground !== "rgba(0, 0, 0, 0)" &&
+      settingsVisual.group !== "rgb(7, 87, 184)" &&
+      afterAboutSelection.background !== "rgba(0, 0, 0, 0)",
+    JSON.stringify({ settingsVisual, afterAboutSelection })
   );
 
   await settings.evalJs(`document.querySelectorAll(".settings-nav")[7]?.click(); "plugins"`);
@@ -721,6 +721,9 @@ try {
   preview = await findPreview();
   if (!preview) throw new Error("preview target missing");
   await sleep(700);
+  preview.ws.close();
+  preview = await findPreview();
+  if (!preview) throw new Error("preview target missing after update");
   const previewInfo = await preview.evalJs(`(() => {
     const title = document.querySelector(".preview-title");
     const close = document.querySelector(".preview-close");

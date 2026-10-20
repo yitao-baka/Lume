@@ -43,15 +43,17 @@ fallback, the opt-in circular icon mask, truncation tooltips, scroll fades, and
 the satellite preview title/close path.
 
 Settings interaction/accessibility regressions are covered by
-`node scripts/cdp_settings_ux_audit_verify.mjs`. It opens the embedded debug
-settings window and checks document language, switch/chip semantics, tablist
-arrow navigation, baseline-diff dirty state, confirm-dialog focus trap/inert/
-Esc restoration, visible-label and plugin-setting search, keyboard plugin-card
-expansion, trust-all reset, single-key mode recording, blur/click cancellation,
-user-index validation/normalization, completion-gated index refresh,
-automation duplicate/delay feedback, clipboard ignore normalization, immediate
-write labeling, and click-target floors. The probe discards its draft and
-restores temporary developer/trust state.
+`node scripts/cdp_settings_skin_verify.mjs`. It opens the embedded debug settings
+window and checks Quiet / Chromatic across system-resolved light and dark modes,
+first-paint `data-settings-skin`, grouped tab semantics, focus and scroll
+preservation while switching skins, catalog search (including a disk plugin's
+declarative setting), autosave persistence, save failure/rollback with a
+read-only `settings.toml`, real confirmation dialogs, and all nine pages at
+`1040×720` and `560×420` without horizontal overflow. The lighter
+`node scripts/cdp_settings_smoke.mjs` covers the grouped navigation, command
+search, autosave status bar, restore confirmation, clipboard disabled-slider
+dependency, keycap shortcuts, and page screenshots. The former
+`cdp_settings_ux_audit_verify.mjs` filename forwards to the skin verifier.
 
 ## Manual verification
 
@@ -195,18 +197,18 @@ dev URL instead.
 3. **No close button without content** — the window is hidden, never a bare
    header floating beside the launcher.
 
-### Settings window (设置迭代)
+### Settings window
 
 1. **Entry** — click the gear button in the launcher's search row, or
    「设置」 in the tray right-click menu: the settings window opens.
-2. **Layout** — the left sidebar shows 外观 / 导航页 / 剪贴板 / 快捷键 /
-   搜索 / 系统 / 自动化 / 插件 / 关于; clicking swaps the right pane.
-   「保存并应用」 is disabled until a change is made.
-3. **Save** — 「保存并应用」 writes `settings.toml`, applies immediately and
-   closes the window. The previous file is copied to `backup.toml` first.
-   Make a color-mode change dirty, switch to 插件 and disable a plugin, then
-   save: the plugin stays disabled (the save only patches the appearance field
-   it edited).
+2. **Layout** — the grouped sidebar shows 个性化（外观 / 启动器 / 剪贴板）、
+   效率（搜索 / 快捷键 / 自动化）与管理（插件 / 系统 / 关于）；clicking swaps
+   the right pane. The footer shows autosave status instead of a global save
+   button, and Chromatic additionally shows the current page number.
+3. **Autosave** — change a color mode, skin, or switch without pressing save:
+   the footer reports saving then saved. Quit and reopen: the value persists.
+   While a text field is focused, a light write from the launcher/plugin manager
+   must not replace the text being typed.
 4. **Settings files** — live under the writable base dir: portable is the exe
    dir (dev: `src-tauri/target/debug/`), installed (exe under `Program Files`)
    is `%LOCALAPPDATA%\Lume\`; `settings/settings.toml` is created from
@@ -215,26 +217,31 @@ dev URL instead.
 5. **DB migration** — `lume.db` lives in `<base>/data/` (portable:
    `<exe_dir>/data/`; installed: `%LOCALAPPDATA%\Lume\data\`); clipboard
    history survives the move from the old app-data location (auto-copied once).
-6. **Dirty close / import** — change a setting, then press the title-bar X or
-   Alt+F4: choose 保存并关闭 / 丢弃并关闭 / 继续编辑. 继续编辑 keeps the
-   draft; the other two clear it. Import / restore backup while dirty asks
-   before replacing the draft.
-7. **Idle reset (docs/ROADMAP_HISTORY.md #46)** — 设置 → 导航页：「闲置重置」默认开、阈值
+6. **Close / replacement operations** — close during a pending text edit: the
+   queue flushes before hiding. Make `settings.toml` read-only, change a
+   setting, then close: the window stays open, the control rolls back, and the
+   footer offers retry. Import, backup restore, default restore, service
+   uninstall, agent unregister, plugin uninstall, and trust-all enable use the
+   in-window confirmation dialog rather than “click twice”.
+7. **Idle reset (docs/ROADMAP_HISTORY.md #46)** — 设置 → 启动器：「闲置重置」默认开、阈值
    30 分钟。把启动器呼出再隐藏，超过阈值后下次呼出应回导航页、搜索框为空，
    未豁免插件页冷启动；清单 `keep_session = true` 或 设置 → 插件 打开豁免的
    插件应保留查询与页面状态（但落地仍是导航页）；总开关关闭后不重置。
    自动验证：`node scripts/cdp_idle_reset_verify.mjs`（需先构建 debug exe）。
-8. **Search** — queries such as 「闲置重置」「模式切换栏仅显示图标」
-   「各模式使用独立搜索词」「强制聚焦」 find their section; a nonsense query
-   shows the localized no-match state and its clear-search button.
-9. **Minimum window** — resize to the 560×420 minimum. All nine navigation
-   items, including 关于, remain inside the content band and clickable; the
-   footer must not overlap the last item. Open 自动化: rule rows wrap with the
-   delay/toggle/delete controls still visible and no horizontal scrollbar.
-10. **Result icon shape** — 设置 → 导航页 → 条目框：「应用图标圆形显示」默认关，
+8. **Search** — `Ctrl+F`, then search 「设置窗皮肤」「闲置重置」 or a disk
+   plugin's declarative label (e.g. 「列表前缀」): one row-level result appears;
+   Enter jumps to the exact row and focuses its container. A nonsense query
+   shows the localized no-match suggestions. Esc clears the overlay.
+9. **Skins** — switch Quiet ↔ Chromatic in 外观. Focus stays on the skin radio,
+   scroll position is preserved, and the launcher/plugin pages do not change.
+   Repeat with light/dark mode: both skins must use their own palette.
+10. **Minimum window** — resize to 560×420. The sidebar collapses to icons with
+    tooltips; all nine pages remain reachable, rows stack label over control,
+    plugin detail uses list → detail → back, and no page has horizontal overflow.
+11. **Result icon shape** — 设置 → 启动器 → 条目：「应用图标圆形显示」默认关，
     the Navigate grid shows the extracted artwork without a circular crop. Turn
-    it on and save: only the result artwork becomes circular; turn it off and
-    save again to restore the original outline.
+    it on: only the result artwork becomes circular; turn it off to restore the
+    original outline.
 
 ### Service / run-as-admin / auto-start (Program Files iteration)
 

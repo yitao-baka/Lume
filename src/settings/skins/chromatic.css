@@ -1,0 +1,382 @@
+/* Chromatic Edge — square editorial settings skin. */
+
+html[data-settings-skin="chromatic"] {
+  --settings-canvas: #1e1e20;
+  --settings-rail: #18181b;
+  --settings-panel: #262629;
+  --settings-control: #262629;
+  --settings-line: rgba(220, 216, 209, 0.14);
+  --settings-line-strong: rgba(220, 216, 209, 0.28);
+  --settings-text: #dcd8d1;
+  --settings-secondary: #bbb8b2;
+  --settings-muted: #96949b;
+  --settings-structure: #ac8e97;
+  --settings-structure-text: #c0a4ac;
+  --settings-selected: #372d31;
+  --settings-selected-text: #dcd8d1;
+  --settings-hover: rgba(220, 216, 209, 0.055);
+  --settings-signal: #c09682;
+  --settings-signal-text: #d0a68f;
+  --settings-signal-tint: rgba(192, 150, 130, 0.09);
+  --settings-success: #8dae99;
+  --settings-overlay-shadow: 6px 6px 0 rgba(0, 0, 0, 0.58);
+}
+
+html[data-settings-skin="chromatic"][data-theme="light"] {
+  --settings-canvas: #f3efe6;
+  --settings-rail: #dde5de;
+  --settings-panel: #fbf8f1;
+  --settings-control: #fbf8f1;
+  --settings-line: rgba(52, 56, 50, 0.16);
+  --settings-line-strong: rgba(52, 56, 50, 0.34);
+  --settings-text: #343832;
+  --settings-secondary: #4e554f;
+  --settings-muted: #626862;
+  --settings-structure: #64796d;
+  --settings-structure-text: #52675b;
+  --settings-selected: #d1ded4;
+  --settings-selected-text: #303a33;
+  --settings-hover: rgba(52, 56, 50, 0.05);
+  --settings-signal: #b88374;
+  --settings-signal-text: #86594d;
+  --settings-signal-tint: rgba(184, 131, 116, 0.09);
+  --settings-success: #4d6d58;
+  --settings-overlay-shadow: 6px 6px 0 rgba(52, 56, 50, 0.2);
+}
+
+html[data-settings-skin="chromatic"] {
+  --settings-topbar-height: 52px;
+  --settings-rail-width: 224px;
+  --settings-rail-medium: 196px;
+  --settings-page-gutter: 30px;
+  --settings-header-top: 26px;
+  --settings-group-gap: 20px;
+  --settings-row-gap: 18px;
+  --settings-panel-radius: 0px;
+  --settings-control-radius: 0px;
+  --settings-nav-radius: 0px;
+  --settings-toggle-radius: 0px;
+  --settings-knob-radius: 0px;
+  --settings-line-width: 1.5px;
+  --settings-overlay-border-width: 2px;
+  --settings-focus-width: 3px;
+  --settings-control-height: 30px;
+  --settings-page-title-size: 40px;
+  --settings-page-title-size-narrow: 30px;
+  --settings-page-title-tracking: -0.045em;
+  --settings-page-number-medium: 72px;
+}
+
+html[data-settings-skin="chromatic"] .settings-topbar {
+  grid-template-columns: var(--settings-rail-width) minmax(180px, 1fr) auto;
+}
+
+html[data-settings-skin="chromatic"] .settings-brand-mark {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+  border-width: 1.5px;
+  background: transparent;
+  color: var(--settings-text);
+  font-size: 16px;
+}
+
+html[data-settings-skin="chromatic"] .settings-brand-copy strong {
+  font-size: 14px;
+  letter-spacing: 0.11em;
+}
+
+html[data-settings-skin="chromatic"] .settings-brand-copy small {
+  color: var(--settings-secondary);
+  letter-spacing: 0.16em;
+}
+
+html[data-settings-skin="chromatic"] .settings-search {
+  width: min(460px, calc(100% - 48px));
+  height: 34px;
+  border-width: 1.5px;
+  border-color: var(--settings-text);
+  background: var(--settings-panel);
+}
+
+html[data-settings-skin="chromatic"] .settings-search:focus-within {
+  border-color: var(--settings-structure);
+  box-shadow: 0 0 0 2px var(--settings-structure);
+}
+
+html[data-settings-skin="chromatic"] .settings-search-input {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
+html[data-settings-skin="chromatic"] .settings-nav-group {
+  margin-top: 20px;
+}
+
+html[data-settings-skin="chromatic"] .settings-nav-group-label {
+  color: var(--settings-muted);
+  font: 700 8.5px/1.4 "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.12em;
+}
+
+html[data-settings-skin="chromatic"] .settings-nav {
+  height: 36px;
+  border: 1.5px solid transparent;
+  color: var(--settings-secondary);
+}
+
+html[data-settings-skin="chromatic"] .settings-nav:hover {
+  background: var(--settings-hover);
+}
+
+html[data-settings-skin="chromatic"] .settings-nav.active {
+  border-color: var(--settings-structure);
+  background: var(--settings-selected);
+  color: var(--settings-selected-text);
+}
+
+html[data-settings-skin="chromatic"] .settings-nav.active::before {
+  display: none;
+}
+
+html[data-settings-skin="chromatic"] .settings-nav-label {
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+html[data-settings-skin="chromatic"] .settings-nav-index {
+  display: inline;
+  font-size: 8.5px;
+}
+
+html[data-settings-skin="chromatic"] .settings-nav-watermark {
+  position: sticky;
+  bottom: -24px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 22px;
+  padding: 16px 10px 0;
+  border-top: 1.5px solid var(--settings-line-strong);
+  color: var(--settings-muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+
+html[data-settings-skin="chromatic"] .settings-nav-watermark strong {
+  color: var(--settings-text);
+  font-size: 44px;
+  line-height: 0.8;
+  font-weight: 700;
+  letter-spacing: -0.08em;
+}
+
+html[data-settings-skin="chromatic"] .settings-nav-watermark span {
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+}
+
+html[data-settings-skin="chromatic"] .settings-page-header {
+  padding-bottom: 21px;
+}
+
+html[data-settings-skin="chromatic"] .settings-page-eyebrow {
+  margin-bottom: 6px;
+  color: var(--settings-structure-text);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+}
+
+html[data-settings-skin="chromatic"] .settings-eyebrow-mark {
+  width: 38px;
+  height: 1.5px;
+}
+
+html[data-settings-skin="chromatic"] .settings-page-title-row h1 {
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  font-weight: 750;
+}
+
+html[data-settings-skin="chromatic"] .settings-page-number {
+  display: block;
+  margin-top: -6px;
+  -webkit-text-stroke: 1.5px var(--settings-structure);
+  font-size: 96px;
+}
+
+html[data-settings-skin="chromatic"] .settings-page-header > p {
+  max-width: 520px;
+  font-size: 12.5px;
+  line-height: 1.52;
+}
+
+html[data-settings-skin="chromatic"] .settings-page-accent {
+  display: block;
+  width: 126px;
+  height: 3px;
+  margin-top: 6px;
+}
+
+html[data-settings-skin="chromatic"] .settings-page-content {
+  margin-top: 0;
+}
+
+html[data-settings-skin="chromatic"] .settings-group-heading {
+  margin-bottom: 5px;
+}
+
+html[data-settings-skin="chromatic"] .settings-group-panel {
+  border-width: 1.5px;
+}
+
+html[data-settings-skin="chromatic"] .settings-setting-row {
+  min-height: 54px;
+  padding: 10px 14px;
+}
+
+html[data-settings-skin="chromatic"] .settings-sub-label {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+html[data-settings-skin="chromatic"] .settings-row-summary {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+html[data-settings-skin="chromatic"] .settings-help-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  border-width: 1px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+
+html[data-settings-skin="chromatic"] .settings-help {
+  margin-left: 0;
+  border-left-width: 4px;
+  background: transparent;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10px;
+}
+
+html[data-settings-skin="chromatic"] .settings-toggle::before {
+  border-radius: 0;
+  border-width: 1.5px;
+}
+
+html[data-settings-skin="chromatic"] .settings-toggle-knob {
+  border-radius: 0;
+}
+
+html[data-settings-skin="chromatic"] .settings-toggle.on::before {
+  background: var(--settings-selected);
+}
+
+html[data-settings-skin="chromatic"] .settings-toggle.on .settings-toggle-knob {
+  background: var(--settings-structure);
+}
+
+html[data-settings-skin="chromatic"] .settings-segmented,
+html[data-settings-skin="chromatic"] .settings-chip,
+html[data-settings-skin="chromatic"] .settings-action,
+html[data-settings-skin="chromatic"] .settings-text-input,
+html[data-settings-skin="chromatic"] .settings-keycap-card,
+html[data-settings-skin="chromatic"] .settings-cheatsheet,
+html[data-settings-skin="chromatic"] .settings-status-ticket {
+  border-width: 1.5px;
+  border-radius: 0;
+}
+
+html[data-settings-skin="chromatic"] .settings-segment {
+  height: calc(var(--settings-control-height) - 3px);
+  border-right-width: 1.5px;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 11.5px;
+}
+
+html[data-settings-skin="chromatic"] .settings-segment.active {
+  box-shadow: none;
+}
+
+html[data-settings-skin="chromatic"] .settings-action-primary {
+  border-color: var(--settings-structure);
+  background: var(--settings-selected);
+}
+
+html[data-settings-skin="chromatic"] .settings-preview-option {
+  border-width: 1.5px;
+  border-radius: 0;
+}
+
+html[data-settings-skin="chromatic"] .settings-preview-option.active {
+  box-shadow: inset 0 -3px 0 var(--settings-structure);
+}
+
+html[data-settings-skin="chromatic"] .settings-theme-grid .settings-preview-option {
+  width: 136px;
+}
+
+html[data-settings-skin="chromatic"] .settings-skin-options .settings-preview-option {
+  width: 188px;
+}
+
+html[data-settings-skin="chromatic"] .settings-keycap {
+  border-radius: 0;
+  border-width: 1.5px;
+  background: var(--settings-panel);
+  font-size: 10px;
+}
+
+html[data-settings-skin="chromatic"] .settings-footer {
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+
+html[data-settings-skin="chromatic"] .settings-save-status,
+html[data-settings-skin="chromatic"] .settings-footer-action,
+html[data-settings-skin="chromatic"] .settings-footer-page {
+  font-size: 9px;
+}
+
+html[data-settings-skin="chromatic"] .settings-search-results {
+  border-color: var(--settings-structure);
+  border-width: 2px;
+}
+
+html[data-settings-skin="chromatic"] .settings-search-result {
+  min-height: 56px;
+}
+
+html[data-settings-skin="chromatic"] .settings-search-result.active {
+  outline: 1.5px solid var(--settings-structure);
+  outline-offset: -2px;
+}
+
+html[data-settings-skin="chromatic"] .settings-jump-highlight {
+  outline-width: 1.5px;
+}
+
+@media (max-width: 759px) {
+  html[data-settings-skin="chromatic"] .settings-nav-watermark {
+    display: none;
+  }
+  html[data-settings-skin="chromatic"] .settings-page-number {
+    display: none;
+  }
+}
+
+@media (max-height: 480px) {
+  html[data-settings-skin="chromatic"] .settings-sidebar {
+    padding: 2px 6px 2px;
+  }
+  html[data-settings-skin="chromatic"] .settings-nav-group {
+    margin-top: 2px;
+    gap: 2px;
+  }
+  html[data-settings-skin="chromatic"] .settings-nav {
+    height: 34px;
+  }
+  html[data-settings-skin="chromatic"] .settings-nav-group-label {
+    display: none;
+  }
+}

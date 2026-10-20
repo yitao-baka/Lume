@@ -17,7 +17,7 @@ import { t, type Messages } from "../i18n";
 import { pickIcon, resolveThemedIcon } from "../launcher/iconSpec";
 import type { PickedIcon } from "../launcher/types";
 import type { PluginManifest, PluginSetting } from "../plugins/types";
-import { Chip, ImmediateBadge, Toggle } from "./controls";
+import { Chip, Toggle } from "./controls";
 import { settingsError } from "./errors";
 import reloadIcon from "../../res/icons/refresh.svg";
 import deleteIcon from "../../res/icons/delete.svg";
@@ -129,7 +129,15 @@ function pluginSearchText(p: PluginManifest): string {
     .toLowerCase();
 }
 
-export default function PluginsPane(props: { searchQuery?: string }) {
+export default function PluginsPane(props: {
+  searchQuery?: string;
+  requestConfirm: (state: {
+    title: string;
+    hint: string;
+    confirmLabel: string;
+    action: () => Promise<void>;
+  }) => void;
+}) {
   const [plugins, setPlugins] = createSignal<PluginManifest[]>([]);
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
   /** Global plugin developer mode (settings `plugins.dev_mode`). While off,
@@ -196,6 +204,7 @@ export default function PluginsPane(props: { searchQuery?: string }) {
   }
 
   const enabledCount = () => plugins().filter((p) => p.enabled).length;
+  const selectedPlugin = () => plugins().find((plugin) => plugin.id === openId());
 
   const visible = () => {
     const n = needle().trim().toLowerCase();
@@ -329,7 +338,7 @@ export default function PluginsPane(props: { searchQuery?: string }) {
   /** Global 全部授权 — light write like the other plugin controls; the
    * backend reports every disk plugin trusted while this and dev mode are
    * both on. */
-  async function toggleTrustAll(v: boolean) {
+  async function performTrustAll(v: boolean) {
     const before = trustAll();
     setTrustAll(v); // optimistic — the write is a plain file write
     try {
@@ -339,6 +348,19 @@ export default function PluginsPane(props: { searchQuery?: string }) {
     } catch (err) {
       setTrustAll(before);
       showStatus(false, settingsError(err, "pluginsActionFailed"));
+    }
+  }
+
+  function toggleTrustAll(v: boolean) {
+    if (v) {
+      props.requestConfirm({
+        title: t("pluginsConfirmTrustAllTitle"),
+        hint: t("pluginsConfirmTrustAllHint"),
+        confirmLabel: t("pluginTrustAll"),
+        action: () => performTrustAll(true),
+      });
+    } else {
+      void performTrustAll(false);
     }
   }
 
@@ -393,19 +415,25 @@ export default function PluginsPane(props: { searchQuery?: string }) {
     }
   }
 
+  function askUninstall(p: PluginManifest) {
+    props.requestConfirm({
+      title: t("pluginsConfirmUninstallTitle", { name: p.name || p.id }),
+      hint: t("pluginsConfirmUninstallHint"),
+      confirmLabel: t("pluginUninstall"),
+      action: () => uninstall(p),
+    });
+  }
+
   return (
     <>
-      <div class="settings-title-row">
-        <h2 class="settings-grouptitle">{t("plugins")}</h2>
-        <ImmediateBadge />
-      </div>
       <Show when={devMode() && trustAll()}>
         <div class="settings-warning" role="alert">
           <strong>{t("pluginTrustAll")}</strong>
           <span>{t("pluginsTrustAllBanner")}</span>
         </div>
       </Show>
-      {/* Summary + filter toolbar + the global developer-mode switch */}
+      {/* Summary + filter toolbar + install action. Developer options live at
+          the bottom of the selected plugin detail. */}
       <div class="plg-toolbar">
         <span class="plg-summary">
           {t("pluginsSummary", {
@@ -436,30 +464,7 @@ export default function PluginsPane(props: { searchQuery?: string }) {
           value={needle()}
           onInput={(e) => setNeedle(e.currentTarget.value)}
         />
-        <label
-          class="plg-devmode"
-          title={t("pluginsDevModeHint")}
-        >
-          <Toggle
-            checked={devMode()}
-            label={t("pluginsDevMode")}
-            onChange={(v) => void toggleDevMode(v)}
-          />
-          <span class="settings-sub-label">{t("pluginsDevMode")}</span>
-        </label>
-        {/* Global 全部授权 — the only trust control left (the per-plugin
-            toggles are gone); shown under the same developer gate. */}
-        <Show when={devMode()}>
-          <label class="plg-devmode" title={t("pluginsTrustAllHint")}>
-            <Toggle
-              checked={trustAll()}
-              label={t("pluginTrustAll")}
-              onChange={(v) => void toggleTrustAll(v)}
-            />
-            <span class="settings-sub-label warn">{t("pluginTrustAll")}</span>
-          </label>
-        </Show>
-        <button class="settings-action plg-install-btn" onClick={() => void pickLupx()}>
+        <button class="settings-action plg-install-btn" data-setting-id="action.plugin_install" onClick={() => void pickLupx()}>
           {t("pluginsInstall")}
         </button>
       </div>
@@ -544,27 +549,68 @@ export default function PluginsPane(props: { searchQuery?: string }) {
         )}
       </Show>
 
-      <div class="plg-list">
-        <For each={visible()} fallback={<div class="plg-empty">{t("pluginsEmpty")}</div>}>
-          {(p) => (
-            <PluginCard
-              p={p}
-              open={openId() === p.id}
-              devMode={devMode()}
-              keepSession={keepOverrides()[p.id] ?? p.keepSession}
-              keepSessionOverridden={keepOverrides()[p.id] !== undefined}
-              searchNeedle={(props.searchQuery ?? "").trim()}
-              settingValues={values()[p.id] ?? ({} as Record<string, unknown>)}
-              onToggleOpen={() => void toggleOpen(p)}
-              onToggleEnabled={(v) => void toggle(p, v)}
-              onToggleKeepSession={(v) => void toggleKeepSession(p, v)}
-              onClearKeepSession={() => void clearKeepSession(p)}
-              onReload={() => void reload(p)}
-              onUninstall={() => void uninstall(p)}
-              onPutSetting={(key, value) => void putSetting(p, key, value)}
-            />
-          )}
-        </For>
+      <div class="plg-master-detail" classList={{ "has-selection": !!selectedPlugin() }}>
+        <div class="plg-list">
+          <For each={visible()} fallback={<div class="plg-empty">{t("pluginsEmpty")}</div>}>
+            {(p) => (
+              <PluginCard
+                p={p}
+                open={false}
+                compact
+                devMode={devMode()}
+                trustAll={trustAll()}
+                keepSession={keepOverrides()[p.id] ?? p.keepSession}
+                keepSessionOverridden={keepOverrides()[p.id] !== undefined}
+                searchNeedle={(props.searchQuery ?? "").trim()}
+                settingValues={values()[p.id] ?? ({} as Record<string, unknown>)}
+                onToggleOpen={() => void toggleOpen(p)}
+                onToggleEnabled={(v) => void toggle(p, v)}
+                onToggleKeepSession={(v) => void toggleKeepSession(p, v)}
+                onClearKeepSession={() => void clearKeepSession(p)}
+                onReload={() => void reload(p)}
+                onUninstall={() => askUninstall(p)}
+                onToggleDevMode={(v) => void toggleDevMode(v)}
+                onToggleTrustAll={(v) => void toggleTrustAll(v)}
+                onPutSetting={(key, value) => void putSetting(p, key, value)}
+              />
+            )}
+          </For>
+        </div>
+        <div class="plg-detail-pane">
+          <button
+            class="plg-mobile-back"
+            type="button"
+            onClick={() => setOpenId(null)}
+          >
+            ← {t("pluginsBackToList")}
+          </button>
+          <Show
+            when={selectedPlugin()}
+            fallback={<div class="plg-select-prompt">{t("pluginsSelectPrompt")}</div>}
+          >
+            {(p) => (
+              <PluginCard
+                p={p()}
+                open
+                devMode={devMode()}
+                trustAll={trustAll()}
+                keepSession={keepOverrides()[p().id] ?? p().keepSession}
+                keepSessionOverridden={keepOverrides()[p().id] !== undefined}
+                searchNeedle={(props.searchQuery ?? "").trim()}
+                settingValues={values()[p().id] ?? ({} as Record<string, unknown>)}
+                onToggleOpen={() => setOpenId(null)}
+                onToggleEnabled={(v) => void toggle(p(), v)}
+                onToggleKeepSession={(v) => void toggleKeepSession(p(), v)}
+                onClearKeepSession={() => void clearKeepSession(p())}
+                onReload={() => void reload(p())}
+                onUninstall={() => askUninstall(p())}
+                onToggleDevMode={(v) => void toggleDevMode(v)}
+                onToggleTrustAll={(v) => void toggleTrustAll(v)}
+                onPutSetting={(key, value) => void putSetting(p(), key, value)}
+              />
+            )}
+          </Show>
+        </div>
       </div>
       <Show when={status()}>
         <span
@@ -586,9 +632,11 @@ export default function PluginsPane(props: { searchQuery?: string }) {
 function PluginCard(props: {
   p: PluginManifest;
   open: boolean;
+  compact?: boolean;
   /** Global developer mode — gates 重载 and the 开发 badge (the global
    * 全部授权 switch lives in the toolbar, not per-card). */
   devMode: boolean;
+  trustAll: boolean;
   /** Effective idle-reset exemption (user override ?? manifest keep_session). */
   keepSession: boolean;
   keepSessionOverridden: boolean;
@@ -601,31 +649,21 @@ function PluginCard(props: {
   onClearKeepSession: () => void;
   onReload: () => void;
   onUninstall: () => void;
+  onToggleDevMode: (v: boolean) => void;
+  onToggleTrustAll: (v: boolean) => void;
   onPutSetting: (key: string, value: unknown) => void;
 }) {
   const p = () => props.p;
   const icon = () => pluginIcon(p());
   const tileChar = () => (p().name || p().id).trim().charAt(0).toUpperCase() || "·";
   const desc = () => pluginDescription(p());
-  /** Uninstall is destructive (the plugin directory goes) — the button arms
-   * on the first click and fires on the second, within a 3-second window. */
-  const [armUninstall, setArmUninstall] = createSignal(false);
-  let armTimer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => clearTimeout(armTimer));
-  function clickUninstall() {
-    if (!armUninstall()) {
-      setArmUninstall(true);
-      clearTimeout(armTimer);
-      armTimer = setTimeout(() => setArmUninstall(false), 3000);
-      return;
-    }
-    clearTimeout(armTimer);
-    setArmUninstall(false);
-    props.onUninstall();
-  }
-
   return (
-    <div class="plg-card" classList={{ open: props.open, off: !p().enabled }}>
+    <div
+      class="plg-card"
+      classList={{ open: props.open, off: !p().enabled, compact: !!props.compact }}
+      data-setting-id={`plugin.${p().id}`}
+      tabIndex={props.compact ? -1 : undefined}
+    >
       <div
         class="plg-head"
         role="button"
@@ -692,11 +730,10 @@ function PluginCard(props: {
           <Show when={!p().builtin}>
             <button
               class="settings-icon-btn plg-uninstall"
-              classList={{ armed: armUninstall() }}
               type="button"
-              title={armUninstall() ? t("settingsConfirmAction") : t("pluginUninstallHint")}
+              title={t("pluginUninstallHint")}
               aria-label={`${t("pluginUninstall")}: ${p().name || p().id}`}
-              onClick={clickUninstall}
+              onClick={props.onUninstall}
             >
               <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
             </button>
@@ -807,6 +844,7 @@ function PluginCard(props: {
               <For each={p().settings}>
                 {(s) => (
                   <SettingRow
+                    pluginId={p().id}
                     setting={s}
                     value={props.settingValues[s.key]}
                     searchNeedle={props.searchNeedle}
@@ -829,6 +867,34 @@ function PluginCard(props: {
               </div>
             </Show>
           </div>
+
+          <details class="plg-dev-options">
+            <summary data-setting-id="plugins.dev_mode" tabIndex={-1}>{t("pluginsDevMode")}</summary>
+            <div class="settings-row-between">
+              <div class="settings-setting-copy">
+                <span class="settings-sub-label">{t("pluginsDevMode")}</span>
+                <span class="settings-row-summary">{t("pluginsDevModeHint")}</span>
+              </div>
+              <Toggle
+                checked={props.devMode}
+                label={t("pluginsDevMode")}
+                onChange={props.onToggleDevMode}
+              />
+            </div>
+            <Show when={props.devMode}>
+              <div class="settings-row-between" data-setting-id="plugins.trust_all">
+                <div class="settings-setting-copy">
+                  <span class="settings-sub-label warn">{t("pluginTrustAll")}</span>
+                  <span class="settings-row-summary">{t("pluginsTrustAllHint")}</span>
+                </div>
+                <Toggle
+                  checked={props.trustAll}
+                  label={t("pluginTrustAll")}
+                  onChange={props.onToggleTrustAll}
+                />
+              </div>
+            </Show>
+          </details>
         </div>
       </Show>
     </div>
@@ -845,6 +911,7 @@ function featureTypeLabel(type: string): string {
  * renders as text, so a manifest from a newer version degrades gracefully.
  * A non-default value shows the factory default underneath for context. */
 function SettingRow(props: {
+  pluginId: string;
   setting: PluginSetting;
   value: unknown;
   searchNeedle: string;
@@ -870,7 +937,12 @@ function SettingRow(props: {
     return String(d);
   };
   return (
-    <div class="plg-setting" classList={{ "search-hit": searchHit() }}>
+    <div
+      class="plg-setting"
+      classList={{ "search-hit": searchHit() }}
+      data-setting-id={`plugin.${props.pluginId}.setting.${props.setting.key}`}
+      tabIndex={-1}
+    >
       <div class="settings-row-between">
         <span class="settings-sub-label">{props.setting.label}</span>
         <Show when={isToggle()}>

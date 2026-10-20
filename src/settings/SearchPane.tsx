@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { t, type Messages } from "../i18n";
 import type { SettingsData } from "./types";
-import { Row, Toggle } from "./controls";
+import { SettingGroup, SettingRow, Toggle } from "./controls";
 import { settingsError } from "./errors";
 import folderOpenIcon from "../../res/icons/folder_open.svg";
 import folderPlusIcon from "../../res/icons/folder_plus.svg";
@@ -217,10 +217,10 @@ export default function SearchPane(props: {
 
   return (
     <>
-      <div class="settings-title-row">
-        <h2 class="settings-grouptitle">{t("settingsIndexDirs")}</h2>
+      <div class="settings-page-inline-action">
         <button
-          class="settings-icon-btn"
+          class="settings-action settings-refresh-action"
+          data-setting-id="action.refresh_index"
           classList={{ refreshing: refreshing() }}
           title={t(refreshing() ? "settingsRefreshRunning" : "settingsRefreshIndex")}
           aria-label={t(refreshing() ? "settingsRefreshRunning" : "settingsRefreshIndex")}
@@ -231,8 +231,7 @@ export default function SearchPane(props: {
           <img class="settings-icon-btn-icon" src={refreshIcon} alt="" draggable={false} />
         </button>
       </div>
-      <div class="settings-group">
-        <div class="settings-blocktitle">{t("settingsSystemIndex")}</div>
+      <SettingGroup id="index.system_dirs" title={t("settingsSystemIndex")} number="04.1">
         <For each={idx().system_dirs}>
           {(d) => {
             const label =
@@ -242,19 +241,30 @@ export default function SearchPane(props: {
                   ? t("settingsIndexStartMenu")
                   : d.path;
             return (
-              <Row label={label}>
+              <SettingRow
+                id={`index.system_dirs.${d.path}`}
+                label={label}
+                summary={t("settingsSystemIndexHint")}
+              >
                 <Toggle
                   checked={d.enabled}
                   label={label}
                   onChange={(v) => setSystemDir(d.path, v)}
                 />
-              </Row>
+              </SettingRow>
             );
           }}
         </For>
+      </SettingGroup>
 
-        <div class="settings-blocktitle">{t("settingsUserIndex")}</div>
-        <span class="settings-hint">{t("settingsIndexFilesHint")}</span>
+      <SettingGroup title={t("settingsUserIndex")} number="04.2">
+        <SettingRow
+          id="index.user_index"
+          label={t("settingsIndexDirs")}
+          summary={t("settingsIndexFilesHint")}
+          class="settings-editor-row"
+        >
+          <div class="settings-inline-editor">
         <Show
           when={(idx().user_index ?? []).length > 0}
           fallback={<span class="settings-empty">{t("settingsUserIndexEmpty")}</span>}
@@ -345,13 +355,18 @@ export default function SearchPane(props: {
           </button>
         </div>
         <Show when={pathError()}>
-          <span class="settings-error" role="alert">{pathError()}</span>
+          <span class="settings-inline-error" role="alert">{pathError()}</span>
         </Show>
-      </div>
+          </div>
+        </SettingRow>
+      </SettingGroup>
 
-      <h2 class="settings-grouptitle">{t("groupIndexCache")}</h2>
-      <div class="settings-group">
-        <Row label={t("settingsCacheRefresh")}>
+      <SettingGroup title={t("groupIndexCache")} number="04.3">
+        <SettingRow
+          id="index.cache_refresh_interval_minutes"
+          label={t("settingsCacheRefresh")}
+          summary={t("settingsCacheHint")}
+        >
           <div class="settings-slider">
             <input
               class="settings-slider-input"
@@ -377,8 +392,8 @@ export default function SearchPane(props: {
               {idx().cache_refresh_interval_minutes} {t("settingsMinutes")}
             </span>
           </div>
-        </Row>
-      </div>
+        </SettingRow>
+      </SettingGroup>
       <Show when={status()}>
         <span
           class="settings-status"

@@ -9,7 +9,42 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+
+- **设置面板 Quiet / Chromatic 重构** — 设置窗改为三组九分区导航、共享语义
+  组件、逐行命令搜索、分层帮助、自动保存 / 失败回滚 / 6 秒撤销和 32px 状态
+  栏；新增 `appearance.settings_skin`（默认 `quiet`，仅设置窗）、首帧
+  `data-settings-skin`、Quiet Control Deck 与 Chromatic Edge 两套完整 token /
+  几何。主题、启动器、剪贴板、搜索、快捷键、自动化、插件主从视图、系统状态
+  票券与关于页全部接入新壳；服务/代理/导入/恢复/卸载改用确认对话框，默认尺寸
+  调整为 `1040×720`。验证：`pnpm exec tsc --noEmit`、`pnpm run build`、
+  `cargo check`、`cargo test`（**227 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `node scripts/cdp_settings_skin_verify.mjs` **52/52 PASS**（双皮肤六种明暗
+  组合、焦点/滚动保持、目录搜索、动态插件设置、只读文件保存失败回滚、
+  1040×720 / 560×420 九页无横向溢出）；`node scripts/cdp_settings_smoke.mjs`
+  **9/9 PASS**。
+
 ### Documentation
+
+- **设置窗皮肤切换实现方案** — 新增
+  `docs/SETTINGS_SKIN_SWITCH.md`：定义 Quiet Control Deck ↔ Chromatic Edge
+  双皮肤、`appearance.settings_skin`（默认 `quiet`，仅作用于设置窗）、
+  `data-settings-skin` 首帧应用、即时切换与保存回滚、共享语义组件、两套
+  token / 几何、三语文案、响应式与 CDP / Rust / 视觉验收。同步修订
+  `SETTINGS_REDESIGN.md`、`SETTINGS_REDESIGN_SELECTED.md`、`SETTINGS.md`
+  与 `ROADMAP.md` 中“只能选一套 / 不新增字段”的旧约束。验证：相关文档相对链接全部可解析、
+  代码围栏成对、无尾随空白；`rg` 活跃文档分期编号检查通过；
+  `git diff --check` 通过。
+
+- **设置面板设计文档收敛** — 保留 `docs/SETTINGS_REDESIGN.md`（Quiet
+  Control Deck，默认皮肤与共享行为契约）与
+  `docs/SETTINGS_REDESIGN_SELECTED.md`（Chromatic Edge，可选皮肤、完整直角
+  构图与浅色 Mineral / 深色 Charcoal Blush 最终色板）；并入旧 Chromatic
+  Edge / Blush Charcoal 稿的布局、控件、页面与验收内容，删除重复设计稿。
+  `final-light-launcher.png` / `final-dark-plugins.png` 保留为终版预览。
+  验证：文档相对链接、代码围栏与字段覆盖检查通过；预览在 Edge `1040×720`
+  下渲染；`git diff --check` 通过。
 
 - **文档体系改革 —— 活跃文档与历史归档分离** — 删除 `docs/RULES.md` 与
   `docs/NORMS.md`（内容分别并入 README/AGENTS 与 SETTINGS/ARCHITECTURE）；

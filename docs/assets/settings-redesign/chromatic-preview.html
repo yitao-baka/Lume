@@ -1,0 +1,1333 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lume Chromatic Edge Preview</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --base: #f3efe6;
+      --base-2: #fbf8f1;
+      --ink: #343832;
+      --ink-soft: #4e554f;
+      --muted: #626862;
+      --line: rgba(52, 56, 50, 0.16);
+      --line-strong: rgba(52, 56, 50, 0.34);
+      --rail: #dde5de;
+      --rail-ink: #303a33;
+      --primary: #64796d;
+      --primary-text: #52675b;
+      --primary-ink: #303a33;
+      --primary-soft: #d1ded4;
+      --highlight: #d1ded4;
+      --highlight-ink: #303a33;
+      --signal: #b88374;
+      --signal-ink: #343832;
+      --signal-text: #86594d;
+      --success: #4d6d58;
+      --mono: "Cascadia Mono", "Consolas", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 1040px;
+      height: 720px;
+      margin: 0;
+      overflow: hidden;
+      background: var(--base);
+      color: var(--ink);
+      font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    body[data-theme="night"] {
+      color-scheme: dark;
+      --base: #1e201d;
+      --base-2: #262925;
+      --ink: #e7e3d9;
+      --ink-soft: #c8c6bd;
+      --muted: #989d96;
+      --line: rgba(231, 227, 217, 0.14);
+      --line-strong: rgba(231, 227, 217, 0.28);
+      --rail: #29332e;
+      --rail-ink: #e7e3d9;
+      --primary: #9db4a6;
+      --primary-text: #b8ccbf;
+      --primary-ink: #e7e3d9;
+      --primary-soft: #3b4d43;
+      --highlight: #3b4d43;
+      --highlight-ink: #e7e3d9;
+      --signal: #c49486;
+      --signal-ink: #1e201d;
+      --signal-text: #d0a698;
+      --success: #8eaf99;
+    }
+
+    button, input { font: inherit; }
+
+    .window {
+      width: 1040px;
+      height: 720px;
+      display: flex;
+      flex-direction: column;
+      background: var(--base);
+    }
+
+    .topline {
+      flex: none;
+      height: 52px;
+      display: flex;
+      background: var(--base);
+    }
+
+    .brand-panel {
+      flex: none;
+      width: 224px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 18px;
+      background: var(--rail);
+      color: var(--rail-ink);
+    }
+
+    .brand-glyph {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1.5px solid var(--rail-ink);
+      color: var(--rail-ink);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .brand-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .brand-name {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 1.6px;
+      line-height: 18px;
+    }
+
+    .brand-sub {
+      color: color-mix(in srgb, var(--rail-ink) 72%, transparent);
+      font-family: var(--mono);
+      font-size: 8.5px;
+      letter-spacing: 0.7px;
+      line-height: 11px;
+    }
+
+    .topbar-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      padding: 0 10px 0 30px;
+      border-bottom: 1.5px solid var(--line-strong);
+    }
+
+    .search {
+      width: 380px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 10px;
+      border: 1.5px solid var(--ink);
+      background: var(--base-2);
+      color: var(--ink);
+      font-size: 12px;
+    }
+
+    .search svg {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.9;
+    }
+
+    .search-placeholder { flex: 1; color: var(--muted); }
+
+    .search-key {
+      padding: 1px 5px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 8.5px;
+      letter-spacing: 0.2px;
+    }
+
+    .chrome {
+      margin-left: auto;
+      display: flex;
+      gap: 2px;
+    }
+
+    .chrome span {
+      width: 34px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      color: var(--ink-soft);
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    .shell {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+    }
+
+    .rail {
+      flex: none;
+      width: 224px;
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px 14px;
+      background: var(--rail);
+      color: var(--rail-ink);
+    }
+
+    .rail-group {
+      margin: 15px 10px 6px;
+      color: color-mix(in srgb, var(--rail-ink) 57%, transparent);
+      font-family: var(--mono);
+      font-size: 8.5px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .rail-group:first-child { margin-top: 2px; }
+
+    .nav {
+      height: 36px;
+      display: grid;
+      grid-template-columns: 18px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 0 9px;
+      color: color-mix(in srgb, var(--rail-ink) 84%, transparent);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .nav svg {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.9;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+
+    .nav-no {
+      color: color-mix(in srgb, var(--rail-ink) 44%, transparent);
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: 0.5px;
+    }
+
+    .nav.active {
+      background: var(--highlight);
+      color: var(--highlight-ink);
+      box-shadow: inset 0 0 0 1.5px var(--primary);
+    }
+
+    .nav.active .nav-no {
+      color: color-mix(in srgb, var(--highlight-ink) 54%, transparent);
+    }
+
+    .rail-footer {
+      margin-top: auto;
+      padding: 13px 10px 0;
+      border-top: 1.5px solid color-mix(in srgb, var(--rail-ink) 30%, transparent);
+    }
+
+    .rail-index {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      color: var(--rail-ink);
+      font-family: var(--mono);
+      font-size: 27px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -1.5px;
+    }
+
+    .rail-index small {
+      color: color-mix(in srgb, var(--rail-ink) 52%, transparent);
+      font-size: 9px;
+      letter-spacing: 0;
+    }
+
+    .rail-footnote {
+      margin-top: 8px;
+      color: color-mix(in srgb, var(--rail-ink) 57%, transparent);
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: 0.6px;
+      line-height: 13px;
+    }
+
+    .main {
+      flex: 1;
+      min-width: 0;
+      position: relative;
+      overflow: hidden;
+      background: var(--base);
+    }
+
+    .page {
+      width: 760px;
+      margin: 0 auto;
+      padding: 26px 0 12px;
+    }
+
+    .page-head {
+      position: relative;
+      min-height: 112px;
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 21px;
+      border-bottom: 1.5px solid var(--line-strong);
+    }
+
+    .page-head::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      bottom: -4.5px;
+      width: 126px;
+      height: 7px;
+      background: var(--primary);
+      border: 1.5px solid var(--ink);
+      border-left: 0;
+    }
+
+    .page-kicker {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      color: var(--primary-text);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1.15px;
+    }
+
+    .page-kicker::before {
+      content: "";
+      width: 17px;
+      height: 2px;
+      background: var(--signal);
+    }
+
+    h1 {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+      font-size: 40px;
+      font-weight: 750;
+      letter-spacing: -1.8px;
+      line-height: 44px;
+    }
+
+    .page-desc {
+      width: 520px;
+      margin: 11px 0 0;
+      color: var(--muted);
+      font-size: 12.5px;
+      line-height: 19px;
+    }
+
+    .page-no {
+      align-self: flex-start;
+      margin-top: -7px;
+      color: transparent;
+      font-family: var(--mono);
+      font-size: 96px;
+      font-weight: 700;
+      letter-spacing: -8px;
+      line-height: 1;
+      -webkit-text-stroke: 1.25px var(--primary);
+    }
+
+    .section {
+      margin-top: 20px;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 38px auto 1fr;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 7px;
+    }
+
+    .section-no {
+      color: var(--primary-text);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.45px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.1px;
+    }
+
+    .section-rule {
+      height: 1.5px;
+      background: var(--line);
+    }
+
+    .panel {
+      border: 1.5px solid var(--line-strong);
+      background: var(--base-2);
+    }
+
+    .row {
+      min-height: 54px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 24px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .row:last-child { border-bottom: 0; }
+
+    .row-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 19px;
+    }
+
+    .row-sub {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 16px;
+    }
+
+    .info {
+      width: 16px;
+      height: 16px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .segmented {
+      display: flex;
+      border: 1.5px solid var(--ink);
+      background: var(--base);
+    }
+
+    .segmented span {
+      min-width: 54px;
+      height: 29px;
+      display: grid;
+      place-items: center;
+      padding: 0 12px;
+      border-right: 1.5px solid var(--ink);
+      color: var(--ink-soft);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .segmented span:last-child { border-right: 0; }
+
+    .segmented span.active {
+      background: var(--primary-soft);
+      color: var(--primary-ink);
+    }
+
+    .switch {
+      width: 40px;
+      height: 22px;
+      position: relative;
+      border: 1.5px solid var(--ink);
+      background: transparent;
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 15px;
+      height: 15px;
+      background: var(--ink);
+    }
+
+    .switch.on {
+      background: var(--primary-soft);
+    }
+
+    .switch.on::after {
+      left: 20px;
+      background: var(--primary);
+    }
+
+    .position-zone {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .position-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 31px);
+      grid-template-rows: repeat(2, 20px);
+      border: 1.5px solid var(--ink);
+      background: var(--base);
+    }
+
+    .position-cell {
+      position: relative;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .position-cell:nth-child(3n) { border-right: 0; }
+    .position-cell:nth-child(n+4) { border-bottom: 0; }
+
+    .position-cell::after {
+      content: "";
+      position: absolute;
+      width: 7px;
+      height: 4px;
+      background: var(--muted);
+    }
+
+    .position-cell.tl::after { left: 4px; top: 3px; }
+    .position-cell.tr::after { right: 4px; top: 3px; }
+    .position-cell.bl::after { left: 4px; bottom: 3px; }
+    .position-cell.br::after { right: 4px; bottom: 3px; }
+
+    .position-cell.center {
+      background: var(--primary-soft);
+    }
+
+    .position-cell.center::after {
+      left: 12px;
+      top: 8px;
+      background: var(--primary);
+    }
+
+    .follow-box {
+      width: 64px;
+      display: grid;
+      place-items: center;
+      border: 1.5px solid var(--ink);
+      background: var(--base);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 9px;
+      text-align: center;
+    }
+
+    .note-strip {
+      display: grid;
+      grid-template-columns: 76px 1fr;
+      gap: 12px;
+      margin-top: 10px;
+      padding: 9px 11px;
+      border-left: 4px solid var(--primary);
+      background: var(--base-2);
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 16px;
+    }
+
+    .note-strip strong {
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.2px;
+    }
+
+    .statusbar {
+      flex: none;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 18px;
+      border-top: 1.5px solid var(--ink);
+      background: var(--rail);
+      color: var(--rail-ink);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.45px;
+    }
+
+    .status-mark {
+      width: 13px;
+      height: 13px;
+      display: grid;
+      place-items: center;
+      border: 1.5px solid currentColor;
+      font-size: 8px;
+      line-height: 1;
+    }
+
+    .statusbar .status-right {
+      margin-left: auto;
+      font-weight: 500;
+      letter-spacing: 0.15px;
+    }
+
+    /* Plugins */
+    .plugin-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .summary {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.25px;
+      white-space: nowrap;
+    }
+
+    .filters {
+      display: flex;
+      margin-left: 4px;
+      border: 1.5px solid var(--ink);
+    }
+
+    .filters span {
+      height: 27px;
+      display: grid;
+      place-items: center;
+      padding: 0 9px;
+      border-right: 1.5px solid var(--ink);
+      color: var(--ink-soft);
+      font-family: var(--mono);
+      font-size: 8.5px;
+    }
+
+    .filters span:last-child { border-right: 0; }
+
+    .filters span.active {
+      background: var(--ink);
+      color: var(--base);
+    }
+
+    .filter-input {
+      flex: 1;
+      height: 30px;
+      padding: 0 9px;
+      border: 1.5px solid var(--ink);
+      background: var(--base-2);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 8.5px;
+    }
+
+    .primary-action {
+      height: 30px;
+      padding: 0 13px;
+      border: 1.5px solid var(--ink);
+      background: var(--primary-soft);
+      color: var(--primary-ink);
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.15px;
+    }
+
+    .plugin-layout {
+      display: grid;
+      grid-template-columns: 274px 1fr;
+      gap: 0;
+      border: 1.5px solid var(--line-strong);
+      min-height: 486px;
+    }
+
+    .plugin-list {
+      border-right: 1.5px solid var(--line-strong);
+      background: var(--base-2);
+    }
+
+    .plugin-item {
+      min-height: 58px;
+      display: grid;
+      grid-template-columns: 30px 1fr 38px;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .plugin-item:last-child { border-bottom: 0; }
+
+    .plugin-item.active {
+      background: var(--primary-soft);
+      color: var(--primary-ink);
+    }
+
+    .plugin-item.active .plugin-kind,
+    .plugin-item.active .plugin-name { color: var(--primary-ink); }
+
+    .plugin-tile {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1.5px solid currentColor;
+      color: var(--primary-text);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .plugin-item.active .plugin-tile {
+      border-color: var(--primary-ink);
+      color: var(--primary-text);
+    }
+
+    .plugin-name {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 700;
+      line-height: 15px;
+    }
+
+    .plugin-kind {
+      display: block;
+      margin-top: 1px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 8px;
+      line-height: 11px;
+    }
+
+    .plugin-item .switch {
+      width: 34px;
+      height: 20px;
+    }
+
+    .plugin-item .switch::after {
+      width: 12px;
+      height: 12px;
+    }
+
+    .plugin-item .switch.on::after { left: 17px; }
+
+    .plugin-item.active .switch {
+      border-color: var(--primary-ink);
+    }
+
+    .plugin-item.active .switch.on {
+      background: var(--primary);
+    }
+
+    .plugin-item.active .switch.on::after {
+      background: var(--base-2);
+    }
+
+    .plugin-detail {
+      padding: 18px 20px;
+      background: var(--base);
+    }
+
+    .detail-head {
+      display: grid;
+      grid-template-columns: 50px 1fr auto;
+      gap: 13px;
+      align-items: start;
+      padding-bottom: 15px;
+      border-bottom: 1.5px solid var(--ink);
+    }
+
+    .detail-tile {
+      width: 50px;
+      height: 50px;
+      display: grid;
+      place-items: center;
+      border: 1.5px solid var(--ink);
+      background: var(--primary-soft);
+      color: var(--primary-ink);
+      font-size: 17px;
+      font-weight: 800;
+    }
+
+    .detail-name-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .detail-name {
+      font-size: 17px;
+      font-weight: 750;
+      letter-spacing: -0.3px;
+      line-height: 20px;
+    }
+
+    .version {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 8px;
+    }
+
+    .badge {
+      padding: 1px 5px;
+      border: 1px solid var(--line-strong);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 7.5px;
+      line-height: 14px;
+    }
+
+    .badge.primary {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+      color: var(--primary-ink);
+    }
+
+    .detail-desc {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 17px;
+    }
+
+    .detail-section {
+      margin-top: 17px;
+    }
+
+    .detail-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      color: var(--primary-text);
+      font-family: var(--mono);
+      font-size: 8.5px;
+      font-weight: 700;
+      letter-spacing: 0.7px;
+    }
+
+    .detail-label::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+
+    .chip {
+      padding: 3px 7px;
+      border: 1.5px solid var(--ink);
+      color: var(--ink-soft);
+      font-family: var(--mono);
+      font-size: 8px;
+    }
+
+    .note {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 15px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      min-height: 41px;
+      border-top: 1px solid var(--line);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .text-box {
+      width: 174px;
+      height: 29px;
+      display: flex;
+      align-items: center;
+      padding: 0 9px;
+      border: 1.5px solid var(--ink);
+      background: var(--base-2);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 8.5px;
+    }
+
+    .three-way {
+      display: flex;
+      border: 1.5px solid var(--ink);
+    }
+
+    .three-way span {
+      height: 27px;
+      display: grid;
+      place-items: center;
+      padding: 0 8px;
+      border-right: 1.5px solid var(--ink);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 8px;
+    }
+
+    .three-way span:last-child { border-right: 0; }
+
+    .three-way span.active {
+      background: var(--primary-soft);
+      color: var(--primary-ink);
+    }
+
+    .detail-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 17px;
+      padding-top: 11px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 8px;
+    }
+
+    .detail-meta strong {
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    .detail-actions {
+      display: flex;
+      gap: 5px;
+      margin-left: auto;
+    }
+
+    .outline-button {
+      height: 26px;
+      padding: 0 8px;
+      border: 1.5px solid var(--ink);
+      background: transparent;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: 8px;
+    }
+
+    .outline-button.danger {
+      border-color: var(--signal-text);
+      color: var(--signal-text);
+    }
+
+    body[data-theme="night"] .rail,
+    body[data-theme="night"] .brand-panel {
+      background: var(--rail);
+    }
+
+    body[data-theme="night"] .nav.active {
+      background: var(--highlight);
+    }
+
+    body[data-theme="night"] .statusbar {
+      background: var(--rail);
+      color: var(--rail-ink);
+      border-top-color: var(--primary);
+    }
+
+    body[data-theme="night"] .page-head::after {
+      background: var(--primary);
+    }
+
+    body[data-theme="night"] .plugin-item.active {
+      background: var(--primary-soft);
+    }
+
+    /* Blush / Charcoal palette variant.
+       Keep geometry and component structure identical to the mineral preview. */
+    body[data-palette="blush"] {
+      --base: #f3efe6;
+      --base-2: #fbf8f1;
+      --ink: #3a3436;
+      --ink-soft: #595154;
+      --muted: #6f6467;
+      --line: rgba(58, 52, 54, 0.14);
+      --line-strong: rgba(58, 52, 54, 0.32);
+      --rail: #e8dadd;
+      --rail-ink: #3a3033;
+      --primary: #8a6d76;
+      --primary-text: #72545d;
+      --primary-ink: #3a3436;
+      --primary-soft: #dcc9cf;
+      --highlight: #dcc9cf;
+      --highlight-ink: #3a3436;
+      --signal: #b18372;
+      --signal-ink: #3a3436;
+      --signal-text: #83574a;
+      --success: #536f62;
+    }
+
+    body[data-palette="blush"][data-theme="night"] {
+      --base: #1e1e20;
+      --base-2: #262629;
+      --ink: #dcd8d1;
+      --ink-soft: #bbb8b2;
+      --muted: #96949b;
+      --line: rgba(220, 216, 209, 0.14);
+      --line-strong: rgba(220, 216, 209, 0.28);
+      --rail: #18181b;
+      --rail-ink: #dcd8d1;
+      --primary: #ac8e97;
+      --primary-text: #c0a4ac;
+      --primary-ink: #dcd8d1;
+      --primary-soft: #372d31;
+      --highlight: #372d31;
+      --highlight-ink: #dcd8d1;
+      --signal: #c09682;
+      --signal-ink: #1e1e20;
+      --signal-text: #d0a68f;
+      --success: #8dae99;
+    }
+
+    /* Selected direction: light = Mineral, dark = Blush / Charcoal. */
+    body[data-palette="final"] {
+      --base: #f3efe6;
+      --base-2: #fbf8f1;
+      --ink: #343832;
+      --ink-soft: #4e554f;
+      --muted: #626862;
+      --line: rgba(52, 56, 50, 0.16);
+      --line-strong: rgba(52, 56, 50, 0.34);
+      --rail: #dde5de;
+      --rail-ink: #303a33;
+      --primary: #64796d;
+      --primary-text: #52675b;
+      --primary-ink: #303a33;
+      --primary-soft: #d1ded4;
+      --highlight: #d1ded4;
+      --highlight-ink: #303a33;
+      --signal: #b88374;
+      --signal-ink: #343832;
+      --signal-text: #86594d;
+      --success: #4d6d58;
+    }
+
+    body[data-palette="final"][data-theme="night"] {
+      --base: #1e1e20;
+      --base-2: #262629;
+      --ink: #dcd8d1;
+      --ink-soft: #bbb8b2;
+      --muted: #96949b;
+      --line: rgba(220, 216, 209, 0.14);
+      --line-strong: rgba(220, 216, 209, 0.28);
+      --rail: #18181b;
+      --rail-ink: #dcd8d1;
+      --primary: #ac8e97;
+      --primary-text: #c0a4ac;
+      --primary-ink: #dcd8d1;
+      --primary-soft: #372d31;
+      --highlight: #372d31;
+      --highlight-ink: #dcd8d1;
+      --signal: #c09682;
+      --signal-ink: #1e1e20;
+      --signal-text: #d0a68f;
+      --success: #8dae99;
+    }
+  </style>
+</head>
+<body data-theme="paper" data-page="launcher" data-palette="final">
+  <div class="window">
+    <header class="topline">
+      <div class="brand-panel">
+        <span class="brand-glyph">L</span>
+        <span class="brand-copy">
+          <span class="brand-name">LUME</span>
+          <span class="brand-sub">设置 / SETTINGS</span>
+        </span>
+      </div>
+      <div class="topbar-main">
+        <div class="search">
+          <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 4.5 4.5"></path></svg>
+          <span class="search-placeholder">搜索设置…</span>
+          <span class="search-key">CTRL F</span>
+        </div>
+        <div class="chrome"><span>—</span><span>□</span><span>×</span></div>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="rail">
+        <div class="rail-group">个性化</div>
+        <div class="nav" data-page-link="appearance">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 4a8 8 0 0 0 0 16c1.8 0 2.2-1.2 1.2-2.3-.8-.9-.2-2.7 1.2-2.7h1.6A2 2 0 0 0 18 13"></path></svg>
+          <span>外观</span><span class="nav-no">01</span>
+        </div>
+        <div class="nav active" data-page-link="launcher">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16"></rect><path d="M3 8h18M8 12h8M8 16h5"></path></svg>
+          <span>启动器</span><span class="nav-no">02</span>
+        </div>
+        <div class="nav" data-page-link="clipboard">
+          <svg viewBox="0 0 24 24"><rect x="6" y="5" width="12" height="16"></rect><path d="M9 5V3.5h6V5M9 10h6M9 14h6M9 18h4"></path></svg>
+          <span>剪贴板</span><span class="nav-no">03</span>
+        </div>
+
+        <div class="rail-group">效率</div>
+        <div class="nav" data-page-link="search">
+          <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 4.5 4.5"></path></svg>
+          <span>搜索</span><span class="nav-no">04</span>
+        </div>
+        <div class="nav" data-page-link="hotkeys">
+          <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12"></rect><path d="M6.5 10h.1M9.5 10h.1M12.5 10h.1M15.5 10h.1M18.5 10h.1M7 14h10"></path></svg>
+          <span>快捷键</span><span class="nav-no">05</span>
+        </div>
+        <div class="nav" data-page-link="automation">
+          <svg viewBox="0 0 24 24"><path d="M13 3 5 13h6l-1 8 8-10h-6l1-8Z"></path></svg>
+          <span>自动化</span><span class="nav-no">06</span>
+        </div>
+
+        <div class="rail-group">管理</div>
+        <div class="nav" data-page-link="plugins">
+          <svg viewBox="0 0 24 24"><path d="m12 3 3 3-2 2 3 3 2-2 3 3-3 3-2-2-3 3 2 2-3 3-3-3 2-2-3-3-2 2-3-3 3-3 2 2 3-3-2-2 3-3Z"></path></svg>
+          <span>插件</span><span class="nav-no">07</span>
+        </div>
+        <div class="nav" data-page-link="system">
+          <svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6"></rect><rect x="14" y="4" width="6" height="6"></rect><rect x="4" y="14" width="6" height="6"></rect><rect x="14" y="14" width="6" height="6"></rect></svg>
+          <span>系统</span><span class="nav-no">08</span>
+        </div>
+        <div class="nav" data-page-link="about">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 10.5v6M12 7.3h.1"></path></svg>
+          <span>关于</span><span class="nav-no">09</span>
+        </div>
+
+        <div class="rail-footer">
+          <div class="rail-index">02 <small>/ 09</small></div>
+          <div class="rail-footnote">PREFERENCES<br />LUME PRE-26.10</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="page" id="launcher-page">
+          <div class="page-head">
+            <div>
+              <div class="page-kicker">LAUNCHER / 主界面</div>
+              <h1>启动器</h1>
+              <p class="page-desc">控制呼出窗口的尺寸、位置、主界面内容与会话记忆。所有更改即时生效，并保留最近一次撤销。</p>
+            </div>
+            <div class="page-no">02</div>
+          </div>
+
+          <section class="section">
+            <div class="section-head">
+              <span class="section-no">02.1</span>
+              <span class="section-title">窗口</span>
+              <span class="section-rule"></span>
+            </div>
+            <div class="panel">
+              <div class="row">
+                <div>
+                  <div class="row-title">宽度</div>
+                </div>
+                <div class="segmented"><span>小</span><span class="active">中</span><span>大</span></div>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="row-title">内容最大高度 <span class="info">i</span></div>
+                  <div class="row-sub">这是内容区上限，窗口仍会按实际结果收缩。</div>
+                </div>
+                <div class="segmented"><span>小</span><span class="active">中</span><span>大</span></div>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="row-title">窗口位置</div>
+                  <div class="row-sub">首次出现时使用所选位置；手动位置会保留当前摆放。</div>
+                </div>
+                <div class="position-zone">
+                  <div class="position-grid">
+                    <span class="position-cell tl"></span><span class="position-cell"></span><span class="position-cell tr"></span>
+                    <span class="position-cell bl"></span><span class="position-cell center"></span><span class="position-cell br"></span>
+                  </div>
+                  <div class="follow-box">跟随<br />鼠标</div>
+                </div>
+              </div>
+            </div>
+            <div class="note-strip">
+              <strong>01 / HELP</strong>
+              <span>手动位置只影响当前会话内的首次定位；重启后仍从设置中的位置策略开始。</span>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="section-head">
+              <span class="section-no">02.2</span>
+              <span class="section-title">主界面</span>
+              <span class="section-rule"></span>
+            </div>
+            <div class="panel">
+              <div class="row">
+                <div>
+                  <div class="row-title">显示最近使用</div>
+                  <div class="row-sub">只隐藏栏目，最近打开记录仍会继续保存。</div>
+                </div>
+                <span class="switch on"></span>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="row-title">模式切换栏仅显示图标</div>
+                  <div class="row-sub">窗口变窄时也会自动使用图标；悬停显示名称。</div>
+                </div>
+                <span class="switch"></span>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="page" id="plugin-page" hidden>
+          <div class="page-head">
+            <div>
+              <div class="page-kicker">EXTENSIONS / 注册表</div>
+              <h1>插件</h1>
+              <p class="page-desc">启用、配置和检查插件。能力只从清单声明进入，权限检查在 Rust 侧执行。</p>
+            </div>
+            <div class="page-no">07</div>
+          </div>
+
+          <div class="plugin-toolbar">
+            <span class="summary">28 PLUGINS / 20 ACTIVE</span>
+            <div class="filters"><span class="active">全部</span><span>启用</span><span>停用</span><span>磁盘</span></div>
+            <div class="filter-input">FILTER BY NAME / KEYWORD</div>
+            <button class="primary-action">安装插件</button>
+          </div>
+
+          <div class="plugin-layout">
+            <div class="plugin-list">
+              <div class="plugin-item active">
+                <span class="plugin-tile">剪</span>
+                <span><span class="plugin-name">剪贴板历史</span><span class="plugin-kind">MODE</span></span>
+                <span class="switch on"></span>
+              </div>
+              <div class="plugin-item">
+                <span class="plugin-tile">卫</span>
+                <span><span class="plugin-name">卫星预览</span><span class="plugin-kind">SERVICE</span></span>
+                <span class="switch on"></span>
+              </div>
+              <div class="plugin-item">
+                <span class="plugin-tile">动</span>
+                <span><span class="plugin-name">Actions</span><span class="plugin-kind">PROVIDER</span></span>
+                <span class="switch"></span>
+              </div>
+              <div class="plugin-item">
+                <span class="plugin-tile">翻</span>
+                <span><span class="plugin-name">Translate</span><span class="plugin-kind">MODE</span></span>
+                <span class="switch"></span>
+              </div>
+              <div class="plugin-item">
+                <span class="plugin-tile">文</span>
+                <span><span class="plugin-name">Text Tools</span><span class="plugin-kind">PROVIDER</span></span>
+                <span class="switch"></span>
+              </div>
+            </div>
+
+            <div class="plugin-detail">
+              <div class="detail-head">
+                <div class="detail-tile">剪</div>
+                <div>
+                  <div class="detail-name-row">
+                    <span class="detail-name">剪贴板历史</span>
+                    <span class="version">2.8.0</span>
+                    <span class="badge primary">内置</span>
+                    <span class="badge">可分离</span>
+                  </div>
+                  <p class="detail-desc">历史记录、分类浏览、多选合并粘贴与卫星预览窗口。</p>
+                </div>
+                <span class="switch on" style="margin-top: 12px;"></span>
+              </div>
+
+              <div class="detail-section">
+                <div class="detail-label">PERMISSIONS / 权限</div>
+                <div class="chips"><span class="chip">剪贴板</span><span class="chip">活动窗口</span><span class="chip">文件</span></div>
+                <div class="note">插件只能调用已声明的能力，未声明的调用会被拒绝。</div>
+              </div>
+
+              <div class="detail-section">
+                <div class="detail-label">SETTINGS / 设置</div>
+                <div class="setting-row">
+                  <span>列表前缀</span>
+                  <span class="text-box">（留空）</span>
+                </div>
+                <div class="setting-row">
+                  <span>闲置重置时保留状态</span>
+                  <span class="three-way"><span>跟随清单</span><span class="active">保留</span><span>重置</span></span>
+                </div>
+              </div>
+
+              <div class="detail-section">
+                <div class="detail-label">IDENTITY / 信息</div>
+                <div class="detail-meta">
+                  <strong>ID</strong><span>clipboard</span>
+                  <strong>PATH</strong><span>…\plugins\clipboard</span>
+                  <span class="detail-actions"><button class="outline-button">重载</button><button class="outline-button danger">卸载</button></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer class="statusbar">
+      <span class="status-mark">✓</span>
+      <span>ALL CHANGES SAVED / 所有更改已自动保存</span>
+      <span class="status-right">恢复默认…</span>
+    </footer>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const theme = params.get("theme") || "paper";
+    const page = params.get("page") || "launcher";
+    const palette = params.get("palette") || "final";
+    document.body.dataset.theme = theme;
+    document.body.dataset.page = page;
+    document.body.dataset.palette = palette;
+    document.getElementById("launcher-page").hidden = page !== "launcher";
+    document.getElementById("plugin-page").hidden = page !== "plugins";
+    document.querySelectorAll(".nav").forEach((el) => {
+      el.classList.toggle("active", el.dataset.pageLink === page);
+    });
+  </script>
+</body>
+</html>

@@ -325,24 +325,29 @@ every save / apply / import / restore-default. All fields are
 `#[serde(default)]`, so an older `settings.toml` loads unchanged and new fields
 pick up their defaults.
 
-The settings window saves a **minimal patch** (`save_settings_patch`): only
-fields that differ from the snapshot it loaded. The Rust side merges that patch
-into the current `SettingsState` under its lock, so a dirty draft cannot roll
-back plugin enable/disable, plugin geometry / theme preferences, last-page
-bookmarks or remember-checks writes made while the window was open. Import,
+The settings window autosaves a **minimal patch** (`save_settings_patch`): only
+fields that differ from the last server-confirmed baseline. A single-writer
+frontend queue debounces text and sliders, serializes writes, and merges later
+edits before the next patch. The Rust side merges that patch into the current
+`SettingsState` under its lock, so autosave cannot roll back plugin
+enable/disable, plugin geometry / theme preferences, last-page bookmarks or
+remember-checks writes made in the meantime. A failed write restores the
+affected controls and the settings-window skin DOM to the confirmed snapshot,
+then exposes retry in the footer. Import,
 restore-default and restore-backup call the same runtime-apply helper as a
 normal save (window geometry, hotkey, dedup index, index refresh + watcher,
 plugin dev watcher, `settings-applied`), so file replacement is never
 persist-only.
 
-The window's dirty flag is recomputed from `diffSettings(baseline, draft)` on
-every edit, so reverting a value clears Save and the close prompt. Plugin
-enable/disable, developer/trust switches, declarative plugin settings,
-autostart and system integration actions remain immediate light writes; their
-groups carry an “immediate effect” badge and the draft-discard prompt says they
-will not be rolled back. `set_plugin_dev_mode` clears `trust_all` on every
-transition, requiring a fresh acknowledgement after developer mode is turned
-back on.
+Reversible preferences save automatically and expose a six-second undo in the
+status bar; there is no global Save button or unsaved-draft prompt. The last
+successful change stores its before/after snapshots so undo submits the inverse
+minimal patch through the same queue. Plugin enable/disable, developer/trust
+switches, declarative plugin settings, autostart and service/agent/import
+operations remain explicit commands with real status feedback; destructive
+ones use the shared confirmation dialog. `set_plugin_dev_mode` clears
+`trust_all` on every transition, requiring a fresh acknowledgement after
+developer mode is turned back on.
 
 Two distinct "missing" cases, and they resolve differently — worth knowing
 before adding a field:
@@ -542,11 +547,15 @@ before adding a field:
     blocker allows the native Windows edit set (Ctrl+Backspace, Ctrl+Home/End,
     word navigation, …) inside text fields.
 - The settings window reuses the same build via the window label
-  (`src/settings/`, grouped-card layout — see `docs/SETTINGS.md`). Its search
-  indexes static localized labels plus live plugin manifest/setting metadata;
-  the dirty flag is baseline-diff based, the confirm dialog owns a focus trap
-  with inert background, and all shared switches/chips expose accessible names
-  and selected state. `setLocale()` also synchronizes `documentElement.lang`.
+  (`src/settings/` — grouped navigation, shared semantic rows, command search,
+  autosave, and the Quiet / Chromatic skin runtime; see `docs/SETTINGS.md`).
+  Its catalog indexes localized labels, summaries/details, keywords, current
+  values, and live plugin manifest/setting metadata; result jumps focus the
+  exact row. The confirm dialog owns a focus trap with inert background, all
+  shared switches/radios expose accessible names and selected state, and
+  `setLocale()` synchronizes `documentElement.lang`. `src/settings/skin.ts` is
+  the single writer for `data-settings-skin`; the property is applied from the
+  injected config before `render()`, while the launcher never sets it.
   The
   satellite preview is its own entry (`src/preview.tsx`). Its compact header
   names the current file/content type and owns the in-window `close_preview`

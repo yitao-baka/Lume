@@ -1,149 +1,162 @@
-// Dev helper: settings re-layout smoke test (2026-08-30 grouped-card layout).
-//  1. 7 nav sections render in the Flutter-aligned order
-//  2. footer has 恢复应用默认值 + 保存并应用 (disabled until dirty)
-//  3. 恢复应用默认值 is two-step: click → save button enables (nothing written)
-//  4. search box filters nav + stacks matching sections
-//  5. user index empty state + refresh-index button present
-// Screenshots: test/settings_*.png
-// Usage: node scripts/cdp_settings_smoke.mjs
+// Settings redesign smoke: grouped nav, command search, autosave footer,
+// restore confirmation, and the reworked page controls.
+// Usage: pnpm run tauri build --debug --no-bundle
+//        node scripts/cdp_settings_smoke.mjs
 import { spawn, execSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 const CDP_PORT = 9222;
 const APP = "src-tauri/target/debug/lume.exe";
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const OUT = "test/settings-smoke";
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let failures = 0;
-const check = (name, cond, extra = "") => {
-  console.log(`[${cond ? "PASS" : "FAIL"}] ${name}${extra ? " — " + extra : ""}`);
-  if (!cond) failures++;
+const check = (name, condition, extra = "") => {
+  console.log(`[${condition ? "PASS" : "FAIL"}] ${name}${extra ? ` — ${extra}` : ""}`);
+  if (!condition) failures++;
 };
 
-try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
+try { execSync("taskkill /F /T /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
+try { execSync("taskkill /F /IM msedgewebview2.exe 2>NUL", { stdio: "ignore" }); } catch {}
+await sleep(300);
+mkdirSync(OUT, { recursive: true });
 spawn(APP, [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}` },
   stdio: "ignore",
 });
 
 async function getTargets() {
-  for (let i = 0; i < 40; i++) {
-    try { return await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json(); } catch { await sleep(500); }
+  for (let i = 0; i < 60; i++) {
+    try { return await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json(); }
+    catch { await sleep(250); }
   }
-  throw new Error("CDP not available on :" + CDP_PORT);
+  throw new Error(`CDP not available on :${CDP_PORT}`);
 }
 
 async function connect(url) {
   const ws = new WebSocket(url);
-  let id = 0; const pending = new Map();
-  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-  const send = (method, params) => new Promise((res) => { const k = ++id; pending.set(k, res); ws.send(JSON.stringify({ id: k, method, params })); });
-  const evalJs = async (expression) => {
-    const r = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-    if (r.result?.exceptionDetails) throw new Error("eval: " + JSON.stringify(r.result.exceptionDetails));
-    return r.result?.result?.value;
+  let id = 0;
+  const pending = new Map();
+  ws.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    if (message.id && pending.has(message.id)) {
+      pending.get(message.id)(message);
+      pending.delete(message.id);
+    }
   };
-  return { ws, send, evalJs };
+  await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+  const send = (method, params) => new Promise((resolve) => {
+    const key = ++id;
+    pending.set(key, resolve);
+    ws.send(JSON.stringify({ id: key, method, params }));
+  });
+  const evalJs = async (expression) => {
+    const reply = await send("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (reply.result?.exceptionDetails) {
+      throw new Error(reply.result.exceptionDetails.exception?.description ?? "eval failed");
+    }
+    return reply.result?.result?.value;
+  };
+  const shot = async (name) => {
+    const image = await send("Page.captureScreenshot", { format: "png" });
+    writeFileSync(`${OUT}/${name}.png`, Buffer.from(image.result.data, "base64"));
+  };
+  return { ws, send, evalJs, shot };
 }
 
-const targets = await getTargets();
-for (const t of targets) console.log("[target]", t.type, JSON.stringify(t.title), t.url);
-
-// Identify the settings window by its body class (index.tsx adds
-// `settings-window`); both windows share the title "Lume".
-async function findSettingsTarget() {
-  const pages = (await getTargets()).filter((t) => t.type === "page" && t.url.includes("tauri.localhost"));
-  for (const t of pages) {
-    const c = await connect(t.webSocketDebuggerUrl);
-    const isSettings = await c.evalJs(`document.body.classList.contains("settings-window")`);
-    if (isSettings) return { settingsT: t, mainT: pages.find((p) => p !== t) };
-    c.ws.close();
+let mainTarget = null;
+let settings = null;
+for (let attempt = 0; attempt < 60 && (!settings || !mainTarget); attempt++) {
+  const pages = (await getTargets()).filter((target) =>
+    target.type === "page" && target.url.includes("tauri.localhost"),
+  );
+  for (const page of pages) {
+    if (page.webSocketDebuggerUrl === mainTarget?.webSocketDebuggerUrl) continue;
+    try {
+      const client = await connect(page.webSocketDebuggerUrl);
+      const kind = await client.evalJs(`document.body.classList.contains('settings-window')
+        ? 'settings'
+        : document.querySelector('#search-input') ? 'main' : ''`);
+      if (kind === "settings" && !settings) settings = client;
+      else if (kind === "main" && !mainTarget) {
+        mainTarget = page;
+        client.ws.close();
+      } else client.ws.close();
+    } catch {}
   }
-  return {};
+  if (!settings || !mainTarget) await sleep(250);
 }
-let settingsT = null, mainT = null;
-for (let i = 0; i < 30 && !settingsT; i++) {
-  ({ settingsT, mainT } = await findSettingsTarget());
-  if (!settingsT) await sleep(500);
+if (!settings || !mainTarget) throw new Error("main/settings targets missing");
+const main = await connect(mainTarget.webSocketDebuggerUrl);
+await main.evalJs(`window.__TAURI_INTERNALS__.invoke('open_settings').then(() => true)`);
+for (let i = 0; i < 40; i++) {
+  if (await settings.evalJs(`!!document.querySelector('.settings-page-content')`)) break;
+  await sleep(150);
 }
-if (!settingsT || !mainT) { console.error("targets missing"); process.exit(1); }
 
-const m = await connect(mainT.webSocketDebuggerUrl);
-// Show the launcher briefly (it starts hidden) and click the settings gear.
-await m.evalJs(`document.querySelector('.icon-btn[aria-label]')?.click(); "clicked"`);
-await sleep(1200);
+const nav = await settings.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).map((el) => el.dataset.section)`);
+check(
+  "nine grouped nav sections in task order",
+  JSON.stringify(nav) === JSON.stringify(["appearance", "launcher", "clipboard", "search", "hotkeys", "automation", "plugins", "system", "about"]),
+  JSON.stringify(nav),
+);
+const footer = await settings.evalJs(`({
+  status: document.querySelector('.settings-save-status')?.textContent.trim(),
+  save: Array.from(document.querySelectorAll('.settings-footer button')).some((el) => el.textContent.includes('保存并应用')),
+  restore: Array.from(document.querySelectorAll('.settings-footer button')).some((el) => el.textContent.includes('恢复应用默认值')),
+})`);
+check("autosave status replaces the global save button", !!footer.status && footer.save === false && footer.restore, JSON.stringify(footer));
+check("appearance renders semantic groups", (await settings.evalJs(`document.querySelectorAll('.settings-setting-group').length`)) >= 3);
+await settings.shot("appearance");
 
-const s = await connect(settingsT.webSocketDebuggerUrl);
-await sleep(600);
+await settings.evalJs(`(() => {
+  const input = document.querySelector('.settings-search-input');
+  input.focus();
+  input.value = '许可证';
+  input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '许可证' }));
+  return true;
+})()`);
+await sleep(250);
+const search = await settings.evalJs(`({
+  open: !!document.querySelector('.settings-search-results'),
+  labels: Array.from(document.querySelectorAll('.settings-result-label')).map((el) => el.textContent),
+})`);
+check("command search shows row-level results", search.open && search.labels.some((label) => label.includes('许可证')), JSON.stringify(search));
+await settings.evalJs(`document.querySelector('.settings-search-result')?.click(); true`);
+await sleep(250);
+check("search result jumps to 关于", (await settings.evalJs(`document.querySelector('.settings-nav.active')?.dataset.section`)) === "about");
 
-// 1. Nav sections
-const nav = await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).map((b) => b.textContent.trim())`);
-check("9 nav sections in order", JSON.stringify(nav) === JSON.stringify(["外观", "导航页", "剪贴板", "快捷键", "搜索", "系统", "自动化", "插件", "关于"]), JSON.stringify(nav));
-
-// 2. Footer buttons
-const footer = await s.evalJs(`Array.from(document.querySelectorAll('.settings-footer .settings-action')).map((b) => ({ text: b.textContent.trim(), disabled: b.disabled }))`);
-check("footer = 恢复应用默认值 + 保存并应用(disabled)", footer.length === 2 && footer[0].text.includes("恢复应用默认值") && footer[1].text.includes("保存并应用") && footer[1].disabled === true, JSON.stringify(footer));
-
-// 3. Two-step restore default
-await s.evalJs(`Array.from(document.querySelectorAll('.settings-footer .settings-action'))[0].click(); "ok"`);
+await settings.evalJs(`document.querySelector('.settings-nav[data-section="search"]')?.click(); true`);
 await sleep(200);
-const footer2 = await s.evalJs(`Array.from(document.querySelectorAll('.settings-footer .settings-action')).map((b) => b.disabled)`);
-check("restore-default enables save (two-step)", footer2[1] === false, JSON.stringify(footer2));
+const refresh = await settings.evalJs(`!!document.querySelector('[data-setting-id="action.refresh_index"]')`);
+const emptyIndex = await settings.evalJs(`document.querySelector('.settings-empty')?.textContent ?? ''`);
+check("search page exposes refresh + user-index empty state", refresh && emptyIndex.length > 0, JSON.stringify({ refresh, emptyIndex }));
+await settings.shot("search");
 
-// Grouped cards render in the appearance section
-const cards = await s.evalJs(`document.querySelectorAll('.settings-group').length`);
-const titles = await s.evalJs(`Array.from(document.querySelectorAll('.settings-grouptitle')).map((h) => h.textContent.trim())`);
-check("appearance section renders cards + group titles", cards >= 1 && titles.length >= 1, JSON.stringify({ cards, titles }));
-
-// 4. Search filter: 许可证 only matches 关于
-await s.evalJs(`(() => { const inp = document.querySelector('.settings-search-input'); inp.value = "许可证"; inp.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
-await sleep(300);
-const navFiltered = await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).map((b) => b.textContent.trim())`);
-const sectionsStacked = await s.evalJs(`Array.from(document.querySelectorAll('.settings-section')).map((d) => d.dataset.section)`);
-check("search 许可证 → only 关于 in nav", JSON.stringify(navFiltered) === JSON.stringify(["关于"]), JSON.stringify(navFiltered));
-check("search stacks matching section", JSON.stringify(sectionsStacked) === JSON.stringify(["about"]), JSON.stringify(sectionsStacked));
-await s.evalJs(`(() => { const inp = document.querySelector('.settings-search-input'); inp.value = ""; inp.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
+await settings.evalJs(`document.querySelector('.settings-nav[data-section="clipboard"]')?.click(); true`);
 await sleep(200);
-
-// Screenshot: appearance
-let shot = await s.send("Page.captureScreenshot", { format: "png" });
-writeFileSync("test/settings_appearance.png", Buffer.from(shot.result.data, "base64"));
-
-// 5. Switch to 搜索 section (user index + refresh)
-await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).find((b) => b.textContent.includes("搜索"))?.click(); "ok"`);
-await sleep(300);
-const hasRefresh = await s.evalJs(`!!document.querySelector('.settings-title-row .settings-icon-btn')`);
-const emptyState = await s.evalJs(`document.querySelector('.settings-empty')?.textContent ?? ""`);
-check("搜索 section: refresh button + user-index empty state", hasRefresh === true && emptyState.includes("索引"), JSON.stringify({ hasRefresh, emptyState }));
-shot = await s.send("Page.captureScreenshot", { format: "png" });
-writeFileSync("test/settings_search.png", Buffer.from(shot.result.data, "base64"));
-
-// 6. 剪贴板 section (merge slider visible but disabled, ignore editor, remember checks)
-await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).find((b) => b.textContent.includes("剪贴板"))?.click(); "ok"`);
-await sleep(300);
-const clip = await s.evalJs(`({
-  toggles: Array.from(document.querySelectorAll('.settings-toggle')).length,
-  blocktitle: Array.from(document.querySelectorAll('.settings-blocktitle')).map((h) => h.textContent.trim()),
-  rememberChecks: Array.from(document.querySelectorAll('.settings-sub-label')).some((l) => l.textContent === "记住勾选"),
+const clipboard = await settings.evalJs(`({
+  groups: Array.from(document.querySelectorAll('.settings-grouptitle')).map((el) => el.textContent.trim()),
   mergeSlider: !!document.querySelector('.settings-slider-input'),
   mergeDisabled: document.querySelector('.settings-slider-input')?.disabled === true,
 })`);
-check("剪贴板 section: blocktitles + remember-checks + disabled merge slider while merge off",
-  clip.blocktitle.includes("忽略应用") && clip.rememberChecks === true && clip.mergeSlider && clip.mergeDisabled, JSON.stringify(clip));
-shot = await s.send("Page.captureScreenshot", { format: "png" });
-writeFileSync("test/settings_clipboard.png", Buffer.from(shot.result.data, "base64"));
+check("clipboard keeps merge slider visible but disabled", clipboard.groups.includes('忽略应用') && clipboard.mergeSlider && clipboard.mergeDisabled, JSON.stringify(clipboard));
+await settings.shot("clipboard");
 
-// 7. 快捷键 + 系统 + 关于 screenshots via nav
-for (const name of ["快捷键", "系统", "关于"]) {
-  await s.evalJs(`Array.from(document.querySelectorAll('.settings-nav')).find((b) => b.textContent.includes("${name}"))?.click(); "ok"`);
-  await sleep(300);
-  shot = await s.send("Page.captureScreenshot", { format: "png" });
-  writeFileSync(`test/settings_${name}.png`, Buffer.from(shot.result.data, "base64"));
+for (const section of ["hotkeys", "automation", "plugins", "system", "about"]) {
+  await settings.evalJs(`document.querySelector('.settings-nav[data-section="${section}"]')?.click(); true`);
+  await sleep(200);
+  await settings.shot(section);
 }
-const hotkey = await s.evalJs(`({
-  chips: Array.from(document.querySelectorAll('.settings-chip')).map((c) => c.textContent.trim()),
-  rec: document.querySelector('.settings-hotkey-btn')?.textContent.trim(),
-})`).catch(() => null);
+await settings.evalJs(`document.querySelector('.settings-nav[data-section="hotkeys"]')?.click(); true`);
+await sleep(200);
+const keycaps = await settings.evalJs(`Array.from(document.querySelectorAll('.settings-keycap')).map((el) => el.textContent.trim())`);
+check("hotkey slots render as keycaps", keycaps.length >= 2, JSON.stringify(keycaps));
+const overflow = await settings.evalJs(`document.documentElement.scrollWidth <= innerWidth && document.querySelector('.settings-main').scrollWidth <= document.querySelector('.settings-main').clientWidth`);
+check("1040×720 settings has no horizontal overflow", overflow);
 
-console.log("[hotkey chips]", JSON.stringify(hotkey));
-console.log(failures === 0 ? "[smoke] ALL PASS" : `[smoke] ${failures} FAILURES`);
+console.log(failures === 0 ? "[settings-smoke] ALL PASS" : `[settings-smoke] ${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

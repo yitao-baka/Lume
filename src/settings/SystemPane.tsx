@@ -1,13 +1,13 @@
-//! 「系统」页 — auto-start, the LumeSVC service and import/export (with the
-//! backup restore that the Flutter settings dropped). 恢复应用默认值 lives in
-//! the footer now (two-step: reset working copy → 保存并应用).
+//! 「系统」页 — auto-start, the LumeSVC service, elevation agent, and explicit
+//! import/export/restore operations. Reversible settings autosave; this page
+//! uses status tickets and confirmation dialogs instead.
 
-import { createSignal, Show, onCleanup, onMount } from "solid-js";
+import { createSignal, Show, onMount } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { t } from "../i18n";
 import type { SettingsData } from "./types";
-import { ImmediateBadge, Row, Toggle } from "./controls";
+import { SettingGroup, SettingRow, StatusTicket, Toggle } from "./controls";
 import { settingsError } from "./errors";
 
 /** Status of the LumeSVC service as reported by the Rust `svc_status` command. */
@@ -34,30 +34,39 @@ interface AgentStatus {
 function ConfirmButton(props: {
   label: string;
   confirm?: boolean;
+  settingId?: string;
+  confirmTitle?: string;
+  confirmHint?: string;
+  requestConfirm?: (state: {
+    title: string;
+    hint: string;
+    confirmLabel: string;
+    action: () => Promise<void>;
+  }) => void;
   onAction: () => Promise<void>;
   disabled?: boolean;
 }) {
-  const [arming, setArming] = createSignal(false);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => clearTimeout(timer));
   async function handle() {
-    if (props.confirm && !arming()) {
-      setArming(true);
-      timer = setTimeout(() => setArming(false), 3000);
+    if (props.confirm && props.requestConfirm) {
+      props.requestConfirm({
+        title: props.confirmTitle ?? props.label,
+        hint: props.confirmHint ?? "",
+        confirmLabel: props.label,
+        action: props.onAction,
+      });
       return;
     }
-    clearTimeout(timer);
-    setArming(false);
     await props.onAction();
   }
   return (
     <button
       class="settings-action"
       type="button"
+      data-setting-id={props.settingId}
       disabled={props.disabled}
       onClick={() => void handle()}
     >
-      {props.confirm && arming() ? t("settingsConfirmAction") : props.label}
+      {props.label}
     </button>
   );
 }
@@ -65,8 +74,14 @@ function ConfirmButton(props: {
 export default function SystemPane(props: {
   settings: SettingsData;
   onReload: () => void;
-  /** False = the user kept their unsaved draft; skip the instant change. */
+  /** False = pending autosave failed; do not replace the live file. */
   confirmDiscard: () => Promise<boolean>;
+  requestConfirm: (state: {
+    title: string;
+    hint: string;
+    confirmLabel: string;
+    action: () => Promise<void>;
+  }) => void;
 }) {
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
 
@@ -212,7 +227,7 @@ export default function SystemPane(props: {
     return a.elevated ? t("settingsAgentRunning") : t("settingsAgentNotElevated");
   };
 
-  async function toggleAgent() {
+  async function performAgentToggle() {
     if (agentBusy()) return;
     setAgentBusy(true);
     setAgentMsg(null);
@@ -260,20 +275,40 @@ export default function SystemPane(props: {
     }
   }
 
+  function toggleAgent() {
+    if (!agent().installed) {
+      void performAgentToggle();
+      return;
+    }
+    props.requestConfirm({
+      title: t("settingsConfirmUninstallAgentTitle"),
+      hint: t("settingsConfirmUninstallAgentHint"),
+      confirmLabel: t("settingsAgentUninstall"),
+      action: performAgentToggle,
+    });
+  }
+
   async function importSettings() {
     const file = await open({
       multiple: false,
       filters: [{ name: "TOML", extensions: ["toml"] }],
     });
     if (typeof file !== "string") return;
-    if (!(await props.confirmDiscard())) return;
-    try {
-      await invoke("import_settings", { sourcePath: file });
-      setStatus({ ok: true, text: t("settingsImported") });
-      props.onReload();
-    } catch (err) {
-      setStatus({ ok: false, text: settingsError(err, "settingsImportFailed") });
-    }
+    props.requestConfirm({
+      title: t("settingsConfirmImportTitle"),
+      hint: t("settingsConfirmImportHint"),
+      confirmLabel: t("settingsImport"),
+      action: async () => {
+        if (!(await props.confirmDiscard())) return;
+        try {
+          await invoke("import_settings", { sourcePath: file });
+          setStatus({ ok: true, text: t("settingsImported") });
+          props.onReload();
+        } catch (err) {
+          setStatus({ ok: false, text: settingsError(err, "settingsImportFailed") });
+        }
+      },
+    });
   }
 
   async function exportSettings() {
@@ -291,146 +326,162 @@ export default function SystemPane(props: {
   }
 
   async function restoreBackup() {
-    if (!(await props.confirmDiscard())) return;
-    try {
-      await invoke("restore_backup");
-      setStatus({ ok: true, text: t("settingsRestored") });
-      props.onReload();
-    } catch (err) {
-      setStatus({ ok: false, text: settingsError(err, "settingsRestoreFailed") });
-    }
+    props.requestConfirm({
+      title: t("settingsConfirmRestoreBackupTitle"),
+      hint: t("settingsConfirmRestoreBackupHint"),
+      confirmLabel: t("settingsRestoreBackup"),
+      action: async () => {
+        if (!(await props.confirmDiscard())) return;
+        try {
+          await invoke("restore_backup");
+          setStatus({ ok: true, text: t("settingsRestored") });
+          props.onReload();
+        } catch (err) {
+          setStatus({ ok: false, text: settingsError(err, "settingsRestoreFailed") });
+        }
+      },
+    });
   }
 
   return (
     <>
-      <div class="settings-title-row">
-        <h2 class="settings-grouptitle">{t("settingsAutostart")}</h2>
-        <ImmediateBadge />
-      </div>
-      <div class="settings-group">
-        <Row label={t("settingsAutostart")}>
+      <SettingGroup title={t("settingsAutostart")} number="08.1">
+        <SettingRow
+          id="system.autostart"
+          label={t("settingsAutostart")}
+          summary={t("settingsAutostartHint")}
+        >
           <Toggle
             checked={autostart()}
             label={t("settingsAutostart")}
-            onChange={(v) => void toggleAutostart(v)}
+            onChange={(value) => void toggleAutostart(value)}
           />
-        </Row>
+        </SettingRow>
         <Show when={autostartMsg()}>
-          <span
-            classList={{ "settings-status": true, error: !autostartMsg()!.ok }}
-            role={autostartMsg()!.ok ? "status" : "alert"}
-          >
-            {autostartMsg()!.text}
-          </span>
-        </Show>
-      </div>
-
-      <div class="settings-title-row">
-        <h2 class="settings-grouptitle">{t("settingsSystemService")}</h2>
-        <ImmediateBadge />
-      </div>
-      <div class="settings-group">
-        <div class="settings-row-between">
-          <span class="settings-path" role="status" aria-live="polite">{svcText()}</span>
-          <div class="settings-row settings-service-actions">
-            <Show
-              when={svc().installed}
-              fallback={
-                <button
-                  class="settings-action"
-                  type="button"
-                  disabled={svcBusy()}
-                  onClick={() => void runServiceAction("install")}
-                >
-                  {t("settingsRegisterService")}
-                </button>
-              }
+          <div class="settings-group-status">
+            <span
+              classList={{ "settings-status": true, error: !autostartMsg()!.ok }}
+              role={autostartMsg()!.ok ? "status" : "alert"}
             >
-              <Show when={!svc().running}>
+              {autostartMsg()!.text}
+            </span>
+          </div>
+        </Show>
+      </SettingGroup>
+
+      <SettingGroup title={t("settingsSystemService")} number="08.2">
+        <div class="settings-ticket-wrap">
+          <StatusTicket
+            id="system.service"
+            title={t("settingsSystemService")}
+            status={svcText()}
+            tone={svc().running ? "ok" : svc().installed ? "warn" : "neutral"}
+          >
+            <p class="settings-row-summary">{t("settingsServiceHint")}</p>
+            <div class="settings-ticket-actions">
+              <Show
+                when={svc().installed}
+                fallback={
+                  <button
+                    class="settings-action settings-action-primary"
+                    type="button"
+                    disabled={svcBusy()}
+                    onClick={() => void runServiceAction("install")}
+                  >
+                    {t("settingsRegisterService")}
+                  </button>
+                }
+              >
+                <Show when={!svc().running}>
+                  <button
+                    class="settings-action"
+                    type="button"
+                    disabled={svcBusy()}
+                    onClick={() => void runServiceAction("start")}
+                  >
+                    {t("settingsStartService")}
+                  </button>
+                </Show>
                 <button
                   class="settings-action"
                   type="button"
                   disabled={svcBusy()}
-                  onClick={() => void runServiceAction("start")}
+                  onClick={() => void runServiceAction("restart")}
                 >
-                  {t("settingsStartService")}
+                  {t("settingsRestartService")}
                 </button>
+                <ConfirmButton
+                  label={t("settingsUninstallService")}
+                  confirm
+                  confirmTitle={t("settingsConfirmUninstallServiceTitle")}
+                  confirmHint={t("settingsConfirmUninstallServiceHint")}
+                  requestConfirm={props.requestConfirm}
+                  disabled={svcBusy()}
+                  onAction={() => runServiceAction("uninstall")}
+                />
               </Show>
+            </div>
+            <Show when={svcMsg()}>
+              <span
+                classList={{ "settings-status": true, error: !svcMsg()!.ok }}
+                role={svcMsg()!.ok ? "status" : "alert"}
+              >
+                {svcMsg()!.text}
+              </span>
+            </Show>
+          </StatusTicket>
+
+          <StatusTicket
+            id="system.agent"
+            title={t("settingsAgentGroup")}
+            status={agentText()}
+            tone={agent().elevated ? "ok" : agent().installed ? "warn" : "neutral"}
+          >
+            <p class="settings-row-summary">{t("settingsAgentHint")}</p>
+            <div class="settings-ticket-actions">
               <button
                 class="settings-action"
                 type="button"
-                disabled={svcBusy()}
-                onClick={() => void runServiceAction("restart")}
+                disabled={agentBusy()}
+                onClick={() => void toggleAgent()}
               >
-                {t("settingsRestartService")}
+                {agent().installed ? t("settingsAgentUninstall") : t("settingsAgentInstall")}
               </button>
-              <ConfirmButton
-                label={t("settingsUninstallService")}
-                confirm
-                disabled={svcBusy()}
-                onAction={() => runServiceAction("uninstall")}
-              />
+            </div>
+            <Show when={agentMsg()}>
+              <span
+                classList={{ "settings-status": true, error: !agentMsg()!.ok }}
+                role={agentMsg()!.ok ? "status" : "alert"}
+              >
+                {agentMsg()!.text}
+              </span>
             </Show>
+          </StatusTicket>
+        </div>
+      </SettingGroup>
+
+      <SettingGroup title={t("settingsImportExport")} number="08.3">
+        <div class="settings-data-actions">
+          <p class="settings-row-summary">{t("settingsRestoreDefaultsHint")}</p>
+          <div class="settings-data-action-row">
+            <ConfirmButton settingId="system.export_settings" label={t("settingsExport")} onAction={exportSettings} />
+            <ConfirmButton settingId="system.import_settings" label={t("settingsImport")} onAction={importSettings} />
+            <ConfirmButton
+              settingId="system.restore_backup"
+              label={t("settingsRestoreBackup")}
+              onAction={restoreBackup}
+            />
           </div>
+          <Show when={status()}>
+            <span
+              classList={{ "settings-status": true, error: !status()!.ok }}
+              role={status()!.ok ? "status" : "alert"}
+            >
+              {status()!.text}
+            </span>
+          </Show>
         </div>
-        <Show when={svcMsg()}>
-          <span
-            classList={{ "settings-status": true, error: !svcMsg()!.ok }}
-            role={svcMsg()!.ok ? "status" : "alert"}
-          >
-            {svcMsg()!.text}
-          </span>
-        </Show>
-      </div>
-
-      <div class="settings-title-row">
-        <h2 class="settings-grouptitle">{t("settingsAgentGroup")}</h2>
-        <ImmediateBadge />
-      </div>
-      <div class="settings-group">
-        <div class="settings-row-between">
-          <span class="settings-path" role="status" aria-live="polite">{agentText()}</span>
-          <button
-            class="settings-action"
-            type="button"
-            disabled={agentBusy()}
-            onClick={() => void toggleAgent()}
-          >
-            {agent().installed
-              ? t("settingsAgentUninstall")
-              : t("settingsAgentInstall")}
-          </button>
-        </div>
-        <p class="settings-hint">{t("settingsAgentHint")}</p>
-        <Show when={agentMsg()}>
-          <span
-            classList={{ "settings-status": true, error: !agentMsg()!.ok }}
-            role={agentMsg()!.ok ? "status" : "alert"}
-          >
-            {agentMsg()!.text}
-          </span>
-        </Show>
-      </div>
-
-      <div class="settings-title-row">
-        <h2 class="settings-grouptitle">{t("settingsImportExport")}</h2>
-        <ImmediateBadge />
-      </div>
-      <div class="settings-group">
-        <div class="settings-row">
-          <ConfirmButton label={t("settingsExport")} onAction={exportSettings} />
-          <ConfirmButton label={t("settingsImport")} onAction={importSettings} />
-          <ConfirmButton label={t("settingsRestoreBackup")} confirm onAction={restoreBackup} />
-        </div>
-        <Show when={status()}>
-          <span
-            classList={{ "settings-status": true, error: !status()!.ok }}
-            role={status()!.ok ? "status" : "alert"}
-          >
-            {status()!.text}
-          </span>
-        </Show>
-      </div>
+      </SettingGroup>
     </>
   );
 }

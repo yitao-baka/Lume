@@ -174,7 +174,7 @@ pub fn run() {
                 tauri::WebviewUrl::App("index.html".into()),
             )
             .title("Lume")
-            .inner_size(940.0, 660.0)
+            .inner_size(1040.0, 720.0)
             .min_inner_size(560.0, 420.0)
             .center()
             .resizable(true)
@@ -187,6 +187,21 @@ pub fn run() {
             // frameless windows (same as the detached plugin window).
             if let Some(sw) = app.get_webview_window("settings") {
                 window::clear_dwm_border(&sw);
+                // The redesign opens at 1040x720, but small work areas keep a
+                // 64px margin before falling back to the 560x420 minimum.
+                let monitor = sw
+                    .current_monitor()
+                    .ok()
+                    .flatten()
+                    .or_else(|| sw.primary_monitor().ok().flatten());
+                if let Some(monitor) = monitor {
+                    let scale = monitor.scale_factor();
+                    let area = monitor.work_area();
+                    let width = (area.size.width as f64 / scale - 64.0).clamp(560.0, 1040.0);
+                    let height = (area.size.height as f64 / scale - 64.0).clamp(420.0, 720.0);
+                    let _ = sw.set_size(tauri::LogicalSize::new(width, height));
+                    let _ = sw.center();
+                }
             }
 
             // Satellite preview window (docs/ROADMAP_HISTORY.md #15): all clipboard previews

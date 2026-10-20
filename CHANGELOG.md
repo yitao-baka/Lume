@@ -11,6 +11,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **设置窗主题色与调色盘** — 新增 `appearance.settings_accent`（空值跟随皮肤，
+  否则持久化小写 `#rrggbb`），外观页提供跟随皮肤、湖蓝 / 靛蓝 / 紫罗兰 / 玫瑰 /
+  翡翠 / 琥珀与原生颜色输入。`src/settings/accent.ts` 统一归一化、按 3:1 / 4.5:1
+  派生结构色与小字色，并在系统明暗切换时重算；`skins/accent.css` 以固定低比例把
+  主题色染入画布、导航栏、面板、控件和选中背景，空值时完全回退原生皮肤。首帧、
+  自动保存、250ms 颜色合并、失败回滚、6 秒撤销、恢复默认、搜索定位和三语文案
+  均已接入；Portal 帮助提示 / 模态继承同一结构色与面板染色，“更多”数字输入隐藏
+  原生 spinner 箭头。验证：`pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、
+  `cargo test`（**228 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `node scripts/cdp_settings_accent_verify.mjs` **34/34 PASS**（四组合染色、
+  对比度、系统主题、预设/自定义、readonly 回滚、窄窗口、进程重启、启动器隔离）；
+  `node scripts/cdp_settings_skin_verify.mjs` **59/59 PASS**；
+  `node scripts/cdp_settings_smoke.mjs` **9/9 PASS**。
 - **设置面板 Quiet / Chromatic 重构** — 设置窗改为三组九分区导航、共享语义
   组件、逐行命令搜索、分层帮助、自动保存 / 失败回滚 / 6 秒撤销和 32px 状态
   栏；新增 `appearance.settings_skin`（默认 `quiet`，仅设置窗）、首帧
@@ -25,7 +39,19 @@ All notable changes to Lume are documented here. Format based on
   1040×720 / 560×420 九页无横向溢出）；`node scripts/cdp_settings_smoke.mjs`
   **9/9 PASS**。
 
+### Fixed
+
+- **设置窗窗口位置网格** — 位置预设改为 3×3 网格，`居中` 从第一行中间移到第二行第二列，与网格几何中心对齐；四角预设保持在四角。验证：`node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**（新增居中偏移断言）。
+
 ### Documentation
+
+- **设置窗主题色实现方案** — 新增 `docs/SETTINGS_ACCENT_COLOR.md`：定义
+  `appearance.settings_accent`（空值跟随皮肤）、预设 / 自定义强调色、固定低比例
+  表面染色、WCAG 对比度派生、首帧应用、保存节流与回滚、双皮肤四组合验收，以及
+  不触碰启动器 / 插件页 / 托盘 / DWM 的边界。同步更新 `SETTINGS.md`、
+  `UI_GUIDELINES.md`、`ARCHITECTURE.md`、`TESTING.md`、`ROADMAP.md` 与
+  `ROADMAP_HISTORY.md`。验证：文档相对链接、代码围栏、尾随空白与活跃文档禁用词
+  检查通过；`git diff --check` 通过。
 
 - **设置窗皮肤切换实现方案** — 新增
   `docs/SETTINGS_SKIN_SWITCH.md`：定义 Quiet Control Deck ↔ Chromatic Edge

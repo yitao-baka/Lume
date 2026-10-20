@@ -17,7 +17,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { resolveLocale, setLocale, t } from "../i18n";
-import { applyColorMode } from "../theme";
+import { applyColorMode, themeMode } from "../theme";
 import { TitleBarControls, useChromeControls } from "../components/TitleBar";
 import AppearancePane from "./AppearancePane";
 import LauncherPane from "./LauncherPane";
@@ -49,11 +49,13 @@ import {
   type SettingDescriptor,
 } from "./catalog";
 import { applySettingsSkin } from "./skin";
+import { applySettingsAccent, normalizeSettingsAccent } from "./accent";
 import type { PluginManifest } from "../plugins/types";
 import { settingsError } from "./errors";
 import "./skins/base.css";
 import "./skins/quiet.css";
 import "./skins/chromatic.css";
+import "./skins/accent.css";
 
 const SECTION_ICONS: Record<SectionId, string> = {
   appearance: appearanceIcon,
@@ -121,6 +123,9 @@ function patchKeys(patch: SettingsPatch): string[] {
 
 function saveDelayFor(patch: SettingsPatch): number {
   const keys = patchKeys(patch);
+  if (keys.some((key) => key.endsWith("settings_accent"))) {
+    return 250;
+  }
   if (
     keys.some(
       (key) =>
@@ -174,6 +179,7 @@ export default function Settings() {
   const [saveState, setSaveState] = createSignal<SaveState>("saved");
   const [saveError, setSaveError] = createSignal<string | null>(null);
   const [skinError, setSkinError] = createSignal<string | null>(null);
+  const [accentError, setAccentError] = createSignal<string | null>(null);
   const [lastUndo, setLastUndo] = createSignal<{
     before: SettingsData;
     after: SettingsData;
@@ -246,15 +252,20 @@ export default function Settings() {
       .then((loaded) => {
         if (sequence !== loadSeq) return;
         const normalized = clone(loaded);
+        normalized.appearance.settings_accent = normalizeSettingsAccent(
+          normalized.appearance.settings_accent,
+        );
         batch(() => {
           setSettings(normalized);
           setBaseline(clone(normalized));
           setSaveState("saved");
           setSaveError(null);
           setSkinError(null);
+          setAccentError(null);
           setLastUndo(null);
           failedSnapshot = null;
           applySettingsSkin(normalized.appearance.settings_skin);
+          applySettingsAccent(normalized.appearance.settings_accent);
         });
       })
       .catch((error) => {
@@ -269,6 +280,7 @@ export default function Settings() {
     failedSnapshot = null;
     setSaveError(null);
     setSkinError(null);
+    setAccentError(null);
     setSaveState("saving");
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -290,6 +302,7 @@ export default function Settings() {
       return true;
     }
     const snapshot = clone(draft);
+    const keys = patchKeys(patch);
     setSaveState("saving");
     setSaveError(null);
     try {
@@ -298,6 +311,8 @@ export default function Settings() {
       batch(() => {
         setBaseline(clone(snapshot));
         setSaveState("saved");
+        setSkinError(null);
+        setAccentError(null);
         setLastUndo({ before: clone(base), after: clone(snapshot) });
       });
       if (undoTimer) clearTimeout(undoTimer);
@@ -309,11 +324,15 @@ export default function Settings() {
       batch(() => {
         setSaveState("error");
         setSaveError(message);
-        if (patchKeys(patch).includes("appearance.settings_skin")) {
+        if (keys.includes("appearance.settings_skin")) {
           setSkinError(t("settingsSkinSaveFailed"));
+        }
+        if (keys.includes("appearance.settings_accent")) {
+          setAccentError(t("settingsAccentSaveFailed"));
         }
         setSettings(clone(base));
         applySettingsSkin(base.appearance.settings_skin);
+        applySettingsAccent(base.appearance.settings_accent);
       });
       return false;
     }
@@ -336,8 +355,10 @@ export default function Settings() {
     }
     const snapshot = failedSnapshot;
     failedSnapshot = null;
+    setAccentError(null);
     setSettings(clone(snapshot));
     applySettingsSkin(snapshot.appearance.settings_skin);
+    applySettingsAccent(snapshot.appearance.settings_accent);
     setSaveState("saving");
     await saveNow();
   }
@@ -345,12 +366,46 @@ export default function Settings() {
   function commitAppearance(patch: Partial<SettingsData["appearance"]>) {
     const current = settings();
     if (!current) return;
+    const normalized: Partial<SettingsData["appearance"]> = { ...patch };
+    if ("settings_accent" in normalized) {
+      normalized.settings_accent = normalizeSettingsAccent(normalized.settings_accent);
+    }
     const focusBefore = document.activeElement as HTMLElement | null;
     const scrollBefore = bodyEl?.scrollTop ?? 0;
-    if (patch.settings_skin) applySettingsSkin(patch.settings_skin);
-    setSettings({ ...current, appearance: { ...current.appearance, ...patch } });
-    queueSave({ appearance: patch } as SettingsPatch);
-    if (patch.settings_skin) {
+    if (normalized.settings_skin) applySettingsSkin(normalized.settings_skin);
+    if ("settings_accent" in normalized) {
+      applySettingsAccent(normalized.settings_accent);
+    }
+    const accentFocusValue = focusBefore?.matches(".settings-accent-option")
+      ? (focusBefore as HTMLElement).dataset.accentValue
+      : null;
+    const accentFocusInput = focusBefore?.classList.contains("settings-accent-input") ?? false;
+    setSettings({ ...current, appearance: { ...current.appearance, ...normalized } });
+    queueSave({ appearance: normalized } as SettingsPatch);
+    if ("settings_accent" in normalized && (accentFocusValue || accentFocusInput)) {
+      const restoreAccentFocus = () => {
+        const active = document.activeElement as HTMLElement | null;
+        if (active && active !== document.body && active.isConnected) return;
+        let target: HTMLElement | null = null;
+        if (accentFocusInput) {
+          target = document.querySelector<HTMLElement>(
+            '[data-setting-id="appearance.settings_accent"] .settings-accent-input',
+          );
+        } else if (accentFocusValue) {
+          target =
+            Array.from(
+              document.querySelectorAll<HTMLElement>(
+                '[data-setting-id="appearance.settings_accent"] .settings-accent-option',
+              ),
+            ).find((button) => button.dataset.accentValue === accentFocusValue) ?? null;
+        }
+        target?.focus({ preventScroll: true });
+      };
+      requestAnimationFrame(restoreAccentFocus);
+      setTimeout(restoreAccentFocus, 150);
+      setTimeout(restoreAccentFocus, 420);
+    }
+    if (normalized.settings_skin) {
       const restoreSkinFocus = () => {
         if (bodyEl) bodyEl.scrollTop = scrollBefore;
         const currentSelected = document.querySelector<HTMLElement>(
@@ -405,6 +460,7 @@ export default function Settings() {
     if (undoTimer) clearTimeout(undoTimer);
     setSettings(next);
     applySettingsSkin(next.appearance.settings_skin);
+    applySettingsAccent(next.appearance.settings_accent);
     queueSave(inverse);
   }
 
@@ -508,14 +564,20 @@ export default function Settings() {
           if (!(await saveNow())) throw new Error(t("settingsSaveFailed"));
           await invoke("restore_default");
           const loaded = await invoke<SettingsData>("get_settings");
+          const normalized = clone(loaded);
+          normalized.appearance.settings_accent = normalizeSettingsAccent(
+            normalized.appearance.settings_accent,
+          );
           batch(() => {
-            setSettings(clone(loaded));
-            setBaseline(clone(loaded));
+            setSettings(normalized);
+            setBaseline(clone(normalized));
             setSaveState("saved");
             setSaveError(null);
             setSkinError(null);
+            setAccentError(null);
             setLastUndo(null);
-            applySettingsSkin(loaded.appearance.settings_skin);
+            applySettingsSkin(normalized.appearance.settings_skin);
+            applySettingsAccent(normalized.appearance.settings_accent);
           });
         },
       },
@@ -600,6 +662,15 @@ export default function Settings() {
     applyColorMode(value.appearance.color_mode);
     applySettingsSkin(value.appearance.settings_skin);
     document.documentElement.dataset.settingsSaveState = saveState();
+  });
+
+  // Accent derivation depends on the resolved light/dark mode, so this must
+  // run after the color-mode/skin effect above and track themeMode directly.
+  createEffect(() => {
+    const value = settings();
+    if (!value) return;
+    themeMode();
+    applySettingsAccent(value.appearance.settings_accent);
   });
 
   createEffect(() => {
@@ -869,6 +940,8 @@ export default function Settings() {
                   confirmDiscard={async () => (await saveNow()) && saveState() !== "error"}
                   pluginSearchQuery={pluginDeepQuery()}
                   skinError={skinError()}
+                  accentError={accentError()}
+                  onAccentPreview={(value) => applySettingsAccent(value)}
                   onNavigate={navigateTo}
                   requestConfirm={openConfirm}
                   clipboardPluginEnabled={
@@ -981,6 +1054,8 @@ function SectionBody(props: {
   confirmDiscard: () => Promise<boolean>;
   pluginSearchQuery: string;
   skinError: string | null;
+  accentError: string | null;
+  onAccentPreview: (value: string) => void;
   onNavigate: (section: SectionId) => void;
   requestConfirm: (state: ConfirmState) => void;
   clipboardPluginEnabled: boolean;
@@ -992,6 +1067,8 @@ function SectionBody(props: {
           settings={props.settings}
           onChange={props.onUpdateAppearance}
           skinError={props.skinError}
+          accentError={props.accentError}
+          onAccentPreview={props.onAccentPreview}
         />
       </Match>
       <Match when={props.section === "launcher"}>

@@ -1,10 +1,14 @@
 /* Quiet Control Deck — default settings skin. */
 
 html[data-settings-skin="quiet"] {
-  --settings-canvas: #191a1d;
-  --settings-rail: #151619;
-  --settings-panel: #1f2024;
-  --settings-control: #292a30;
+  --settings-canvas-base: #191a1d;
+  --settings-rail-base: #151619;
+  --settings-panel-base: #1f2024;
+  --settings-control-base: #292a30;
+  --settings-canvas: var(--settings-canvas-base);
+  --settings-rail: var(--settings-rail-base);
+  --settings-panel: var(--settings-panel-base);
+  --settings-control: var(--settings-control-base);
   --settings-line: #2a2b31;
   --settings-line-strong: #303138;
   --settings-text: #f3f4f6;
@@ -23,10 +27,14 @@ html[data-settings-skin="quiet"] {
 }
 
 html[data-settings-skin="quiet"][data-theme="light"] {
-  --settings-canvas: #f5f6f8;
-  --settings-rail: #f9fafb;
-  --settings-panel: #ffffff;
-  --settings-control: #f2f3f5;
+  --settings-canvas-base: #f5f6f8;
+  --settings-rail-base: #f9fafb;
+  --settings-panel-base: #ffffff;
+  --settings-control-base: #f2f3f5;
+  --settings-canvas: var(--settings-canvas-base);
+  --settings-rail: var(--settings-rail-base);
+  --settings-panel: var(--settings-panel-base);
+  --settings-control: var(--settings-control-base);
   --settings-line: #eceef1;
   --settings-line-strong: #dde1e6;
   --settings-text: #1b1d21;

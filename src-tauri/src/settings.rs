@@ -44,6 +44,8 @@ impl Settings {
     fn normalize(&mut self) {
         self.appearance.settings_skin =
             normalize_settings_skin(&self.appearance.settings_skin).to_string();
+        self.appearance.settings_accent =
+            normalize_settings_accent(&self.appearance.settings_accent);
     }
 }
 
@@ -162,6 +164,10 @@ pub struct Appearance {
     /// webview unstyled.
     #[serde(default = "default_settings_skin")]
     pub settings_skin: String,
+    /// Settings-window accent: empty follows the skin, otherwise a normalized
+    /// lowercase `#rrggbb`. This value never affects the launcher or plugins.
+    #[serde(default)]
+    pub settings_accent: String,
     /// Entry-box edge length in px — the square box wrapping each main-menu
     /// entry (grid columns adapt to fit).
     #[serde(default = "default_entry_size")]
@@ -273,6 +279,25 @@ pub fn normalize_settings_skin(value: &str) -> &'static str {
         "chromatic" => "chromatic",
         _ => "quiet",
     }
+}
+
+/// Normalize the settings-window accent. Only literal 3- or 6-digit hex colors
+/// are accepted; everything else falls back to the empty "follow skin" value.
+fn normalize_settings_accent(value: &str) -> String {
+    let raw = value.trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    let digits = raw.strip_prefix('#').unwrap_or(raw);
+    let expanded = match digits.len() {
+        3 if digits.chars().all(|ch| ch.is_ascii_hexdigit()) => digits
+            .chars()
+            .flat_map(|ch| [ch, ch])
+            .collect::<String>(),
+        6 if digits.chars().all(|ch| ch.is_ascii_hexdigit()) => digits.to_string(),
+        _ => return String::new(),
+    };
+    format!("#{}", expanded.to_ascii_lowercase())
 }
 
 /// Default max/initial window height (the old fixed 520px auto-size cap).
@@ -546,6 +571,7 @@ impl Default for Settings {
                 language: "system".into(),
                 color_mode: "system".into(),
                 settings_skin: "quiet".into(),
+                settings_accent: String::new(),
                 entry_size: 110,
                 round_app_icons: false,
                 window_width: 720,
@@ -1303,6 +1329,65 @@ mod tests {
         .unwrap();
         assert_eq!(merged.appearance.settings_skin, "quiet");
         assert_eq!(merged.appearance.color_mode, next.appearance.color_mode);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// Settings-window accent accepts only opaque 3/6-digit hex values,
+    /// normalizes them, and degrades malformed input to the follow-skin value
+    /// without disturbing the rest of the appearance section.
+    #[test]
+    fn settings_accent_defaults_normalizes_and_round_trips() {
+        assert_eq!(normalize_settings_accent(""), "");
+        assert_eq!(normalize_settings_accent("   "), "");
+        assert_eq!(normalize_settings_accent("#5cf"), "#55ccff");
+        assert_eq!(normalize_settings_accent("AABBCC"), "#aabbcc");
+        assert_eq!(normalize_settings_accent("#AbCdEf"), "#abcdef");
+        for invalid in [
+            "#abcd",
+            "#aabbccdd",
+            "red",
+            "rgb(0 0 0)",
+            "var(--x)",
+            "#12345g",
+            "url(https://example.com/x)",
+        ] {
+            assert_eq!(normalize_settings_accent(invalid), "", "{invalid}");
+        }
+
+        let base = temp_base("settings-accent");
+        ensure_settings_files(&base).unwrap();
+        let defaults = read_settings(&base);
+        assert_eq!(defaults.appearance.settings_accent, "");
+        assert!(fs::read_to_string(default_path(&base))
+            .unwrap()
+            .contains("settings_accent = \"\""));
+
+        // Older files without the key read as the follow-skin value.
+        let full = fs::read_to_string(settings_path(&base)).unwrap();
+        let legacy = full
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("settings_accent ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), legacy).unwrap();
+        assert_eq!(read_settings(&base).appearance.settings_accent, "");
+
+        // Valid values round-trip; an invalid patch does not fail the document
+        // and only clears the accent field.
+        let mut next = read_settings(&base);
+        next.appearance.settings_accent = "#6F7CFF".into();
+        next.appearance.settings_skin = "chromatic".into();
+        next.appearance.color_mode = "light".into();
+        write_settings_light(&base, &next).unwrap();
+        assert_eq!(read_settings(&base).appearance.settings_accent, "#6f7cff");
+        let merged = merge_settings_patch(
+            &next,
+            serde_json::json!({ "appearance": { "settings_accent": "rgb(0 0 0)" } }),
+        )
+        .unwrap();
+        assert_eq!(merged.appearance.settings_accent, "");
+        assert_eq!(merged.appearance.settings_skin, "chromatic");
+        assert_eq!(merged.appearance.color_mode, "light");
         fs::remove_dir_all(&base).ok();
     }
 

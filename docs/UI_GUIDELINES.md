@@ -141,6 +141,26 @@ contrast-safe tiers.
   under `.settings` / `html[data-settings-skin]`; they must never change the
   launcher surface, plugin canvases, detached windows, tray, or DWM border.
   Switching skin preserves focus, DOM identity, and scroll position.
+- `appearance.settings_accent` overlays a user accent without changing skin
+  geometry. An empty value is pixel-identical to the selected skin. A custom
+  value mixes into only `--settings-canvas` (dark 5% / light 3%),
+  `--settings-rail` (7% / 5%), `--settings-panel` (4% / 2%),
+  `--settings-control` (6% / 3%), and `--settings-selected` (16% / 12%,
+  mixed with the panel base). Text, semantic, warning, danger, success and
+  overlay-shadow tokens stay unchanged. All mixed surfaces remain opaque and
+  the override adds no transitions. The derived variables are scoped to the
+  settings document's `body.settings-window` as well as `.settings`, so the
+  Portal-rendered help tooltip and modal inherit the same structure and panel
+  tint instead of falling back to the skin base.
+- Accent decoration and small text are derived separately: structure follows a
+  3:1 floor and structure text a 4.5:1 floor against the worst relevant tinted
+  surface in the current mode. Selected text keeps the skin's native text token
+  and must clear 4.5:1 on the tinted selected background. Selection also keeps
+  its border, underline or numbered-page cue so color never carries state alone.
+- The compact accent preview uses the same CSS tokens as real controls: a
+  structure rule, selected navigation row, on-state switch and small accent
+  text. Presets pair every swatch with a localized label; the native color
+  input keeps a hit area of at least 32×32px.
 - Settings help buttons never expand inline: hover/focus shows a fixed-position
   tooltip without changing row geometry, and click opens a portaled modal with
   the full explanation. The modal makes the settings body inert, traps focus on
@@ -171,9 +191,11 @@ contrast-safe tiers.
 
 - Every switch carries a non-empty accessible name derived from its visible
   row label. Launcher option pills expose `aria-pressed`; settings segmented
-  controls use radio semantics with arrow/Home/End navigation. Range inputs
-  have labels; settings navigation uses tab/tabpanel relationships and roving
-  tabindex. The document `lang` follows the resolved UI locale.
+  controls and accent presets use radio semantics with arrow/Home/End
+  navigation and roving tabindex. The native color input remains separately
+  keyboard-focusable and named. Range inputs have labels; settings navigation
+  uses tab/tabpanel relationships and roving tabindex. The document `lang`
+  follows the resolved UI locale.
 - Confirm dialogs are real keyboard scopes: focus enters on the safe
   cancel action, background regions become `inert`, Tab and
   Shift+Tab cycle inside, Esc dismisses, and focus returns to the trigger.

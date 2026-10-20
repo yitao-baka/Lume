@@ -14,6 +14,8 @@ export interface SettingsData {
     color_mode: string;
     /** `"quiet"` | `"chromatic"` — settings window only. */
     settings_skin: SettingsSkin;
+    /** Settings-window accent: empty follows the skin, otherwise #rrggbb. */
+    settings_accent: string;
     /** Entry-box edge length in px — the box wrapping each main-menu entry. */
     entry_size: number;
     /** Crop Navigation result icons to a circle (default off — show the
@@ -155,6 +157,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
     language: "system",
     color_mode: "system",
     settings_skin: "quiet",
+    settings_accent: "",
     entry_size: 110,
     round_app_icons: false,
     window_width: 720,

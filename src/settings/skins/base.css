@@ -1202,6 +1202,21 @@ button.settings-toggle.on .settings-toggle-knob {
   width: 86px;
 }
 
+.settings-number-input,
+.settings-delay-input {
+  appearance: textfield;
+  -webkit-appearance: textfield;
+}
+
+.settings-number-input::-webkit-inner-spin-button,
+.settings-number-input::-webkit-outer-spin-button,
+.settings-delay-input::-webkit-inner-spin-button,
+.settings-delay-input::-webkit-outer-spin-button {
+  display: none;
+  margin: 0;
+  -webkit-appearance: none;
+}
+
 .settings-slider {
   min-width: 230px;
   display: flex;
@@ -1414,10 +1429,10 @@ button.settings-toggle.on .settings-toggle-knob {
 
 .settings-position-grid {
   width: 114px;
-  height: 64px;
+  height: 96px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(2, 1fr);
+  grid-template-rows: repeat(3, 1fr);
   gap: 3px;
   padding: 4px;
   border: var(--settings-line-width) solid var(--settings-line-strong);
@@ -2335,5 +2350,243 @@ html[data-settings-skin="chromatic"] .plg-filter-chip { border-radius: 0; }
   }
   .settings-nav-group-label {
     display: none;
+  }
+}
+
+/* ── Settings-window accent palette ────────────────────────────────── */
+
+.settings-accent-row {
+  align-items: flex-start;
+}
+
+.settings-accent-row .settings-setting-control {
+  flex: 0 1 390px;
+  display: grid;
+  justify-items: stretch;
+}
+
+.settings-accent-control {
+  width: min(100%, 390px);
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+}
+
+.settings-accent-preview {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 10px;
+  padding: 9px 8px 8px 15px;
+  border: var(--settings-line-width) solid var(--settings-line-strong);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-control);
+}
+
+.settings-accent-preview-rule {
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  background: var(--settings-structure);
+}
+
+.settings-accent-preview-nav {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+  border: var(--settings-line-width) solid var(--settings-structure);
+  border-radius: var(--settings-nav-radius);
+  background: var(--settings-selected);
+  color: var(--settings-selected-text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.settings-accent-preview-index {
+  color: var(--settings-structure-text);
+  font: 700 8.5px/1 "Cascadia Mono", Consolas, monospace;
+}
+
+.settings-accent-preview-copy {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-accent-preview-switch {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  align-self: center;
+  border: var(--settings-line-width) solid var(--settings-structure);
+  border-radius: var(--settings-toggle-radius);
+  background: var(--settings-selected);
+}
+
+.settings-accent-preview-switch span {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--settings-knob-radius);
+  background: var(--settings-structure);
+}
+
+.settings-accent-preview-text {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--settings-structure-text);
+  font-size: 10.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-accent-options {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-accent-option {
+  min-width: 0;
+  min-height: 36px;
+  flex: 1 1 104px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: var(--settings-line-width) solid var(--settings-line-strong);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-control);
+  color: var(--settings-secondary);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-accent-option:hover {
+  border-color: var(--settings-structure);
+  color: var(--settings-text);
+}
+
+.settings-accent-option.active {
+  border-color: var(--settings-structure);
+  box-shadow: inset 0 -2px 0 var(--settings-structure);
+  color: var(--settings-text);
+}
+
+html[data-settings-skin="chromatic"] .settings-accent-option.active {
+  box-shadow: inset 0 -3px 0 var(--settings-structure);
+}
+
+.settings-accent-option > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-accent-swatch {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 1px solid var(--settings-line-strong);
+  border-radius: var(--settings-knob-radius);
+  background: var(--swatch);
+}
+
+.settings-accent-swatch.follow {
+  background: linear-gradient(
+    135deg,
+    var(--settings-structure) 0 50%,
+    var(--settings-panel) 50% 100%
+  );
+}
+
+.settings-accent-custom {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 9px 3px 3px;
+  border: var(--settings-line-width) solid var(--settings-line-strong);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-control);
+  color: var(--settings-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.settings-accent-custom:hover,
+.settings-accent-custom:focus-within {
+  border-color: var(--settings-structure);
+}
+
+.settings-accent-custom.active {
+  border-color: var(--settings-structure);
+  box-shadow: inset 0 -2px 0 var(--settings-structure);
+  color: var(--settings-text);
+}
+
+.settings-accent-input {
+  width: 38px;
+  height: 34px;
+  flex: 0 0 38px;
+  padding: 2px;
+  border: 1px solid var(--settings-line-strong);
+  border-radius: calc(var(--settings-control-radius) / 2);
+  background: var(--settings-panel);
+  cursor: pointer;
+}
+
+.settings-accent-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.settings-accent-input::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--settings-control-radius) / 2);
+}
+
+.settings-accent-custom-label {
+  color: inherit;
+  font-weight: 600;
+}
+
+.settings-accent-custom code {
+  color: var(--settings-structure-text);
+  font: 600 10px/1.2 "Cascadia Mono", Consolas, monospace;
+  text-transform: lowercase;
+}
+
+.settings-accent-row .settings-inline-error {
+  width: 100%;
+}
+
+@media (max-width: 759px) {
+  .settings-accent-row .settings-setting-control {
+    width: 100%;
+    flex: 1 1 auto;
+    justify-content: stretch;
+  }
+
+  .settings-accent-control {
+    width: 100%;
+    max-width: none;
+  }
+
+  .settings-accent-option {
+    flex-basis: calc(50% - 3px);
   }
 }

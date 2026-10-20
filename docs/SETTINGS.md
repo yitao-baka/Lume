@@ -19,8 +19,9 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
   - 管理：插件、系统、关于
 - 可逆偏好自动保存，不提供全局「保存并应用」。服务、代理、导入、恢复和卸载等
   系统操作仍是显式命令，并使用确认对话框与真实结果。
-- 设置窗皮肤由 `appearance.settings_skin` 控制，默认 `quiet`。皮肤只改变设置窗
-  视觉与版面，不改变启动器、插件页、插件窗口、托盘或 DWM 边框。
+- 设置窗视觉由 `appearance.settings_skin` 与 `appearance.settings_accent` 控制。
+  皮肤默认 `quiet`；主题色默认空值，跟随当前皮肤。两者只改变设置窗视觉与版面，
+  不改变启动器、插件页、插件窗口、托盘或 DWM 边框。
 - 所有用户可见字符串走 `t()`，`languages/en.json`、`zh-CN.json`、`zh-TW.json`
   同步维护。
 
@@ -55,20 +56,27 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 - 页面头由一行说明、标题、可选页码和当前页动作组成。页面头随内容滚动，标题栏
   保持固定。
 
-## 皮肤字段
+## 设置窗视觉字段
 
 | 键 | 类型 | 值 | 默认值 | 作用域 |
 |---|---|---|---|---|
 | `appearance.settings_skin` | string | `quiet` / `chromatic` | `quiet` | 仅设置窗口 |
+| `appearance.settings_accent` | string | `""` / `#rrggbb` | `""` | 仅设置窗口 |
 
-- 首帧由 `src/index.tsx` 在 `render()` 前读取 `__LUME_CONFIG__` 并写入
-  `html[data-settings-skin]`；缺少配置或未知值回落 `quiet`。
-- 运行时唯一写入器为 `src/settings/skin.ts` 的 `applySettingsSkin`。
-- Rust 在读取、补丁合并、导入、恢复默认、恢复备份与整表保存后统一规范化未知
-  皮肤值，避免整张设置表反序列化失败。
-- 切换先更新 DOM 属性、再更新工作副本并走自动保存。保存失败时 DOM、工作副本和
-  控件一起回滚到最近确认值。
-- 撤销与重试都走同一条保存链，不直接改属性绕过队列。
+- 首帧由 `src/index.tsx` 在 `render()` 前读取 `__LUME_CONFIG__`，依次应用皮肤、
+  明暗模式与主题色；缺少配置或未知皮肤回落 `quiet`，主题色缺失或非法时为空值。
+- `src/settings/skin.ts` 的 `applySettingsSkin` 是 `data-settings-skin` 的唯一
+  写入器；`src/settings/accent.ts` 的 `applySettingsAccent` 是
+  `data-settings-accent`、`--settings-user-accent`、
+  `--settings-user-structure`、`--settings-user-structure-text` 的唯一写入器。
+- Rust 在读取、补丁合并、导入、恢复默认、恢复备份与整表保存后统一规范化皮肤和
+  主题色。主题色只接受三位或六位十六进制，输出小写 `#rrggbb`；其他值回落为空。
+- 空主题色移除覆盖属性并清空内联变量，完全使用皮肤原生 token。非空主题色按固定
+  低比例染入画布、导航栏、面板、控件与选中背景，并从同一输入派生装饰色和小字色。
+- 切换皮肤或主题色先更新 DOM，再更新工作副本并走自动保存。保存失败时 DOM、
+  工作副本和控件一起回滚到最近确认值。
+- 系统明暗切换时重新派生主题色；撤销、重试、恢复默认、导入与恢复备份都走同一
+  应用路径，不直接改属性绕过队列。
 
 ## 自动保存
 
@@ -83,7 +91,9 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 
 - 同一时间只允许一个写请求在途；后续编辑在内存中合并，旧响应不能覆盖新值。
 - 开关、分段选择和列表操作立即提交；单行文本在停止输入 500ms、失焦或 Enter 时
-  提交；滑块使用 200ms 合并；快捷键校验通过后立即提交。
+  提交；滑块使用 200ms 合并；主题色保存使用 250ms 合并；快捷键校验通过后立即提交。
+- 原生颜色输入的 `input` 事件只即时预览 DOM，`change` 事件才写入工作副本并排队；
+  拖动取色器不会逐帧写 TOML 或备份文件。
 - 保存仍只发送相对最近确认基线的最小 patch，因此插件启停、窗口几何、最后页面等
   并发轻写不会被设置窗的整份旧快照覆盖。
 - 外部 `settings-applied` 到达时，没有本地写入且没有文本焦点才重新读取；自身写入
@@ -135,7 +145,7 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 
 ### 01 外观（`appearance`）
 
-页面说明：选择界面语言、明暗主题与设置窗皮肤。
+页面说明：选择界面语言、明暗主题、设置窗皮肤与主题色。
 
 - **颜色模式** `appearance.color_mode`：跟随系统 / 深色 / 浅色，使用三张主题
   预览卡。跟随系统响应 `prefers-color-scheme`。
@@ -143,6 +153,9 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
   语言名称使用自身语言显示，切换后当前窗口与托盘立即更新。
 - **设置窗皮肤** `appearance.settings_skin`：Quiet / Chromatic。只改变当前设置
   窗口，启动器和插件页面不受影响。
+- **设置窗主题色** `appearance.settings_accent`：跟随皮肤 / 湖蓝 / 靛蓝 / 紫罗兰
+  / 玫瑰 / 翡翠 / 琥珀 / 自定义。选择后即时预览，250ms 后自动保存；文字与焦点
+  对比度自动修正。自定义入口使用原生颜色输入并显示规范化十六进制值。
 
 ### 02 启动器（`launcher`）
 
@@ -154,7 +167,7 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 |---|---|---|
 | `appearance.window_width` | 小 540 / 中 720 / 大 900 | 启动器水平宽度 |
 | `appearance.window_height` | 小 420 / 中 520 / 大 620 | 内容自动收缩时的最大高度 |
-| `appearance.window_position` | 3×2 位置网格 + 跟随鼠标 + 手动位置 | 首次出现的位置策略；位置标记在浅色/深色下均使用高对比描边 |
+| `appearance.window_position` | 3×3 位置网格 + 跟随鼠标 + 手动位置 | 首次出现的位置策略；居中预设位于网格正中心，位置标记在浅色/深色下均使用高对比描边 |
 | `appearance.remember_position` | 手动位置 | 打开时不再套用预设位置 |
 
 位置只在本次运行内继承。选择四角/居中会关闭手动位置；选择手动位置会打开
@@ -307,7 +320,8 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 - dev / debug 运行的 `<base>` 为 `src-tauri/target/debug/`，release 为
   `src-tauri/target/release/`；安装布局下位于 `%LOCALAPPDATA%\Lume\`。
 - 旧配置缺少 `appearance.settings_skin` 时读取为 `quiet`；未知值同样回落
-  `quiet`。导入、恢复默认和恢复备份都经过同一 Rust 规范化路径。
+  `quiet`。旧配置缺少 `appearance.settings_accent` 时读取为空值；非法主题色
+  同样回落为空值。导入、恢复默认和恢复备份都经过同一 Rust 规范化路径。
 - 外部 TOML 替换、`backup.toml` 恢复和默认值恢复都通过 Rust 命令完成；前端不直接
   读写设置文件或 SQLite。
 
@@ -315,9 +329,10 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 
 - 前端：`pnpm exec tsc --noEmit`、`pnpm run build`。
 - Rust：`cargo check`、`cargo test`。
-- CDP：`node scripts/cdp_settings_smoke.mjs` 与
-  `node scripts/cdp_settings_skin_verify.mjs`。后者覆盖双皮肤六种明暗组合、
-  首帧属性、焦点/滚动保持、目录搜索与插件动态设置、保存失败回滚、确认对话框、
-  以及九页在 `1040×720` 与 `560×420` 下的横向溢出检查。
+- CDP：`node scripts/cdp_settings_smoke.mjs`、
+  `node scripts/cdp_settings_skin_verify.mjs` 与
+  `node scripts/cdp_settings_accent_verify.mjs`。主题色脚本覆盖首帧属性、四组合
+  染色、WCAG 对比度、系统明暗重算、预设/自定义值、持久化、撤销、恢复默认、
+  只读文件回滚、搜索定位、窄窗口布局、进程重启与启动器隔离。
 - 手工：按 [TESTING.md](TESTING.md) 的设置窗清单复核真实窗口、200% 缩放、
   快捷键录制、UAC、服务/代理注册与备份恢复。

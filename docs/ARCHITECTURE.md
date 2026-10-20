@@ -332,8 +332,8 @@ edits before the next patch. The Rust side merges that patch into the current
 `SettingsState` under its lock, so autosave cannot roll back plugin
 enable/disable, plugin geometry / theme preferences, last-page bookmarks or
 remember-checks writes made in the meantime. A failed write restores the
-affected controls and the settings-window skin DOM to the confirmed snapshot,
-then exposes retry in the footer. Import,
+affected controls plus the settings-window skin and accent DOM to the confirmed
+snapshot, then exposes retry in the footer. Import,
 restore-default and restore-backup call the same runtime-apply helper as a
 normal save (window geometry, hotkey, dedup index, index refresh + watcher,
 plugin dev watcher, `settings-applied`), so file replacement is never
@@ -554,8 +554,17 @@ before adding a field:
   exact row. The confirm dialog owns a focus trap with inert background, all
   shared switches/radios expose accessible names and selected state, and
   `setLocale()` synchronizes `documentElement.lang`. `src/settings/skin.ts` is
-  the single writer for `data-settings-skin`; the property is applied from the
-  injected config before `render()`, while the launcher never sets it.
+  the single writer for `data-settings-skin`, while
+  `src/settings/accent.ts` is the single writer for `data-settings-accent` and
+  the three `--settings-user-*` variables. Both are applied from the injected
+  config before `render()`; the launcher never sets either property. The accent
+  module normalizes untrusted input, derives separate 3:1 structure and 4.5:1
+  text tokens from conservative mode anchors, and recomputes them when
+  `themeMode()` flips. `skins/accent.css` overrides the five tinted semantic
+  surfaces under `html[data-settings-accent]` for both `.settings` and the
+  settings document's `body.settings-window`, so Portal-rendered help surfaces
+  inherit the same tokens. An empty value removes the attribute and inline
+  variables so the skin's native tokens and geometry remain unchanged.
   The
   satellite preview is its own entry (`src/preview.tsx`). Its compact header
   names the current file/content type and owns the in-window `close_preview`

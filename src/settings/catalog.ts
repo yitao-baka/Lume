@@ -24,7 +24,8 @@ export type SettingKind =
   | "number"
   | "text"
   | "editor"
-  | "action";
+  | "action"
+  | "palette";
 
 export interface SettingDescriptor {
   id: string;
@@ -170,6 +171,27 @@ export function buildSettingsCatalog(
       kind: "segmented",
       keywords: ["skin", "theme", "style", "quiet", "chromatic", "皮肤", "主題", "风格"],
       value: a.settings_skin,
+    }),
+    descriptor({
+      id: "appearance.settings_accent",
+      section: "appearance",
+      labelKey: "settingsAccent",
+      summaryKey: "settingsAccentHint",
+      groupKey: "groupAppearanceAccent",
+      detailKeys: ["settingsAccentDetail"],
+      kind: "palette",
+      keywords: [
+        "color",
+        "accent",
+        "palette",
+        "theme",
+        "主题色",
+        "強調色",
+        "调色盘",
+        "調色盤",
+        "配色",
+      ],
+      value: a.settings_accent || t("settingsAccentFollowSkin"),
     }),
     descriptor({
       id: "appearance.window_width",

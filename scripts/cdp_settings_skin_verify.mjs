@@ -123,7 +123,7 @@ const reloadSettings = async () => {
 };
 const setAppearance = async (skin, colorMode) => {
   await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', { patch: {
-    appearance: { settings_skin: '${skin}', color_mode: '${colorMode}' }
+    appearance: { settings_skin: '${skin}', color_mode: '${colorMode}', settings_accent: '' }
   }}).then(() => true)`);
   await reloadSettings();
 };
@@ -170,6 +170,12 @@ check("grouped nav keeps the nine-section order", JSON.stringify(initial.nav) ==
 check("global Save & Apply is gone", initial.saveButtons === 0);
 check("status starts at All changes saved", initial.status?.includes("所有更改已自动保存"), initial.status);
 check("Quiet has rounded panels and no page number", initial.pageRadius !== "0px" && initial.pageNumber === "none", JSON.stringify(initial));
+const initialAccent = await settings.evalJs(`(async () => ({
+  attr: document.documentElement.dataset.settingsAccent ?? null,
+  accent: getComputedStyle(document.querySelector('.settings')).getPropertyValue('--settings-user-accent').trim(),
+  saved: (await window.__TAURI_INTERNALS__.invoke('get_settings')).appearance.settings_accent,
+}))()`);
+check("empty settings accent preserves native skin tokens", initialAccent.attr === null && initialAccent.accent === "" && initialAccent.saved === "", JSON.stringify(initialAccent));
 const a11y = await settings.evalJs(`({
   lang: document.documentElement.lang,
   tabs: Array.from(document.querySelectorAll('.settings-nav')).map((tab) => ({
@@ -275,14 +281,22 @@ const positionPreview = await settings.evalJs(`(() => {
   const cells = Array.from(document.querySelectorAll('.settings-position-cell'));
   const marks = cells.map((cell) => cell.querySelector('span').getBoundingClientRect());
   const active = document.querySelector('.settings-position-cell.active span');
+  const centerCell = document.querySelector('.settings-position-cell[data-position="center"]');
+  const gridRect = grid.getBoundingClientRect();
+  const centerRect = centerCell.getBoundingClientRect();
   return {
     count: cells.length,
     markSizes: marks.map((r) => [Math.round(r.width), Math.round(r.height)]),
     activeBorder: active ? getComputedStyle(active).borderTopColor : '',
     gridBackground: getComputedStyle(grid).backgroundColor,
+    centerOffset: [
+      Math.round((centerRect.left + centerRect.width / 2) - (gridRect.left + gridRect.width / 2)),
+      Math.round((centerRect.top + centerRect.height / 2) - (gridRect.top + gridRect.height / 2)),
+    ],
   };
 })()`);
 check("window-position presets use large visible marks in every slot", positionPreview.count === 5 && positionPreview.markSizes.every(([w, h]) => w >= 20 && h >= 12) && !!positionPreview.activeBorder, JSON.stringify(positionPreview));
+check("window-position center preset sits at the exact grid center", Math.abs(positionPreview.centerOffset[0]) <= 1 && Math.abs(positionPreview.centerOffset[1]) <= 1, JSON.stringify(positionPreview.centerOffset));
 await settings.shot("launcher-position");
 
 await go("search");

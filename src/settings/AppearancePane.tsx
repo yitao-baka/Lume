@@ -1,9 +1,14 @@
-//! 「外观」页 — language, color mode, and the settings-window skin. Visual
+//! 「外观」页 — language, color mode, settings-window skin and accent. Visual
 //! previews are shared DOM nodes; switching skins only changes the root data
 //! attribute, so focus and scroll position stay put.
 
-import { For, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { t } from "../i18n";
+import { themeMode } from "../theme";
+import {
+  normalizeSettingsAccent,
+  SETTINGS_ACCENT_PRESETS,
+} from "./accent";
 import type { SettingsData, SettingsSkin } from "./types";
 import { SegmentedControl, SettingGroup, SettingRow } from "./controls";
 
@@ -82,10 +87,175 @@ function RadioCards(props: {
   );
 }
 
+function rgbStringToHex(value: string): string {
+  const match = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(value.trim());
+  if (!match) return "";
+  const channels = match.slice(1, 4).map((part) => Math.min(255, Number(part)));
+  return normalizeSettingsAccent(
+    `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`,
+  );
+}
+
+function skinStructureColor(): string {
+  const settings = document.querySelector<HTMLElement>(".settings");
+  if (!settings) return "#5ac8fa";
+  const raw = getComputedStyle(settings).getPropertyValue("--settings-structure").trim();
+  const direct = normalizeSettingsAccent(raw);
+  if (direct) return direct;
+  const probe = document.createElement("span");
+  probe.style.color = raw;
+  probe.style.display = "none";
+  document.body.appendChild(probe);
+  const resolved = getComputedStyle(probe).color;
+  probe.remove();
+  return rgbStringToHex(resolved) || "#5ac8fa";
+}
+
+function AccentPreview() {
+  return (
+    <div class="settings-accent-preview" aria-hidden="true">
+      <span class="settings-accent-preview-rule" />
+      <span class="settings-accent-preview-nav">
+        <span class="settings-accent-preview-index">01</span>
+        <span class="settings-accent-preview-copy">Lume</span>
+      </span>
+      <span class="settings-accent-preview-switch"><span /></span>
+      <span class="settings-accent-preview-text">{t("settingsAccentPreviewLabel")}</span>
+    </div>
+  );
+}
+
+function AccentPalette(props: {
+  value: string;
+  onPreview: (value: string) => void;
+  onChange: (value: string) => void;
+}) {
+  let buttons: HTMLButtonElement[] = [];
+  const [preview, setPreview] = createSignal("");
+  const accent = () => normalizeSettingsAccent(props.value);
+  const options = createMemo(() => [
+    { value: "", label: t("settingsAccentFollowSkin"), swatch: "" },
+    ...SETTINGS_ACCENT_PRESETS.map((preset) => ({
+      value: preset.value,
+      label: t(preset.labelKey),
+      swatch: preset.value,
+    })),
+  ]);
+  const selectedIndex = () => {
+    const current = accent();
+    if (!current) return 0;
+    const found = SETTINGS_ACCENT_PRESETS.findIndex((preset) => preset.value === current);
+    return found < 0 ? -1 : found + 1;
+  };
+  const customActive = () => selectedIndex() < 0;
+  // Keep one radio in the tab order even while Custom is active; otherwise
+  // keyboard users could not reach the preset group from Tab.
+  const rovingIndex = () => (selectedIndex() < 0 ? 0 : selectedIndex());
+  const customColor = () => {
+    themeMode();
+    const current = accent();
+    if (current) return current;
+    return skinStructureColor();
+  };
+  const shownCustomColor = () => normalizeSettingsAccent(preview()) || customColor();
+  createEffect(() => {
+    props.value;
+    setPreview("");
+  });
+  const move = (next: number) => {
+    const list = options();
+    const index = (next + list.length) % list.length;
+    props.onChange(list[index].value);
+    requestAnimationFrame(() => buttons[index]?.focus());
+  };
+  return (
+    <div class="settings-accent-control">
+      <AccentPreview />
+      <div class="settings-accent-options" role="radiogroup" aria-label={t("settingsAccent")}>
+        <For each={options()}>
+          {(option, index) => (
+            <button
+              ref={(el) => (buttons[index()] = el)}
+              class="settings-accent-option"
+              classList={{ active: selectedIndex() === index() }}
+              type="button"
+              role="radio"
+              aria-checked={selectedIndex() === index()}
+              data-accent-value={option.value || "follow"}
+              tabIndex={rovingIndex() === index() ? 0 : -1}
+              onClick={() => {
+                props.onChange(option.value);
+                requestAnimationFrame(() => {
+                  document
+                    .querySelector<HTMLElement>(
+                      `[data-setting-id="appearance.settings_accent"] [data-accent-value="${option.value || "follow"}"]`,
+                    )
+                    ?.focus();
+                });
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+                  event.preventDefault();
+                  move(index() + 1);
+                } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  move(index() - 1);
+                } else if (event.key === "Home") {
+                  event.preventDefault();
+                  move(0);
+                } else if (event.key === "End") {
+                  event.preventDefault();
+                  move(options().length - 1);
+                }
+              }}
+            >
+              <span
+                class="settings-accent-swatch"
+                classList={{ follow: !option.swatch }}
+                style={{ "--swatch": option.swatch || undefined }}
+                aria-hidden="true"
+              >
+                <span />
+              </span>
+              <span>{option.label}</span>
+            </button>
+          )}
+        </For>
+      </div>
+      <label
+        class="settings-accent-custom"
+        classList={{ active: customActive() }}
+        title={`${t("settingsAccentCustom")}: ${shownCustomColor()}`}
+      >
+        <input
+          class="settings-accent-input"
+          type="color"
+          value={shownCustomColor()}
+          aria-label={t("settingsAccentCustom")}
+          onInput={(event) => {
+            const value = normalizeSettingsAccent(event.currentTarget.value);
+            setPreview(value);
+            props.onPreview(value);
+          }}
+          onChange={(event) => {
+            const value = normalizeSettingsAccent(event.currentTarget.value);
+            setPreview("");
+            if (value) props.onChange(value);
+          }}
+        />
+        <span class="settings-accent-custom-label">{t("settingsAccentCustom")}</span>
+        <code>{shownCustomColor()}</code>
+      </label>
+    </div>
+  );
+}
+
 export default function AppearancePane(props: {
   settings: SettingsData;
   onChange: (patch: Partial<SettingsData["appearance"]>) => void;
+  onAccentPreview: (value: string) => void;
   skinError?: string | null;
+  accentError?: string | null;
   children?: JSX.Element;
 }) {
   const a = () => props.settings.appearance;
@@ -158,6 +328,27 @@ export default function AppearancePane(props: {
           <Show when={props.skinError}>
             <span class="settings-inline-error" role="alert">
               {props.skinError}
+            </span>
+          </Show>
+        </SettingRow>
+      </SettingGroup>
+
+      <SettingGroup title={t("groupAppearanceAccent")} number="01.4">
+        <SettingRow
+          id="appearance.settings_accent"
+          label={t("settingsAccent")}
+          summary={t("settingsAccentHint")}
+          details={[t("settingsAccentDetail")]}
+          class="settings-accent-row"
+        >
+          <AccentPalette
+            value={a().settings_accent}
+            onPreview={props.onAccentPreview}
+            onChange={(value) => props.onChange({ settings_accent: value })}
+          />
+          <Show when={props.accentError}>
+            <span class="settings-inline-error" role="alert">
+              {props.accentError}
             </span>
           </Show>
         </SettingRow>

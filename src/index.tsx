@@ -5,6 +5,7 @@ import { applyColorMode } from "./theme";
 import App from "./App";
 import SettingsApp from "./settings/Settings";
 import { applySettingsSkin } from "./settings/skin";
+import { applySettingsAccent } from "./settings/accent";
 
 // One build serves both windows: the launcher (`main`) and the settings
 // window (`settings`). Branch on the window label.
@@ -19,10 +20,17 @@ if (isSettings) {
   // First-frame skin/theme: the Rust initialization script has already put
   // the effective settings on the window, so no async IPC/flash is involved.
   const cfg = (window as any).__LUME_CONFIG__ as
-    | { appearance?: { settings_skin?: string; color_mode?: string } }
+    | {
+        appearance?: {
+          settings_skin?: string;
+          color_mode?: string;
+          settings_accent?: string;
+        };
+      }
     | undefined;
   applySettingsSkin(cfg?.appearance?.settings_skin);
   applyColorMode(cfg?.appearance?.color_mode ?? "system");
+  applySettingsAccent(cfg?.appearance?.settings_accent);
 } else {
   // Launcher: apply the OS-preferred theme before first paint (the stored
   // color_mode is applied right after get_settings resolves).

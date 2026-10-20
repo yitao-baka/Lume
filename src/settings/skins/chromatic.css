@@ -1,10 +1,14 @@
 /* Chromatic Edge — square editorial settings skin. */
 
 html[data-settings-skin="chromatic"] {
-  --settings-canvas: #1e1e20;
-  --settings-rail: #18181b;
-  --settings-panel: #262629;
-  --settings-control: #262629;
+  --settings-canvas-base: #1e1e20;
+  --settings-rail-base: #18181b;
+  --settings-panel-base: #262629;
+  --settings-control-base: #262629;
+  --settings-canvas: var(--settings-canvas-base);
+  --settings-rail: var(--settings-rail-base);
+  --settings-panel: var(--settings-panel-base);
+  --settings-control: var(--settings-control-base);
   --settings-line: rgba(220, 216, 209, 0.14);
   --settings-line-strong: rgba(220, 216, 209, 0.28);
   --settings-text: #dcd8d1;
@@ -23,10 +27,14 @@ html[data-settings-skin="chromatic"] {
 }
 
 html[data-settings-skin="chromatic"][data-theme="light"] {
-  --settings-canvas: #f3efe6;
-  --settings-rail: #dde5de;
-  --settings-panel: #fbf8f1;
-  --settings-control: #fbf8f1;
+  --settings-canvas-base: #f3efe6;
+  --settings-rail-base: #dde5de;
+  --settings-panel-base: #fbf8f1;
+  --settings-control-base: #fbf8f1;
+  --settings-canvas: var(--settings-canvas-base);
+  --settings-rail: var(--settings-rail-base);
+  --settings-panel: var(--settings-panel-base);
+  --settings-control: var(--settings-control-base);
   --settings-line: rgba(52, 56, 50, 0.16);
   --settings-line-strong: rgba(52, 56, 50, 0.34);
   --settings-text: #343832;

@@ -8,10 +8,10 @@ import { NumberPreset, SettingGroup, SettingRow, Toggle } from "./controls";
 
 const POSITION_GRID = [
   { value: "top-left", label: "settingsPosTopLeft", column: 1, row: 1 },
-  { value: "center", label: "settingsPosCenter", column: 2, row: 1 },
   { value: "top-right", label: "settingsPosTopRight", column: 3, row: 1 },
-  { value: "bottom-left", label: "settingsPosBottomLeft", column: 1, row: 2 },
-  { value: "bottom-right", label: "settingsPosBottomRight", column: 3, row: 2 },
+  { value: "center", label: "settingsPosCenter", column: 2, row: 2 },
+  { value: "bottom-left", label: "settingsPosBottomLeft", column: 1, row: 3 },
+  { value: "bottom-right", label: "settingsPosBottomRight", column: 3, row: 3 },
 ] as const;
 
 function PositionGrid(props: {
@@ -30,6 +30,7 @@ function PositionGrid(props: {
               aria-checked={!props.manual && props.value === position.value}
               aria-label={t(position.label)}
               title={t(position.label)}
+              data-position={position.value}
               class="settings-position-cell"
               classList={{ active: !props.manual && props.value === position.value }}
               style={{ "grid-column": String(position.column), "grid-row": String(position.row) }}

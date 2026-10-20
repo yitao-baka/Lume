@@ -3911,3 +3911,97 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 - 视觉检查：`test/settings-skin-verify/launcher-position.png`、
   `automation-switches.png`、`plugins-master-detail.png`、`help-dialog.png`、
   `chromatic-appearance.png` 与 `narrow-about.png`。
+
+---
+
+## 60. 设置窗主题色与调色盘
+
+### 60.1 实现
+
+- `src-tauri/src/settings.rs` 的 `Appearance` 新增 `settings_accent`：缺省为空，
+  只接受可选 `#` 的三位 / 六位十六进制，未知值与越界格式统一回落 `""`。读取、
+  补丁合并、导入、恢复默认、恢复备份和整表保存都经过同一 `normalize()`。
+- `src/settings/accent.ts` 成为 `data-settings-accent` 与
+  `--settings-user-accent` / `--settings-user-structure` /
+  `--settings-user-structure-text` 的唯一写入器。纯函数负责格式归一化和 WCAG
+  对比度修正：结构色按 3:1、小字色按 4.5:1，深色向白、浅色向黑以 1% 步长修正。
+  对比锚点取两套皮肤染色后较不利的高亮表面，覆盖已选中导航项上的结构文字。
+- `src/index.tsx` 在 `render()` 前按皮肤 → 明暗 → 主题色顺序应用注入配置；
+  `Settings.tsx` 的独立 effect 在颜色模式 effect 之后读取 `themeMode()`，系统
+  明暗翻转时重新派生。外观页新增 `01.4 设置窗口配色`，包含跟随皮肤、六个预设、
+  原生颜色输入和同 token 紧凑预览。预设使用 radio、方向键 / Home / End 与
+  roving tabindex；Custom 激活时仍保留一个可 Tab 进入的预选项。自动保存完成后
+  设置节点会刷新，提交链会按提交前的 accent 选项 / 颜色输入恢复焦点。
+- 保存链保持最小 patch：颜色输入 `input` 只预览，`change` 才更新工作副本；
+  `saveDelayFor` 对该字段使用 250ms。失败、重试、撤销、恢复默认、导入/恢复备份
+  刷新和窗口重开都重新调用 `applySettingsAccent`，避免 DOM 与工作副本分叉。
+- `quiet.css` / `chromatic.css` 新增 `--settings-*-base` 基础 token，
+  `skins/accent.css` 只从基础 token 混色，避免自引用；变量同时挂到设置文档的
+  `body.settings-window`，使 Portal 帮助提示 / 模态也能继承同一结构色和面板染色。
+  深色比例分别为
+  画布 5%、导航 7%、面板 4%、控件 6%、选中 16%；浅色为 3%、5%、2%、3%、12%。
+  空值不命中 accent.css，启动器、插件页、预览窗、托盘与 DWM 边框不读取该字段。
+
+### 60.2 踩坑
+
+- `default.toml` 只在缺失时生成。旧 debug 目录里遗留的工厂文件可能早于当前
+  schema，直接用它验证“恢复默认”会因其他必填 section 解析失败；CDP 脚本在
+  scratch 构建中先删除 `target/debug/settings/default.toml` 再启动，确保测试的是
+  当前默认值。
+- 自定义值激活时如果把所有预设 radio 的 `tabIndex` 都设为 `-1`，键盘用户将无法
+  从 Tab 进入预设组；roving tabindex 在 Custom 状态回落到“跟随皮肤”一项。
+- CSS 染色变量必须落在 `.settings` 或设置文档的 `body.settings-window`，且只
+  引用 `--settings-*-base`；直接让 `--settings-canvas` 引用自身会被浏览器判为
+  循环无效。Portal 浮层只有挂到 body 作用域才能拿到同一组染色 token。
+- 浅色选中的最不利表面比页面画布更暗，深色选中的最不利表面又可能被高亮主题色
+  抬亮；只对 `--surface` 校验会漏掉 Chromatic 页码和选中导航上的结构文字。
+- 颜色输入拖动期间不能更新完整设置快照；否则每个 `input` 帧都会触发响应式渲染，
+  并可能把颜色预览混入下一次最小 patch。
+- 帮助提示和详情模态由 `Portal` 挂到 `body`，不继承 `.settings` 上的 accent 变量；
+  仅给 `.settings` 染色会让边框 / 面板回落到皮肤基色。accent 变量必须同时作用于
+  `body.settings-window`。
+- 原生 `type="number"` 在 WebView2 中会绘制 spinner 箭头；`NumberPreset` 的
+  “更多”输入使用 `appearance: textfield` 并隐藏 webkit spin button，保持与设置
+  皮肤的几何和视觉一致。
+- 预设按钮在 250ms 保存完成时会被设置节点刷新替换，浏览器把焦点落回 `body`；
+  仅靠点击时 `focus()` 不够，提交链要在 DOM 更新后按提交前的选项恢复焦点。
+
+### 60.3 验证
+
+- `node scripts/cdp_settings_accent_verify.mjs`：**34/34 PASS**。覆盖首帧属性与
+  小写归一化、Quiet / Chromatic × 深色 / 浅色染色、五类表面不透明度与原生差异、
+  WCAG 4.5:1 / 3:1、系统明暗重算、预设和自定义保存、撤销、恢复默认、只读文件
+  回滚与重试、Custom 状态下的 roving tabindex、Portal 帮助提示 / 模态染色、
+  “更多”数字输入隐藏 spinner、`调色盘` / `強調色` 搜索、1040×720 与 560×420
+  无横向溢出、启动器 token 隔离，以及完整进程重启后的首帧保持。
+- `node scripts/cdp_settings_skin_verify.mjs`：**59/59 PASS**。增加空主题色断言
+  并显式写入 `settings_accent = ""`，保证双皮肤矩阵在原生 token 上运行。
+- `node scripts/cdp_settings_smoke.mjs`：**9/9 PASS**。
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、
+  `cargo test`（**228 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过。
+- Rust 单测 `settings_accent_defaults_normalizes_and_round_trips` 覆盖缺字段、
+  默认文件、三位展开、大小写、非法格式、往返写入与 patch 隔离。
+- 视觉检查：`test/settings-accent-verify/quiet-dark-indigo.png`、
+  `quiet-light-indigo.png`、`chromatic-dark-indigo.png`、
+  `chromatic-light-indigo.png`、`narrow-560x420.png`。
+
+
+---
+
+## 61. 设置窗窗口位置网格居中
+
+### 61.1 实现
+
+- `src/settings/LauncherPane.tsx` 的位置预设从 2 行布局改为 3×3 坐标：左上 /
+  右上位于第 1 行，`center` 位于第 2 行第 2 列，左下 / 右下位于第 3 行。
+- `src/settings/skins/base.css` 的 `.settings-position-grid` 同步改为 3 行、96px
+  高，保持 20×12px 标记和原有间距 / 边框。
+- 每个位置按钮增加 `data-position`，供 CDP 几何断言定位。
+
+### 61.2 验证
+
+- `node scripts/cdp_settings_skin_verify.mjs`：**60/60 PASS**。新增断言确认
+  `center` 单元中心与网格中心横纵偏移均不超过 1px。
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`pnpm run tauri build --debug --no-bundle`
+  通过。

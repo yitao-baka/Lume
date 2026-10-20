@@ -51,8 +51,16 @@ declarative setting), autosave persistence, save failure/rollback with a
 read-only `settings.toml`, real confirmation dialogs, and all nine pages at
 `1040×720` and `560×420` without horizontal overflow. It also asserts the
 hover tooltip/click dialog help path without row reflow, switch knob geometry in
-both states, high-contrast position marks, distinct system-index hints, and
-independent list/detail scrolling in the plugin manager. The lighter
+both states, high-contrast position marks with the center preset at the grid
+center, distinct system-index hints, and
+independent list/detail scrolling in the plugin manager.
+`node scripts/cdp_settings_accent_verify.mjs` covers the settings-window accent:
+first-frame `data-settings-accent`, normalized inline tokens, Quiet /
+Chromatic × light / dark tinting, WCAG contrast floors, system-theme
+re-derivation, preset/custom input persistence, undo, restore defaults,
+read-only save rollback, catalog keywords, Portaled help-surface tinting,
+spinner-free numeric “More…” inputs, 1040×720 / 560×420 overflow, launcher
+isolation and a full process restart. The lighter
 `node scripts/cdp_settings_smoke.mjs` covers the grouped navigation, command
 search, autosave status bar, restore confirmation, clipboard disabled-slider
 dependency, keycap shortcuts, and page screenshots. The former
@@ -208,10 +216,10 @@ dev URL instead.
    效率（搜索 / 快捷键 / 自动化）与管理（插件 / 系统 / 关于）；clicking swaps
    the right pane. The footer shows autosave status instead of a global save
    button, and Chromatic additionally shows the current page number.
-3. **Autosave** — change a color mode, skin, or switch without pressing save:
-   the footer reports saving then saved. Quit and reopen: the value persists.
-   While a text field is focused, a light write from the launcher/plugin manager
-   must not replace the text being typed.
+3. **Autosave** — change a color mode, skin, accent preset, or switch without
+   pressing save: the footer reports saving then saved. Quit and reopen: the
+   value persists. While a text field or the color input is focused, a light
+   write from the launcher/plugin manager must not replace the current edit.
 4. **Settings files** — live under the writable base dir: portable is the exe
    dir (dev: `src-tauri/target/debug/`), installed (exe under `Program Files`)
    is `%LOCALAPPDATA%\Lume\`; `settings/settings.toml` is created from
@@ -235,9 +243,16 @@ dev URL instead.
    plugin's declarative label (e.g. 「列表前缀」): one row-level result appears;
    Enter jumps to the exact row and focuses its container. A nonsense query
    shows the localized no-match suggestions. Esc clears the overlay.
-9. **Skins** — switch Quiet ↔ Chromatic in 外观. Focus stays on the skin radio,
-   scroll position is preserved, and the launcher/plugin pages do not change.
-   Repeat with light/dark mode: both skins must use their own palette.
+9. **Skins and accent** — switch Quiet ↔ Chromatic in 外观. Focus stays on the
+   skin radio, scroll position is preserved, and the launcher/plugin pages do
+   not change. Repeat with light/dark mode: both skins must use their own
+   palette. Select each accent preset and a custom color with the native color
+   picker; structures, selected rows, switches and small accent text update
+   immediately, values survive reload/restart, and **跟随皮肤** restores the
+   native skin. With the system color mode active, flip Windows app light/dark
+   mode and confirm the derived accent updates without reopening the window.
+   Repeat the picker at 200% scaling and check the 32×32px hit area, keyboard
+   traversal, and that the launcher and plugin pages keep their own accent.
 10. **Minimum window** — resize to 560×420. The sidebar collapses to icons with
     tooltips; all nine pages remain reachable, rows stack label over control,
     plugin detail uses list → detail → back, and no page has horizontal overflow.

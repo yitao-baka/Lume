@@ -1,0 +1,23 @@
+html[data-settings-accent] body.settings-window,
+html[data-settings-accent] .settings {
+  --settings-structure: var(--settings-user-structure);
+  --settings-structure-text: var(--settings-user-structure-text);
+}
+
+html[data-settings-accent][data-theme="dark"] body.settings-window,
+html[data-settings-accent][data-theme="dark"] .settings {
+  --settings-canvas: color-mix(in oklab, var(--settings-user-accent) 5%, var(--settings-canvas-base));
+  --settings-rail: color-mix(in oklab, var(--settings-user-accent) 7%, var(--settings-rail-base));
+  --settings-panel: color-mix(in oklab, var(--settings-user-accent) 4%, var(--settings-panel-base));
+  --settings-control: color-mix(in oklab, var(--settings-user-accent) 6%, var(--settings-control-base));
+  --settings-selected: color-mix(in oklab, var(--settings-user-accent) 16%, var(--settings-panel-base));
+}
+
+html[data-settings-accent][data-theme="light"] body.settings-window,
+html[data-settings-accent][data-theme="light"] .settings {
+  --settings-canvas: color-mix(in oklab, var(--settings-user-accent) 3%, var(--settings-canvas-base));
+  --settings-rail: color-mix(in oklab, var(--settings-user-accent) 5%, var(--settings-rail-base));
+  --settings-panel: color-mix(in oklab, var(--settings-user-accent) 2%, var(--settings-panel-base));
+  --settings-control: color-mix(in oklab, var(--settings-user-accent) 3%, var(--settings-control-base));
+  --settings-selected: color-mix(in oklab, var(--settings-user-accent) 12%, var(--settings-panel-base));
+}

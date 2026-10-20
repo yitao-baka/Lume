@@ -462,7 +462,7 @@ export default function SystemPane(props: {
 
       <SettingGroup title={t("settingsImportExport")} number="08.3">
         <div class="settings-data-actions">
-          <p class="settings-row-summary">{t("settingsRestoreDefaultsHint")}</p>
+          <p class="settings-row-summary">{t("settingsImportExportHint")}</p>
           <div class="settings-data-action-row">
             <ConfirmButton settingId="system.export_settings" label={t("settingsExport")} onAction={exportSettings} />
             <ConfirmButton settingId="system.import_settings" label={t("settingsImport")} onAction={importSettings} />

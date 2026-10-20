@@ -37,6 +37,10 @@ import systemIcon from "../../res/icons/system.svg";
 import automationIcon from "../../res/icons/automation.svg";
 import pluginsIcon from "../../res/icons/plugins.svg";
 import aboutIcon from "../../res/icons/about.svg";
+// Transparent-background derivative of the canonical app icon (`icon.png`,
+// same artwork the exe/taskbar carries). The alpha cutout lets the mark sit
+// directly on the settings surface instead of showing a white icon tile.
+import lumeAppIcon from "../../src-tauri/icons/icon-transparent.png";
 import { diffSettings, type SettingsData, type SettingsPatch } from "./types";
 import {
   buildSettingsCatalog,
@@ -475,6 +479,24 @@ export default function Settings() {
     });
   }
 
+  /** Jump scrolling: centering a deep-linked row inside the plugin detail pane
+   * scrolls the card head out of view, leaving a clipped sliver of the title
+   * at the pane's top edge. Anchor the pane on the card head and only scroll
+   * on when the highlighted row sits below the fold. */
+  function scrollJumpTarget(target: HTMLElement) {
+    const pane = target.closest<HTMLElement>(".plg-detail-pane");
+    const head = pane?.querySelector<HTMLElement>(".plg-card .plg-head");
+    if (pane && head && pane.clientHeight > 0) {
+      const paneTop = pane.getBoundingClientRect().top;
+      pane.scrollTop += head.getBoundingClientRect().top - paneTop;
+      const row = target.getBoundingClientRect();
+      const box = pane.getBoundingClientRect();
+      if (row.bottom > box.bottom) pane.scrollTop += row.bottom - box.bottom;
+      return;
+    }
+    target.scrollIntoView({ block: "center" });
+  }
+
   function jumpToResult(result: SettingDescriptor) {
     setSection(result.section);
     if (result.id.startsWith("plugin.")) {
@@ -497,7 +519,7 @@ export default function Settings() {
         setTimeout(focusTarget, 100);
         return;
       }
-      target?.scrollIntoView({ block: "center" });
+      if (target) scrollJumpTarget(target);
       target?.focus({ preventScroll: true });
       if (target) {
         target.classList.add("settings-jump-highlight");
@@ -725,7 +747,7 @@ export default function Settings() {
     <div class="settings" data-save-state={saveState()}>
       <header class="settings-topbar" data-tauri-drag-region ref={(el) => (topbarEl = el)}>
         <div class="settings-brand" data-tauri-drag-region>
-          <span class="settings-brand-mark" aria-hidden="true">L</span>
+          <img class="settings-brand-mark" src={lumeAppIcon} alt="" draggable={false} data-tauri-drag-region />
           <span class="settings-brand-copy" data-tauri-drag-region>
             <strong>LUME</strong>
             <small>{t("settingsTopbarSubtitle")}</small>
@@ -774,7 +796,7 @@ export default function Settings() {
               }
             }}
           />
-          <kbd class="settings-search-shortcut" aria-hidden="true">Ctrl F</kbd>
+          <kbd class="settings-search-shortcut" aria-hidden="true">Ctrl+F</kbd>
           <Show when={searchOpen()}>
             <div
               id="settings-search-results"

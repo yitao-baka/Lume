@@ -104,16 +104,17 @@ html[data-settings-skin] body.settings-window #root {
   background: var(--settings-rail);
 }
 
+/* Transparent app mark: no border, no backing plate. Legacy dark-icon
+   inversion keeps the black artwork readable on dark surfaces. */
 .settings-brand-mark {
   width: 26px;
   height: 26px;
   flex: 0 0 26px;
-  display: grid;
-  place-items: center;
-  border: var(--settings-line-width) solid var(--settings-structure);
-  background: var(--settings-selected);
-  color: var(--settings-selected-text);
-  font: 700 14px/1 "Cascadia Mono", Consolas, monospace;
+  display: block;
+  object-fit: contain;
+  filter: var(--icon-filter);
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .settings-brand-copy {
@@ -222,10 +223,15 @@ html[data-settings-skin] body.settings-window #root {
   right: 0;
   max-height: min(520px, calc(100vh - var(--settings-topbar-height) - 24px));
   overflow-y: auto;
+  scrollbar-width: none;
   border: var(--settings-overlay-border-width) solid var(--settings-structure);
   border-radius: var(--settings-panel-radius);
   background: var(--settings-panel);
   box-shadow: var(--settings-overlay-shadow);
+}
+
+.settings-search-results::-webkit-scrollbar {
+  width: 0;
 }
 
 .settings-search-result {
@@ -1405,7 +1411,7 @@ button.settings-toggle.on .settings-toggle-knob {
 .settings-preview-search {
   display: block;
   height: 12px;
-  border: 1px solid var(--settings-line);
+  border: 1px solid var(--settings-line-strong);
 }
 
 .settings-preview-grid {
@@ -1417,8 +1423,8 @@ button.settings-toggle.on .settings-toggle-knob {
 
 .settings-preview-grid i {
   height: 13px;
-  border: 1px solid var(--settings-line);
-  background: var(--settings-panel);
+  border: 1px solid var(--settings-line-strong);
+  background: var(--settings-control);
 }
 
 .settings-position-wrap {
@@ -2157,7 +2163,8 @@ button.settings-toggle.on .settings-toggle-knob {
 }
 
 .plg-card.off { opacity: 0.55; }
-.plg-card.off img { filter: grayscale(0.9); }
+.plg-card.off img { filter: grayscale(0.9) var(--icon-filter); }
+.plg-card.off img.icon-explicit { filter: grayscale(0.9); }
 
 .plg-head {
   display: flex;
@@ -2172,6 +2179,11 @@ button.settings-toggle.on .settings-toggle-knob {
 }
 
 .plg-head:hover { background: var(--settings-hover); }
+
+/* The detail pane's card head is not a toggle: the pane is left through the
+   list or the explicit back button, never by clicking the card title. */
+.plg-head-static { cursor: default; }
+.plg-head-static:hover { background: transparent; }
 
 .plg-tile {
   width: 38px;
@@ -2191,7 +2203,10 @@ button.settings-toggle.on .settings-toggle-knob {
   flex-basis: 30px;
 }
 
-.plg-tile img { width: 24px; height: 24px; object-fit: contain; }
+/* Legacy single `icon` art keeps the historical dark-mode inversion; explicit
+   icon_light/icon_dark variants are the author's final image and opt out. */
+.plg-tile img { width: 24px; height: 24px; object-fit: contain; filter: var(--icon-filter); }
+.plg-tile img.icon-explicit { filter: none; }
 .plg-tile-letter { font-size: 14px; font-weight: 700; }
 .plg-tile.mode,
 .plg-tile.service,
@@ -2288,7 +2303,8 @@ button.settings-toggle.on .settings-toggle-knob {
   .plg-toolbar { align-items: stretch; }
   .plg-summary { width: 100%; }
   .plg-filter-input { width: 100%; }
-  .plg-filter-chips { max-width: 100%; overflow-x: auto; }
+  .plg-filter-chips { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .plg-filter-chips::-webkit-scrollbar { height: 0; }
 }
 
 html[data-settings-skin="quiet"] .plg-master-detail { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); }

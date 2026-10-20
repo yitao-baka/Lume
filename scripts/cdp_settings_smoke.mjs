@@ -103,6 +103,54 @@ check(
   JSON.stringify(nav) === JSON.stringify(["appearance", "launcher", "clipboard", "search", "hotkeys", "automation", "plugins", "system", "about"]),
   JSON.stringify(nav),
 );
+const brandAlpha = await settings.evalJs(`(async () => {
+  const mark = document.querySelector('.settings-brand-mark');
+  if (!mark) return null;
+  if (!mark.complete) await new Promise((resolve, reject) => {
+    mark.addEventListener('load', resolve, { once: true });
+    mark.addEventListener('error', reject, { once: true });
+  });
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = mark.naturalWidth;
+    canvas.height = mark.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(mark, 0, 0);
+    const corner = Array.from(ctx.getImageData(0, 0, 1, 1).data);
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let maxAlpha = 0;
+    for (let i = 3; i < data.length; i += 4) maxAlpha = Math.max(maxAlpha, data[i]);
+    return { cornerAlpha: corner[3], maxAlpha };
+  } catch {
+    return { cornerAlpha: -1, maxAlpha: -1 };
+  }
+})()`);
+const topbar = await settings.evalJs(`(() => {
+  const mark = document.querySelector('.settings-brand-mark');
+  const cs = mark ? getComputedStyle(mark) : null;
+  return {
+    tag: mark?.tagName ?? "",
+    asset: (mark?.getAttribute('src') || '').split('/').pop() ?? "",
+    natural: [mark?.naturalWidth ?? 0, mark?.naturalHeight ?? 0],
+    border: cs?.borderTopWidth ?? "",
+    background: cs?.backgroundColor ?? "",
+    fit: cs?.objectFit ?? "",
+    filter: cs?.filter ?? "",
+    rootFilter: getComputedStyle(document.documentElement).getPropertyValue('--icon-filter').trim(),
+    dragRegion: mark?.hasAttribute('data-tauri-drag-region') ?? false,
+    shortcut: document.querySelector('.settings-search-shortcut')?.textContent ?? "",
+  };
+})()`);
+check(
+  "settings topbar shows the transparent high-res app icon and the Ctrl+F hint",
+  topbar.tag === "IMG" && topbar.natural[0] >= 256 && topbar.natural[1] >= 256
+    && topbar.border === "0px" && topbar.background === "rgba(0, 0, 0, 0)"
+    && topbar.fit === "contain" && topbar.filter === topbar.rootFilter
+    && topbar.dragRegion && topbar.shortcut === "Ctrl+F"
+    && /icon-transparent/.test(topbar.asset)
+    && brandAlpha?.cornerAlpha === 0 && brandAlpha?.maxAlpha > 200,
+  JSON.stringify({ topbar, brandAlpha }),
+);
 const footer = await settings.evalJs(`({
   status: document.querySelector('.settings-save-status')?.textContent.trim(),
   save: Array.from(document.querySelectorAll('.settings-footer button')).some((el) => el.textContent.includes('保存并应用')),

@@ -22,12 +22,13 @@ export default function AboutPane() {
   }
 
   async function copyVersion() {
+    setError(null);
     try {
       await navigator.clipboard.writeText(APP_VERSION_LABEL);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
-      setError(t("settingsOperationFailed"));
+      setError(t("settingsAboutCopyFailed"));
     }
   }
 

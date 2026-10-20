@@ -598,7 +598,7 @@ export default function PluginsPane(props: {
                 keepSessionOverridden={keepOverrides()[p().id] !== undefined}
                 searchNeedle={(props.searchQuery ?? "").trim()}
                 settingValues={values()[p().id] ?? ({} as Record<string, unknown>)}
-                onToggleOpen={() => setOpenId(null)}
+                headStatic
                 onToggleEnabled={(v) => void toggle(p(), v)}
                 onToggleKeepSession={(v) => void toggleKeepSession(p(), v)}
                 onClearKeepSession={() => void clearKeepSession(p())}
@@ -628,7 +628,8 @@ export default function PluginsPane(props: {
 /** One plugin card: icon tile + name row + description, an enable toggle
  * (plus 重载/卸载 for disk plugins) on the right, and an expandable detail
  * panel below. The header click toggles the panel; the embedded controls
- * don't. */
+ * don't — and `headStatic` drops the toggle for the detail pane's own card,
+ * where leaving is the job of the list and the back button. */
 function PluginCard(props: {
   p: PluginManifest;
   open: boolean;
@@ -643,7 +644,10 @@ function PluginCard(props: {
   /** The global settings query, used to highlight matching declared rows. */
   searchNeedle: string;
   settingValues: Record<string, unknown>;
-  onToggleOpen: () => void;
+  /** Omitted by the detail pane's card, whose head must not toggle. */
+  onToggleOpen?: () => void;
+  /** Static head: no toggle role, no click/keyboard activation. */
+  headStatic?: boolean;
   onToggleEnabled: (v: boolean) => void;
   onToggleKeepSession: (v: boolean) => void;
   onClearKeepSession: () => void;
@@ -666,22 +670,30 @@ function PluginCard(props: {
     >
       <div
         class="plg-head"
-        role="button"
-        tabIndex={0}
-        aria-expanded={props.open}
-        aria-controls={`plugin-detail-${p().id}`}
-        onClick={props.onToggleOpen}
+        classList={{ "plg-head-static": !!props.headStatic }}
+        role={props.headStatic ? undefined : "button"}
+        tabIndex={props.headStatic ? undefined : 0}
+        aria-expanded={props.headStatic ? undefined : props.open}
+        aria-controls={props.headStatic ? undefined : `plugin-detail-${p().id}`}
+        onClick={() => {
+          if (!props.headStatic) props.onToggleOpen?.();
+        }}
         onKeyDown={(e) => {
-          if (e.target !== e.currentTarget) return;
+          if (props.headStatic || e.target !== e.currentTarget) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            props.onToggleOpen();
+            props.onToggleOpen?.();
           }
         }}
       >
         <div class="plg-tile" classList={{ [p().kind]: true }}>
           <Show when={icon()} fallback={<span class="plg-tile-letter">{tileChar()}</span>}>
-            <img src={icon()!.src} alt="" draggable={false} />
+            <img
+              src={icon()!.src}
+              alt=""
+              draggable={false}
+              classList={{ "icon-explicit": !icon()!.legacy }}
+            />
           </Show>
         </div>
         <div class="plg-main">
@@ -743,7 +755,9 @@ function PluginCard(props: {
             label={t("pluginToggleLabel", { name: p().name || p().id })}
             onChange={props.onToggleEnabled}
           />
-          <span class="plg-chev" classList={{ open: props.open }}>▸</span>
+          <Show when={!props.headStatic}>
+            <span class="plg-chev" classList={{ open: props.open }}>▸</span>
+          </Show>
         </div>
       </div>
 

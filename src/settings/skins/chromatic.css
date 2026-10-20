@@ -83,10 +83,6 @@ html[data-settings-skin="chromatic"] .settings-brand-mark {
   width: 30px;
   height: 30px;
   flex-basis: 30px;
-  border-width: 1.5px;
-  background: transparent;
-  color: var(--settings-text);
-  font-size: 16px;
 }
 
 html[data-settings-skin="chromatic"] .settings-brand-copy strong {

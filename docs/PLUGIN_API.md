@@ -113,7 +113,7 @@ export default {
 | `detach_button` | bool | `true` | **mode 专属 + `detachable` 配套**（§6.8）— 宿主是否在模式页右上角渲染内置的悬停「在独立窗口打开」按钮。插件自绘分离按钮（常驻、纯图标…）时设 `false` 把右上角完全让给页面，分离走 `lume.app.detach()`（§6.1）。 |
 | `hidden` | bool | `false` | **mode 专属** — 在模式切换栏（pill）与切换键（Tab）循环中隐藏本模式：不渲染 pill、Tab 不切入（模式激活时 Tab 从导航页重新开始）。唯一入口是导航页搜索结果：keywords 的「进入 <name>」行、`[[features]]` 命中行与插件互跳（`app.redirect`）。设置 → 插件 卡片会显示「仅搜索进入」徽标；插件仍然可以被启停。示例：`examples/plugins/hidden-mode/`。 |
 | `keep_session` | bool | `false` | **mode 专属** — 闲置重置（启动器隐藏超过设置阈值后的下一次呼出，§6.6）时保留本模式会话状态的**声明式默认**：查询、页面状态、保活宿主与会话帧都不动。用户可在 设置 → 插件 逐插件覆盖（`settings.plugins.keep_session_overrides`，用户值优先）。适合「状态 = 未保存草稿」的页面；不改变「超阈值先回导航页」这一点。示例：`examples/plugins/state-probe/`。 |
-| `icon` | string | `""` | **旧版单图（兼容）** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录，或 `data:`/`http(s):`/`asset:`/`blob:` URI）。省略 = 不显示图标。**同时是本插件在导航搜索结果里的默认行图标**：keywords 行、没有自己 `icon` 的 provider 结果与 feature 行都用它（没有才回退到 `path` 常规图标管线）。旧图表现不变：在本来就按 `--icon-filter` 反相的位置（模式 pill、列表模板行）深色下仍反相；结果网格/设置卡片沿用原样。分离窗口（§6.8）的任务栏图标同源。 |
+| `icon` | string | `""` | **旧版单图（兼容）** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录，或 `data:`/`http(s):`/`asset:`/`blob:` URI）。省略 = 不显示图标。**同时是本插件在导航搜索结果里的默认行图标**：keywords 行、没有自己 `icon` 的 provider 结果与 feature 行都用它（没有才回退到 `path` 常规图标管线）。旧图表现不变：在本来就按 `--icon-filter` 反相的位置（模式 pill、列表模板行、设置 → 插件 主从列表的图标块）深色下仍反相；结果网格沿用原样。分离窗口（§6.8）的任务栏图标同源。 |
 | `icon_light` | string | `""` | **浅色界面变体** — 浅色表面显示的那套图（通常是深色描边），相对插件目录（URI 规则同上）。省略 → 回退 `icon`（仍没有 → 用另一套）。显式变体一律**按原样渲染、不再反相**。 |
 | `icon_dark` | string | `""` | **深色界面变体** — 深色表面显示的那套图（通常是浅色描边）。省略 → 回退 `icon`（仍没有 → 用另一套）。 |
 

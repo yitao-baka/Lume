@@ -52,9 +52,15 @@ export function NumberPreset(props: {
   function commitCustom(raw: string) {
     const custom = props.custom;
     if (!custom) return;
-    const n = Math.round(Number(raw));
-    if (!Number.isFinite(n)) return;
-    const value = Math.min(Math.max(n, custom.min), custom.max);
+    const text = raw.trim();
+    const parsed = text === "" ? Number.NaN : Number(text);
+    // An empty box means "no value", not zero: put the displayed number back
+    // instead of silently clamping the empty string to the field minimum.
+    if (!Number.isFinite(parsed)) {
+      if (input) input.value = String(props.value);
+      return;
+    }
+    const value = Math.min(Math.max(Math.round(parsed), custom.min), custom.max);
     props.onCommit(value);
     setEditing(false);
   }

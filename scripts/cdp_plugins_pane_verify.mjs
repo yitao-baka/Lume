@@ -77,27 +77,37 @@ const toolbar = await s.evalJs(`({
   summary: document.querySelector('.plg-summary')?.textContent ?? "",
   chips: Array.from(document.querySelectorAll('.plg-filter-chip')).map((b) => b.textContent.trim()),
   filterInput: !!document.querySelector('.plg-filter-input'),
-  devToggle: document.querySelector('.plg-devmode')?.textContent.trim() ?? "",
+  install: document.querySelector('.plg-install-btn')?.textContent.trim() ?? "",
 })`);
-check("toolbar: summary + 4 filter chips + filter input + dev-mode switch",
+check("toolbar: summary + 4 filter chips + filter input + install action",
   toolbar.summary.includes("插件") && toolbar.chips.length === 4 && toolbar.filterInput
-  && toolbar.devToggle.includes("开发者模式"), JSON.stringify(toolbar));
+  && toolbar.install.length > 0, JSON.stringify(toolbar));
 
-// Developer mode OFF (deterministic: click only if currently on) — no reload
-// buttons, no 开发 badge, no global trust-all
+// The developer options render at the bottom of the selected plugin's detail
+// card (settings redesign), so the switch only exists once a card is open.
 const setDevMode = async (on) => {
   await s.evalJs(`(() => {
-    const t = document.querySelector('.plg-devmode .settings-toggle');
+    if (!document.querySelector('.plg-dev-options')) {
+      document.querySelector('.plg-list .plg-card .plg-head')?.click();
+    }
+    return "ok";
+  })()`);
+  await sleep(500);
+  await s.evalJs(`(() => {
+    const t = document.querySelector('.plg-dev-options .settings-toggle');
     if (t && t.classList.contains("on") !== ${on}) t.click();
     return "ok";
   })()`);
-  await sleep(800);
+  await sleep(900);
 };
+
+// Developer mode OFF (deterministic: click only if currently on) — no reload
+// buttons, no 开发 badge, no global trust-all
 await setDevMode(false);
 const devOff = await s.evalJs(`({
   reloads: document.querySelectorAll('.plg-card .settings-icon-btn:not(.plg-uninstall)').length,
   badges: Array.from(document.querySelectorAll('.plg-badge')).map((b) => b.textContent.trim()).filter((t) => t === "开发"),
-  trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
+  trustAllLabel: document.querySelectorAll('[data-setting-id="plugins.trust_all"]').length,
 })`);
 check("dev mode off hides developer options", devOff.reloads === 0 && devOff.badges.length === 0 && devOff.trustAllLabel === 0, JSON.stringify(devOff));
 
@@ -105,9 +115,14 @@ check("dev mode off hides developer options", devOff.reloads === 0 && devOff.bad
 await setDevMode(true);
 const devOnState = await s.evalJs(`({
   reloads: document.querySelectorAll('.plg-card .settings-icon-btn:not(.plg-uninstall)').length,
-  trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
+  trustAllLabel: document.querySelectorAll('[data-setting-id="plugins.trust_all"]').length,
 })`);
 check("dev mode on shows reload + global trust-all", devOnState.reloads > 0 && devOnState.trustAllLabel === 1, JSON.stringify(devOnState));
+await setDevMode(false);
+
+// Drop the temporary selection so the next step opens its own detail card.
+await s.evalJs(`document.querySelector('.plg-list .plg-card .plg-head')?.click(); "ok"`);
+await sleep(500);
 
 const cards = await s.evalJs(`Array.from(document.querySelectorAll('.plg-card')).map((c) => ({
   name: c.querySelector('.plg-name')?.textContent,
@@ -137,10 +152,48 @@ check("detail panel opens with permissions + meta, no per-plugin trust row",
   detail.open && detail.permChips.length > 0 && detail.perPluginTrust === 0 && detail.meta.length >= 1, JSON.stringify(detail));
 await s.shot("test/plg_dark_list.png");
 
+// Icon inversion (docs/SETTINGS_AUDIT_2026-10-20.md §2): legacy art follows the
+// surface `--icon-filter`, explicit icon_light / icon_dark stays as-is.
+const tileIcons = await s.evalJs(`(() => {
+  const strip = (f) => f.replace(/^grayscale\([^)]*\)\s*/, "").trim();
+  const imgs = Array.from(document.querySelectorAll('.plg-list .plg-tile img'));
+  const legacy = imgs.filter((i) => !i.classList.contains('icon-explicit'));
+  const explicit = imgs.filter((i) => i.classList.contains('icon-explicit'));
+  return {
+    total: imgs.length,
+    rootFilter: getComputedStyle(document.documentElement).getPropertyValue('--icon-filter').trim(),
+    filters: legacy.map((i) => strip(getComputedStyle(i).filter)),
+    explicitFilters: explicit.map((i) => strip(getComputedStyle(i).filter)),
+  };
+})()`);
+check("legacy plugin tiles follow --icon-filter, explicit variants stay as-is",
+  tileIcons.total > 0 && tileIcons.filters.length > 0 &&
+  tileIcons.filters.every((f) => f === tileIcons.rootFilter) &&
+  tileIcons.explicitFilters.every((f) => f === "none"),
+  JSON.stringify(tileIcons));
+
+// Detail head is static (docs/SETTINGS_AUDIT_2026-10-20.md §7): clicking the
+// card title must not drop the selection back to the empty prompt.
+const detailHead = await s.evalJs(`(async () => {
+  const head = document.querySelector('.plg-detail-pane .plg-head');
+  const before = !!head;
+  head?.click();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return {
+    before,
+    after: !!document.querySelector('.plg-detail-pane .plg-head'),
+    role: head?.getAttribute('role') ?? null,
+    tabindex: head?.getAttribute('tabindex') ?? null,
+  };
+})()`);
+check("detail card head does not clear the selection",
+  detailHead.before && detailHead.after && detailHead.role === null && detailHead.tabindex === null,
+  JSON.stringify(detailHead));
+
 // Keyword filter narrows the list
 await s.evalJs(`(() => { const i = document.querySelector('.plg-filter-input'); i.value = "hello"; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
 await sleep(300);
-const filtered = await s.evalJs(`Array.from(document.querySelectorAll('.plg-card .plg-name')).map((n) => n.textContent)`);
+const filtered = await s.evalJs(`Array.from(document.querySelectorAll('.plg-list .plg-card .plg-name')).map((n) => n.textContent)`);
 check("filter input narrows to hello-mode", JSON.stringify(filtered) === JSON.stringify(["Hello Mode"]), JSON.stringify(filtered));
 await s.evalJs(`(() => { const i = document.querySelector('.plg-filter-input'); i.value = ""; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
 await sleep(300);
@@ -149,7 +202,7 @@ await sleep(300);
 await s.evalJs(`Array.from(document.querySelectorAll('.plg-filter-chip')).find((b) => b.textContent === "已停用")?.click(); "ok"`);
 await sleep(300);
 const disabledCards = await s.evalJs(`({
-  cards: Array.from(document.querySelectorAll('.plg-card')).map((c) => ({ name: c.querySelector('.plg-name')?.textContent, off: c.classList.contains('off') })),
+  cards: Array.from(document.querySelectorAll('.plg-list .plg-card')).map((c) => ({ name: c.querySelector('.plg-name')?.textContent, off: c.classList.contains('off') })),
   empty: document.querySelector('.plg-empty')?.textContent ?? "",
 })`);
 check("已停用 filter: only disabled cards, or the empty state", disabledCards.cards.every((c) => c.off) && (disabledCards.cards.length >= 1 || disabledCards.empty.includes("没有匹配")), JSON.stringify(disabledCards));
@@ -193,7 +246,7 @@ await sleep(400);
 await setDevMode(false);
 const devRestored = await s.evalJs(`({
   reloads: document.querySelectorAll('.plg-card .settings-icon-btn:not(.plg-uninstall)').length,
-  trustAllLabel: Array.from(document.querySelectorAll('.plg-devmode')).map((l) => l.textContent.trim()).filter((t) => t === "全部授权").length,
+  trustAllLabel: document.querySelectorAll('[data-setting-id="plugins.trust_all"]').length,
 })`);
 check("dev mode restored to off", devRestored.reloads === 0 && devRestored.trustAllLabel === 0, JSON.stringify(devRestored));
 

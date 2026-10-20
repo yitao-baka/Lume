@@ -4005,3 +4005,101 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   `center` 单元中心与网格中心横纵偏移均不超过 1px。
 - `pnpm exec tsc --noEmit`、`pnpm run build`、`pnpm run tauri build --debug --no-bundle`
   通过。
+---
+
+## 62. 设置面板审查遗留项收口
+
+[SETTINGS_AUDIT_2026-10-20.md](SETTINGS_AUDIT_2026-10-20.md) 的九条发现与两条观察
+全部修复，报告保留为证据归档，条目已从 `docs/ROADMAP.md` 的开放事项删除。
+
+### 62.1 实现
+
+- 标题栏搜索下拉 `.settings-search-results` 补 `scrollbar-width: none` 与零宽
+  `::-webkit-scrollbar`；窄窗 `.plg-filter-chips` 同步隐藏横向滚动条，结果行不再被
+  原生滚动条挤窄。
+- 插件列表图标块 `.plg-tile img` 接入 `filter: var(--icon-filter)`，与启动器同一
+  反色规则；`pickIcon()` 的 `legacy` 标记映射为 `.icon-explicit`，声明式
+  `icon_light` / `icon_dark` 仍按作者原图渲染（`App.css` 同名规则同步）。
+- 快捷键录制态只在 keycap 卡内提示「按下新的组合键…」，按钮与 `aria-label` 改成
+  「取消」，点击即退出录制。
+- `NumberPreset` 的「更多」自定义输入：空串与非有限值不提交、不钳制，回滚显示当前
+  生效值；显式越界输入仍按 `min` / `max` 钳制。
+- 关于页 `copyVersion` 入口清空旧错误，失败改用复制专用文案
+  `settingsAboutCopyFailed`，不再复用「详情已写入日志」的操作失败文案。
+- 系统页 `08.3` 分组改用独立范围说明 `settingsImportExportHint`（导出 / 导入完整
+  设置文件、恢复备份取最近一次保存前快照）；`settingsRestoreDefaultsHint` 只留在
+  「恢复应用默认值」确认框。
+- 插件详情卡头部改为静态：`PluginCard` 新增 `headStatic`，宽布局下点击标题 / 图标 /
+  描述不再清空右栏，窄布局仍走显式「← 返回列表」；该卡同时去掉 `role="button"`、
+  `tabindex` 与展开箭头。
+- 启动器尺寸预览线框内描边换 `--settings-line-strong`、格底换 `--settings-control`，
+  Quiet 深色下能读出搜索行与条目网格。
+- 剪贴板「忽略应用」条目去掉误用的地图图标前缀，添加按钮改 `plus.svg`。
+- `Settings.tsx` 新增 `scrollJumpTarget()`：跳转目标位于 `.plg-detail-pane` 时先把
+  详情卡头部对齐到栏顶再按需下滚，修掉 `scrollIntoView({ block: "center" })` 把卡片
+  标题切出视口、顶部留半行字形的问题。
+
+### 62.2 踩坑
+
+- 三语文案以 `en.json` 的键集为 `Messages` 基准，新增
+  `settingsAboutCopyFailed` / `settingsImportExportHint` 必须三语同步，否则
+  `tsc` 直接失败。
+- CDP 里对未聚焦文档 `input.blur()` 不会派发 blur / change（`document.hasFocus()`
+  为 false）：验证「清空后回滚」前先 `Page.bringToFront`，否则探针会把「没有事件」
+  误判成「没有回滚」。
+- 复制成功路径需要真实用户激活，只有 `Input.dispatchMouseEvent` 的可信点击能让
+  `navigator.clipboard.writeText` 落地；纯 JS `click()` 适合验证失败分支。
+- Vite 把小体积 `res/icons/*.svg` 内联成 data URI，图标断言不能再按文件名匹配，
+  需 `decodeURIComponent` 后比对路径数据（如 `plus.svg` 的 `M24 8v32M8 24h32`）。
+- `scripts/cdp_plugins_pane_verify.mjs` 的选择器停在上一次改版之前
+  （`.plg-devmode`、工具栏内的开发者开关、含详情卡的 `.plg-card` 计数）：开发者选项
+  实际位于选中插件详情卡底部，本轮按现结构同步脚本，并补两条回归断言（旧图跟随
+  `--icon-filter`、详情卡头部不清空选中）。
+
+### 62.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`pnpm run tauri build --debug --no-bundle`
+  通过；`cargo check`、`cargo test`（**228 passed / 9 ignored**）通过。
+- `node scripts/cdp_settings_smoke.mjs`：**9/9 PASS**。
+- `node scripts/cdp_settings_skin_verify.mjs`：**60/60 PASS**。
+- `node scripts/cdp_settings_accent_verify.mjs`：**34/34 PASS**。
+- `node scripts/cdp_plugins_pane_verify.mjs`：**ALL PASS**（11 项，含新增的图标反色与
+  静态详情头断言）。
+- 一次性探针 `test/settings-audit-fix/probe.mjs`（scratch，不入库）：13 项逐条复核
+  审查发现——搜索下拉 `scrollbarWidth: none` 且 `offsetWidth − clientWidth = 2`
+  （只剩 1px 边框）、Quiet 深色插件图标 `invert(1)` 与显式变体 `none`、预览线框取到
+  `--settings-line-strong` / `--settings-control`、录制态提示只出现一次、清空自定义
+  数字输入后显示值回滚为 30 且未落盘、复制失败后成功复制清空错误、导入导出分组文案、
+  忽略应用行只剩删除按钮且添加按钮为 `plus.svg`、宽布局详情头点击后选中保持、搜索
+  跳转后卡片头部完整留在详情栏内；截图归档在 `test/settings-audit-fix/`。
+---
+
+## 63. 设置窗顶栏应用图标与 Ctrl+F 标识
+
+设置窗顶栏品牌标记此前是带描边的字母 `L`，搜索框右侧快捷键 keycap 的加号在
+重构时丢失（显示为 `Ctrl F`）。
+
+### 63.1 实现
+
+- 从 `src-tauri/icons/icon.png` 派生 `src-tauri/icons/icon-transparent.png`：按亮度
+  提取黑色墨迹的 alpha 通道、清除纸张底色与孤立噪点，裁到主体后补成 512×512
+  透明 PNG；与 exe / 任务栏仍是同一份原始造型。
+- `src/settings/Settings.tsx` 导入透明素材替换 `.settings-brand-mark` 的 `span`
+  字母标记；`src/settings/skins/base.css` 去掉描边、背景与等宽字体，改为
+  `object-fit: contain` + `filter: var(--icon-filter)`，深色主题自动转为浅色，
+  浅色主题保留黑色原图；Quiet 保持 26×26，Chromatic 仍为 30×30。
+- 图标节点带 `data-tauri-drag-region`，窄窗只剩图标时仍能拖动窗口。
+- `Ctrl F` keycap 改回 `Ctrl+F`；窄窗原本就隐藏该 keycap，桌面宽度下完整显示。
+
+### 63.2 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`pnpm run tauri build --debug --no-bundle`
+  通过。
+- `node scripts/cdp_settings_smoke.mjs`：**10/10 PASS**。新增断言确认品牌标记是
+  `IMG`、加载 512×512、`border: 0px`、透明背景、`object-fit: contain`、边角
+  alpha = 0 / 主体 alpha = 255、深色 `filter` 与 `--icon-filter` 一致，且 keycap
+  文本精确为 `Ctrl+F`；1040×720 无横向溢出。
+- `node scripts/cdp_settings_skin_verify.mjs`：**60/60 PASS**；
+  `node scripts/cdp_settings_accent_verify.mjs`：**34/34 PASS**。
+- 截图检查：`test/settings-brand-check/brand-quiet-zoom.png`、
+  `brand-chromatic-zoom.png`（3× 裁剪，双皮肤下图标清晰、无外框）。

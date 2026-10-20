@@ -13,9 +13,8 @@ import {
   Toggle,
 } from "./controls";
 import { ProgramPicker } from "./ProgramPicker";
-import folderPlusIcon from "../../res/icons/folder_plus.svg";
+import plusIcon from "../../res/icons/plus.svg";
 import deleteIcon from "../../res/icons/delete.svg";
-import damageMapIcon from "../../res/icons/damage-map.svg";
 
 const CAPS = [100, 200, 500, 1000];
 
@@ -186,7 +185,6 @@ export default function ClipboardPane(props: {
                 <For each={c().ignore_apps ?? []}>
                   {(app) => (
                     <div class="settings-compact-item">
-                      <img class="settings-icon-btn-icon" src={damageMapIcon} alt="" draggable={false} />
                       <span class="settings-path">{app}</span>
                       <button
                         class="settings-icon-btn"
@@ -234,7 +232,7 @@ export default function ClipboardPane(props: {
                 disabled={!ignore().trim() || ignoreBusy()}
                 onClick={() => void addIgnoreApp()}
               >
-                <img class="settings-icon-btn-icon" src={folderPlusIcon} alt="" draggable={false} />
+                <img class="settings-icon-btn-icon" src={plusIcon} alt="" draggable={false} />
               </button>
             </div>
             <Show when={ignoreError()}>

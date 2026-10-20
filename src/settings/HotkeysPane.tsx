@@ -112,7 +112,7 @@ function HotkeyControl(props: {
           ref={(el) => (buttonEl = el)}
           class="settings-action settings-keycap-change"
           type="button"
-          aria-label={`${props.label}: ${t("hotkeyChange")}`}
+          aria-label={`${props.label}: ${recording() ? t("cancel") : t("hotkeyChange")}`}
           onClick={() => {
             if (recording()) stop();
             else {
@@ -128,7 +128,7 @@ function HotkeyControl(props: {
             if (recording()) stop();
           }}
         >
-          {recording() ? t("hotkeyRecording") : t("hotkeyChange")}
+          {recording() ? t("cancel") : t("hotkeyChange")}
         </button>
       </div>
       <details class="settings-hotkey-presets">

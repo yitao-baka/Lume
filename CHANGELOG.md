@@ -43,7 +43,41 @@ All notable changes to Lume are documented here. Format based on
 
 - **设置窗窗口位置网格** — 位置预设改为 3×3 网格，`居中` 从第一行中间移到第二行第二列，与网格几何中心对齐；四角预设保持在四角。验证：`node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**（新增居中偏移断言）。
 
+- **设置窗顶栏品牌标识与搜索快捷键** — 设置窗左上角的字母 `L` 改为应用自身的
+  透明底图标 `src-tauri/icons/icon-transparent.png`（由 `icon.png` 派生的 512×512
+  alpha 素材，26px / Chromatic 30px 显示），移除描边与底色框，使图标直接融入
+  设置背景；深色主题沿用 `--icon-filter` 反相为浅色，浅色主题保留黑色原图。
+  窄窗仍只显示图标，图标本身保留标题栏拖拽区域。
+  搜索框右侧快捷键 keycap 恢复 `Ctrl+F` 中的加号，不再显示成 `Ctrl F`。
+  验证：`pnpm exec tsc --noEmit`、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `node scripts/cdp_settings_smoke.mjs` **10/10 PASS**（新增断言确认 512×512
+  `IMG`、边角 alpha = 0、主体 alpha = 255、无边框无底色、`object-fit: contain`、
+  深色反相与 keycap 文本为 `Ctrl+F`）；`node scripts/cdp_settings_skin_verify.mjs`
+  **60/60 PASS**、`node scripts/cdp_settings_accent_verify.mjs` **34/34 PASS**；
+  1040×720 与 560×420 视觉截图检查通过。
+
+- **设置面板审查遗留项收口** — [SETTINGS_AUDIT_2026-10-20.md](docs/SETTINGS_AUDIT_2026-10-20.md)
+  的九条发现与两条观察全部修复：设置搜索下拉与窄窗插件筛选条隐藏原生滚动条；插件
+  列表图标块按 `--icon-filter` 反色、显式 `icon_light`/`icon_dark` 保持原图；快捷键
+  录制态只在 keycap 卡内提示「按下新的组合键…」、按钮改「取消」；「更多」自定义数字
+  输入清空后回滚显示值而不再静默写入下限；关于页复制失败提示在下次成功复制时清除并
+  改用复制专用文案；系统页「导入导出与恢复」改用独立范围说明；宽布局插件详情卡头部
+  不再因点击标题清空选中；启动器尺寸预览线框换 `--settings-line-strong` /
+  `--settings-control`；剪贴板「忽略应用」条目去掉地图图标、添加按钮改 `plus.svg`；
+  设置搜索跳转不再把插件详情卡标题切出视口。验证：`pnpm exec tsc --noEmit`、
+  `pnpm run build`、`cargo check`、`cargo test`（**228 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `node scripts/cdp_settings_smoke.mjs` **9/9 PASS**、
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**、
+  `node scripts/cdp_settings_accent_verify.mjs` **34/34 PASS**、
+  `node scripts/cdp_plugins_pane_verify.mjs` **ALL PASS**（按现结构同步选择器，并新增
+  图标反色与静态详情头两条断言）；一次性探针逐条复核 13 项
+  （`test/settings-audit-fix/`，scratch）。
+
 ### Documentation
+
+- **设置面板审查报告** — 新增 `docs/SETTINGS_AUDIT_2026-10-20.md`：设置窗重构（双皮肤 + 调色盘）后的独立审查，逐条记录现象、证据、影响与建议——搜索下拉原生滚动条、插件列表图标深色下不可见、自定义数字输入清空后静默写入下限、关于页复制失败提示残留、系统页导入导出分组复用恢复范围文案、宽布局详情头误关、尺寸预览对比度、忽略应用条目图标语义。验证：`pnpm run build`、`pnpm run tauri build --debug --no-bundle`；`node scripts/cdp_settings_smoke.mjs` 9 项、`node scripts/cdp_settings_skin_verify.mjs` 60 项、`node scripts/cdp_settings_accent_verify.mjs` 34 项断言均无失败。
 
 - **设置窗主题色实现方案** — 新增 `docs/SETTINGS_ACCENT_COLOR.md`：定义
   `appearance.settings_accent`（空值跟随皮肤）、预设 / 自定义强调色、固定低比例

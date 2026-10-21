@@ -257,6 +257,9 @@ export default function Settings() {
         normalized.appearance.settings_accent = normalizeSettingsAccent(
           normalized.appearance.settings_accent,
         );
+        normalized.appearance.settings_accent_custom = normalizeSettingsAccent(
+          normalized.appearance.settings_accent_custom,
+        );
         batch(() => {
           setSettings(normalized);
           setBaseline(clone(normalized));
@@ -587,6 +590,9 @@ export default function Settings() {
           const normalized = clone(loaded);
           normalized.appearance.settings_accent = normalizeSettingsAccent(
             normalized.appearance.settings_accent,
+          );
+          normalized.appearance.settings_accent_custom = normalizeSettingsAccent(
+            normalized.appearance.settings_accent_custom,
           );
           batch(() => {
             setSettings(normalized);

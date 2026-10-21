@@ -142,8 +142,11 @@ contrast-safe tiers.
   launcher surface, plugin canvases, detached windows, tray, or DWM border.
   Switching skin preserves focus, DOM identity, and scroll position.
 - `appearance.settings_accent` overlays a user accent without changing skin
-  geometry. An empty value is pixel-identical to the selected skin. A custom
-  value mixes into only `--settings-canvas` (dark 5% / light 3%),
+  geometry. An empty value is pixel-identical to the selected skin — for dark
+  Chromatic that native accent is 湖蓝 (`#5ac8fa`), with `--settings-selected`
+  written as the same 16% mix an explicit Aqua accent produces, so the skin
+  default and a picked Aqua look identical. A custom value mixes into only
+  `--settings-canvas` (dark 5% / light 3%),
   `--settings-rail` (7% / 5%), `--settings-panel` (4% / 2%),
   `--settings-control` (6% / 3%), and `--settings-selected` (16% / 12%,
   mixed with the panel base). Text, semantic, warning, danger, success and
@@ -159,15 +162,28 @@ contrast-safe tiers.
   its border, underline or numbered-page cue so color never carries state alone.
 - The compact accent preview uses the same CSS tokens as real controls: a
   structure rule, selected navigation row, on-state switch and small accent
-  text. Presets pair every swatch with a localized label; the native color
-  input keeps a hit area of at least 32×32px.
+  text. Presets pair every swatch with a localized label; the first preset slot
+  is the one skin-dependent swatch (Quiet leads with Aqua, Chromatic with the
+  skin's original `#ac8e97`) and it stays pinned to the skin's default accent
+  while another color is applied, and the native color input keeps a hit area
+  of at least 32×32px.
+- The color input owns its value: it shows the remembered
+  `appearance.settings_accent_custom`, or — until the user picks one — pure
+  white. Picking a preset or switching skins never rewrites it, so the swatch
+  does not follow the color in use. The entry's name is a button that applies
+  that color immediately; only the swatch opens the native picker.
+- The About brand block shows the product mark itself — the transparent app
+  icon, inverted per `--icon-filter` like the topbar brand, at 104px (78px at
+  narrow widths) with no plate, frame or letter monogram around it.
 - Settings help buttons never expand inline: hover/focus shows a fixed-position
   tooltip without changing row geometry, and click opens a portaled modal with
   the full explanation. The modal makes the settings body inert, traps focus on
   its controls, closes on Esc/backdrop, and returns focus to the `i` button.
 - The plugin manager's master/detail frame is bounded by the available viewport;
   the list and detail panes each scroll independently with hidden scrollbars.
-  A long plugin list must never move the selected detail off-screen.
+  A long plugin list must never move the selected detail off-screen. List rows
+  carry no disclosure glyph: the head is the click/keyboard target and the
+  detail pane states the selection.
 - The `.lupx` install confirmation is the shared confirm dialog: the inspected
   package facts (name / version / kind, localized capability chips, payload
   stats, signature or SHA-256, overwrite relation) render between the hint and

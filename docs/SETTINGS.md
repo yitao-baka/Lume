@@ -62,6 +62,7 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 |---|---|---|---|---|
 | `appearance.settings_skin` | string | `quiet` / `chromatic` | `quiet` | 仅设置窗口 |
 | `appearance.settings_accent` | string | `""` / `#rrggbb` | `""` | 仅设置窗口 |
+| `appearance.settings_accent_custom` | string | `""` / `#rrggbb` | `""` | 仅设置窗口 |
 
 - 首帧由 `src/index.tsx` 在 `render()` 前读取 `__LUME_CONFIG__`，依次应用皮肤、
   明暗模式与主题色；缺少配置或未知皮肤回落 `quiet`，主题色缺失或非法时为空值。
@@ -75,6 +76,10 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
   低比例染入画布、导航栏、面板、控件与选中背景，并从同一输入派生装饰色和小字色。
 - 切换皮肤或主题色先更新 DOM，再更新工作副本并走自动保存。保存失败时 DOM、
   工作副本和控件一起回滚到最近确认值。
+- `appearance.settings_accent_custom` 只记录取色器最后一次提交的颜色，与正在使用
+  的主题色解耦：选预设 / 默认都不会改写它，取色器始终显示这份记忆值；从未选过时
+  统一显示纯白 `#ffffff`。它与 `settings_accent` 一起写入、一起被规范化，恢复
+  默认值会清空两者。
 - 系统明暗切换时重新派生主题色；撤销、重试、恢复默认、导入与恢复备份都走同一
   应用路径，不直接改属性绕过队列。
 
@@ -152,15 +157,19 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 
 页面说明：选择界面语言、明暗主题、设置窗皮肤与主题色。
 
-- **颜色模式** `appearance.color_mode`：跟随系统 / 深色 / 浅色，使用三张主题
-  预览卡。跟随系统响应 `prefers-color-scheme`。
+- **颜色模式** `appearance.color_mode`：跟随系统 / 月之暗面（深色）/ 日之耀面
+  （浅色），使用三张主题预览卡。跟随系统响应 `prefers-color-scheme`。
 - **语言** `appearance.language`：跟随系统 / English / 简体中文 / 繁體中文；
   语言名称使用自身语言显示，切换后当前窗口与托盘立即更新。
 - **设置窗皮肤** `appearance.settings_skin`：Quiet / Chromatic。只改变当前设置
   窗口，启动器和插件页面不受影响。
-- **设置窗主题色** `appearance.settings_accent`：跟随皮肤 / 湖蓝 / 靛蓝 / 紫罗兰
-  / 玫瑰 / 翡翠 / 琥珀 / 自定义。选择后即时预览，250ms 后自动保存；文字与焦点
-  对比度自动修正。自定义入口使用原生颜色输入并显示规范化十六进制值。
+- **设置窗主题色** `appearance.settings_accent`：默认 / 六个预设色 / 自定义。
+  预设行只在首格区分皮肤：Quiet 首格是湖蓝，Chromatic 首格是浅粉 `#ac8e97`
+  （Chromatic 深色默认色为湖蓝，原色因此留在首格）。首格「默认」的色块固定显示
+  当前皮肤、当前明暗下的默认色，不随正在使用的主题色变化。选择后即时预览，
+  250ms 后自动保存；文字与焦点对比度自动修正。自定义入口是「色块 + 名称」：
+  点击色块打开原生取色器，点击名称直接应用记忆值（尚未选过时为纯白 `#ffffff`），
+  新颜色单独记忆到 `appearance.settings_accent_custom`。
 
 ### 02 启动器（`launcher`）
 
@@ -326,8 +335,9 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 - dev / debug 运行的 `<base>` 为 `src-tauri/target/debug/`，release 为
   `src-tauri/target/release/`；安装布局下位于 `%LOCALAPPDATA%\Lume\`。
 - 旧配置缺少 `appearance.settings_skin` 时读取为 `quiet`；未知值同样回落
-  `quiet`。旧配置缺少 `appearance.settings_accent` 时读取为空值；非法主题色
-  同样回落为空值。导入、恢复默认和恢复备份都经过同一 Rust 规范化路径。
+  `quiet`。旧配置缺少 `appearance.settings_accent` 或
+  `appearance.settings_accent_custom` 时读取为空值；非法值同样回落为空值。
+  导入、恢复默认和恢复备份都经过同一 Rust 规范化路径。
 - 外部 TOML 替换、`backup.toml` 恢复和默认值恢复都通过 Rust 命令完成；前端不直接
   读写设置文件或 SQLite。
 
@@ -338,7 +348,8 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 - CDP：`node scripts/cdp_settings_smoke.mjs`、
   `node scripts/cdp_settings_skin_verify.mjs` 与
   `node scripts/cdp_settings_accent_verify.mjs`。主题色脚本覆盖首帧属性、四组合
-  染色、WCAG 对比度、系统明暗重算、预设/自定义值、持久化、撤销、恢复默认、
-  只读文件回滚、搜索定位、窄窗口布局、进程重启与启动器隔离。
+  染色、WCAG 对比度、系统明暗重算、预设/自定义值、取色器记忆值与皮肤默认色、
+  持久化、撤销、恢复默认、只读文件回滚、搜索定位、窄窗口布局、进程重启与
+  启动器隔离。
 - 手工：按 [TESTING.md](TESTING.md) 的设置窗清单复核真实窗口、200% 缩放、
   快捷键录制、UAC、服务/代理注册与备份恢复。

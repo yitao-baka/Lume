@@ -10,6 +10,12 @@
 
 方案日期：2026-10-19。
 
+> 色彩现状：Chromatic 深色的原生强调色已改为湖蓝 `#5ac8fa`（选中背景为同一套
+> 16% oklab 混色），本稿原本的 `#AC8E97` 作为调色盘首格「浅粉」保留；浅色仍是
+> 本稿的 Mineral 灰绿。运行时契约与调色盘行为见 [SETTINGS.md](SETTINGS.md) 与
+> [SETTINGS_ACCENT_COLOR.md](SETTINGS_ACCENT_COLOR.md)，下文色板论证、对比度表与
+> 截图保留设计探索时的原始数据。
+
 ## 文档关系
 
 | 文档 | 直接职责 |

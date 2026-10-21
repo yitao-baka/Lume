@@ -145,9 +145,10 @@ const reloadSettings = async () => {
   await sleep(700);
   await waitReady();
 };
-const setAppearance = async (skin, colorMode, accent) => {
+const setAppearance = async (skin, colorMode, accent, custom) => {
   const appearance = { settings_skin: skin, color_mode: colorMode };
   if (accent !== undefined) appearance.settings_accent = accent;
+  if (custom !== undefined) appearance.settings_accent_custom = custom;
   await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', { patch: {
     appearance: ${JSON.stringify(appearance)}
   }}).then(() => true)`);
@@ -365,6 +366,7 @@ await sleep(550);
 const custom = await collect();
 const customSaved = await getSaved();
 check("custom color commits as normalized lowercase hex", custom.customActive && custom.checked === null && custom.customValue === "#abcdef" && customSaved.appearance.settings_accent === "#abcdef", JSON.stringify({ custom: custom.customValue, checked: custom.checked, saved: customSaved.appearance.settings_accent }));
+check("custom commit also remembers the color for the picker", customSaved.appearance.settings_accent_custom === "#abcdef", JSON.stringify(customSaved.appearance));
 check("custom state keeps one preset in the keyboard tab order", custom.accentTabStops === 1, String(custom.accentTabStops));
 
 await settings.evalJs(`Array.from(document.querySelectorAll('.settings-footer-action')).find((el) => el.textContent.includes('Undo') || el.textContent.includes('撤销') || el.textContent.includes('復原'))?.click(); true`);
@@ -455,6 +457,101 @@ await sleep(500);
 await waitReady();
 const restarted = await collect();
 check("accent survives a full process restart on the first frame", restarted.accentAttr === "custom" && restarted.userAccent === "#d96c95", JSON.stringify({ attr: restarted.accentAttr, accent: restarted.userAccent }));
+
+
+// ── ⑧ picker ownership + skin defaults ────────────────────────────────────
+/** Resolve the live skin tokens the palette renders from. */
+const palette = () => settings.evalJs(`(() => {
+  const root = document.documentElement;
+  const host = document.querySelector('.settings');
+  const read = (token) => {
+    const probe = document.createElement('span');
+    probe.style.display = 'none';
+    probe.style.color = getComputedStyle(host).getPropertyValue(token).trim();
+    document.body.appendChild(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    return resolved;
+  };
+  const hex = (rgb) => {
+    const parts = rgb.match(/[0-9]+/g);
+    return parts && parts.length >= 3
+      ? '#' + parts.slice(0, 3).map((part) => Number(part).toString(16).padStart(2, '0')).join('')
+      : rgb;
+  };
+  return {
+    skin: root.dataset.settingsSkin,
+    theme: root.dataset.theme,
+    structure: hex(read('--settings-structure')),
+    options: Array.from(document.querySelectorAll('.settings-accent-option')).map((el) => el.dataset.accentValue),
+    labels: Array.from(document.querySelectorAll('.settings-accent-option')).map((el) => el.textContent.trim()),
+    custom: document.querySelector('.settings-accent-input')?.value ?? '',
+    defaultSwatch: hex((() => {
+      const swatch = document.querySelector('.settings-accent-option[data-accent-value="default"] .settings-accent-swatch');
+      return swatch ? getComputedStyle(swatch).backgroundColor : '';
+    })()),
+    defaultLabel: document.querySelector('.settings-accent-option[data-accent-value="default"]')?.textContent.trim() ?? '',
+  };
+})()`);
+
+await setAppearance("quiet", "dark", "#3fb98b", "#abcdef");
+await go("appearance");
+const keptPicker = await palette();
+check("custom picker shows the remembered color, not the applied preset", keptPicker.custom === "#abcdef" && keptPicker.structure === "#3fb98b", JSON.stringify({ custom: keptPicker.custom, structure: keptPicker.structure }));
+await settings.evalJs(`document.querySelector('.settings-accent-option[data-accent-value="#6f7cff"]')?.click(); true`);
+await sleep(550);
+const afterPreset = await palette();
+const afterPresetSaved = await getSaved();
+check("picking a preset leaves the remembered custom color untouched", afterPreset.custom === "#abcdef" && afterPresetSaved.appearance.settings_accent === "#6f7cff" && afterPresetSaved.appearance.settings_accent_custom === "#abcdef", JSON.stringify({ custom: afterPreset.custom, saved: afterPresetSaved.appearance.settings_accent, savedCustom: afterPresetSaved.appearance.settings_accent_custom }));
+
+await setAppearance("quiet", "dark", "", "");
+await go("appearance");
+const quietDefault = await palette();
+check("an empty remembered color falls back to pure white", quietDefault.custom === "#ffffff" && quietDefault.structure === "#5ac8fa", JSON.stringify({ custom: quietDefault.custom, structure: quietDefault.structure }));
+
+await setAppearance("chromatic", "dark", "", "");
+await go("appearance");
+const chromaticDark = await palette();
+check("chromatic dark follows 湖蓝 and leads its palette with the skin's original color", chromaticDark.structure === "#5ac8fa" && chromaticDark.options[1] === "#ac8e97" && !chromaticDark.options.includes("#5ac8fa"), JSON.stringify({ structure: chromaticDark.structure, options: chromaticDark.options }));
+check("chromatic dark keeps that color as a labeled preset", /浅粉|淺粉|Blush/.test(chromaticDark.labels[1] ?? ''), JSON.stringify(chromaticDark.labels));
+check("chromatic dark's picker default is pure white too", chromaticDark.custom === "#ffffff", chromaticDark.custom);
+await showAccent();
+await settings.shot("chromatic-dark-default");
+
+await setAppearance("chromatic", "light", "", "");
+await go("appearance");
+const chromaticLight = await palette();
+check("chromatic light keeps its mineral green default", chromaticLight.structure === "#64796d" && chromaticLight.options[1] === "#ac8e97", JSON.stringify({ structure: chromaticLight.structure, options: chromaticLight.options }));
+
+// The 默认 option keeps the skin's own color on its swatch while another
+// accent is in use, and still clears the override when clicked.
+await setAppearance("quiet", "dark", "#6f7cff", "");
+await go("appearance");
+const fixedSwatch = await palette();
+check("the 默认 swatch stays on the skin default while a preset is applied", fixedSwatch.defaultSwatch === "#5ac8fa" && fixedSwatch.options[0] === "default", JSON.stringify({ swatch: fixedSwatch.defaultSwatch, options: fixedSwatch.options }));
+check("the first option is labeled 默认", /默认|預設|Default/.test(fixedSwatch.defaultLabel), fixedSwatch.defaultLabel);
+await settings.evalJs(`document.querySelector('.settings-accent-option[data-accent-value="default"]')?.click(); true`);
+await sleep(550);
+const cleared = await collect();
+check("clicking 默认 clears the override again", cleared.accentAttr === undefined && cleared.checked === "default" && cleared.userAccent === "", JSON.stringify({ attr: cleared.accentAttr, checked: cleared.checked }));
+
+// Clicking the custom entry applies its stored color straight away.
+await setAppearance("quiet", "dark", "", "#abcdef");
+await go("appearance");
+await settings.evalJs(`document.querySelector('.settings-accent-custom-apply')?.click(); true`);
+await sleep(550);
+const appliedCustom = await collect();
+const appliedCustomSaved = await getSaved();
+check("clicking the custom entry applies the remembered color", appliedCustom.accentAttr === "custom" && appliedCustom.userAccent === "#abcdef" && appliedCustomSaved.appearance.settings_accent === "#abcdef", JSON.stringify({ accent: appliedCustom.userAccent, saved: appliedCustomSaved.appearance.settings_accent }));
+
+// …and pure white when nothing was stored yet.
+await setAppearance("quiet", "dark", "", "");
+await go("appearance");
+await settings.evalJs(`document.querySelector('.settings-accent-custom-apply')?.click(); true`);
+await sleep(550);
+const appliedWhite = await collect();
+const appliedWhiteSaved = await getSaved();
+check("clicking the custom entry with nothing stored applies pure white", appliedWhite.accentAttr === "custom" && appliedWhite.userAccent === "#ffffff" && appliedWhiteSaved.appearance.settings_accent === "#ffffff" && appliedWhiteSaved.appearance.settings_accent_custom === "#ffffff", JSON.stringify({ accent: appliedWhite.userAccent, saved: appliedWhiteSaved.appearance.settings_accent, savedCustom: appliedWhiteSaved.appearance.settings_accent_custom }));
 
 console.log(`\n[settings-accent] ${pass} passed, ${fail} failed`);
 killApp();

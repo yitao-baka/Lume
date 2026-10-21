@@ -4174,3 +4174,104 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   12.1ms；另把旧关键帧（`toast-in`）注入回去复现修复前行为（首帧偏低 165.2px、
   末帧跳回居中），确认该断言能抓住回归。
 - 截图：`test/lupx_install_dialog.png`（Quiet 深色：模态框 + 事实块 + 降级提示）。
+---
+
+## 65. 设置窗外观收口：主题命名、Chromatic 默认色、取色器记忆与品牌标识
+
+五条来自使用者的外观反馈：插件列表行的折叠三角、颜色模式的命名、Chromatic 皮肤
+深色下的默认色与调色盘首格、自定义颜色跟着在用颜色跑、关于页的 `LU` 字标。
+
+### 65.1 实现
+
+- **颜色模式更名**：`languages/*.json` 的 `settingsColorModeDark` / `Light` 改为
+  **月之暗面** / **日之耀面**（en: `Lunar Shadow` / `Solar Radiance`），
+  `settingsColorModeHint` 同步；取值 `system` / `dark` / `light` 与 `跟随系统`
+  不变。`src/settings/catalog.ts` 的搜索关键词补上新名称（保留 `dark` / `light` /
+  `深色` / `浅色` 旧词），`docs/SETTINGS.md` 的外观页说明同步。
+- **Chromatic 深色默认色**：`skins/chromatic.css` 深色 token 块里
+  `--settings-structure` / `--settings-structure-text` 改为湖蓝 `#5ac8fa`，
+  `--settings-selected` 直接写成 `color-mix(in oklab, #5ac8fa 16%, var(--settings-panel-base))`
+  —— 与 `skins/accent.css` 给显式主题色用的 16% 混色同一条规则，因此「默认」
+  与显式选中湖蓝在视觉上一致。浅色块（灰绿 `#64796d`）不动。
+- **调色盘首格随皮肤**：`src/settings/accent.ts` 新增
+  `settingsAccentPresets(skin)`，首格是唯一随皮肤取色的预设——Quiet 仍是湖蓝
+  `#5ac8fa`，Chromatic 换成该皮肤原本的 `#ac8e97`，标签 `settingsAccentPresetBlush`
+  （中「浅粉」/ en `Blush`）。`AppearancePane` 的预设行与 `selectedIndex` 都读
+  这一份列表，选中值出现在当前皮肤预设里时才点亮对应项。
+- **取色器记忆色**：新增 `appearance.settings_accent_custom`。Rust `Appearance`
+  加字段（`#[serde(default)]`）、`Settings::normalize()` 与 `impl Default` 同步、
+  单元测试覆盖默认值 / 旧配置缺字段 / 往返写入 / 非法补丁；`src/settings/types.ts`
+  的 `SettingsData` 与 `DEFAULT_SETTINGS` 跟上，`Settings.tsx` 在加载与恢复默认
+  两条路径再归一化一次。`AccentPalette` 改为持有 `custom` / `skin` /
+  `onCustomChange`：显示 `normalize(custom) || 皮肤当前默认色`，提交时同时写
+  `settings_accent`（立即生效）与 `settings_accent_custom`（记忆），`input` 阶段
+  仍然只预览。
+- **关于页品牌标识**：`AboutPane` 的 `LU` 字标换成 `icon-transparent.png`
+  （与设置窗顶栏同一素材），`skins/base.css` 的 `.settings-about-monogram` 改为
+  无框的 `.settings-about-mark`：不再保留结构色方框，图标 104px（窄窗 78px）并
+  沿用 `--icon-filter` 反色。
+- **插件列表折叠三角**：删掉 `PluginCard` 里的 `.plg-chev` 节点与 `skins/base.css`
+  的两条规则；行头仍是点击 / 键盘激活目标，`headStatic` 只用于详情卡（不参与
+  展开），右侧详情面板与列表选中关系不变。
+- **调色盘「默认」项**：`settingsAccentFollowSkin` 更名 `settingsAccentDefault`
+  （默认 / 預設 / Default）。首项色块不再用「跟随」对角线渐变（`.settings-accent-swatch.follow`
+  规则删除），改为实色并固定显示当前皮肤、当前明暗下的默认色：`skinDefaultAccent()`
+  从 `<html>` 读 `--settings-structure`（染色层只覆盖 `body.settings-window` 与
+  `.settings`），options memo 里读一次 `themeMode()` 以便明暗翻转时重算。
+  `data-accent-value` 的占位值从 `follow` 改为 `default`。
+- **自定义入口点名称即应用**：`<label>` 改为 `<div>` + 内部
+  `.settings-accent-custom-apply` 按钮（`aria-pressed` = 当前生效值是否为自定义）。
+  点色块（原生 `<input type="color">`）仍然打开取色器；点名称直接
+  `onCustomChange(customColor())`，与预设一样立即应用并落盘。取色器的兜底值统一
+  为纯白 `#ffffff`（`SETTINGS_ACCENT_CUSTOM_FALLBACK`），不再回退皮肤默认色。
+
+### 65.2 踩坑
+
+- **预设列表不能全局替换**：把湖蓝预设直接换成 `#ac8e97` 会让 Quiet 皮肤在浅色下
+  彻底失去湖蓝（Quiet 浅色的原生色是 `#0969da`，不是湖蓝），所以首格必须按皮肤
+  取色，其余五格共用。
+- **「默认」与显式主题色的表面染色要对齐**：`accent.css` 只在
+  `html[data-settings-accent]` 下染五块表面；皮肤原生 token 不跟着改的话，深色
+  Chromatic 的选中背景会停在旧的原色混色上，与新的湖蓝结构色撞色。把
+  `--settings-selected` 写成同一条 16% 混色即可对齐（实测 `#313d46`：结构色
+  5.87:1、选中文字 7.84:1，均达标）。
+- **CDP 脚本里的 `\d` 会变成 `d`**：`evalJs` 的页面代码写在模板字符串里，
+  `\d` 属于未识别转义、最终字符串只剩 `d`，`/rgb\((\d+)...)/` 永远不匹配，实测
+  读回的是 `rgb(90, 200, 250)` 而不是 `#5ac8fa`。改用 `[0-9]+` 分组后正常。
+- **新增断言段的落点**：⑧ 段插在 `settings.ws.close()` 之前时，会把「重启后首帧
+  仍是上一次主题色」的断言状态改掉（该断言读的是脚本留下的 accent）。整段移到
+  重启断言之后，两段互不干扰。
+- **scratch 截图脚本会改真设置**：为了拍英文文案把 `appearance.language` 写成
+  `en` 后必须还原成 `system`，否则后续断言中文标签的 CDP 脚本会整片失败。
+- **首项色块必须从 `<html>` 取值**：`accent.css` 的覆盖写在
+  `html[data-settings-accent] body.settings-window` 与 `.settings` 上，从 `.settings`
+  读 `--settings-structure` 拿到的是「正在使用的颜色」；改读 `document.documentElement`
+  才是皮肤默认色。只改取值来源还不够——options memo 的依赖里没有主题，明暗翻转后
+  色块会停在旧值，因此要在 memo 里读一次 `themeMode()`。
+- **`<label>` 会吞掉点击**：原来的自定义入口是包住 `<input type="color">` 的
+  `<label>`，点名称会转发给输入框、直接弹系统取色器，「点名称即应用」无法实现。
+  改成 `<div>` 容器 + 独立按钮后，色块与名称各司其职。
+- **`cdp_visual_audit_verify` 的 5 项剪贴板失败与本轮无关**：脚本切到剪贴板模式后
+  只等 1.1s，而本机冷启动时首屏行约 5s 才渲染（探针实测 0 → 12 行）。把本轮改动
+  stash 后重建 exe 复现同样 5 项，确认是既有的时序问题。
+
+### 65.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cd src-tauri && cargo check`、
+  `cargo test`（**228 passed / 9 ignored**）、`pnpm run tauri build --debug --no-bundle`
+  通过。
+- `node scripts/cdp_settings_accent_verify.mjs` **47/47 PASS**（第二轮再补 5 项：
+  默认色块在用其他颜色时仍为 `#5ac8fa`、首项标签为「默认」、点击默认清除覆盖、
+  点击自定义名称应用记忆色、无记忆值时应用纯白并落盘两个字段）。新增 8 项断言：
+  自定义提交同时落盘两个字段、取色器显示记忆色而不是在用预设、选预设不改写记忆色、
+  空记忆值回退皮肤默认色、Chromatic 深色结构色为 `#5ac8fa`、首格为 `#ac8e97` 且
+  湖蓝不再单列、首格标签本地化、Chromatic 浅色仍是 `#64796d`；原有四组合染色、
+  对比度、系统明暗重算、readonly 回滚、窄窗与重启断言全部保持通过。
+- `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**、
+  `node scripts/cdp_settings_smoke.mjs` **10/10 PASS**、
+  `node scripts/cdp_plugins_pane_verify.mjs` **ALL PASS**。
+- `node scripts/cdp_visual_audit_verify.mjs` **23/28**，5 项失败均为启动器剪贴板页
+  的冷启动时序问题（stash 后复现同样 5 项）。
+- 截图：`test/settings-accent-verify/chromatic-dark-default.png`（Chromatic 深色
+  默认湖蓝 + 首格浅粉 + 取色器显示 `#5ac8fa`）；scratch 全皮肤截图在
+  `test/verify-shots/`（关于页图标、插件列表、外观页三组明暗）。

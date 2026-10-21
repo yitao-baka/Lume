@@ -57,10 +57,12 @@ independent list/detail scrolling in the plugin manager.
 `node scripts/cdp_settings_accent_verify.mjs` covers the settings-window accent:
 first-frame `data-settings-accent`, normalized inline tokens, Quiet /
 Chromatic × light / dark tinting, WCAG contrast floors, system-theme
-re-derivation, preset/custom input persistence, undo, restore defaults,
-read-only save rollback, catalog keywords, Portaled help-surface tinting,
-spinner-free numeric “More…” inputs, 1040×720 / 560×420 overflow, launcher
-isolation and a full process restart. The lighter
+re-derivation, preset/custom input persistence, the remembered custom color
+(the picker ignores the preset in use and falls back to the skin default),
+Chromatic's dark Aqua default with the skin's original color in the first
+preset slot, undo, restore defaults, read-only save rollback, catalog keywords,
+Portaled help-surface tinting, spinner-free numeric “More…” inputs,
+1040×720 / 560×420 overflow, launcher isolation and a full process restart. The lighter
 `node scripts/cdp_settings_smoke.mjs` covers the grouped navigation, command
 search, autosave status bar, restore confirmation, clipboard disabled-slider
 dependency, keycap shortcuts, and page screenshots. The former
@@ -248,8 +250,11 @@ dev URL instead.
    not change. Repeat with light/dark mode: both skins must use their own
    palette. Select each accent preset and a custom color with the native color
    picker; structures, selected rows, switches and small accent text update
-   immediately, values survive reload/restart, and **跟随皮肤** restores the
-   native skin. With the system color mode active, flip Windows app light/dark
+   immediately, values survive reload/restart, **默认** restores the native skin
+   (its swatch stays on the skin default while another color is applied), and
+   clicking the custom entry's name applies the stored color (pure white before
+   one is stored) without opening the picker. With the system color mode active,
+   flip Windows app light/dark
    mode and confirm the derived accent updates without reopening the window.
    Repeat the picker at 200% scaling and check the 32×32px hit area, keyboard
    traversal, and that the launcher and plugin pages keep their own accent.

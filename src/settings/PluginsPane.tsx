@@ -738,9 +738,6 @@ function PluginCard(props: {
             label={t("pluginToggleLabel", { name: p().name || p().id })}
             onChange={props.onToggleEnabled}
           />
-          <Show when={!props.headStatic}>
-            <span class="plg-chev" classList={{ open: props.open }}>▸</span>
-          </Show>
         </div>
       </div>
 

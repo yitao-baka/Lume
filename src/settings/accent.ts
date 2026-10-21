@@ -1,4 +1,5 @@
 import { themeMode } from "../theme";
+import type { SettingsSkin } from "./types";
 
 /** Canonical preset colors. Persistence always stores the hex value. */
 export const SETTINGS_ACCENT_PRESETS = [
@@ -9,6 +10,33 @@ export const SETTINGS_ACCENT_PRESETS = [
   { value: "#3fb98b", labelKey: "settingsAccentPresetEmerald" },
   { value: "#e0a33a", labelKey: "settingsAccentPresetAmber" },
 ] as const;
+
+/**
+ * Chromatic Edge's signature 浅粉. The skin's dark default is 湖蓝 (Aqua), so its
+ * own color takes the slot Aqua holds for the other skin — it stays one click
+ * away instead of disappearing from the palette.
+ */
+const SETTINGS_ACCENT_PRESET_CHROMATIC = {
+  value: "#ac8e97",
+  labelKey: "settingsAccentPresetBlush",
+} as const;
+
+/**
+ * The preset row for one skin. Only the first slot differs: Quiet leads with
+ * 湖蓝, Chromatic with its own signature color; the rest of the row is shared.
+ */
+export function settingsAccentPresets(skin: SettingsSkin) {
+  return skin === "chromatic"
+    ? [SETTINGS_ACCENT_PRESET_CHROMATIC, ...SETTINGS_ACCENT_PRESETS.slice(1)]
+    : SETTINGS_ACCENT_PRESETS;
+}
+
+/**
+ * The custom picker's color while nothing has been stored yet: pure white, in
+ * every skin and mode. Applying the custom entry with no saved color writes
+ * this value instead of falling back to the skin's own accent.
+ */
+export const SETTINGS_ACCENT_CUSTOM_FALLBACK = "#ffffff";
 
 export type AccentTokens = {
   structure: string;

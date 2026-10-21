@@ -23,8 +23,9 @@
 
 - 在「外观」页提供设置窗皮肤选择，用户无需重启即可在 Quiet Control Deck 与
   Chromatic Edge 之间切换。
-- 皮肤与明暗模式是两个正交维度：Chromatic Edge 使用浅色 Mineral Paper /
-  深色 Charcoal Blush；Quiet Control Deck 使用自己的浅色 / 深色 token。
+- 皮肤与明暗模式是两个正交维度：Chromatic Edge 使用浅色 Mineral Paper（灰绿
+  强调）/ 深色 Charcoal（湖蓝强调，浅粉 `#AC8E97` 为该皮肤的调色盘首格）；
+  Quiet Control Deck 使用自己的浅色 / 深色 token。
 - 皮肤偏好持久化到 `settings.toml`，并随导入、恢复备份、恢复默认值一起生效。
 - 切换过程中保留当前页面、滚动位置、键盘焦点和未提交的本地编辑。
 - 设置窗是唯一消费该偏好的表面。启动器、插件页画布、分离插件窗口、托盘图标
@@ -54,8 +55,8 @@
 | `quiet` | `dark` | Quiet Control Deck 深色 |
 | `quiet` | `light` | Quiet Control Deck 浅色 |
 | `chromatic` | `system` | Chromatic Edge，跟随系统明暗 |
-| `chromatic` | `dark` | Chromatic Edge · Charcoal Blush |
-| `chromatic` | `light` | Chromatic Edge · Mineral Paper |
+| `chromatic` | `dark` | Chromatic Edge · Charcoal（湖蓝强调） |
+| `chromatic` | `light` | Chromatic Edge · Mineral Paper（灰绿强调） |
 
 `system` 继续由现有 `prefers-color-scheme` 监听解析，皮肤层不复制系统主题监听。
 

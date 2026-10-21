@@ -7,7 +7,8 @@ import { t } from "../i18n";
 import { themeMode } from "../theme";
 import {
   normalizeSettingsAccent,
-  SETTINGS_ACCENT_PRESETS,
+  SETTINGS_ACCENT_CUSTOM_FALLBACK,
+  settingsAccentPresets,
 } from "./accent";
 import type { SettingsData, SettingsSkin } from "./types";
 import { SegmentedControl, SettingGroup, SettingRow } from "./controls";
@@ -96,10 +97,17 @@ function rgbStringToHex(value: string): string {
   );
 }
 
-function skinStructureColor(): string {
-  const settings = document.querySelector<HTMLElement>(".settings");
-  if (!settings) return "#5ac8fa";
-  const raw = getComputedStyle(settings).getPropertyValue("--settings-structure").trim();
+/**
+ * The current skin + mode's own accent color. Read from `<html>`: the
+ * `data-settings-accent` override is scoped to `body.settings-window` and
+ * `.settings`, so this stays the skin default even while another color is
+ * applied — the 默认 swatch must not follow the color in use.
+ */
+function skinDefaultAccent(): string {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue("--settings-structure")
+    .trim();
+  if (!raw) return "#5ac8fa";
   const direct = normalizeSettingsAccent(raw);
   if (direct) return direct;
   const probe = document.createElement("span");
@@ -127,36 +135,44 @@ function AccentPreview() {
 
 function AccentPalette(props: {
   value: string;
+  /** The color the custom picker stored ("" = never picked one). */
+  custom: string;
+  skin: SettingsSkin;
   onPreview: (value: string) => void;
   onChange: (value: string) => void;
+  onCustomChange: (value: string) => void;
 }) {
   let buttons: HTMLButtonElement[] = [];
   const [preview, setPreview] = createSignal("");
   const accent = () => normalizeSettingsAccent(props.value);
-  const options = createMemo(() => [
-    { value: "", label: t("settingsAccentFollowSkin"), swatch: "" },
-    ...SETTINGS_ACCENT_PRESETS.map((preset) => ({
-      value: preset.value,
-      label: t(preset.labelKey),
-      swatch: preset.value,
-    })),
-  ]);
+  const presets = () => settingsAccentPresets(props.skin);
+  const options = createMemo(() => {
+    // The 默认 swatch shows the skin's own accent, which is mode-specific:
+    // reading themeMode() here keeps it in step with a light/dark flip.
+    themeMode();
+    return [
+      { value: "", label: t("settingsAccentDefault"), swatch: skinDefaultAccent() },
+      ...presets().map((preset) => ({
+        value: preset.value,
+        label: t(preset.labelKey),
+        swatch: preset.value,
+      })),
+    ];
+  });
   const selectedIndex = () => {
     const current = accent();
     if (!current) return 0;
-    const found = SETTINGS_ACCENT_PRESETS.findIndex((preset) => preset.value === current);
+    const found = presets().findIndex((preset) => preset.value === current);
     return found < 0 ? -1 : found + 1;
   };
   const customActive = () => selectedIndex() < 0;
   // Keep one radio in the tab order even while Custom is active; otherwise
   // keyboard users could not reach the preset group from Tab.
   const rovingIndex = () => (selectedIndex() < 0 ? 0 : selectedIndex());
-  const customColor = () => {
-    themeMode();
-    const current = accent();
-    if (current) return current;
-    return skinStructureColor();
-  };
+  // The picker owns its own value: the remembered custom color, or — until
+  // the user picks one — pure white. It never mirrors the preset in use.
+  const customColor = () =>
+    normalizeSettingsAccent(props.custom) || SETTINGS_ACCENT_CUSTOM_FALLBACK;
   const shownCustomColor = () => normalizeSettingsAccent(preview()) || customColor();
   createEffect(() => {
     props.value;
@@ -181,14 +197,14 @@ function AccentPalette(props: {
               type="button"
               role="radio"
               aria-checked={selectedIndex() === index()}
-              data-accent-value={option.value || "follow"}
+              data-accent-value={option.value || "default"}
               tabIndex={rovingIndex() === index() ? 0 : -1}
               onClick={() => {
                 props.onChange(option.value);
                 requestAnimationFrame(() => {
                   document
                     .querySelector<HTMLElement>(
-                      `[data-setting-id="appearance.settings_accent"] [data-accent-value="${option.value || "follow"}"]`,
+                      `[data-setting-id="appearance.settings_accent"] [data-accent-value="${option.value || "default"}"]`,
                     )
                     ?.focus();
                 });
@@ -211,8 +227,7 @@ function AccentPalette(props: {
             >
               <span
                 class="settings-accent-swatch"
-                classList={{ follow: !option.swatch }}
-                style={{ "--swatch": option.swatch || undefined }}
+                style={{ "--swatch": option.swatch }}
                 aria-hidden="true"
               >
                 <span />
@@ -222,7 +237,7 @@ function AccentPalette(props: {
           )}
         </For>
       </div>
-      <label
+      <div
         class="settings-accent-custom"
         classList={{ active: customActive() }}
         title={`${t("settingsAccentCustom")}: ${shownCustomColor()}`}
@@ -240,12 +255,21 @@ function AccentPalette(props: {
           onChange={(event) => {
             const value = normalizeSettingsAccent(event.currentTarget.value);
             setPreview("");
-            if (value) props.onChange(value);
+            if (value) props.onCustomChange(value);
           }}
         />
-        <span class="settings-accent-custom-label">{t("settingsAccentCustom")}</span>
-        <code>{shownCustomColor()}</code>
-      </label>
+        {/* The swatch above opens the native picker; this label applies the
+            stored color straight away, so the entry behaves like a preset. */}
+        <button
+          class="settings-accent-custom-apply"
+          type="button"
+          aria-pressed={customActive()}
+          onClick={() => props.onCustomChange(customColor())}
+        >
+          <span class="settings-accent-custom-label">{t("settingsAccentCustom")}</span>
+          <code>{shownCustomColor()}</code>
+        </button>
+      </div>
     </div>
   );
 }
@@ -343,8 +367,13 @@ export default function AppearancePane(props: {
         >
           <AccentPalette
             value={a().settings_accent}
+            custom={a().settings_accent_custom}
+            skin={a().settings_skin}
             onPreview={props.onAccentPreview}
             onChange={(value) => props.onChange({ settings_accent: value })}
+            onCustomChange={(value) =>
+              props.onChange({ settings_accent: value, settings_accent_custom: value })
+            }
           />
           <Show when={props.accentError}>
             <span class="settings-inline-error" role="alert">

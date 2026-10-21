@@ -46,6 +46,8 @@ impl Settings {
             normalize_settings_skin(&self.appearance.settings_skin).to_string();
         self.appearance.settings_accent =
             normalize_settings_accent(&self.appearance.settings_accent);
+        self.appearance.settings_accent_custom =
+            normalize_settings_accent(&self.appearance.settings_accent_custom);
     }
 }
 
@@ -168,6 +170,11 @@ pub struct Appearance {
     /// lowercase `#rrggbb`. This value never affects the launcher or plugins.
     #[serde(default)]
     pub settings_accent: String,
+    /// The color the user last picked in the custom picker — remembered
+    /// independently of `settings_accent` (picking a preset must not rewrite
+    /// it). Empty = the picker shows pure white.
+    #[serde(default)]
+    pub settings_accent_custom: String,
     /// Entry-box edge length in px — the square box wrapping each main-menu
     /// entry (grid columns adapt to fit).
     #[serde(default = "default_entry_size")]
@@ -572,6 +579,7 @@ impl Default for Settings {
                 color_mode: "system".into(),
                 settings_skin: "quiet".into(),
                 settings_accent: String::new(),
+                settings_accent_custom: String::new(),
                 entry_size: 110,
                 round_app_icons: false,
                 window_width: 720,
@@ -1358,36 +1366,56 @@ mod tests {
         ensure_settings_files(&base).unwrap();
         let defaults = read_settings(&base);
         assert_eq!(defaults.appearance.settings_accent, "");
-        assert!(fs::read_to_string(default_path(&base))
-            .unwrap()
-            .contains("settings_accent = \"\""));
+        assert_eq!(defaults.appearance.settings_accent_custom, "");
+        let factory = fs::read_to_string(default_path(&base)).unwrap();
+        assert!(factory.contains("settings_accent = \"\""));
+        assert!(factory.contains("settings_accent_custom = \"\""));
 
-        // Older files without the key read as the follow-skin value.
+        // Older files without the keys read as the follow-skin value.
         let full = fs::read_to_string(settings_path(&base)).unwrap();
         let legacy = full
             .lines()
-            .filter(|line| !line.trim_start().starts_with("settings_accent ="))
+            .filter(|line| {
+                !line.trim_start().starts_with("settings_accent =")
+                    && !line.trim_start().starts_with("settings_accent_custom =")
+            })
             .collect::<Vec<_>>()
             .join("\n");
         fs::write(settings_path(&base), legacy).unwrap();
         assert_eq!(read_settings(&base).appearance.settings_accent, "");
+        assert_eq!(read_settings(&base).appearance.settings_accent_custom, "");
 
         // Valid values round-trip; an invalid patch does not fail the document
         // and only clears the accent field.
         let mut next = read_settings(&base);
         next.appearance.settings_accent = "#6F7CFF".into();
+        next.appearance.settings_accent_custom = "#ABCDEF".into();
         next.appearance.settings_skin = "chromatic".into();
         next.appearance.color_mode = "light".into();
         write_settings_light(&base, &next).unwrap();
         assert_eq!(read_settings(&base).appearance.settings_accent, "#6f7cff");
+        assert_eq!(
+            read_settings(&base).appearance.settings_accent_custom,
+            "#abcdef"
+        );
         let merged = merge_settings_patch(
             &next,
             serde_json::json!({ "appearance": { "settings_accent": "rgb(0 0 0)" } }),
         )
         .unwrap();
         assert_eq!(merged.appearance.settings_accent, "");
+        // Picking a preset rewrites only the applied accent — the remembered
+        // custom color survives the patch.
+        assert_eq!(merged.appearance.settings_accent_custom, "#abcdef");
         assert_eq!(merged.appearance.settings_skin, "chromatic");
         assert_eq!(merged.appearance.color_mode, "light");
+        let cleared = merge_settings_patch(
+            &next,
+            serde_json::json!({ "appearance": { "settings_accent_custom": "nope" } }),
+        )
+        .unwrap();
+        assert_eq!(cleared.appearance.settings_accent_custom, "");
+        assert_eq!(cleared.appearance.settings_accent, "#6f7cff");
         fs::remove_dir_all(&base).ok();
     }
 

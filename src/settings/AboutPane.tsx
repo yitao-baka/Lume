@@ -5,6 +5,7 @@ import { createSignal, Show } from "solid-js";
 import { t } from "../i18n";
 import { APP_VERSION_LABEL } from "../appVersion";
 import { settingsError } from "./errors";
+import lumeAppIcon from "../../src-tauri/icons/icon-transparent.png";
 
 const HOMEPAGE = "https://github.com/yitao-baka/Lume";
 
@@ -35,7 +36,9 @@ export default function AboutPane() {
   return (
     <section class="settings-about">
       <div class="settings-about-brand">
-        <span class="settings-about-monogram" aria-hidden="true">LU</span>
+        <span class="settings-about-mark" aria-hidden="true">
+          <img src={lumeAppIcon} alt="" draggable={false} />
+        </span>
         <div>
           <h2>LUME</h2>
           <p>{t("aboutTagline")}</p>

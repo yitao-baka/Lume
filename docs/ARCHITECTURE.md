@@ -564,7 +564,14 @@ before adding a field:
   surfaces under `html[data-settings-accent]` for both `.settings` and the
   settings document's `body.settings-window`, so Portal-rendered help surfaces
   inherit the same tokens. An empty value removes the attribute and inline
-  variables so the skin's native tokens and geometry remain unchanged.
+  variables so the skin's native tokens and geometry remain unchanged. The
+  palette's first preset is the only skin-dependent swatch
+  (`settingsAccentPresets`): Quiet leads with Aqua, Chromatic with its original
+  `#ac8e97` (whose dark default is Aqua). The picker shows
+  `appearance.settings_accent_custom` — the remembered color, written together
+  with the accent on commit — or pure white while it is empty; the 默认 swatch
+  reads the skin token from `<html>`, so it stays the skin default instead of
+  following the accent in use.
   The
   satellite preview is its own entry (`src/preview.tsx`). Its compact header
   names the current file/content type and owns the in-window `close_preview`

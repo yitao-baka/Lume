@@ -14,9 +14,13 @@ html[data-settings-skin="chromatic"] {
   --settings-text: #dcd8d1;
   --settings-secondary: #bbb8b2;
   --settings-muted: #96949b;
-  --settings-structure: #ac8e97;
-  --settings-structure-text: #c0a4ac;
-  --settings-selected: #372d31;
+  /* Default accent = 湖蓝 (Aqua): the skin's original mauve moved into the
+     palette's first slot (src/settings/accent.ts). The selection tint is the
+     same 16% oklab mix an explicit Aqua accent produces (skins/accent.css),
+     so "follow skin" and a picked Aqua stay visually identical. */
+  --settings-structure: #5ac8fa;
+  --settings-structure-text: #5ac8fa;
+  --settings-selected: color-mix(in oklab, #5ac8fa 16%, var(--settings-panel-base));
   --settings-selected-text: #dcd8d1;
   --settings-hover: rgba(220, 216, 209, 0.055);
   --settings-signal: #c09682;

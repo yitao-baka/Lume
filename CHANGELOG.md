@@ -12,7 +12,7 @@ All notable changes to Lume are documented here. Format based on
 ### Added
 
 - **设置窗主题色与调色盘** — 新增 `appearance.settings_accent`（空值跟随皮肤，
-  否则持久化小写 `#rrggbb`），外观页提供跟随皮肤、湖蓝 / 靛蓝 / 紫罗兰 / 玫瑰 /
+  否则持久化小写 `#rrggbb`），外观页提供默认、湖蓝 / 靛蓝 / 紫罗兰 / 玫瑰 /
   翡翠 / 琥珀与原生颜色输入。`src/settings/accent.ts` 统一归一化、按 3:1 / 4.5:1
   派生结构色与小字色，并在系统明暗切换时重算；`skins/accent.css` 以固定低比例把
   主题色染入画布、导航栏、面板、控件和选中背景，空值时完全回退原生皮肤。首帧、
@@ -39,6 +39,20 @@ All notable changes to Lume are documented here. Format based on
   1040×720 / 560×420 九页无横向溢出）；`node scripts/cdp_settings_smoke.mjs`
   **9/9 PASS**。
 
+- **取色器记忆色** — 新增 `appearance.settings_accent_custom`（空值 = 尚未选过自定义
+  色）。取色器从此拥有自己的值：切换预设、默认或换皮肤都不再改写它，输入框始终
+  显示这份记忆值，未选过时统一显示纯白 `#ffffff`；提交自定义色时与
+  `settings_accent` 一起写入，`input` 阶段仍然只预览。Rust 在读取、补丁合并、
+  导入、恢复默认、恢复备份与整表保存后统一规范化该字段，前端在加载与恢复默认
+  路径再次归一化；旧配置缺字段读取为空值，恢复默认值同时清空两者。三语新增
+  `settingsAccentPresetBlush`。验证：`pnpm exec tsc --noEmit`、`pnpm run build`、
+  `cargo check`、`cargo test`（**228 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `node scripts/cdp_settings_accent_verify.mjs` **42/42 PASS**（新增 8 项断言：
+  取色器显示记忆色而不是在用预设、选预设不改写记忆色、空记忆值回退纯白、
+  Chromatic 深色默认湖蓝与首格浅粉、Chromatic 浅色保持灰绿、自定义提交同时落盘
+  两个字段）。
+
 ### Changed
 
 - **插件安装确认改为模态弹窗** — `.lupx` 的事实核对从插件页内联卡片
@@ -62,6 +76,41 @@ All notable changes to Lume are documented here. Format based on
   `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**、
   `node scripts/cdp_settings_accent_verify.mjs` **34/34 PASS**；
   截图 `test/lupx_install_dialog.png`。
+
+- **颜色模式更名与 Chromatic 深色默认色** — 外观页的深色 / 浅色更名为
+  **月之暗面** / **日之耀面**（en: Lunar Shadow / Solar Radiance；`跟随系统` 与
+  三个取值 `system` / `dark` / `light` 不变），行内说明与设置搜索关键词同步。
+  Chromatic 皮肤深色下的原生强调色改为湖蓝 `#5ac8fa`，`--settings-selected` 写成
+  同一套 16% oklab 混色，使「默认」与显式选中湖蓝视觉一致；该皮肤原本的
+  `#ac8e97` 移到调色盘首格并取名 **浅粉**，浅色下的灰绿 `#64796d` 保持不变。
+  验证：`node scripts/cdp_settings_accent_verify.mjs` **42/42 PASS**（Chromatic
+  深色结构色 = `#5ac8fa`、首格 = `#ac8e97`、湖蓝不再单列、浅色仍为 `#64796d`），
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**；截图
+  `test/settings-accent-verify/chromatic-dark-default.png`。
+
+- **关于页品牌标识与插件列表收口** — 关于页的 `LU` 字标换成与设置窗顶栏同源的
+  应用图标（透明底 `icon-transparent.png` + `--icon-filter` 反色，58px / 窄窗
+  44px，仍收在结构色方框内）；插件主从视图的列表行去掉 `▸` 折叠三角，行的点击 /
+  键盘激活与右侧详情面板不变。验证：`node scripts/cdp_settings_smoke.mjs`
+  **10/10 PASS**、`node scripts/cdp_plugins_pane_verify.mjs` **ALL PASS**、
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**（含 560×420 九页无
+  横向溢出）。`node scripts/cdp_visual_audit_verify.mjs` **23/28** —— 5 项失败全部
+  落在启动器剪贴板页（脚本等待窗口内首屏行尚未渲染，本机冷启动约需 5s）；把本轮
+  改动 stash 后重建 exe 复现同样 5 项，确认与本轮改动无关。
+
+- **调色盘「默认」项与自定义入口** — 「跟随皮肤」更名 **默认**（繁：預設 /
+  en：Default），其色块固定显示当前皮肤、当前明暗下的默认色：从 `<html>` 读取
+  `--settings-structure`（染色层只覆盖 `body.settings-window` 与 `.settings`），
+  并读取 `themeMode()` 以跟随明暗，因此正在使用别的主题色时不再跟着变；原「跟随」
+  对角线渐变一并去掉，所有色块统一为实色。自定义入口改为「色块 + 名称按钮」：
+  点色块打开原生取色器，点名称直接应用记忆值（尚未保存过时为纯白 `#ffffff`，
+  不再回退皮肤默认色），行为与预设一致。验证：`pnpm exec tsc --noEmit`、
+  `pnpm run build`、`cargo check`、`cargo test`（**228 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `node scripts/cdp_settings_accent_verify.mjs` **47/47 PASS**（新增 5 项：默认色块
+  在用其他颜色时仍为 `#5ac8fa`、首项标签为「默认」、点击默认清除覆盖、点击自定义
+  名称应用记忆色、无记忆值时应用纯白并落盘两个字段）；截图
+  `test/verify-shots/palette-quiet-dark-indigo.png`。
 
 ### Fixed
 

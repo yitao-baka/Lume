@@ -1939,16 +1939,22 @@ button.settings-toggle.on .settings-toggle-knob {
   border-bottom: 1px solid var(--settings-line);
 }
 
-.settings-about-monogram {
-  width: 116px;
-  height: 90px;
+/* The brand block carries the product mark itself — the same transparent app
+   icon the topbar brand uses, with no plate or frame around it. */
+.settings-about-mark {
+  flex: none;
   display: grid;
   place-items: center;
-  border: 1.5px solid var(--settings-structure);
-  color: transparent;
-  -webkit-text-stroke: 1.5px var(--settings-structure);
-  font: 700 40px/1 "Cascadia Mono", Consolas, monospace;
-  letter-spacing: -0.08em;
+}
+
+.settings-about-mark img {
+  width: 104px;
+  height: 104px;
+  display: block;
+  object-fit: contain;
+  filter: var(--icon-filter);
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .settings-about-brand h2 {
@@ -2001,7 +2007,7 @@ button.settings-toggle.on .settings-toggle-knob {
 
 @media (max-width: 759px) {
   .settings-about-brand h2 { font-size: 34px; }
-  .settings-about-monogram { width: 82px; height: 72px; font-size: 30px; }
+  .settings-about-mark img { width: 78px; height: 78px; }
   .settings-about-row { grid-template-columns: 110px minmax(0, 1fr); }
   .settings-about-row .settings-action { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 }
@@ -2245,8 +2251,6 @@ button.settings-toggle.on .settings-toggle-knob {
 .plg-actions { flex: none; display: flex; align-items: center; gap: 1px; }
 .plg-card.compact .plg-actions .settings-icon-btn,
 .plg-card.compact .plg-actions .settings-test-btn { display: none; }
-.plg-chev { width: 14px; color: var(--settings-muted); font-size: 11px; text-align: center; }
-.plg-chev.open { transform: rotate(90deg); }
 .plg-uninstall.armed { background: var(--settings-signal-tint); }
 
 .plg-detail {
@@ -2529,14 +2533,6 @@ html[data-settings-skin="chromatic"] .settings-accent-option.active {
   background: var(--swatch);
 }
 
-.settings-accent-swatch.follow {
-  background: linear-gradient(
-    135deg,
-    var(--settings-structure) 0 50%,
-    var(--settings-panel) 50% 100%
-  );
-}
-
 .settings-accent-custom {
   width: fit-content;
   max-width: 100%;
@@ -2582,6 +2578,20 @@ html[data-settings-skin="chromatic"] .settings-accent-option.active {
 .settings-accent-input::-webkit-color-swatch {
   border: 0;
   border-radius: calc(var(--settings-control-radius) / 2);
+}
+
+.settings-accent-custom-apply {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .settings-accent-custom-label {

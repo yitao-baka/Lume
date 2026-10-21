@@ -33,6 +33,9 @@ export interface SettingsData {
     settings_skin: SettingsSkin;
     /** Settings-window accent: empty follows the skin, otherwise #rrggbb. */
     settings_accent: string;
+    /** The color the custom picker last stored — remembered independently of
+     * `settings_accent`. Empty = the picker shows pure white. */
+    settings_accent_custom: string;
     /** Entry-box edge length in px — the box wrapping each main-menu entry. */
     entry_size: number;
     /** Crop Navigation result icons to a circle (default off — show the
@@ -175,6 +178,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
     color_mode: "system",
     settings_skin: "quiet",
     settings_accent: "",
+    settings_accent_custom: "",
     entry_size: 110,
     round_app_icons: false,
     window_width: 720,

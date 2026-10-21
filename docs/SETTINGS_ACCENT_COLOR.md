@@ -66,6 +66,11 @@
 | 空字符串 | 完全使用当前皮肤原生的强调色、表面色与选中色 |
 | 合法十六进制色 | 用该色派生强调色与表面染色，覆盖当前皮肤对应的 token |
 
+皮肤原生强调色：Quiet 深色 / 浅色为 `#5ac8fa` / `#0969da`；Chromatic 深色为
+湖蓝 `#5ac8fa`（该皮肤的原色 `#ac8e97` 移到调色盘首格，见 §7.2），浅色为
+`#64796d`。深色 Chromatic 的 `--settings-selected` 直接写成同一套 16% 混色，
+让「默认」与显式选中湖蓝在视觉上一致。
+
 主题色为空时必须与现有视觉逐像素一致。自定义值不能改变皮肤几何、字号、圆角、
 边框宽度、布局或组件结构。
 
@@ -79,12 +84,16 @@
 /// 设置窗主题色：空字符串表示跟随当前皮肤，否则为规范化后的 #rrggbb。
 #[serde(default)]
 pub settings_accent: String,
+/// 取色器最后一次提交的颜色；与 settings_accent 解耦，空值 = 显示皮肤默认色。
+#[serde(default)]
+pub settings_accent_custom: String,
 ```
 
 `impl Default for Settings` 中显式写入空字符串：
 
 ```rust
 settings_accent: String::new(),
+settings_accent_custom: String::new(),
 ```
 
 默认值使用空字符串而不是 Quiet 的青色，原因是 Chromatic 有独立的原生强调色。
@@ -117,6 +126,8 @@ fn normalize_settings_accent(value: &str) -> String
 ```rust
 self.appearance.settings_accent =
     normalize_settings_accent(&self.appearance.settings_accent);
+self.appearance.settings_accent_custom =
+    normalize_settings_accent(&self.appearance.settings_accent_custom);
 ```
 
 `normalize()` 已在读取、补丁合并、导入、恢复默认值、恢复备份和整表保存路径
@@ -130,12 +141,15 @@ self.appearance.settings_accent =
 ```ts
 /** 设置窗主题色；空字符串表示跟随当前皮肤，否则为 #rrggbb。 */
 settings_accent: string;
+/** 取色器记忆的颜色；空字符串表示尚未选过自定义色。 */
+settings_accent_custom: string;
 ```
 
 `DEFAULT_SETTINGS.appearance` 增加：
 
 ```ts
 settings_accent: "",
+settings_accent_custom: "",
 ```
 
 前端再次执行同样的归一化，防止手写配置、旧缓存或测试桩绕过 Rust 校验后留下
@@ -361,13 +375,28 @@ effect 的声明位置必须在现有颜色模式 / 皮肤 effect 之后，保�
 
 预设使用单选语义：
 
-- 跟随皮肤
-- 湖蓝 `#5ac8fa`
+- 默认 `settingsAccentDefault`
 - 靛蓝 `#6f7cff`
 - 紫罗兰 `#a678ff`
 - 玫瑰 `#d96c95`
 - 翡翠 `#3fb98b`
 - 琥珀 `#e0a33a`
+- 浅粉 `#ac8e97`（仅 Chromatic，占首格）
+
+首格是唯一随皮肤变化的预设，位置与「湖蓝」在 Quiet 下的位置相同：
+
+| 皮肤 | 首格色 | 标签 |
+|---|---|---|
+| Quiet | 湖蓝 `#5ac8fa` | `settingsAccentPresetAqua` |
+| Chromatic | 浅粉 `#ac8e97` | `settingsAccentPresetBlush` |
+
+「默认」项的色块固定显示当前皮肤、当前明暗下的默认色：它从 `<html>` 上读取
+`--settings-structure`（染色层只覆盖 `body.settings-window` 与 `.settings`），
+所以正在使用别的主题色时也不会跟着变。
+
+Chromatic 深色的原生强调色改成湖蓝后，湖蓝预设不再单列；原色（浅粉 `#ac8e97`）
+因此占住首格，仍然一键可达。选中的十六进制值若出现在当前皮肤的预设里，就点亮
+对应预设。
 
 每个选项同时显示色块和文字标签，不能只靠颜色表达选中状态。选中项使用
 `--settings-structure` 边框或底边，并暴露 `role="radio"` 与 `aria-checked`。
@@ -377,20 +406,24 @@ effect 的声明位置必须在现有颜色模式 / 皮肤 effect 之后，保�
 
 ### 7.3 自定义颜色
 
-自定义入口使用 HTML 原生 `<input type="color">`。选择自定义入口后显示：
+自定义入口是「原生 `<input type="color">` 色块 + 名称按钮」的一行：
 
-- 32×32px 以上的颜色输入命中区。
-- 当前规范化十六进制值。
-- 本地化「自定义」标签。
-- 可由键盘聚焦并打开系统取色器。
+- 色块保留 32×32px 以上的命中区，点击打开系统取色器。
+- 名称按钮（含当前规范化十六进制值）点击即应用记忆值，不打开取色器，行为与预设
+  一致；尚未保存过颜色时应用纯白 `#ffffff`。
+- 两个控件都可由键盘聚焦，按钮暴露 `aria-pressed` 选中状态。
 
-颜色输入初始值：
+取色器显示的初始值：
 
-1. 已有合法 `settings_accent` 时使用该值。
-2. 否则从当前皮肤的 `--settings-structure` 计算样式读取并转为十六进制。
-3. 读取失败时使用 `#5ac8fa`。
+1. 已有合法 `settings_accent_custom` 时使用该值。
+2. 否则统一为纯白 `#ffffff`（不随皮肤或明暗变化）。
 
-自定义值等于某个预设时，预设项显示选中；不等于任何预设时，自定义入口显示选中
+取色器拥有自己的值：切换预设或「默认」都不改写 `settings_accent_custom`，输入框
+始终显示这份记忆值，因此不会跟着正在使用的颜色跑。提交自定义色时同时写入
+`settings_accent`（立即生效）与 `settings_accent_custom`（记忆），`input` 阶段
+仍然只做预览。
+
+当前生效值等于某个预设时，预设项显示选中；不等于任何预设时，自定义入口显示选中
 状态。颜色输入只写合法 `#rrggbb`。
 
 ### 7.4 预览
@@ -413,7 +446,7 @@ effect 的声明位置必须在现有颜色模式 / 皮肤 effect 之后，保�
 - `settingsAccent`
 - `settingsAccentHint`
 - `settingsAccentDetail`
-- `settingsAccentFollowSkin`
+- `settingsAccentDefault`
 - `settingsAccentCustom`
 - `settingsAccentPresetAqua`
 - `settingsAccentPresetIndigo`
@@ -629,13 +662,20 @@ settings_accent = "#6f7cff"
 | CSS 自引用导致颜色失效 | 皮肤提供 `--settings-*-base`，染色层引用基色而不是被覆盖的派生 token |
 | 皮肤 token 漂移 | 基础色集中在各皮肤 token 块，染色层只定义固定混色规则 |
 | 自定义色与预设名称不一致 | 预设只作为写入快捷方式，持久化始终是十六进制值 |
+| 取色器跟着预设 / 皮肤跑 | 记忆值单独存 `settings_accent_custom`，只在取色器提交或自定义入口点击时改写；空值为纯白 `#ffffff` |
+| 「默认」色块跟着在用颜色跑 | 色块从 `<html>` 读取皮肤原生 `--settings-structure`（染色层只覆盖 body 与 `.settings`），并读取 `themeMode()` 以跟随明暗 |
+| Chromatic 默认色改动后原色不可达 | 原色 `#ac8e97` 占据该皮肤调色盘首格，标签 `settingsAccentPresetBlush`（浅粉） |
 | 取色器系统界面与应用视觉不同 | 使用 WebView2 原生颜色输入，优先保证可访问性与系统行为一致 |
 | 启动器意外继承颜色 | 所有规则限定在 `html[data-settings-accent] .settings`；不修改全局 token |
 
 ## 12. 验收标准
 
-- 外观页可选择跟随皮肤、六个预设色和自定义颜色。
+- 外观页可选择默认、六个预设色和自定义颜色；首格预设随皮肤取色。
 - 自定义颜色即时预览，并在 250ms 内进入保存队列。
+- 取色器显示 `settings_accent_custom`（未设置时为纯白 `#ffffff`），切换预设不改写它。
+- 「默认」项的色块固定在当前皮肤的默认色上，不随正在使用的主题色变化。
+- 点击自定义入口的名称直接应用记忆值（未保存过时为纯白），点击色块才打开取色器。
+- 深色 Chromatic 的原生强调色为湖蓝，选中背景与显式湖蓝主题色一致。
 - 主题色为空时，设置窗计算样式与现有 Quiet / Chromatic 原生值一致。
 - 非空主题色同时影响结构色、文字强调色、选中背景与少量表面色。
 - 所有自定义色在深色 / 浅色和两套皮肤下满足：

@@ -466,7 +466,11 @@ dev URL instead.
    fixture on exit.
 7. **`.lupx` packages** — `node scripts/cdp_lupx_verify.mjs`; cover inspect,
    install, overwrite relation (`upgrade` / `reinstall` / `downgrade`),
-   uninstall and private-file preservation.
+   uninstall and private-file preservation. The install confirmation dialog runs
+   end to end by stubbing the native file dialog at the Windows IPC `fetch`
+   seam: fact block, `aria-modal` + overlay, background `inert`, focus on the
+   safe cancel action, Esc / cancel leaving nothing on disk, and confirm writing
+   through to `plugins/` with the list and toast updating.
 8. **HTTP and slow requests** — `node scripts/cdp_http_probe_verify.mjs`
    (offline local echo server) covers status/headers/text/json, non-2xx,
    request timeout and post-timeout bridge health.

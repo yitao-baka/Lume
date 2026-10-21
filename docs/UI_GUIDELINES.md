@@ -168,6 +168,15 @@ contrast-safe tiers.
 - The plugin manager's master/detail frame is bounded by the available viewport;
   the list and detail panes each scroll independently with hidden scrollbars.
   A long plugin list must never move the selected detail off-screen.
+- The `.lupx` install confirmation is the shared confirm dialog: the inspected
+  package facts (name / version / kind, localized capability chips, payload
+  stats, signature or SHA-256, overwrite relation) render between the hint and
+  the actions, and a long facts block scrolls inside the dialog instead of
+  growing it.
+- Centered dialogs animate with `confirm-in`, which keeps their
+  `translate(-50%, -50%)` centering while easing in from 8px below center. The
+  bottom toast's `toast-in` keyframes only carry the X centering — reusing them
+  makes a dialog appear half a height too low and snap up on the last frame.
 - Position preset marks and every help/tooltip surface must remain legible in
   both Quiet/Chromatic and light/dark combinations.
 

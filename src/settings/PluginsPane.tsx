@@ -19,11 +19,12 @@ import type { PickedIcon } from "../launcher/types";
 import type { PluginManifest, PluginSetting } from "../plugins/types";
 import { Chip, Toggle } from "./controls";
 import { settingsError } from "./errors";
+import type { ConfirmState } from "./types";
 import reloadIcon from "../../res/icons/refresh.svg";
 import deleteIcon from "../../res/icons/delete.svg";
 
 /** What `plugin_lupx_inspect` reports about a picked `.lupx` archive — the
- * confirmation card shows exactly this before anything is written. */
+ * install confirmation dialog shows exactly this before anything is written. */
 interface LupxInfo {
   id: string;
   name: string;
@@ -131,12 +132,7 @@ function pluginSearchText(p: PluginManifest): string {
 
 export default function PluginsPane(props: {
   searchQuery?: string;
-  requestConfirm: (state: {
-    title: string;
-    hint: string;
-    confirmLabel: string;
-    action: () => Promise<void>;
-  }) => void;
+  requestConfirm: (state: ConfirmState, trigger?: HTMLElement) => void;
 }) {
   const [plugins, setPlugins] = createSignal<PluginManifest[]>([]);
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
@@ -151,12 +147,6 @@ export default function PluginsPane(props: {
   /** Idle-reset exemption overrides (docs/ROADMAP_HISTORY.md #46): plugin id → explicit user
    * value; absent means follow the manifest's `keep_session` default. */
   const [keepOverrides, setKeepOverrides] = createSignal<Record<string, boolean>>({});
-  /** `.lupx` install flow: the picked archive's inspected facts (null when
-   * no install is in flight), its source path, and a busy flag while a
-   * command runs. */
-  const [installInfo, setInstallInfo] = createSignal<LupxInfo | null>(null);
-  const [installPath, setInstallPath] = createSignal<string | null>(null);
-  const [installBusy, setInstallBusy] = createSignal(false);
   /** Which plugin's detail panel is open (one at a time keeps the list
    * scannable) and the declared-setting values loaded for it. */
   const [openId, setOpenId] = createSignal<string | null>(null);
@@ -365,9 +355,9 @@ export default function PluginsPane(props: {
   }
 
   /** `.lupx` install, step 1 — pick a file and validate it. The Rust side
-   * only reads: the card below shows the manifest (permissions included)
-   * and nothing is written until 确认安装. */
-  async function pickLupx() {
+   * only reads: the confirmation dialog shows the manifest (permissions
+   * included) and nothing is written until 确认安装. */
+  async function pickLupx(trigger?: HTMLElement) {
     try {
       const picked = await openFileDialog({
         multiple: false,
@@ -375,32 +365,31 @@ export default function PluginsPane(props: {
       });
       if (typeof picked !== "string") return; // cancelled
       const info = await invoke<LupxInfo>("plugin_lupx_inspect", { sourcePath: picked });
-      setInstallPath(picked);
-      setInstallInfo(info);
+      props.requestConfirm(
+        {
+          title: t("pluginsInstallTitle"),
+          hint: t("pluginsInstallHint"),
+          confirmLabel: t("pluginsInstallConfirm"),
+          // A thunk: the dialog evaluates it inside its own reactive scope, so
+          // the facts (and their effects) mount and dispose with the dialog.
+          details: () => <InstallFacts info={info} />,
+          action: () => installLupx(picked, info),
+        },
+        trigger,
+      );
     } catch (err) {
       showStatus(false, settingsError(err, "pluginsActionFailed"));
     }
   }
 
-  /** `.lupx` install, step 2 — the user saw the manifest and confirmed. The
-   * Rust command extracts + swaps and emits `settings-applied` /
-   * `plugin-reload`, so the launcher picks the plugin up immediately. */
-  async function confirmInstall() {
-    const source = installPath();
-    const info = installInfo();
-    if (!source || !info) return;
-    setInstallBusy(true);
-    try {
-      await invoke("plugin_lupx_install", { sourcePath: source });
-      setInstallInfo(null);
-      setInstallPath(null);
-      await refresh();
-      showStatus(true, t("pluginsInstallDone", { name: info.name || info.id }));
-    } catch (err) {
-      showStatus(false, settingsError(err, "pluginsActionFailed"));
-    } finally {
-      setInstallBusy(false);
-    }
+  /** `.lupx` install, step 2 — the confirm dialog's primary action, after the
+   * user saw the facts. The Rust command extracts + swaps and emits
+   * `settings-applied` / `plugin-reload`, so the launcher picks the plugin up
+   * immediately; a rejection keeps the dialog open with the error inline. */
+  async function installLupx(source: string, info: LupxInfo) {
+    await invoke("plugin_lupx_install", { sourcePath: source });
+    await refresh();
+    showStatus(true, t("pluginsInstallDone", { name: info.name || info.id }));
   }
 
   /** Uninstall one disk plugin: the directory (its private `files/` with it)
@@ -464,90 +453,14 @@ export default function PluginsPane(props: {
           value={needle()}
           onInput={(e) => setNeedle(e.currentTarget.value)}
         />
-        <button class="settings-action plg-install-btn" data-setting-id="action.plugin_install" onClick={() => void pickLupx()}>
+        <button
+          class="settings-action plg-install-btn"
+          data-setting-id="action.plugin_install"
+          onClick={(event) => void pickLupx(event.currentTarget)}
+        >
           {t("pluginsInstall")}
         </button>
       </div>
-
-      {/* `.lupx` confirmation card: the manifest facts (permissions included)
-          before anything is written — the informed-consent moment. */}
-      <Show when={installInfo()}>
-        {(info) => (
-          <div class="plg-install">
-            <div class="plg-install-head">
-              <span class="plg-install-title">{t("pluginsInstallTitle")}</span>
-              <span class="plg-name">{info().name || info().id}</span>
-              <span class="plg-ver">{info().version || "-"}</span>
-              <span class="plg-badge">{kindLabel(info().kind)}</span>
-            </div>
-            <Show when={info().description}>
-              <div class="plg-desc">{info().description}</div>
-            </Show>
-            <div class="plg-chiprow">
-              <For each={info().permissions}>
-                {(perm) => (
-                  <span class="plg-perm-chip" title={permDesc(perm)}>
-                    {permLabel(perm)}
-                  </span>
-                )}
-              </For>
-              <span class="plg-install-stats">
-                {t("pluginsInstallStats", {
-                  count: String(info().fileCount),
-                  size: formatBytes(info().totalBytes),
-                })}
-              </span>
-            </div>
-            {/* Signature status (#32.2): a verified signature is a badge, an
-                unsigned package shows the archive hash for out-of-band
-                comparison. Invalid signatures never reach this card. */}
-            <Show
-              when={info().signature === "valid"}
-              fallback={
-                <span class="plg-note" title={info().sha256}>
-                  {t("pluginsInstallUnsigned", { sha256: info().sha256.slice(0, 16) })}
-                </span>
-              }
-            >
-              <span class="plg-note ok">{t("pluginsInstallSignatureValid")}</span>
-            </Show>
-            {/* Overwrite notice, worded by how the package version relates
-                to the installed one (Rust compares semver-ish): an upgrade is
-                routine, a downgrade is the one that warns. */}
-            <Show when={info().relation !== "fresh"}>
-              <span class={"plg-note" + (info().relation === "downgrade" ? " warn" : "")}>
-                {t(
-                  info().relation === "upgrade"
-                    ? "pluginsInstallUpgrade"
-                    : info().relation === "reinstall"
-                      ? "pluginsInstallReinstall"
-                      : "pluginsInstallDowngrade",
-                  { old: info().existingVersion || "-", new: info().version || "-" },
-                )}
-              </span>
-            </Show>
-            <div class="plg-install-actions">
-              <button
-                class="settings-action settings-action-primary"
-                disabled={installBusy()}
-                onClick={() => void confirmInstall()}
-              >
-                {t("pluginsInstallConfirm")}
-              </button>
-              <button
-                class="settings-action"
-                disabled={installBusy()}
-                onClick={() => {
-                  setInstallInfo(null);
-                  setInstallPath(null);
-                }}
-              >
-                {t("pluginsInstallCancel")}
-              </button>
-            </div>
-          </div>
-        )}
-      </Show>
 
       <div class="plg-master-detail" classList={{ "has-selection": !!selectedPlugin() }}>
         <div class="plg-list">
@@ -622,6 +535,76 @@ export default function PluginsPane(props: {
         </span>
       </Show>
     </>
+  );
+}
+
+/** The `.lupx` facts block inside the install confirm dialog: name / version
+ * / kind, description, declared capabilities, payload stats and the
+ * signature / overwrite notes. Plain values — it mounts with the inspected
+ * package, so nothing here reads disk again. */
+function InstallFacts(props: { info: LupxInfo }) {
+  return (
+    <div class="plg-install-facts">
+      <div class="plg-install-head">
+        <span class="plg-name">{props.info.name || props.info.id}</span>
+        <span class="plg-ver">{props.info.version || "-"}</span>
+        <span class="plg-badge">{kindLabel(props.info.kind)}</span>
+      </div>
+      <Show when={props.info.description}>
+        <div class="plg-desc">{props.info.description}</div>
+      </Show>
+      <div class="plg-dsec">
+        <span class="plg-dlabel">{t("pluginPermissions")}</span>
+        <Show
+          when={props.info.permissions.length > 0}
+          fallback={<span class="plg-note">{t("pluginNoPermissions")}</span>}
+        >
+          <div class="plg-chiprow">
+            <For each={props.info.permissions}>
+              {(perm) => (
+                <span class="plg-perm-chip" title={permDesc(perm)}>
+                  {permLabel(perm)}
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+      <span class="plg-install-stats">
+        {t("pluginsInstallStats", {
+          count: String(props.info.fileCount),
+          size: formatBytes(props.info.totalBytes),
+        })}
+      </span>
+      {/* Signature status (#32.2): a verified signature is a badge, an unsigned
+          package shows the archive hash for out-of-band comparison. Invalid
+          signatures never reach this dialog. */}
+      <Show
+        when={props.info.signature === "valid"}
+        fallback={
+          <span class="plg-note" title={props.info.sha256}>
+            {t("pluginsInstallUnsigned", { sha256: props.info.sha256.slice(0, 16) })}
+          </span>
+        }
+      >
+        <span class="plg-note ok">{t("pluginsInstallSignatureValid")}</span>
+      </Show>
+      {/* Overwrite notice, worded by how the package version relates to the
+          installed one (Rust compares semver-ish): an upgrade is routine, a
+          downgrade is the one that warns. */}
+      <Show when={props.info.relation !== "fresh"}>
+        <span class={"plg-note" + (props.info.relation === "downgrade" ? " warn" : "")}>
+          {t(
+            props.info.relation === "upgrade"
+              ? "pluginsInstallUpgrade"
+              : props.info.relation === "reinstall"
+                ? "pluginsInstallReinstall"
+                : "pluginsInstallDowngrade",
+            { old: props.info.existingVersion || "-", new: props.info.version || "-" },
+          )}
+        </span>
+      </Show>
+    </div>
   );
 }
 

@@ -2063,26 +2063,35 @@ button.settings-toggle.on .settings-toggle-knob {
 
 .plg-install-btn { flex: none; }
 
-.plg-install {
+/* `.lupx` install confirmation: the shared confirm dialog carries the package
+   facts (`.plg-install-facts`) between its hint and its actions. The facts
+   block scrolls inside the dialog instead of growing it. */
+.settings-confirm-details {
+  max-height: min(46vh, 380px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.settings-confirm-details::-webkit-scrollbar { width: 0; }
+
+.plg-install-facts {
   display: grid;
   gap: 8px;
-  margin: 0 0 12px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: var(--settings-line-width) solid var(--settings-structure);
   border-left-width: 4px;
   border-radius: var(--settings-panel-radius);
-  background: var(--settings-panel);
+  background: var(--settings-canvas);
 }
 
-.plg-install-head,
-.plg-install-actions {
+.plg-install-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.plg-install-title { color: var(--settings-muted); font-size: 11px; }
 .plg-install-stats { color: var(--settings-muted); font-size: 11px; }
 
 .plg-master-detail {

@@ -41,7 +41,12 @@ import aboutIcon from "../../res/icons/about.svg";
 // same artwork the exe/taskbar carries). The alpha cutout lets the mark sit
 // directly on the settings surface instead of showing a white icon tile.
 import lumeAppIcon from "../../src-tauri/icons/icon-transparent.png";
-import { diffSettings, type SettingsData, type SettingsPatch } from "./types";
+import {
+  diffSettings,
+  type ConfirmState,
+  type SettingsData,
+  type SettingsPatch,
+} from "./types";
 import {
   buildSettingsCatalog,
   searchCatalog,
@@ -74,13 +79,6 @@ const SECTION_ICONS: Record<SectionId, string> = {
 };
 
 type SaveState = "saved" | "saving" | "error";
-
-interface ConfirmState {
-  title: string;
-  hint: string;
-  confirmLabel: string;
-  action: () => Promise<void>;
-}
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -1036,6 +1034,9 @@ export default function Settings() {
           <p class="settings-confirm-hint" id="settings-confirm-hint">
             {confirmState()!.hint}
           </p>
+          <Show when={confirmState()!.details} keyed>
+            {(details) => <div class="settings-confirm-details">{details()}</div>}
+          </Show>
           <Show when={confirmError()}>
             <span class="settings-inline-error" role="alert">{confirmError()}</span>
           </Show>

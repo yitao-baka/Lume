@@ -776,6 +776,22 @@ body,
   }
 }
 
+/* Centered dialogs slide in from 8px below their centered position. They cannot
+   reuse `toast-in`: that set is written for the bottom toast and only carries
+   the X centering, so it dropped the dialogs' `translateY(-50%)` for the
+   animation's duration — the dialog appeared half a height too low and snapped
+   up on the last frame. */
+@keyframes confirm-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
 .toast-undo-btn {
   border: none;
   outline: none;
@@ -814,7 +830,7 @@ body,
   flex-direction: column;
   gap: 12px;
   z-index: 70;
-  animation: toast-in 150ms ease-out;
+  animation: confirm-in 150ms ease-out;
 }
 
 .clip-confirm-title {
@@ -893,7 +909,7 @@ body,
   flex-direction: column;
   gap: 10px;
   z-index: 80;
-  animation: toast-in 150ms ease-out;
+  animation: confirm-in 150ms ease-out;
 }
 
 .settings-confirm-title {

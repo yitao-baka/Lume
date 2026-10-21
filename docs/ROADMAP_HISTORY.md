@@ -4103,3 +4103,74 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   `node scripts/cdp_settings_accent_verify.mjs`：**34/34 PASS**。
 - 截图检查：`test/settings-brand-check/brand-quiet-zoom.png`、
   `brand-chromatic-zoom.png`（3× 裁剪，双皮肤下图标清晰、无外框）。
+
+---
+
+## 64. 插件安装确认改为模态弹窗
+
+`.lupx` 安装的确认步骤原先在插件页顶部渲染一张内联卡片（`.plg-install`）：
+选包后卡片挤在工具栏与主从视图之间，既不跟手的操作位置对齐，也与同页的卸载 /
+全部授权所用的确认对话框不一致。
+
+### 64.1 实现
+
+- `src/settings/types.ts` 新增共享 `ConfirmState`（Settings.tsx 与
+  PluginsPane.tsx 原先各写一份结构类型），并加入可选 `details` 事实块；
+  `Settings.tsx` 用 `<Show when={...} keyed>` 在对话框自己的响应式作用域里求值
+  该 thunk —— 事实块随对话框挂载 / 销毁，不会在 `await` 之后的异步事件处理器里
+  创建无主 computation（Solid 不会跨 await 恢复 owner）。
+- `PluginsPane.tsx`：删除 `installInfo` / `installPath` / `installBusy` 信号与
+  内联卡片；`pickLupx` 在 inspect 成功后直接 `requestConfirm({ ... })`，安装动作
+  交给对话框主按钮（复用 `runConfirm` 的 busy / 错误内联逻辑），失败不再关框。
+  新组件 `InstallFacts` 渲染名称 / 版本 / kind / 描述 / 能力 chips
+  （`pluginPermissions` 标签 + 未声明时的说明行，与详情面板同款）/ 文件数与
+  大小 / 签名或 SHA-256 / 升级·重装·降级关系。
+- 「安装插件…」按钮把 `event.currentTarget` 作为 trigger 传给对话框，`Esc` /
+  取消后焦点回到该按钮；`skins/base.css` 删掉内联卡容器样式，改为对话框内的
+  `.plg-install-facts` 事实块（`--settings-canvas` 底色 + 结构色左边框）与
+  `.settings-confirm-details` 滚动上限（`min(46vh, 380px)`，隐藏滚动条）。
+- 三语新增 `pluginsInstallHint`（确认前不写入），删除只被内联卡使用的
+  `pluginsInstallCancel`（对话框取消沿用共享 `cancel`）。
+
+### 64.2 踩坑
+
+- 原生文件对话框无法从 CDP 驱动，而 `window.__TAURI_INTERNALS__` 与它的
+  `invoke` 都是不可写 / 不可配置属性（脚本实测替换返回 false），invoke 桩不成立。
+  Windows 上 Tauri v2 的 IPC 走 `fetch(http://ipc.localhost/<cmd>)`，所以改为包一层
+  `window.fetch`：只把 `plugin:dialog|open` 换成合成 `Response`
+  （`Tauri-Response: ok` + JSON 路径），其余命令仍走真实 IPC —— 事实块由真实
+  inspect 产出，确认后也是真实落盘。
+- 卸载按钮的旧 CDP 断言（armed 两段式）是设置窗重构前的契约：卸载现在走确认
+  对话框，`armed` 类不再出现，该断言一直失败。同轮改为断言卸载确认框打开 +
+  背景 inert + `Esc` 取消后插件仍在。
+- 内联卡容器样式（`.plg-install` / `.plg-install-title` / `.plg-install-actions`）
+  必须一起删，否则对话框里的同名事实类会继承卡片外边距与背景；事实块底色也从
+  `--settings-panel` 换成 `--settings-canvas`（对话框本体已经是 panel 色）。
+- 居中对话框的入场动画不能复用底部 toast 的 `toast-in`：那组关键帧只带
+  `translateX(-50%)`，动画期间会丢掉对话框的 `translateY(-50%)` —— 弹窗先
+  出现在偏低半个高度的位置、末帧跳回居中（314px 高的事实块框首帧偏低
+  165.2px，越高越明显）。新增 `confirm-in`（`translate(-50%, calc(-50% + 8px))`
+  → `translate(-50%, -50%)`），`.settings-confirm` 与启动器「清空剪贴板历史」
+  的 `.clip-confirm` 一起改；两者实测都是 8px 滑入后停在居中位置。
+
+### 64.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cd src-tauri && cargo check`、
+  `cargo test`（**228 passed / 9 ignored**）、`pnpm run tauri build --debug --no-bundle`
+  通过。
+- `node scripts/cdp_lupx_verify.mjs` **40/40 PASS**。新增 ⑦ 段以 fetch 桩跑完
+  选包 → 弹窗 → 确认 / 取消：`aria-modal` + overlay + 标题、事实块
+  （名称/版本/kind/2 个文件·333 B）、未声明能力说明行、背景 `inert`、焦点落在
+  取消、`Esc` 关闭并归还焦点、`Esc` 取消不落盘、能力 chips（剪贴板/网络 +
+  本地化 title）、未签名 SHA-256 提示、确认后弹窗关闭 + 列表新卡 + toast +
+  落盘 3.0.0、降级包黄字回退提示、取消按钮不写盘、收尾卸载。
+- `node scripts/cdp_plugins_pane_verify.mjs` **11/11 PASS**、
+  `node scripts/cdp_settings_smoke.mjs` **10/10 PASS**、
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**（双皮肤 × 明暗、
+  560×420 九页无横向溢出、恢复默认值确认框）、
+  `node scripts/cdp_settings_accent_verify.mjs` **34/34 PASS**。
+- 动画回归：⑦ 段逐帧采样 `.settings-confirm` 的 `getBoundingClientRect()` ——
+  位移 8px（阈值 ≤12px）、末帧与居中位置误差 ≤1.5px、透明度 0→1、最长帧间隔
+  12.1ms；另把旧关键帧（`toast-in`）注入回去复现修复前行为（首帧偏低 165.2px、
+  末帧跳回居中），确认该断言能抓住回归。
+- 截图：`test/lupx_install_dialog.png`（Quiet 深色：模态框 + 事实块 + 降级提示）。

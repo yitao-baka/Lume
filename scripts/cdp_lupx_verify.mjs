@@ -4,17 +4,20 @@
 //   ② install   安装 → get_plugins 出现该插件 → 无需重启 provider 搜索行直接
 //               可见（settings-applied + plugin-reload 生效）
 //   ③ subdir    「右键压缩文件夹」形状（plugin.toml 在唯一顶层目录内）可装，
-//               前缀外的散文件被忽略（确认卡与实际解压都是 2 个文件）
+//               前缀外的散文件被忽略（确认弹窗与实际解压都是 2 个文件）
 //   ④ upgrade   v1 → v2：inspect 报 existingVersion=1.0.0 + relation="upgrade"
 //               （版本判断的依据），私有 files/ 在覆盖后保留（#28.1）；安装后
 //               get_plugins 版本变 2.0.0，搜索行照常（模块已重 import）；同
 //               版本包再 inspect → relation="reinstall"
 //   ⑤ uninstall 卸载 → get_plugins 不再列出 → 搜索行消失；重复卸载不报错
-//   ⑥ 设置页    工具栏有「安装插件」按钮；磁盘插件卡片有卸载按钮（两段式，
-//               armed 类名出现再消失）；内置插件没有
-// 说明：安装确认卡由 Solid 信号驱动，自动化无法从外部注入状态，卡片的渲染
-// 以设置页手工清单兜底（docs/TESTING.md）；本脚本覆盖命令层全链路。
-// 截图：test/lupx_settings.png
+//   ⑥ 设置页    工具栏有「安装插件」按钮；磁盘插件卡片的卸载按钮打开确认
+//               对话框（Esc 取消）；内置插件没有卸载按钮
+//   ⑦ 安装弹窗  原生文件对话框无法从 CDP 驱动，这里把 `plugin:dialog|open`
+//               换成返回固定包路径的桩（其余命令仍走真实 IPC），跑完
+//               选包 → 模态确认 → 安装 的整条链路：事实块（名称/版本/kind/
+//               能力 chips/文件数/签名）、背景 inert、焦点落在取消、Esc 关闭
+//               并把焦点还给触发按钮、确认后真实落盘、降级关系黄字提示
+// 截图：test/lupx_settings.png、test/lupx_install_dialog.png
 import { spawn, execSync } from "node:child_process";
 import { writeFileSync, mkdirSync, rmSync, openSync, existsSync, readFileSync } from "node:fs";
 
@@ -91,6 +94,8 @@ const manifest = (v) => `id = "lupx-demo"\nname = "Lupx Demo"\nversion = "${v}"\
 
 const ZIP_V1 = makeZip([["plugin.toml", manifest("1.0.0")], ["main.js", MAIN_JS]]);
 const ZIP_V2 = makeZip([["plugin.toml", manifest("2.0.0")], ["main.js", MAIN_JS]]);
+const manifestPerms = (v) => `id = "lupx-demo"\nname = "Lupx Demo"\nversion = "${v}"\nkind = "provider"\ndescription = ".lupx 验证插件"\nentry = "main.js"\npermissions = ["clipboard", "network"]\n`;
+const ZIP_PERMS = makeZip([["plugin.toml", manifestPerms("3.0.0")], ["main.js", MAIN_JS]]);
 const ZIP_SUBDIR = makeZip([
   ["lupx-demo/plugin.toml", manifest("1.0.0")],
   ["lupx-demo/main.js", MAIN_JS],
@@ -100,6 +105,7 @@ const ZIP_EVIL = makeZip([["plugin.toml", manifest("9.9.9")], ["../evil.txt", "b
 const ZIP_NOMANIFEST = makeZip([["main.js", MAIN_JS]]);
 writeFileSync("test/lupx_v1.lupx", ZIP_V1);
 writeFileSync("test/lupx_v2.lupx", ZIP_V2);
+writeFileSync("test/lupx_perms.lupx", ZIP_PERMS);
 writeFileSync("test/lupx_subdir.lupx", ZIP_SUBDIR);
 writeFileSync("test/lupx_evil.lupx", ZIP_EVIL);
 writeFileSync("test/lupx_nomanifest.lupx", ZIP_NOMANIFEST);
@@ -262,15 +268,203 @@ const ui = await s.evalJs(`({
 check("设置页: 工具栏有「安装插件」按钮", ui.installBtn, JSON.stringify(ui));
 check("设置页: 磁盘插件卡片有卸载按钮（内置无）",
   ui.uninstallBtns > 0 && ui.uninstallBtns < ui.cards, JSON.stringify(ui));
-// 两段式：第一击武装（armed 类出现），不落第二击
-const armed = await s.evalJs(`(() => {
-  const b = document.querySelector('.plg-uninstall');
-  b.click();
-  return b.classList.contains("armed");
+// 卸载按钮 → 共享确认对话框；Esc 取消不落盘
+await s.evalJs(`document.querySelector('.plg-uninstall')?.click(); true`);
+await sleep(250);
+const uninstallDialog = await s.evalJs(`({
+  open: !!document.querySelector('.settings-confirm[role="dialog"]'),
+  title: document.querySelector('.settings-confirm-title')?.textContent ?? '',
+  inert: document.querySelector('.settings-content')?.hasAttribute('inert') ?? false,
+})`);
+check("设置页: 卸载按钮打开确认对话框（背景 inert）",
+  uninstallDialog.open && uninstallDialog.title.includes("卸载") && uninstallDialog.inert, JSON.stringify(uninstallDialog));
+await s.evalJs(`document.querySelector('.settings-confirm')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`);
+await sleep(200);
+check("设置页: Esc 取消卸载（对话框关闭、插件仍在）",
+  !(await s.evalJs(`!!document.querySelector('.settings-confirm')`)) && (await pluginIds()).length > 0);
+
+// ── ⑦ 安装确认弹窗：选包 → 模态确认 → 安装 ──
+// 原生文件对话框没法从 CDP 驱动。Windows 上 Tauri 的 IPC 走 fetch
+// （http://ipc.localhost/<cmd>），而 __TAURI_INTERNALS__.invoke 是只读属性
+// 换不掉 —— 所以拦 fetch：只把 `plugin:dialog|open` 换成返回固定包路径的
+// 合成响应，其余命令继续走真实 IPC；事实块仍由真实 inspect 产出。
+const stubOk = await s.evalJs(`(() => {
+  const internals = window.__TAURI_INTERNALS__;
+  if (typeof internals?.convertFileSrc !== "function") return false;
+  const ipcUrl = internals.convertFileSrc("plugin:dialog|open", "ipc");
+  const realFetch = window.fetch.bind(window);
+  window.__lupxRealFetch = realFetch;
+  window.__lupxDialogTarget = null;
+  window.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : input?.url ?? "";
+    if (url === ipcUrl && window.__lupxDialogTarget) {
+      return Promise.resolve(new Response(JSON.stringify(window.__lupxDialogTarget), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Tauri-Response": "ok" },
+      }));
+    }
+    return realFetch(input, init);
+  };
+  return window.fetch !== realFetch;
 })()`);
-await sleep(3500); // 等 3s 武装窗口自然解除
-const disarmed = await s.evalJs(`!document.querySelector('.plg-uninstall')?.classList.contains("armed")`);
-check("设置页: 卸载按钮两段式（武装→超时解除）", armed && disarmed, `armed=${armed} disarmed=${disarmed}`);
+check("弹窗: 原生文件对话框可被 CDP 桩替换", stubOk === true, String(stubOk));
+if (stubOk === true) {
+  const installWith = async (file) => {
+    await s.evalJs(`window.__lupxDialogTarget = ${JSON.stringify(abs(file))}; true`);
+    await s.evalJs(`document.querySelector('.plg-install-btn')?.click(); true`);
+    await sleep(900);
+  };
+
+  // 出现动画的逐帧采样：旧实现复用底部 toast 的 `toast-in` 关键帧，只带
+  // translateX(-50%)，动画期间丢掉对话框的 translateY(-50%) —— 弹窗先低半高、
+  // 末帧跳回居中（"卡一下"）。这里钉住"8px 滑入 + 末帧居中 + 淡入"。
+  await s.evalJs(`(() => {
+    window.__confirmFrames = [];
+    window.__confirmSampleStop = false;
+    let last = performance.now();
+    const loop = (now) => {
+      const el = document.querySelector('.settings-confirm');
+      if (el) {
+        const r = el.getBoundingClientRect();
+        window.__confirmFrames.push({
+          top: r.top,
+          height: r.height,
+          opacity: +getComputedStyle(el).opacity,
+          dt: +(now - last).toFixed(1),
+        });
+      }
+      last = now;
+      if (!window.__confirmSampleStop) requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+    return true;
+  })()`);
+
+  // ① fresh 包（v1，未声明能力）：模态 + 事实块 + 安全焦点
+  await installWith("lupx_v1.lupx");
+  const modal1 = await s.evalJs(`(() => {
+    const dialog = document.querySelector('.settings-confirm[role="dialog"]');
+    const facts = dialog?.querySelector('.plg-install-facts');
+    return {
+      open: !!dialog,
+      modal: dialog?.getAttribute('aria-modal') ?? '',
+      title: dialog?.querySelector('.settings-confirm-title')?.textContent ?? '',
+      hint: dialog?.querySelector('.settings-confirm-hint')?.textContent ?? '',
+      name: facts?.querySelector('.plg-name')?.textContent ?? '',
+      version: facts?.querySelector('.plg-ver')?.textContent ?? '',
+      kind: facts?.querySelector('.plg-badge')?.textContent ?? '',
+      permsLabel: facts?.querySelector('.plg-dlabel')?.textContent ?? '',
+      noPerms: facts?.querySelector('.plg-dsec .plg-note')?.textContent ?? '',
+      stats: facts?.querySelector('.plg-install-stats')?.textContent ?? '',
+      overlay: !!document.querySelector('.settings-confirm-overlay'),
+      inert: document.querySelector('.settings-content')?.hasAttribute('inert') ?? false,
+      focusCancel: document.activeElement === dialog?.querySelector('.settings-confirm-actions .settings-action:not(.settings-action-primary)'),
+    };
+  })()`);
+  check("弹窗: 「安装插件」打开模态确认框（overlay + aria-modal + 标题）",
+    modal1.open && modal1.overlay && modal1.modal === "true" && modal1.title.includes("安装插件"), JSON.stringify(modal1));
+  check("弹窗: 事实块显示名称/版本/kind/文件数",
+    modal1.name === "Lupx Demo" && modal1.version === "1.0.0" && modal1.kind.length > 0 && /2 个文件/.test(modal1.stats), JSON.stringify(modal1));
+  check("弹窗: 未声明能力时给出说明行（不为空）",
+    modal1.permsLabel.length > 0 && modal1.noPerms.includes("未声明"), JSON.stringify(modal1));
+  check("弹窗: 背景 inert 且焦点落在取消（安全动作）",
+    modal1.inert && modal1.focusCancel, JSON.stringify({ inert: modal1.inert, focusCancel: modal1.focusCancel }));
+  check("弹窗: 提示确认前不写入", modal1.hint.includes("确认前不会写入"), modal1.hint);
+
+  const appear = await s.evalJs(`(() => {
+    window.__confirmSampleStop = true;
+    const frames = window.__confirmFrames;
+    const tops = frames.map((f) => f.top);
+    const vh = innerHeight;
+    const h = frames[0]?.height ?? 0;
+    return {
+      frames: frames.length,
+      jump: +(Math.max(...tops) - Math.min(...tops)).toFixed(1),
+      maxDt: +Math.max(...frames.map((f) => f.dt)).toFixed(1),
+      firstOpacity: frames[0]?.opacity ?? -1,
+      lastOpacity: frames.at(-1)?.opacity ?? -1,
+      lastTop: +tops.at(-1).toFixed(1),
+      centeredTop: +((vh - h) / 2).toFixed(1),
+    };
+  })()`);
+  check("弹窗: 出现动画无跳变（8px 滑入、末帧居中、淡入）",
+    appear.frames >= 4 && appear.jump <= 12
+      && Math.abs(appear.lastTop - appear.centeredTop) <= 1.5
+      && appear.firstOpacity < 0.9 && appear.lastOpacity === 1,
+    JSON.stringify(appear));
+
+  // ② Esc 关闭 → 背景恢复、焦点还给触发按钮、不落盘
+  await s.evalJs(`document.querySelector('.settings-confirm')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`);
+  await sleep(250);
+  const escClosed = await s.evalJs(`({
+    open: !!document.querySelector('.settings-confirm'),
+    inert: document.querySelector('.settings-content')?.hasAttribute('inert') ?? true,
+    focusBack: document.activeElement?.classList?.contains('plg-install-btn') ?? false,
+  })`);
+  check("弹窗: Esc 关闭、背景解除 inert、焦点回到触发按钮",
+    !escClosed.open && !escClosed.inert && escClosed.focusBack, JSON.stringify(escClosed));
+  check("弹窗: Esc 取消不落盘", !(await pluginIds()).includes("lupx-demo"), (await pluginIds()).join(","));
+
+  // ③ 带权限的包（3.0.0）：能力 chips + 未签名哈希提示
+  await installWith("lupx_perms.lupx");
+  const modal2 = await s.evalJs(`(() => {
+    const dialog = document.querySelector('.settings-confirm');
+    const chips = Array.from(dialog?.querySelectorAll('.plg-perm-chip') ?? []);
+    return {
+      open: !!dialog,
+      chips: chips.map((c) => c.textContent),
+      chipTitles: chips.map((c) => c.getAttribute('title') ?? ''),
+      unsigned: dialog?.querySelector('.plg-note[title]')?.textContent ?? '',
+    };
+  })()`);
+  check("弹窗: 声明能力渲染为本地化 chips（带说明 title）",
+    modal2.open && modal2.chips.length === 2 && modal2.chips.join(",").includes("剪贴板")
+      && modal2.chipTitles.every((title) => title.length > 0), JSON.stringify(modal2));
+  check("弹窗: 未签名包显示 SHA-256 提示", modal2.unsigned.includes("SHA-256"), modal2.unsigned);
+
+  // ④ 确认安装 → 真实落盘 + 列表刷新 + toast（弹窗关闭）
+  await s.evalJs(`document.querySelector('.settings-confirm-actions .settings-action-primary')?.click(); true`);
+  await sleep(1600);
+  const afterInstall = await s.evalJs(`({
+    open: !!document.querySelector('.settings-confirm'),
+    toast: document.querySelector('.settings-status')?.textContent ?? '',
+    cards: Array.from(document.querySelectorAll('.plg-card .plg-name')).map((n) => n.textContent),
+  })`);
+  const installed = (await invoke("get_plugins")).find((p) => p.id === "lupx-demo");
+  check("弹窗: 确认后弹窗关闭、列表出现新卡并提示安装完成",
+    !afterInstall.open && afterInstall.cards.some((n) => n.includes("Lupx Demo")) && afterInstall.toast.includes("已安装"),
+    JSON.stringify(afterInstall));
+  check("弹窗: 落盘版本来自包内清单（3.0.0）", installed?.version === "3.0.0", installed?.version);
+
+  // ⑤ 已装 3.0.0 再选 1.0.0 → 降级黄字提示；取消按钮不写盘
+  await installWith("lupx_v1.lupx");
+  const modal3 = await s.evalJs(`({
+    open: !!document.querySelector('.settings-confirm'),
+    warn: document.querySelector('.settings-confirm .plg-note.warn')?.textContent ?? '',
+    warnCount: document.querySelectorAll('.settings-confirm .plg-note.warn').length,
+  })`);
+  check("弹窗: 降级包按关系显示黄字回退提示",
+    modal3.open && modal3.warnCount === 1 && modal3.warn.includes("回退") && modal3.warn.includes("3.0.0"),
+    JSON.stringify(modal3));
+  await s.shot("lupx_install_dialog.png");
+  await s.evalJs(`document.querySelector('.settings-confirm-actions .settings-action:not(.settings-action-primary)')?.click(); true`);
+  await sleep(300);
+  const stillInstalled = (await invoke("get_plugins")).find((p) => p.id === "lupx-demo");
+  check("弹窗: 取消按钮关闭且保持已装版本 3.0.0",
+    !(await s.evalJs(`!!document.querySelector('.settings-confirm')`)) && stillInstalled?.version === "3.0.0",
+    stillInstalled?.version);
+
+  // 收尾：清掉测试插件、还原真实 invoke
+  await tryInvoke("plugin_uninstall", { id: "lupx-demo" });
+  await sleep(600);
+  await s.evalJs(`(() => {
+    if (window.__lupxRealFetch) window.fetch = window.__lupxRealFetch;
+    window.__lupxDialogTarget = null;
+    return true;
+  })()`);
+  check("弹窗: 收尾卸载测试插件", !(await pluginIds()).includes("lupx-demo"), (await pluginIds()).join(","));
+}
+
 await s.shot("lupx_settings.png");
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);

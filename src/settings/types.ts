@@ -1,6 +1,23 @@
 //! Shared settings types — mirrors the Rust `Settings` struct
 //! (src-tauri/src/settings.rs) for the frontend.
 
+import type { JSX } from "solid-js";
+
+/** A confirm-dialog request — the settings window's shared modal contract:
+ * `Settings.tsx` renders the dialog, panes open it through `requestConfirm`.
+ * `action` runs on the primary button; a rejection keeps the dialog open and
+ * shows the error inline. */
+export interface ConfirmState {
+  title: string;
+  hint: string;
+  confirmLabel: string;
+  /** Optional structured body rendered between the hint and the actions (the
+   * plugin install facts). Pass a thunk: the dialog evaluates it inside its
+   * own reactive scope, so the content mounts and disposes with the dialog. */
+  details?: () => JSX.Element;
+  action: () => Promise<void>;
+}
+
 /** Settings-window-only visual language (docs/SETTINGS_SKIN_SWITCH.md). */
 export type SettingsSkin = "quiet" | "chromatic";
 

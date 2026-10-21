@@ -39,7 +39,42 @@ All notable changes to Lume are documented here. Format based on
   1040×720 / 560×420 九页无横向溢出）；`node scripts/cdp_settings_smoke.mjs`
   **9/9 PASS**。
 
+### Changed
+
+- **插件安装确认改为模态弹窗** — `.lupx` 的事实核对从插件页内联卡片
+  （`.plg-install`）移到设置窗共享确认对话框：名称 / 版本 / kind / 描述 /
+  本地化能力 chips（未声明能力时给出说明行）/ 文件数与大小 / 签名或 SHA-256 /
+  升级·重装·降级关系都在框内，确认前不写盘，安装失败留在框内报错而不是关框；
+  对话框沿用既有焦点陷阱（焦点落在取消）、背景 `inert`、`Esc` 关闭并把焦点
+  还给「安装插件…」按钮。`ConfirmState`（现在定义在 `src/settings/types.ts`，
+  由 Settings.tsx 与 PluginsPane.tsx 共享）新增可选 `details` 事实块，由对话框
+  在自己的响应式作用域内求值；三语新增 `pluginsInstallHint`、删除只被内联卡
+  使用的 `pluginsInstallCancel`。验证：`pnpm exec tsc --noEmit`、
+  `pnpm run build`、`cargo check`、`cargo test`（**228 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `node scripts/cdp_lupx_verify.mjs` **41/41 PASS**（新增 16 项弹窗断言：
+  拦 Windows IPC 的 `fetch` 桩掉原生文件对话框，覆盖事实块、`aria-modal`、
+  背景 `inert`、焦点落在取消、`Esc` 关闭并归还焦点、能力 chips 本地化与
+  说明、未签名 SHA-256、确认后真实落盘 3.0.0 + 列表刷新 + toast、降级黄字、
+  取消不写盘、出现动画逐帧采样；卸载按钮的陈旧 armed 断言同步改为卸载确认框）；
+  `node scripts/cdp_plugins_pane_verify.mjs` **11/11 PASS**、
+  `node scripts/cdp_settings_smoke.mjs` **10/10 PASS**、
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**、
+  `node scripts/cdp_settings_accent_verify.mjs` **34/34 PASS**；
+  截图 `test/lupx_install_dialog.png`。
+
 ### Fixed
+
+- **确认对话框出现动画跳变** — `.settings-confirm` / `.clip-confirm` 复用了底部
+  toast 的 `toast-in` 关键帧，而那组关键帧只带 `translateX(-50%)`：动画期间
+  对话框的 `translateY(-50%)` 被丢掉，弹窗先出现在偏低半个高度的位置、末帧再
+  跳回居中（框越高越明显，实测 314px 高的事实块框首帧偏低 165.2px）。新增保留
+  居中的 `confirm-in` 关键帧（`translate(-50%, calc(-50% + 8px))` →
+  `translate(-50%, -50%)`，8px 滑入 + 淡入），两个居中对话框改用它。验证：
+  `node scripts/cdp_lupx_verify.mjs` **41/41 PASS**，新增逐帧 rect 采样断言
+  （位移 ≤ 12px、末帧与居中位置误差 ≤ 1.5px、透明度 0→1；实测位移 8px、末帧
+  居中 204.9px、maxDt 12.1ms）；启动器清空剪贴板确认框同款修复实测 8px 滑入后
+  居中。
 
 - **设置窗窗口位置网格** — 位置预设改为 3×3 网格，`居中` 从第一行中间移到第二行第二列，与网格几何中心对齐；四角预设保持在四角。验证：`node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**（新增居中偏移断言）。
 

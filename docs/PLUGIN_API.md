@@ -1595,14 +1595,14 @@ permissions = ["network", "clipboard", "fs.write"]
 <输出.lupx>`。
 
 **安装流程（设置 → 插件）**：工具栏「安装插件…」→ 选 `.lupx` 文件 → 宿主
-`plugin_lupx_inspect` 只读校验并弹**内联确认卡**（名称/版本/kind/描述/
+`plugin_lupx_inspect` 只读校验并打开**模态确认对话框**（名称/版本/kind/描述/
 **权限 chips（本地化）**/文件数与大小/签名状态；已装同 id 时对包内/已装
 版本做 semver-ish 比较（点分段数字序、缺段补 0、release 高于 prerelease），
 按关系显示「升级 vX → vY」/「同版本重装 vX」/「降级 vX → vY」（黄字）——
 关系只决定措辞，任何关系确认后都安装，降级即回滚旧包）→ 确认 →
-`plugin_lupx_install` 解压换位。这张卡就是权限模型的
-「安装时知情同意」时刻。**卸载**：每张磁盘插件卡（内置无）的卸载按钮，
-两段式确认（3 秒武装窗口）。
+`plugin_lupx_install` 解压换位。这个对话框就是权限模型的
+「安装时知情同意」时刻：确认前不写盘，安装失败留在框内报错，Esc / 取消
+放弃。**卸载**：每张磁盘插件卡（内置无）的卸载按钮，经同一个确认对话框。
 
 **签名**：包内可选条目 `LUME.SIGN`（ed25519）——签名工具与宿主同源：
 
@@ -1614,8 +1614,8 @@ lume --sign-lupx <包.lupx> --key lume-signing.key  # 就地重写包 + 注入 L
 `LUME.SIGN` 覆盖 manifest 字节 + 全部文件（逐个 SHA-256，按名排序）；
 验签信任根 = 内置发行公钥（`plugin_sign.rs::RELEASE_PUBKEY_B64`）+ 用户
 `<base>/settings/trust-keys/*.pub`（发布者发 .pub 文件，用户丢进目录即
-导入，无 UI）。三态：**已验证**（确认卡绿字徽标）/ **未签名**（维持现有
-流程，卡上展示归档 SHA-256 供线下核对）/ **签名无效**（篡改或密钥不符 →
+导入，无 UI）。三态：**已验证**（确认框绿字徽标）/ **未签名**（维持现有
+流程，框内展示归档 SHA-256 供线下核对）/ **签名无效**（篡改或密钥不符 →
 inspect 直接报错、install 不可达——硬拒）。私钥永不进仓库。
 
 Rust 侧（`plugin_install.rs`）语义：
@@ -1671,7 +1671,7 @@ valid URL"），fail-closed。
 
 **信任模型**：动态加载 = 任意代码执行。**显式放置即信任**——用户自己把插件
 放进 `<base>/plugins/`（或经 `.lupx` 确认安装）。`.lupx` 签名（§12）与安装
-确认卡把「知情同意」放进流程。
+确认对话框把「知情同意」放进流程。
 
 **残余边界（如实说）**：启动器主窗口内的视图 iframe（label 仍是 main）
 逃逸沙箱后的裸 `invoke` 沿用既有白名单规则（main 直通）；db/storage/
@@ -1792,8 +1792,9 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
   状态握手 → 聚焦/enter 投递 → Esc 销毁 → 几何记忆 → 禁用自动关窗。
 - `cdp_p3_verify.mjs` — 数据层/权限/私有文件/声明式设置。
 - `cdp_lupx_verify.mjs` — `.lupx` 安装/卸载：inspect
-  形状与拒绝路径 → 安装未重启可用 → subdir/升级/卸载 → 设置页按钮与
-  两段式卸载。
+  形状与拒绝路径 → 安装未重启可用 → subdir/升级/卸载 → 设置页按钮与卸载
+  确认框 → 安装确认弹窗（拦 IPC fetch 桩掉原生文件对话框：事实块 / inert /
+  安全焦点 / Esc·取消不落盘 / 确认落盘 / 降级黄字）。
 - `cdp_p2b_verify.mjs` — files 拖入 / img 剪贴板图片 / template="list" 列表模板 /
   磁贴指针重排 / folder·image·extensions 类别匹配。
 - `cdp_plugin_theme_verify.mjs` — 插件自身颜色模式：

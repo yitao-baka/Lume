@@ -55,6 +55,15 @@ All notable changes to Lume are documented here. Format based on
 
 ### Changed
 
+- **版本号与便携包（Pre-26.10.1 发布准备）** — 内部 semver `2.8.0` → `3.2.0`
+  （package.json / tauri.conf.json / Cargo.toml / Cargo.lock），对外标签
+  `Pre-26.10` → `Pre-26.10.1`（`APP_VERSION_LABEL`，About 页展示）；AGENTS.md
+  的双版本号说明同步。验证：`pnpm exec tsc --noEmit`、`pnpm run build` 干净；
+  `cargo check --all-targets` 干净；`cargo test` **228 passed / 9 ignored**；
+  `pnpm run package:zip` 产出 `Lume_3.2.0_x64_portable.zip`（10,211,009 字节，
+  zip 内含三个 exe + languages + res/icons，exe FileVersion/ProductVersion 均为
+  3.2.0，内嵌 About 标签为 `Pre-26.10.1`）。
+
 - **插件安装确认改为模态弹窗** — `.lupx` 的事实核对从插件页内联卡片
   （`.plg-install`）移到设置窗共享确认对话框：名称 / 版本 / kind / 描述 /
   本地化能力 chips（未声明能力时给出说明行）/ 文件数与大小 / 签名或 SHA-256 /

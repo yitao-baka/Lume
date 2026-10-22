@@ -31,6 +31,7 @@ mod pins;
 pub mod recent;
 pub mod settings;
 pub mod svc;
+mod texts;
 mod tray;
 pub mod usnidx;
 mod window;
@@ -123,6 +124,9 @@ pub fn run() {
                 .current();
             let config_json = serde_json::to_string(&current)
                 .unwrap_or_else(|_| "{}".into());
+            // Rust-rendered shell text (window titles, tray, notifications)
+            // follows the configured language, else the system UI language.
+            let ui_lang = i18n::UiLang::from_setting(&current.appearance.language);
             let init_script = format!("window.__LUME_CONFIG__ = {config_json};");
 
             // Main launcher window (replaces tauri.conf.json windows[0]).
@@ -173,7 +177,7 @@ pub fn run() {
                 "settings",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("Lume")
+            .title(texts::window_title_settings(ui_lang))
             .inner_size(1040.0, 720.0)
             .min_inner_size(560.0, 420.0)
             .center()
@@ -215,7 +219,7 @@ pub fn run() {
                 "preview",
                 tauri::WebviewUrl::App("preview.html".into()),
             )
-            .title("Lume Preview")
+            .title(texts::window_title_preview(ui_lang))
             .inner_size(320.0, 480.0) // real size set on every dock
             .resizable(false)
             .decorations(false)
@@ -404,6 +408,7 @@ pub fn run() {
             apps::launch_app,
             apps::reveal_in_folder,
             filesearch::file_search,
+            filesearch::file_search_status,
             hotkey::get_hotkey,
             hotkey::validate_hotkey,
             hotkey::validate_mode_hotkey,

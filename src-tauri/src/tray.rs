@@ -18,7 +18,7 @@ pub fn setup(app: &tauri::App) {
         return;
     };
     let icon = icon.clone();
-    let menu = match build_menu(app, tray_labels(app)) {
+    let menu = match build_menu(app, &tray_labels(app)) {
         Ok(menu) => menu,
         Err(e) => {
             eprintln!("[tray] failed to build menu: {e}");
@@ -68,12 +68,11 @@ fn build_tray(
 
 fn build_menu(
     manager: &impl Manager<tauri::Wry>,
-    labels: (&'static str, &'static str, &'static str),
+    labels: &crate::texts::TrayText,
 ) -> tauri::Result<Menu<tauri::Wry>> {
-    let (settings_label, restart_label, exit_label) = labels;
-    let settings = MenuItemBuilder::with_id("settings", settings_label).build(manager)?;
-    let restart = MenuItemBuilder::with_id("restart", restart_label).build(manager)?;
-    let exit = MenuItemBuilder::with_id("exit", exit_label).build(manager)?;
+    let settings = MenuItemBuilder::with_id("settings", labels.settings.clone()).build(manager)?;
+    let restart = MenuItemBuilder::with_id("restart", labels.restart.clone()).build(manager)?;
+    let exit = MenuItemBuilder::with_id("exit", labels.exit.clone()).build(manager)?;
     MenuBuilder::new(manager)
         .items(&[&settings, &restart, &exit])
         .build()
@@ -85,37 +84,16 @@ pub fn refresh_labels(app: &AppHandle) -> tauri::Result<()> {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return Ok(());
     };
-    tray.set_menu(Some(build_menu(app, tray_labels(app))?))
+    tray.set_menu(Some(build_menu(app, &tray_labels(app))?))
 }
 
 /// `appearance.language` wins when it is an explicit locale; `"system"` falls
-/// back to the Windows UI language (including the Traditional Chinese
-/// sublanguage, which the old two-way split could not distinguish).
-fn tray_labels(app: &impl Manager<tauri::Wry>) -> (&'static str, &'static str, &'static str) {
+/// back to the Windows UI language. The wording itself lives in
+/// `languages/*.json` (see `crate::texts`), so it follows user overrides.
+fn tray_labels(app: &impl Manager<tauri::Wry>) -> crate::texts::TrayText {
     let configured = app
         .try_state::<crate::settings::SettingsState>()
         .map(|s| s.current().appearance.language)
         .unwrap_or_else(|| "system".into());
-    if configured == "zh-CN" {
-        return ("设置", "重启", "关闭");
-    }
-    if configured == "zh-TW" {
-        return ("設定", "重新啟動", "關閉");
-    }
-    if configured == "en" {
-        return ("Settings", "Restart", "Exit");
-    }
-    use windows::Win32::Globalization::GetUserDefaultUILanguage;
-    let lang = unsafe { GetUserDefaultUILanguage() };
-    let primary = lang & 0x3FF;
-    let sub = (lang >> 10) & 0x3F;
-    if primary == 0x04 {
-        // SUBLANG_CHINESE_TRADITIONAL / HONGKONG / MACAU.
-        if matches!(sub, 0x01 | 0x03 | 0x05) {
-            return ("設定", "重新啟動", "關閉");
-        }
-        ("设置", "重启", "关闭")
-    } else {
-        ("Settings", "Restart", "Exit")
-    }
+    crate::texts::tray(crate::i18n::UiLang::from_setting(&configured))
 }

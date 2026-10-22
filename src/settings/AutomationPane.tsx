@@ -10,15 +10,21 @@
 //! the wait after the window takes the foreground before the key is pressed,
 //! so slow-starting programs have time to build their UI.
 
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
-import type { SettingsData } from "./types";
+import type { ConfirmState, SettingsData } from "./types";
 import { SettingGroup, SettingRow, Toggle } from "./controls";
 import { ComboRecorder } from "./ComboRecorder";
 import { ProgramPicker } from "./ProgramPicker";
 import { settingsError } from "./errors";
 import deleteIcon from "../../res/icons/delete.svg";
+
+/** The slice of `agent_status` this page needs: `installed` = the helper's
+ * scheduled task is registered, i.e. the agent can be started on demand. */
+interface AgentStatus {
+  installed: boolean;
+}
 
 /** Result of 自动化 → 「测试」 (mirrors `TestRuleResult` in automation.rs). */
 interface TestRuleResult {
@@ -113,6 +119,8 @@ export default function AutomationPane(props: {
   settings: SettingsData;
   onChange: (patch: Partial<SettingsData["automation"]>) => void;
   onOpenSystem: () => void;
+  /** Settings-window modal (title/hint/primary action), rendered by the shell. */
+  requestConfirm: (state: ConfirmState) => void;
 }) {
   const automation = () => props.settings.automation;
 
@@ -131,6 +139,11 @@ export default function AutomationPane(props: {
   const [duplicateIndex, setDuplicateIndex] = createSignal<number | null>(null);
   const [highlightIndex, setHighlightIndex] = createSignal<number | null>(null);
   const [expandedRules, setExpandedRules] = createSignal<Record<number, boolean>>({});
+  /** 使用提权代理 — the registration check is in flight (switch disabled). */
+  const [agentCheckBusy, setAgentCheckBusy] = createSignal(false);
+  /** Registration state of the helper (`agent_status`), `null` = unknown yet.
+   * Drives the row's summary when the stored value is on without it. */
+  const [agentInstalled, setAgentInstalled] = createSignal<boolean | null>(null);
   let rowRefs: Record<string, HTMLElement | undefined> = {};
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -138,6 +151,58 @@ export default function AutomationPane(props: {
     setToast({ ok, text });
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = setTimeout(() => setToast(null), 4000);
+  }
+
+  /** Refresh the helper's registration state (the row summary reads it). */
+  async function refreshAgentInstalled() {
+    // Only the "on but unregistered" state needs this answer — skip the probe
+    // (a sync `schtasks /Query` behind `agent_status`) while the switch is off.
+    if (!(automation().use_agent ?? true)) return;
+    try {
+      setAgentInstalled((await invoke<AgentStatus>("agent_status")).installed);
+    } catch (err) {
+      // Fail soft: the summary falls back to the generic text, and the
+      // turn-on path reports its own failure.
+      console.error("[settings] agent_status", err);
+      setAgentInstalled(null);
+    }
+  }
+
+  onMount(() => {
+    void refreshAgentInstalled();
+  });
+
+  /** 「使用提权代理」 is only honest while the helper is registered: the switch
+   * asks the OS first (`agent_status` → the scheduled task) and refuses to turn
+   * on otherwise, pointing at the 系统 page where registration lives (one UAC
+   * prompt). Turning it off never asks. */
+  async function toggleUseAgent(value: boolean) {
+    if (!value) {
+      props.onChange({ use_agent: false });
+      return;
+    }
+    if (agentCheckBusy()) return;
+    setAgentCheckBusy(true);
+    try {
+      const status = await invoke<AgentStatus>("agent_status");
+      setAgentInstalled(status.installed);
+      if (!status.installed) {
+        props.requestConfirm({
+          title: t("autoUseAgentUnregisteredTitle"),
+          hint: t("autoUseAgentUnregisteredHint"),
+          confirmLabel: t("autoUseAgentOpenSystem"),
+          action: async () => {
+            props.onOpenSystem();
+          },
+        });
+        return;
+      }
+      props.onChange({ use_agent: true });
+    } catch (err) {
+      showToast(settingsError(err, "autoUseAgentCheckFailed"), false);
+    } finally {
+      setAgentCheckBusy(false);
+    }
   }
 
   /** 测试: fire this rule right now, ignoring the new-window trigger and the
@@ -252,13 +317,18 @@ export default function AutomationPane(props: {
         <SettingRow
           id="automation.use_agent"
           label={t("autoUseAgent")}
-          summary={t("settingsUseAgentSummary")}
+          summary={
+            (automation().use_agent ?? true) && agentInstalled() === false
+              ? t("autoUseAgentUnregisteredSummary")
+              : t("settingsUseAgentSummary")
+          }
           details={[t("autoUseAgentHint")]}
         >
           <Toggle
             checked={automation().use_agent ?? true}
             label={t("autoUseAgent")}
-            onChange={(value) => props.onChange({ use_agent: value })}
+            disabled={agentCheckBusy()}
+            onChange={(value) => void toggleUseAgent(value)}
           />
         </SettingRow>
         <SettingRow

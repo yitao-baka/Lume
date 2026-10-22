@@ -102,6 +102,30 @@ export interface FileSearchOut {
   entries: FileEntry[];
 }
 
+/** Reply of the Rust `file_search_status` command — the readiness probe behind
+ * the plugin RPC `search.status`, which runs no query. `backend`/`status` name
+ * the backend a query would use right now and whether its index is usable;
+ * the per-backend blocks carry the raw facts behind that summary (svc `state`
+ * "off" = the engine holds no index because Everything owns the machine's).
+ * The launcher's internal failure cooldown is not applied here — this reports
+ * availability, not what the next keystroke would skip. */
+export interface FileSearchStatus {
+  backend: "everything" | "svc" | "none";
+  status: "ready" | "building" | "unavailable";
+  everything: { running: boolean };
+  svc: {
+    /** The service answered on `\\.\pipe\LumeSVC` within the probe budget. */
+    running: boolean;
+    /** `"ready" | "building" | "off" | "failed"`; absent when the answering
+     * service did not report a state (a build older than the `status` verb). */
+    state?: string;
+    /** Files in the live index (0 while `off` / building). */
+    files?: number;
+    /** Failure text the engine attached to a `failed` state. */
+    error?: string;
+  };
+}
+
 /** A history entry as returned by the Rust `search_clipboard` command. */
 export interface ClipboardItem {
   id: number;

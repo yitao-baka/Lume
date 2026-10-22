@@ -268,10 +268,15 @@ fn task_xml(exe: &Path, user_sid: &str) -> String {
     } else {
         path.into_owned()
     };
+    // Task Scheduler is an OS shell surface: describe the task in the Windows
+    // UI language (escaped — a user-edited language file is not trusted XML).
+    let description = crate::texts::xml_escape(&crate::texts::task_description(
+        crate::i18n::UiLang::from_system(),
+    ));
     format!(
         r#"<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Lume elevation agent - injects a configured hotkey into higher-integrity windows (input only; no UI, no files).</Description>
+    <Description>{description}</Description>
     <URI>{TASK_PATH}</URI>
   </RegistrationInfo>
   <Triggers>

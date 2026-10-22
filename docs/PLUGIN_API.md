@@ -452,6 +452,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 | `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV —— v1 契约的**兼容垫片**，内部就是文档库里的 `__storage` 文档（§11.1）；新代码请用 `db` |
 | `db` | `get(id)` / `put(doc)` / `remove(doc\|id, rev?)` / `allDocs({idStartsWith?, limit?})` / `bulkDocs(docs)` | **文档库**（§11.1）：uTools/CouchDB 形状的文档（`_id` + `_rev` 乐观锁），持久化在 `<base>/data/plugin_store.db`。冲突 reject，消息以 `conflict:` 开头 |
 | `settings` | `all()` / `get(key)` | 本插件声明式设置的**生效值**（manifest 默认值 ⊕ 用户改过的值，§11.3） |
+| `search` | `status()` | **后端就绪探测**（不发起查询；权限同 `search.files`）——插件页在用户输入前就能标注自身状态（“索引构建中”）。返回 `{backend, status, everything: {running}, svc: {running, state?, files?, error?}}`：`backend`/`status` 是“现在查询会用哪个后端 + 它的索引是否可用”（`"ready" \| "building" \| "unavailable"`，与 `search.files` 同一套词，Everything 在跑时优先 Everything）；`svc.state` 是服务自报的引擎状态 `"ready" \| "building" \| "off" \| "failed"`（`"off"` = Everything 在跑、引擎刻意不持有索引），`svc.files` 是当前索引文件数，服务没应答时只有 `svc.running: false`，应答但状态无法识别（比 `status` 谓词更老的服务）时 `state`/`files` 缺省。**内部失败冷却不反映在这里**（它只让下一次查询跳过一个刚超时的后端）；探测本身失败时 reject。 |
 | `search` | `files(q, opts?)` | **全盘文件搜索** — 统一门面 `file_search`（Everything 在运行则走它的 IPC，否则 LumeSVC 自研 USN 索引）。返回 `{backend: "everything"\|"svc"\|"none", status: "ready"\|"building"\|"unavailable", total?, sort?, entries: [{id,name,path,isFolder,mtime?,size?}]}`。`opts` 兼容旧调用：**数字 = max**；对象 = `{offset, max, sort, exts, folder}`——`max` 默认 12、钳制 1..=100；`offset` 从第 offset 条开始（0 起；Everything 全量有效，LumeSVC 由引擎 `skip` 分页）；`exts`（小写、不带点的扩展名数组）/`folder` 是**名称级过滤**：Everything 收到的是它自己的 `ext:`/`folder:` 语法，USN 引擎在扫描时判定（它的名字排序会把这类命中埋到几千条之后，客户端对一页结果过滤是找不到的）。回复里 `filter` 字段回显**真正生效**的过滤（规范 Everything 语法，如 `"ext:png;jpg"`）；**没有回显＝没过滤**（老服务/老宿主），调用方要自己兜底。`sort` 取 `"name" \| "path" \| "size" \| "mtime" \| "name_desc" \| "path_desc" \| "size_desc" \| "mtime_desc"`（非法值 = 引擎默认序；svc 无全局排序，对返回页做页内排序并如实回显）。`total` 为引擎报告的总命中数（svc / 老版 Everything 拿不到时缺省）；条目的 `mtime`/`size`（ms epoch / 字节）拿不到时缺省，UI 按字段存在与否自适应隐藏列。完整示例 `examples/plugins/file-search/` |
 
 #### 6.1.1 沙箱边界
@@ -1162,10 +1163,11 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
   小窗类插件。
 - 权限：`screen`。
 
-#### `search.files` — 全盘文件搜索
+#### `search.files` / `search.status` — 全盘文件搜索
 
 见 §6.1 的 `search` 行（完整签名、后端、分页/过滤/排序语义与回显规则）；
-权限：`search.files`。
+`search.status` 是同一门面的就绪探测（不查询，返回两个后端的原始状态）。
+两者共用权限：`search.files`。
 
 #### `fs.*` — 文件读写
 
@@ -1191,6 +1193,7 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 | 文件对话框 | `dialog.*` / `plugin_dialog_*` | `dialog` |
 | 光标与显示器 | `screen.*` / `plugin_cursor_pos`、`plugin_displays` | `screen` |
 | 全盘文件搜索 | `search.files` / `file_search` | `search.files` |
+| 文件搜索后端就绪探测 | `search.status` / `file_search_status` | `search.files` |
 | 文件读取（文本/字节/缩略图/图标） | `fs.readText/bytes/thumb/videoPoster/icon` | `fs.read` |
 | 任意路径写入 | `fs.writeFile` | `fs.write` |
 | 插件私有目录读写 | `fs.writeText/writeBytes/readPrivate/listPrivate/privatePath/removePrivate` | 无（属于插件自己） |
@@ -1565,7 +1568,8 @@ permissions = ["network", "clipboard", "fs.write"]
 
 - **台账**（单一事实源 = §8.2 表）：`app.notify→notify`、`app.trash→trash`、
   `clipboard.*→clipboard`、`http.request→network`、`dialog.*→dialog`、
-  `screen.*→screen`、`search.files→search.files`、`fs.readText/bytes/thumb/
+  `screen.*→screen`、`search.files`/`search.status→search.files`、
+  `fs.readText/bytes/thumb/
   videoPoster/icon→fs.read`、`fs.writeFile→fs.write`。
 - **无需声明**：基础动作（`app.hide/toast/setQuery/setPlaceholder/openPath/
   revealPath/resize/setSubInput/redirect/detach`）、插件自有数据（`storage.*`、`db.*`、

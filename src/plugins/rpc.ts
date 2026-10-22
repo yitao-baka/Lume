@@ -166,6 +166,8 @@ export async function execHostRpc(
       return api.fs.removePrivate(a.name);
     case "fs.writeFile":
       return api.fs.writeFile(a.path, a.text);
+    case "search.status":
+      return api.search.status();
     case "search.files": {
       // Second arg: legacy number (= max) or { offset, max, sort }.
       const o = args.opts as { offset?: number; max?: number; sort?: string } | undefined;

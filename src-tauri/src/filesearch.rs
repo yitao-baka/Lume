@@ -16,6 +16,10 @@
 //! per-keystroke caller never pays repeated timeouts; the other backend takes
 //! over transparently. With neither backend available the command returns
 //! `unavailable` and the grid shows native results only.
+//!
+//! `file_search_status` is the readiness probe behind the plugin RPC
+//! `search.status`: the same two backends reported without running a query,
+//! so a plugin page can label itself ("index building") before the user types.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -41,6 +45,10 @@ const SVC_TIMEOUT: Duration = Duration::from_millis(1500);
 /// Skip a backend for this long after a failure (timeout/hang), so typing
 /// never waits on a wedged Everything or service more than once.
 const COOLDOWN: Duration = Duration::from_secs(10);
+/// Budget for the readiness probe's `status` round trip: the service answers
+/// it from the live index without scanning, so a service that answers at all
+/// answers at once — a missing pipe already fails inside the connect budget.
+const SVC_PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Sort names accepted by `file_search` (Everything sorts; the svc backend
 /// sorts the returned page in memory). Anything else → engine default order.
@@ -85,6 +93,71 @@ pub struct FileEntry {
     pub mtime: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+}
+
+/// Reply of the plugin command `file_search_status` (`search.status` RPC) —
+/// backend readiness without a query. `backend`/`status` are the same pair
+/// `file_search` reports for a query that would run now; the per-backend
+/// blocks carry the raw facts behind that summary.
+#[derive(Serialize)]
+pub struct FileSearchStatusOut {
+    /// `"everything" | "svc" | "none"` — the backend a query would use now
+    /// (Everything first while it runs, exactly like `run_search`).
+    pub backend: String,
+    /// `"ready" | "building" | "unavailable"` for that backend. Unavailable
+    /// covers "nothing running" and "the answering backend holds no usable
+    /// index" (`svc.state` / `svc.error` say which).
+    pub status: String,
+    pub everything: EverythingStatus,
+    pub svc: SvcBackendStatus,
+}
+
+/// Everything's half of the probe — a cheap window check, no query sent.
+#[derive(Serialize)]
+pub struct EverythingStatus {
+    /// Everything's taskbar-notification window exists, i.e. the process is
+    /// running in a user session and answers its IPC.
+    pub running: bool,
+}
+
+/// The service's half of the probe. Everything but `running` is omitted when
+/// the service did not answer with an engine state (absent, wedged, or a
+/// build older than the `status` verb).
+#[derive(Serialize)]
+pub struct SvcBackendStatus {
+    /// The service answered on `\\.\pipe\LumeSVC` within the probe budget.
+    pub running: bool,
+    /// Engine state as the service reports it: `"ready" | "building" | "off" |
+    /// "failed"` (`"off"` = the engine deliberately holds no index because
+    /// Everything owns the machine's live index).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Files in the live index (0 while `off` / building).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<u64>,
+    /// Failure text the engine attached to a `failed` state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl SvcBackendStatus {
+    /// The service did not answer (absent, or the probe timed out).
+    fn silent() -> Self {
+        Self {
+            running: false,
+            state: None,
+            files: None,
+            error: None,
+        }
+    }
+
+    /// The service answered, but not with an engine state we understand.
+    fn state_unknown() -> Self {
+        Self {
+            running: true,
+            ..Self::silent()
+        }
+    }
 }
 
 /// Async so the potential backend timeouts (≤1.4s) never block the UI thread
@@ -144,6 +217,119 @@ pub async fn file_search(
         eprintln!("[filesearch] join failed: {e}");
         Ok(unavailable())
     })
+}
+
+/// Readiness probe behind the plugin RPC `search.status`: which backend would
+/// answer now and whether its index is usable — no query run, no cooldown
+/// touched. Same permission word as `search.files` (it exposes the same
+/// machine facts). Async + `spawn_blocking`: the service probe is a pipe round
+/// trip, and a sync command would stall the main thread.
+#[tauri::command]
+pub async fn file_search_status(
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<FileSearchStatusOut, String> {
+    if let Err(err) = crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "search.files",
+    ) {
+        eprintln!("[filesearch] status denied: {err}");
+        return Err(err);
+    }
+    tauri::async_runtime::spawn_blocking(probe_backends)
+        .await
+        .map_err(|e| {
+            eprintln!("[filesearch] status probe failed: {e}");
+            "file-search status probe failed".to_string()
+        })
+}
+
+/// Probe both backends without searching: Everything by window probe, the
+/// service by one `status` round trip.
+fn probe_backends() -> FileSearchStatusOut {
+    let everything_running = everything::available();
+    let svc = probe_svc();
+    let (backend, status) = select_backend(everything_running, svc.state.as_deref());
+    FileSearchStatusOut {
+        backend: backend.into(),
+        status: status.into(),
+        everything: EverythingStatus {
+            running: everything_running,
+        },
+        svc,
+    }
+}
+
+/// Which backend a query would use and how ready it is — the preference order
+/// of `run_search` (Everything while it runs, the service otherwise). The
+/// launcher's failure cooldown is deliberately not applied here: this answers
+/// "what is available", not "what the next keystroke would skip". Pure, so the
+/// mapping is unit-tested.
+fn select_backend(
+    everything_running: bool,
+    svc_state: Option<&str>,
+) -> (&'static str, &'static str) {
+    if everything_running {
+        return ("everything", "ready");
+    }
+    match svc_state {
+        Some("ready") => ("svc", "ready"),
+        Some("building") => ("svc", "building"),
+        // "off" (the engine holds no index because Everything owns it),
+        // "failed", and anything an older service reports: no usable index is
+        // proven, so the honest answer is unavailable — `svc.state` and
+        // `svc.error` carry the reason.
+        Some(_) => ("svc", "unavailable"),
+        None => ("none", "unavailable"),
+    }
+}
+
+/// One `status` reply from the service (see `svc.rs::handle_message`).
+#[derive(serde::Deserialize)]
+struct SvcStatusReply {
+    t: String,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    files: u64,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// Ask the service for its engine state. A service that answers something
+/// else (a build older than the `status` verb) is still reported as running —
+/// only its state stays unknown.
+fn probe_svc() -> SvcBackendStatus {
+    let reply = match crate::svc::pipe_transact(r#"{"t":"status"}"#, SVC_PROBE_TIMEOUT) {
+        Ok(reply) => reply,
+        Err(e) => {
+            eprintln!("[filesearch] svc status probe: {e}");
+            return SvcBackendStatus::silent();
+        }
+    };
+    match serde_json::from_str::<SvcStatusReply>(&reply) {
+        Ok(r) if r.t == "status" => SvcBackendStatus {
+            running: true,
+            state: Some(r.state),
+            files: Some(r.files),
+            error: r.error,
+        },
+        Ok(r) => {
+            eprintln!("[filesearch] svc status reply type: {}", r.t);
+            SvcBackendStatus::state_unknown()
+        }
+        Err(e) => {
+            eprintln!("[filesearch] svc status reply: {e}");
+            SvcBackendStatus::state_unknown()
+        }
+    }
 }
 
 /// The effective sort for a query. An empty query = "recent files": default
@@ -427,6 +613,19 @@ fn cooldown_active(map: &HashMap<&'static str, Instant>, backend: &str, now: Ins
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_backend_selection_follows_search_preference() {
+        // Everything wins whenever it runs (its index is live), whatever the
+        // service state is; without it the service state decides the summary.
+        assert_eq!(select_backend(true, Some("off")), ("everything", "ready"));
+        assert_eq!(select_backend(true, None), ("everything", "ready"));
+        assert_eq!(select_backend(false, Some("ready")), ("svc", "ready"));
+        assert_eq!(select_backend(false, Some("building")), ("svc", "building"));
+        assert_eq!(select_backend(false, Some("failed")), ("svc", "unavailable"));
+        assert_eq!(select_backend(false, Some("off")), ("svc", "unavailable"));
+        assert_eq!(select_backend(false, None), ("none", "unavailable"));
+    }
 
     #[test]
     fn cooldown_windows_failures() {

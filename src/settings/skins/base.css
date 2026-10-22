@@ -1260,7 +1260,6 @@ button.settings-toggle.on .settings-toggle-knob {
 
 .settings-row,
 .settings-listadd,
-.settings-listrow,
 .settings-service-actions,
 .settings-row-between {
   display: flex;
@@ -1280,6 +1279,74 @@ button.settings-toggle.on .settings-toggle-knob {
 .settings-listadd .settings-text-input {
   flex: 1;
   min-width: 150px;
+}
+
+/* 用户索引条目（搜索 → 索引目录）：名称 + 路径两行成组，动作聚在右端 ——
+   旧的「名称 → 路径 · 索引文件 · 开关」一条横排把标签和值拉散，读起来像
+   三个互不相关的片段。 */
+.settings-listitem {
+  display: grid;
+}
+
+.settings-listitem + .settings-listitem {
+  border-top: 1px solid var(--settings-line);
+}
+
+.settings-index-row {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: var(--settings-control-radius);
+}
+
+.settings-index-row:hover {
+  background: color-mix(in srgb, var(--settings-hover) 72%, transparent);
+}
+
+.settings-index-repair .settings-icon-btn-icon {
+  opacity: 0.72;
+}
+
+.settings-index-repair:hover .settings-icon-btn-icon {
+  opacity: 1;
+}
+
+.settings-index-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-index-name {
+  overflow: hidden;
+  color: var(--settings-text);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-index-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-index-files-label {
+  margin-right: 2px;
+  color: var(--settings-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.settings-listitem > .settings-error {
+  padding-left: 42px;
 }
 
 .settings-compact-list {

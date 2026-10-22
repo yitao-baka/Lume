@@ -72,7 +72,7 @@ function PreviewApp() {
   const [text, setText] = createSignal<string | null>(null);
   const [imgSrc, setImgSrc] = createSignal<string | null>(null);
   const [poster, setPoster] = createSignal<string | null>(null);
-  const [error, setError] = createSignal<string | null>(null);
+  const [error, setError] = createSignal(false);
   /** "contain" fits the image; clicking toggles to "one-one" (natural size). */
   const [fit, setFit] = createSignal<"contain" | "one-one">("contain");
   /** Multi-file list (docs/ROADMAP_HISTORY.md #17): paths + existence + checked indices. */
@@ -112,7 +112,7 @@ function PreviewApp() {
   const [pdfPage, setPdfPage] = createSignal(1);
   /** Zoom multiplier; 1 = fit the page width to the window. */
   const [pdfScale, setPdfScale] = createSignal(1);
-  const [pdfError, setPdfError] = createSignal<string | null>(null);
+  const [pdfError, setPdfError] = createSignal(false);
   let pdfCanvas: HTMLCanvasElement | undefined;
   let pdfRenderToken = 0;
   let pdfRenderTask: { cancel(): void } | null = null;
@@ -157,7 +157,7 @@ function PreviewApp() {
 
   /** Lazily load pdfjs-dist and open the document from the asset protocol. */
   async function loadPdf(path: string) {
-    setPdfError(null);
+    setPdfError(false);
     try {
       const pdfjs = await import("pdfjs-dist");
       if (!pdfjs.GlobalWorkerOptions.workerSrc) {
@@ -172,7 +172,8 @@ function PreviewApp() {
       setPdfPage(1);
       setPdfScale(1);
     } catch (e) {
-      setPdfError(String(e));
+      console.error("[preview] pdf load failed", e);
+      setPdfError(true);
     }
   }
 
@@ -182,7 +183,7 @@ function PreviewApp() {
     setText(null);
     setImgSrc(null);
     setPoster(null);
-    setError(null);
+    setError(false);
     setFit("contain");
     setFilelist(null);
     // Tear down any previous PDF — the raster pages + parsed doc leave memory
@@ -196,7 +197,8 @@ function PreviewApp() {
       try {
         setText(await invoke<string>("get_file_text", { path: r.path }));
       } catch (e) {
-        setError(String(e));
+        console.error("[preview] text file load failed", e);
+        setError(true);
       }
     } else if (r.kind === "image") {
       try {
@@ -204,7 +206,8 @@ function PreviewApp() {
         const path = r.path ?? (await invoke<string>("get_clipboard_image", { id: r.id }));
         setImgSrc(convertFileSrc(path));
       } catch (e) {
-        setError(String(e));
+        console.error("[preview] image load failed", e);
+        setError(true);
       }
     } else if (r.kind === "video" && r.path) {
       // Shell thumbnail (a frame) as the player's poster — shown until play
@@ -276,7 +279,7 @@ function PreviewApp() {
       </header>
       <div class="preview-content">
         <Show when={req()} fallback={<div class="preview-empty">—</div>}>
-          <Show when={!error()} fallback={<div class="preview-error">{error()}</div>}>
+          <Show when={!error()} fallback={<div class="preview-error">{t("previewLoadFailed")}</div>}>
             <Switch>
               {/* Text file: content read on demand. */}
               <Match when={req()!.kind === "textfile"}>
@@ -354,7 +357,7 @@ function PreviewApp() {
               </Match>
               {/* PDF (PDF.js): visible page only, page flip + zoom in the toolbar. */}
               <Match when={req()!.kind === "pdf"}>
-                <Show when={!pdfError()} fallback={<div class="preview-error">{pdfError()}</div>}>
+                <Show when={!pdfError()} fallback={<div class="preview-error">{t("previewLoadFailed")}</div>}>
                   <Show when={pdfDoc()} fallback={<span class="preview-placeholder">…</span>}>
                     <div class="preview-pdf">
                       <div class="preview-pdf-scroll">

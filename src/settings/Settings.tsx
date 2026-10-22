@@ -581,7 +581,7 @@ export default function Settings() {
     openConfirm(
       {
         title: t("settingsRestoreDefaultTitle"),
-        hint: t("settingsRestoreDefaultsHintLong"),
+        hint: `${t("settingsRestoreDefaultsHint")} ${t("settingsRestoreDefaultsConfirmHint")}`,
         confirmLabel: t("settingsRestoreDefault"),
         action: async () => {
           if (!(await saveNow())) throw new Error(t("settingsSaveFailed"));
@@ -1122,6 +1122,7 @@ function SectionBody(props: {
           settings={props.settings}
           onChange={props.onUpdateAutomation}
           onOpenSystem={() => props.onNavigate("system")}
+          requestConfirm={props.requestConfirm}
         />
       </Match>
       <Match when={props.section === "plugins"}>

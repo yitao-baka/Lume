@@ -278,9 +278,9 @@ export default function SearchPane(props: {
           <For each={idx().user_index ?? []}>
             {(entry) => (
               <div class="settings-listitem">
-                <div class="settings-row-between settings-listrow">
+                <div class="settings-index-row">
                   <button
-                    class="settings-icon-btn"
+                    class="settings-icon-btn settings-index-repair"
                     type="button"
                     title={t("settingsChooseFolder")}
                     aria-label={`${t("settingsChooseFolder")}: ${entry.name}`}
@@ -288,24 +288,27 @@ export default function SearchPane(props: {
                   >
                     <img class="settings-icon-btn-icon" src={folderOpenIcon} alt="" draggable={false} />
                   </button>
-                  <span class="settings-index-name">{entry.name}</span>
-                  <span class="settings-index-arrow">→</span>
-                  <span class="settings-path" title={entry.path}>{entry.path}</span>
-                  <span class="settings-index-files-label">{t("settingsIndexFilesShort")}</span>
-                  <Toggle
-                    checked={!entry.no_files}
-                    label={`${t("settingsIndexFiles")}: ${entry.name}`}
-                    onChange={() => toggleIndexFiles(entry)}
-                  />
-                  <button
-                    class="settings-icon-btn"
-                    type="button"
-                    title={t("delete")}
-                    aria-label={`${t("delete")}: ${entry.name}`}
-                    onClick={() => removeUserIndex(entry)}
-                  >
-                    <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
-                  </button>
+                  <div class="settings-index-copy">
+                    <span class="settings-index-name" title={entry.name}>{entry.name}</span>
+                    <span class="settings-path" title={entry.path}>{entry.path}</span>
+                  </div>
+                  <div class="settings-index-actions">
+                    <span class="settings-index-files-label">{t("settingsIndexFilesShort")}</span>
+                    <Toggle
+                      checked={!entry.no_files}
+                      label={`${t("settingsIndexFiles")}: ${entry.name}`}
+                      onChange={() => toggleIndexFiles(entry)}
+                    />
+                    <button
+                      class="settings-icon-btn"
+                      type="button"
+                      title={t("delete")}
+                      aria-label={`${t("delete")}: ${entry.name}`}
+                      onClick={() => removeUserIndex(entry)}
+                    >
+                      <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
+                    </button>
+                  </div>
                 </div>
                 <Show when={entryErrors()[entry.path]}>
                   <span class="settings-error" role="alert">{entryErrors()[entry.path]}</span>

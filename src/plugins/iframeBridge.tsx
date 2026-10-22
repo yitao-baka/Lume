@@ -13,6 +13,12 @@ import { createSignal, onMount, onCleanup, type Component } from "solid-js";
 import { currentThemeMode, PANEL_SURFACE_BG } from "../theme";
 import { plog } from "./log";
 
+/** Escape text that is interpolated into a srcdoc page. Localized strings can
+ * come from a user-editable language file, so they are never trusted HTML. */
+export function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** The bridge client injected into every plugin view page. Kept as a string
  * so it can be textually injected — it runs inside the plugin iframe. */
 export const BRIDGE_SCRIPT = `
@@ -201,6 +207,8 @@ export const BRIDGE_SCRIPT = `
     search: {
       // opts: legacy number = max, or { offset, max, sort, exts, folder }
       files: function (q, opts) { return call("search.files", { q: q, opts: opts }); },
+      // readiness probe — no query, same permission as search.files
+      status: function () { return call("search.status", {}); },
     },
     // the page assigns: lume.on.query / .show / .hide / .key / .enter / .subInput
     // / .settings / .theme = function(payload) —— .theme 收到的是本插件**生效**

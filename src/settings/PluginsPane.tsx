@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { t, type Messages } from "../i18n";
 import { pickIcon, resolveThemedIcon } from "../launcher/iconSpec";
+import { pluginDisplayName } from "../plugins/pluginName";
 import type { PickedIcon } from "../launcher/types";
 import type { PluginManifest, PluginSetting } from "../plugins/types";
 import { Chip, Toggle } from "./controls";
@@ -126,8 +127,9 @@ function pluginSearchText(p: PluginManifest): string {
     s.key,
     ...s.options.flatMap((o) => [o.label, o.value]),
   ]);
-  return `${p.name} ${p.id} ${p.description} ${p.keywords.join(" ")} ${settings.join(" ")}`
-    .toLowerCase();
+  return `${pluginDisplayName(p.id, p.name)} ${p.name} ${p.id} ${p.description} ${p.keywords.join(
+    " "
+  )} ${settings.join(" ")}`.toLowerCase();
 }
 
 export default function PluginsPane(props: {
@@ -231,7 +233,10 @@ export default function PluginsPane(props: {
     try {
       await invoke("set_plugin_enabled", { id: p.id, enabled: v });
       setPlugins((list) => list.map((x) => (x.id === p.id ? { ...x, enabled: v } : x)));
-      showStatus(true, t(v ? "pluginToastEnabled" : "pluginToastDisabled", { name: p.name || p.id }));
+      showStatus(
+        true,
+        t(v ? "pluginToastEnabled" : "pluginToastDisabled", { name: pluginDisplayName(p.id, p.name) }),
+      );
     } catch (err) {
       showStatus(false, settingsError(err, "pluginsActionFailed"));
     }
@@ -269,7 +274,7 @@ export default function PluginsPane(props: {
   async function reload(p: PluginManifest) {
     try {
       await invoke("reload_plugin", { id: p.id });
-      showStatus(true, t("pluginToastReloaded", { name: p.name || p.id }));
+      showStatus(true, t("pluginToastReloaded", { name: pluginDisplayName(p.id, p.name) }));
     } catch (err) {
       showStatus(false, settingsError(err, "pluginsActionFailed"));
     }
@@ -398,7 +403,7 @@ export default function PluginsPane(props: {
     try {
       await invoke("plugin_uninstall", { id: p.id });
       await refresh();
-      showStatus(true, t("pluginUninstalled", { name: p.name || p.id }));
+      showStatus(true, t("pluginUninstalled", { name: pluginDisplayName(p.id, p.name) }));
     } catch (err) {
       showStatus(false, settingsError(err, "pluginsActionFailed"));
     }
@@ -406,7 +411,7 @@ export default function PluginsPane(props: {
 
   function askUninstall(p: PluginManifest) {
     props.requestConfirm({
-      title: t("pluginsConfirmUninstallTitle", { name: p.name || p.id }),
+      title: t("pluginsConfirmUninstallTitle", { name: pluginDisplayName(p.id, p.name) }),
       hint: t("pluginsConfirmUninstallHint"),
       confirmLabel: t("pluginUninstall"),
       action: () => uninstall(p),
@@ -428,6 +433,7 @@ export default function PluginsPane(props: {
           {t("pluginsSummary", {
             total: String(plugins().length),
             enabled: String(enabledCount()),
+            count: plugins().length,
           })}
         </span>
         <span class="plg-filter-chips">
@@ -572,7 +578,7 @@ function InstallFacts(props: { info: LupxInfo }) {
       </div>
       <span class="plg-install-stats">
         {t("pluginsInstallStats", {
-          count: String(props.info.fileCount),
+          count: props.info.fileCount,
           size: formatBytes(props.info.totalBytes),
         })}
       </span>
@@ -642,7 +648,8 @@ function PluginCard(props: {
 }) {
   const p = () => props.p;
   const icon = () => pluginIcon(p());
-  const tileChar = () => (p().name || p().id).trim().charAt(0).toUpperCase() || "·";
+  const tileChar = () =>
+    pluginDisplayName(p().id, p().name).trim().charAt(0).toUpperCase() || "·";
   const desc = () => pluginDescription(p());
   return (
     <div
@@ -681,7 +688,7 @@ function PluginCard(props: {
         </div>
         <div class="plg-main">
           <div class="plg-name-row">
-            <span class="plg-name">{p().name || p().id}</span>
+            <span class="plg-name">{pluginDisplayName(p().id, p().name)}</span>
             <span class="plg-ver">{p().version}</span>
             <span class="plg-badge" classList={{ builtin: p().builtin }}>
               {p().builtin ? t("pluginBuiltin") : t("pluginDisk")}
@@ -716,7 +723,7 @@ function PluginCard(props: {
               class="settings-icon-btn"
               type="button"
               title={t("pluginReload")}
-              aria-label={`${t("pluginReload")}: ${p().name || p().id}`}
+              aria-label={`${t("pluginReload")}: ${pluginDisplayName(p().id, p().name)}`}
               onClick={props.onReload}
             >
               <img class="settings-icon-btn-icon" src={reloadIcon} alt="" draggable={false} />
@@ -727,7 +734,7 @@ function PluginCard(props: {
               class="settings-icon-btn plg-uninstall"
               type="button"
               title={t("pluginUninstallHint")}
-              aria-label={`${t("pluginUninstall")}: ${p().name || p().id}`}
+              aria-label={`${t("pluginUninstall")}: ${pluginDisplayName(p().id, p().name)}`}
               onClick={props.onUninstall}
             >
               <img class="settings-icon-btn-icon" src={deleteIcon} alt="" draggable={false} />
@@ -735,7 +742,7 @@ function PluginCard(props: {
           </Show>
           <Toggle
             checked={p().enabled}
-            label={t("pluginToggleLabel", { name: p().name || p().id })}
+            label={t("pluginToggleLabel", { name: pluginDisplayName(p().id, p().name) })}
             onChange={props.onToggleEnabled}
           />
         </div>
@@ -789,7 +796,7 @@ function PluginCard(props: {
                   </Show>
                   <Toggle
                     checked={props.keepSession}
-                    label={`${t("pluginKeepSession")}: ${p().name || p().id}`}
+                    label={`${t("pluginKeepSession")}: ${pluginDisplayName(p().id, p().name)}`}
                     onChange={props.onToggleKeepSession}
                   />
                 </div>

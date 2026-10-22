@@ -14,7 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginColorMode, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { HOST_PLUGIN_API } from "./types";
-import { createIframeView, injectBridge } from "./iframeBridge";
+import { createIframeView, escapeHtml, injectBridge } from "./iframeBridge";
 import { dropSessionFrames, putSessionFrame, takeSessionFrames } from "../launcher/session";
 import { createListTemplateMode } from "./listTemplate";
 import { fetchDiskFile } from "./disk";
@@ -673,10 +673,12 @@ function createDiskModeInstance(
       // (see the onReady callback above) delivers the page state once live.
     })
     .catch((err) => {
+      // The raw error stays in the plugin log; the page itself renders the
+      // localized fallback (the sandboxed view cannot reach the host's t()).
       plog.error(m.id, "view load failed:", err);
       View.setHtml(
-        `<body style="font:13px sans-serif;color:#f66;padding:16px">plugin view load failed: ${String(
-          err
+        `<body style="font:13px sans-serif;color:#f66;padding:16px">${escapeHtml(
+          t("pluginViewLoadFailed")
         )}</body>`
       );
     });

@@ -10,6 +10,7 @@
   #meta { position: fixed; right: 14px; top: 12px; font-size: 11px;
           opacity: .45; pointer-events: none; }
   #building { padding: 6px 24px 0; font-size: 12px; opacity: .7; }
+  #backend { padding: 6px 24px 0; font-size: 11px; opacity: .55; }
   #list .empty { padding: 20px 24px; opacity: .55; line-height: 1.7; }
   #list { position: absolute; top: 30px; bottom: 0; left: 0; right: 0;
           overflow-y: auto; padding-bottom: 10px; }
@@ -33,6 +34,7 @@
 </head>
 <body>
   <div id="building" style="display:none">⏳ LumeSVC 索引构建中 — 结果可能不全</div>
+  <div id="backend"></div>
   <div id="meta"></div>
   <div id="hint">输入以搜索全盘文件 — Everything / LumeSVC 引擎自动选择<br>
     <span style="font-size:12px">↑/↓ 选择 · Enter 打开 · Ctrl+Enter 复制路径 · 点击打开</span></div>
@@ -43,6 +45,7 @@
     var hintDefault = hint.innerHTML;
     var meta = document.getElementById("meta");
     var building = document.getElementById("building");
+    var backendLine = document.getElementById("backend");
     var rows = [];        // [{name, path, isFolder}]
     var sel = 0;
     var seq = 0;          // stale-response guard
@@ -52,6 +55,31 @@
     // "backend unavailable", "index building", "searching" and "no match"
     // are four different user-facing outcomes.
     var emptyState = null; // null | "backend" | "building" | "searching" | "noresult"
+
+    // 后端就绪探测（search.status，权限同 search.files）：不发起查询就能
+    // 知道现在会用哪个后端、索引是否可用 —— 用户还没输入也看得到状态。
+    function renderBackend(backend, status, svc) {
+      var files = svc && svc.files ? "（" + svc.files + " 个文件）" : "";
+      if (backend === "everything") {
+        backendLine.textContent = "后端：Everything 运行中（实时索引）";
+      } else if (backend === "svc" && status === "ready") {
+        backendLine.textContent = "后端：LumeSVC USN 索引就绪" + files;
+      } else if (backend === "svc" && status === "building") {
+        backendLine.textContent = "后端：LumeSVC 索引构建中，结果可能不全" + files;
+      } else if (backend === "svc") {
+        backendLine.textContent = "后端：LumeSVC 索引不可用"
+          + (svc && svc.state ? "（state: " + svc.state + "）" : "");
+      } else {
+        backendLine.textContent = "后端：不可用 — 需要正在运行的 Everything，"
+          + "或已安装并启动 LumeSVC 服务";
+      }
+    }
+
+    lume.search.status().then(function (s) {
+      if (s) renderBackend(s.backend, s.status, s.svc);
+    }).catch(function (err) {
+      console.error("[file-search] status probe failed:", err);
+    });
 
     function esc(s) {
       var d = document.createElement("div");

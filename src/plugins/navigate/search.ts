@@ -108,7 +108,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
   function featureRowToEntry(f: FeatureMatch): AppEntry {
     const name =
       f.type === "files"
-        ? t("pluginFeatureFiles", { label: f.label, count: String(f.paths?.length ?? 0) })
+        ? t("pluginFeatureFiles", { label: f.label, count: f.paths?.length ?? 0 })
         : f.label;
     return {
       id: -1,

@@ -8,7 +8,7 @@
 // Screenshots: test/agent_automation.png, test/agent_system.png
 // Usage: node scripts/cdp_agent_smoke.mjs
 //
-// Deliberately does NOT click 注册代理 / 卸载代理: that pops UAC and registers a
+// Deliberately does NOT click 注册代理 / 注销代理: that pops UAC and registers a
 // real scheduled task, which is a manual step (docs/TESTING.md). Nothing is
 // saved either, so the live settings.toml is left untouched.
 import { spawn, execSync } from "node:child_process";
@@ -95,6 +95,16 @@ async function openSection(name) {
 
 // --- 1. 自动化 pane: the two agent switches -------------------------------
 await openSection("自动化");
+// Normalize first: an interrupted earlier run can leave 使用提权代理 off, and
+// the registration gate refuses to re-enable it while the agent is missing.
+const useAgentStart = await s.evalJs(
+  `window.__TAURI_INTERNALS__.invoke("get_settings").then((v) => v.automation.use_agent)`,
+);
+if (useAgentStart !== true) {
+  await s.evalJs(`window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { automation: { use_agent: true } } })`);
+  await sleep(1200);
+  await openSection("自动化");
+}
 // Control: the pre-existing master switch must read on, otherwise the probe
 // itself is broken rather than the new field.
 const master = await s.evalJs(toggleFor("启用自动动作"));
@@ -106,54 +116,66 @@ const resident = await s.evalJs(toggleFor("登录后常驻代理"));
 check("自动化: 登录后常驻代理 switch exists", resident.found === true, JSON.stringify(resident));
 check("自动化: 登录后常驻代理 defaults off", resident.checked === false, JSON.stringify(resident));
 
-const hints = await s.evalJs(`Array.from(document.querySelectorAll('.settings-hint')).map((p) => p.textContent.trim()).filter((t) => t.includes("UIPI"))`);
+// The long rationale lives behind the row's ⓘ (the settings redesign moved
+// explanations into the shared help dialog).
+await s.evalJs(`document.querySelector('[data-setting-id="automation.use_agent"] .settings-help-btn')?.click(); true`);
+await sleep(400);
+const hints = await s.evalJs(`Array.from(document.querySelectorAll('.settings-help-dialog-body')).map((p) => p.textContent.trim()).filter((t) => t.includes("UIPI"))`);
 check("自动化: the UIPI rationale is shown to the user", hints.length === 1, JSON.stringify(hints));
+await s.evalJs(`document.querySelector('.settings-help-backdrop')?.click(); true`);
+await sleep(250);
 let shot = await s.send("Page.captureScreenshot", { format: "png" });
 writeFileSync("test/agent_automation.png", Buffer.from(shot.result.data, "base64"));
 
-// --- 2. Flipping an agent switch dirties the settings window --------------
-const saveBefore = await s.evalJs(`Array.from(document.querySelectorAll('.settings-footer .settings-action')).map((b) => b.disabled)`);
+// --- 2. Flipping an agent switch autosaves and persists -------------------
+// (The redesign dropped the save button: the footer reports the autosave state.)
+const readUseAgent = () =>
+  s.evalJs(`window.__TAURI_INTERNALS__.invoke("get_settings").then((s) => s.automation.use_agent)`);
+const useAgentBefore = await readUseAgent();
 await s.evalJs(`(() => {
-  const row = Array.from(document.querySelectorAll('.settings-row-between'))
-    .find((r) => r.querySelector('.settings-sub-label')?.textContent.trim() === '使用提权代理');
+  const row = document.querySelector('[data-setting-id="automation.use_agent"]');
   row.querySelector('.settings-toggle').click();
   return 'ok';
 })()`);
-await sleep(200);
-const saveAfter = await s.evalJs(`Array.from(document.querySelectorAll('.settings-footer .settings-action')).map((b) => b.disabled)`);
-check("自动化: toggling an agent switch marks the window dirty",
-  saveBefore[1] === true && saveAfter[1] === false, JSON.stringify({ saveBefore, saveAfter }));
+await sleep(1400);
+const useAgentAfter = await readUseAgent();
+const footer = await s.evalJs(`document.querySelector('.settings-footer')?.textContent.trim() ?? null`);
+check("自动化: flipping an agent switch autosaves and persists",
+  useAgentBefore === true && useAgentAfter === false && (footer ?? "").includes("已自动保存"),
+  JSON.stringify({ useAgentBefore, useAgentAfter, footer }));
 
-// Flip it back so the working copy matches what was loaded (nothing is saved,
-// so this only keeps the screenshots honest).
-await s.evalJs(`(() => {
-  const row = Array.from(document.querySelectorAll('.settings-row-between'))
-    .find((r) => r.querySelector('.settings-sub-label')?.textContent.trim() === '使用提权代理');
-  row.querySelector('.settings-toggle').click();
-  return 'ok';
-})()`);
-await sleep(200);
+// Restore through the command: the gate refuses to re-enable the switch while
+// the agent is unregistered (see cdp_agent_gate_verify.mjs), which is the
+// behaviour under test there, not here.
+await s.evalJs(`window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { automation: { use_agent: true } } }).then(() => "ok")`);
+await sleep(900);
 
-// --- 3. 系统 pane: the 提权代理 group -------------------------------------
+// --- 3. 系统 pane: the service + elevation-agent tickets ------------------
 await openSection("系统");
 const system = await s.evalJs(`({
   groupTitles: Array.from(document.querySelectorAll('.settings-grouptitle')).map((h) => h.textContent.trim()),
-  rows: Array.from(document.querySelectorAll('.settings-row-between')).map((r) => ({
-    label: r.querySelector('.settings-sub-label')?.textContent.trim() ?? r.querySelector('.settings-path')?.textContent.trim(),
-    button: r.querySelector('.settings-action')?.textContent.trim(),
+  tickets: Array.from(document.querySelectorAll('.settings-status-ticket')).map((t) => ({
+    id: t.dataset.settingId,
+    title: t.querySelector('strong')?.textContent.trim(),
+    status: t.querySelector('.settings-status-ticket-state')?.textContent.trim(),
+    button: t.querySelector('button.settings-action')?.textContent.trim(),
   })),
-  hint: Array.from(document.querySelectorAll('.settings-hint')).map((p) => p.textContent.trim()),
+  agentHints: Array.from(document.querySelectorAll('[data-setting-id="system.agent"] .settings-row-summary')).map((p) => p.textContent.trim()),
 })`);
-check("系统: 提权代理 group renders", system.groupTitles.includes("提权代理"), JSON.stringify(system.groupTitles));
-const agentRow = system.rows.find((r) => r.button === "注册代理" || r.button === "卸载代理");
-check("系统: agent row has a status line + register/unregister button",
-  !!agentRow, JSON.stringify(system.rows));
+check("系统: 系统服务 group carries the service and agent tickets",
+  system.groupTitles.includes("系统服务") &&
+  system.tickets.some((t) => t.id === "system.service") &&
+  system.tickets.some((t) => t.id === "system.agent"),
+  JSON.stringify({ groups: system.groupTitles, tickets: system.tickets.map((t) => t.id) }));
+const agentTicket = system.tickets.find((t) => t.id === "system.agent");
+check("系统: agent ticket has a status line + register button",
+  agentTicket?.title === "提权代理" && agentTicket?.button === "注册代理" && !!agentTicket?.status,
+  JSON.stringify(agentTicket));
 check("系统: agent status line reflects registration",
-  agentRow?.label === "代理未注册" || agentRow?.label === "代理已注册，未运行" ||
-  agentRow?.label === "代理运行中（已提权）" || agentRow?.label === "代理运行中，但未取得管理员权限",
-  JSON.stringify(agentRow));
+  ["代理未注册", "代理已注册，未运行", "代理运行中（已提权）", "代理运行中，但未取得管理员权限"].includes(agentTicket?.status),
+  JSON.stringify(agentTicket));
 check("系统: the agent's capability limit is stated",
-  system.hint.some((h) => h.includes("前台窗口")), JSON.stringify(system.hint.length));
+  system.agentHints.some((h) => h.includes("前台窗口")), JSON.stringify(system.agentHints));
 shot = await s.send("Page.captureScreenshot", { format: "png" });
 writeFileSync("test/agent_system.png", Buffer.from(shot.result.data, "base64"));
 

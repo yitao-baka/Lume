@@ -398,8 +398,8 @@ export function ClipboardView(props: ClipboardViewProps) {
       <div class="clip-statusbar">
         <span class="clip-status-count">
           {clip.multiIds().size > 0
-            ? t("clipSelected", { count: String(clip.multiIds().size) })
-            : t("clipTotal", { count: String(clip.clips().length) })}
+            ? t("clipSelected", { count: clip.multiIds().size })
+            : t("clipTotal", { count: clip.clips().length })}
         </span>
         <div class="clip-status-actions">
           <button

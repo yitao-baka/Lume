@@ -14,10 +14,17 @@
 //! the manifest/permission surfaces exist so the loader can slot in).
 
 import type { Component } from "solid-js";
-import type { AppEntry, ClipboardItem, FileSearchOut, PreviewReq, PluginIconSpec } from "../launcher/types";
+import type {
+  AppEntry,
+  ClipboardItem,
+  FileSearchOut,
+  FileSearchStatus,
+  PreviewReq,
+  PluginIconSpec,
+} from "../launcher/types";
 import type { ColorMode, PluginColorMode } from "../theme";
 
-export type { FileSearchOut, PluginColorMode, ColorMode, PluginIconSpec };
+export type { FileSearchOut, FileSearchStatus, PluginColorMode, ColorMode, PluginIconSpec };
 
 /** One plugin's color-mode state (`lume.theme.get`, docs/PLUGIN_API.md §6C). */
 export interface PluginColorState {
@@ -436,6 +443,13 @@ export interface PluginHostApi {
    * missing echo as "not filtered". */
   search: {
     files(q: string, opts?: number | PluginFileSearchOptions): Promise<FileSearchOut>;
+    /** Backend readiness without searching (`file_search_status`): which
+     * backend a query would use now and whether its index is usable, plus the
+     * raw facts per backend — Everything running?, service state/files/error.
+     * The same `search.files` permission word gates it; rejects when the probe
+     * itself fails. The launcher's failure cooldown is not reflected (it only
+     * makes the next query skip a backend that just timed out). */
+    status(): Promise<FileSearchStatus>;
   };
 }
 

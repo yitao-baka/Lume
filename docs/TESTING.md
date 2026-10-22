@@ -15,6 +15,13 @@ cargo check
 cargo test
 ```
 
+Static text invariants are covered by `node scripts/check_i18n.mjs`: the three
+`languages/*.json` bundles must carry the same key set, every key must be
+referenced from `src/**` or `src-tauri/src/**` (plural `_one` / `_other`
+variants are covered by their base key), and every Chinese settings-search
+keyword in `src/settings/catalog.ts` must have its other-script twin in the
+same array.
+
 Coverage includes the app fuzzy/pinyin scorer, clipboard store and migrations,
 settings defaults/migrations, plugin manifests/permissions/storage, `.lupx`
 inspection/installation/signatures, pipe/protocol helpers, USN index

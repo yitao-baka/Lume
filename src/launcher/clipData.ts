@@ -37,11 +37,11 @@ export function clipTitle(item: ClipboardItem): string {
   if (item.kind === "file") {
     const paths = item.content.split("\n").filter(Boolean);
     if (paths.length === 1) return basename(paths[0]);
-    return t("fileCount", { count: String(paths.length) });
+    return t("fileCount", { count: paths.length });
   }
   // 合并复制 N 条 — the full joined text stays available on hover / paste.
   if (item.merged_count >= 2) {
-    return t("clipMergedCount", { count: String(item.merged_count) });
+    return t("clipMergedCount", { count: item.merged_count });
   }
   return item.content;
 }

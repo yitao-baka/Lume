@@ -205,7 +205,7 @@ export function ProgramPicker(props: {
                       <span class="picker-name">{p.name}</span>
                       <span class="picker-meta" title={p.title}>
                         {p.windows > 1
-                          ? t("autoPickWindows", { count: String(p.windows) })
+                          ? t("autoPickWindows", { count: p.windows })
                           : p.title}
                       </span>
                       <span class="picker-path" title={p.path}>{p.path}</span>

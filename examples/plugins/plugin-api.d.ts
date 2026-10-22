@@ -155,6 +155,41 @@ interface LumeThemeApi {
   get(): Promise<{ pref: LumePluginColorMode; mode: "dark" | "light"; host: "dark" | "light" }>;
 }
 
+/** 一行全盘文件搜索结果（`search.files`）。 */
+interface LumeFileSearchEntry {
+  id: number;
+  name: string;
+  path: string;
+  isFolder: boolean;
+  mtime?: number;
+  size?: number;
+}
+
+/** `search.*` —— 全盘文件搜索能力（权限 `search.files`，§6D）。 */
+interface LumeSearchApi {
+  /** 统一门面：Everything 在运行走它的 IPC，否则走 LumeSVC 的 USN 索引。
+   * 第二个参数兼容旧调用：数字 = max；对象 = { offset, max, sort, exts, folder }。 */
+  files(
+    q: string,
+    opts?: number | { offset?: number; max?: number; sort?: string; exts?: string[]; folder?: boolean },
+  ): Promise<{
+    backend: "everything" | "svc" | "none";
+    status: "ready" | "building" | "unavailable";
+    total?: number;
+    sort?: string;
+    filter?: string;
+    entries: LumeFileSearchEntry[];
+  }>;
+  /** 就绪探测（不发起查询）：当前会用哪个后端、索引是否可用，以及每个
+   * 后端的原始事实（Everything 是否在运行、服务 state/files/error）。 */
+  status(): Promise<{
+    backend: "everything" | "svc" | "none";
+    status: "ready" | "building" | "unavailable";
+    everything: { running: boolean };
+    svc: { running: boolean; state?: string; files?: number; error?: string };
+  }>;
+}
+
 /** 传给 `create(ctx)` 的宿主能力面（注入的 `window.lume`）。 */
 interface LumePluginCtx {
   theme: LumeThemeApi;
@@ -164,6 +199,7 @@ interface LumePluginCtx {
   db: LumeDbApi;
   settings: LumeSettingsApi;
   fs: LumeFsApi;
+  search: LumeSearchApi;
   on: LumeEvents;
 }
 

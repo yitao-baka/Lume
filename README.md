@@ -123,7 +123,7 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
   toggle, auto-merge (合并复制), source-app tracking
 - Clipboard manager — the Clipboard mode is a full page with category tabs
   (全部/文本/图片/音乐/视频/收藏), a virtualized list, a status bar, display-time
-  URL / color detection, pin / per-entry delete with undo, clear with 保留固定
+  URL / color detection, favorite / per-entry delete with undo, clear with 保留收藏
   记录 confirm, content dedupe, and multi-file entries (checkable file list +
   invalid-entry graying); `Tab` switches between Navigate and Clipboard modes
 - Clipboard auto-paste — Enter pastes an entry into the window that had focus

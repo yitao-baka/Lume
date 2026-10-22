@@ -11,6 +11,30 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件文件搜索就绪探测 `search.status`** — 新增宿主命令 `file_search_status`
+  （async + `spawn_blocking`，权限词同 `search.files`）：不发起查询就能知道
+  Everything 是否在运行、LumeSVC 引擎状态（`ready`/`building`/`off`/`failed`）与
+  索引文件数，回复 `{backend, status, everything:{running},
+  svc:{running,state?,files?,error?}}`；失败冷却不参与（只报可用性）。视图桥 /
+  逻辑帧 / `rpc.ts` / 权限台账 / 插件类型与示例插件（`examples/plugins/file-search`
+  挂载即显示后端状态）同步接线，细节见 PLUGIN_API §6.1 / §8 与 ARCHITECTURE。
+  验证：`pnpm exec tsc --noEmit`、`pnpm exec tsc -p examples/tsconfig.json`、
+  `pnpm run build`、`cargo check`、`cargo test`（**229 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；无后端时
+  `file_search_status` 回 `{"backend":"none","status":"unavailable",...}`，起
+  `lume-svc.exe --foreground`（非 SYSTEM）后回 `svc.running=true,
+  state="failed", error="C:\\: open volume: 拒绝访问。(0x80070005)"` 如实透传；
+  示例插件页截图 `test/filesearch-example-status.png`。
+- **自动化「使用提权代理」开启前校验代理注册** — 开启动作先问 `agent_status`：
+  计划任务未注册时弹出设置窗共享模态（主按钮跳转「系统」页）并保持开关关闭，
+  查询失败走行内 toast；进入自动化页时探测一次，已开启但未注册的行摘要直接提示
+  未注册。关闭方向不校验，默认值不变（仍为开启）。三语新增 5 个键，
+  `docs/SETTINGS.md` 同步。验证：新增 `scripts/cdp_agent_gate_verify.mjs`
+  **5/5 PASS**（未注册 + 已开启摘要提示 / 关闭不弹窗 / 开启被拦且开关保持关闭 /
+  主按钮跳转系统页 / 测试后还原），截图 `test/agent-gate/*.png`；
+  `node scripts/cdp_settings_smoke.mjs` ALL PASS、
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**。
+
 - **设置窗主题色与调色盘** — 新增 `appearance.settings_accent`（空值跟随皮肤，
   否则持久化小写 `#rrggbb`），外观页提供默认、湖蓝 / 靛蓝 / 紫罗兰 / 玫瑰 /
   翡翠 / 琥珀与原生颜色输入。`src/settings/accent.ts` 统一归一化、按 3:1 / 4.5:1
@@ -55,6 +79,44 @@ All notable changes to Lume are documented here. Format based on
 
 ### Changed
 
+- **用户可见文案审查收口** — `docs/UX_TEXT_AUDIT_2026-10-22.md` 的 17 项发现逐条
+  落地：内置插件名走三语键（`pluginNameClipboard` / `pluginNamePreview`，Rust 只留
+  英文兜底）；「最近使用条数」「默认展开已固定」「呼出主界面」「切换模式」按实现改写
+  （固定应用不豁免上限、每次呼出按设置重置、保存即重新注册、只在启动器窗口内生效）；
+  剪贴板 `pinned` 全量改用「收藏」（清空确认框与历史上限说明同步，「已固定」只留
+  应用栏标题）；勾选保留收藏清空后 toast 改为「已清空历史，收藏记录已保留」；插件页
+  加载失败页与预览窗错误区改走 `pluginViewLoadFailed` / `previewLoadFailed`
+  （原始错误只进日志）；新增 `src-tauri/src/texts.rs` 承载托盘、热键冲突通知、
+  services.msc / 计划任务描述与设置 / 预览窗标题（运行时先读 `languages/*.json`；
+  托盘 / 通知 / 窗口标题跟随 `appearance.language`，OS 外壳描述跟随系统语言，
+  zh-TW 用「系統匣」）；服务统一安装 / 卸载、代理统一注册 / 注销；7 条计数文案补英文
+  `_one` / `_other`（`t()` 接受数值 `count`）；设置搜索关键词补齐简繁；删除
+  36 条死键并新增 `scripts/check_i18n.mjs` 自检。验证：`pnpm exec tsc --noEmit`、
+  `pnpm run build`、`cargo check`、`cargo test`（**235 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；`node scripts/check_i18n.mjs`
+  **PASS**（558 键 × 3 语言、62 个关键词数组配对、0 条未引用键）；
+  `node scripts/cdp_settings_smoke.mjs` ALL PASS、`cdp_settings_skin_verify.mjs`
+  **60/60**、`cdp_settings_accent_verify.mjs` **47/47**、
+  `cdp_plugins_pane_verify.mjs` ALL PASS、`cdp_agent_smoke.mjs` ALL PASS（同步修到
+  设置重构后的 DOM 与 注销代理 按钮）、`cdp_visual_audit_verify.mjs` **28/28**；
+  CDP 实测内置插件名随语言切换（zh-CN 剪贴板 / 卫星预览 ↔ en Clipboard /
+  Satellite preview、设置窗标题 Lume Settings）、9 条改写文案与清空 toast / 计数
+  单复数逐条断言通过。
+
+- **搜索页「索引目录」条目重排** — 用户索引行从「名称 → 路径 · 索引文件 · 开关」
+  的单行横排（箭头把标签和值拉散、开关标签无样式）改成两行成组：左侧文件夹
+  字形 + 名称（13px 主文字）与路径（11px 等宽次要文字，超长省略），右端
+  「索引文件」小字标签 + 开关 + 删除聚成一组，条目之间以发丝线分隔、悬停整行
+  高亮，缺失路径的行内错误缩进对齐名称（42px）。`skins/base.css` 新增
+  `.settings-index-*` 规则并移除只为旧行存在的 `.settings-listrow` 选择器；
+  结构与行为（校验、修复路径、删除、索引文件开关）不变。验证：
+  `pnpm exec tsc --noEmit`、`pnpm run build`、`pnpm run tauri build --debug
+  --no-bundle` 通过；`node scripts/cdp_settings_smoke.mjs` ALL PASS、
+  `cdp_settings_skin_verify.mjs` **60/60 PASS**（含 560×420 搜索页无横向溢出）；
+  CDP 实测两条临时条目（正常 + 缺失路径）在 1040 与 560 宽、Quiet 与 Chromatic
+  下 `scrollWidth - clientWidth` 均为 0，错误文案「文件夹不存在。」落在名称
+  起始列。截图：`test/index-row/wide-scrolled.png`、
+  `test/index-row/narrow-rows.png`、`test/index-row/chromatic-rows.png`。
 - **版本号与便携包（Pre-26.10.1 发布准备）** — 内部 semver `2.8.0` → `3.2.0`
   （package.json / tauri.conf.json / Cargo.toml / Cargo.lock），对外标签
   `Pre-26.10` → `Pre-26.10.1`（`APP_VERSION_LABEL`，About 页展示）；AGENTS.md
@@ -169,6 +231,20 @@ All notable changes to Lume are documented here. Format based on
   （`test/settings-audit-fix/`，scratch）。
 
 ### Documentation
+
+- **用户可见文案语义审查报告** — 新增
+  [UX_TEXT_AUDIT_2026-10-22.md](docs/UX_TEXT_AUDIT_2026-10-22.md)：对
+  `languages/*.json` 全部 567 键、设置窗九页、启动器 / 预览 / 独立插件窗口的可见
+  文案，以及 Rust 侧用户可见字符串（托盘菜单、热键冲突通知、服务与计划任务描述、
+  内置插件名）做一次语义走查，逐条给出文件行号与影响——内置插件名硬编码简体中文、
+  「最近使用条数」摘要承诺不存在的固定豁免、剪贴板收藏态的多种叫法、清空提示与
+  保留行为不符、`expand_pinned` 与呼出热键的摘要与实现不符、模式切换键作用域歧义、
+  加载失败页与预览窗外露英文原始错误、Rust 文案在语言文件之外、zh-TW 混入简体与
+  大陆用语、英文计数文案缺单复数、36 条零引用死键。本文只记结论与建议，不含代码改动。
+  验证：三语键集合比对（各 567 个叶子键，无缺键）；`src` 与 `src-tauri/src` 全量
+  引用扫描（0 条「引用但未定义」、36 条「定义但零引用」）；文案与
+  `src-tauri/src/{recent,pins,clipboard,hotkey,tray,svc,agent,plugins}.rs` 的实现
+  逐条比对；`pnpm exec tsc --noEmit` 通过。
 
 - **设置面板审查报告** — 新增 `docs/SETTINGS_AUDIT_2026-10-20.md`：设置窗重构（双皮肤 + 调色盘）后的独立审查，逐条记录现象、证据、影响与建议——搜索下拉原生滚动条、插件列表图标深色下不可见、自定义数字输入清空后静默写入下限、关于页复制失败提示残留、系统页导入导出分组复用恢复范围文案、宽布局详情头误关、尺寸预览对比度、忽略应用条目图标语义。验证：`pnpm run build`、`pnpm run tauri build --debug --no-bundle`；`node scripts/cdp_settings_smoke.mjs` 9 项、`node scripts/cdp_settings_skin_verify.mjs` 60 项、`node scripts/cdp_settings_accent_verify.mjs` 34 项断言均无失败。
 

@@ -176,6 +176,7 @@
     },
     search: {
       files: function (q, opts) { return call("search.files", { q: q, opts: opts }); },
+      status: function () { return call("search.status", {}); },
     },
     on: {},
   };

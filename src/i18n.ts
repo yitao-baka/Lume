@@ -85,8 +85,12 @@ export function resolveLocale(raw: string): Locale {
   return detectLocale();
 }
 
-/** Look up a message, substituting `{placeholder}` values if given. */
-export function t(key: keyof Messages, params?: Record<string, string>): string {
+/** Look up a message, substituting `{placeholder}` values if given.
+ *
+ * A numeric `count` also selects the `_one` / `_other` variant, which is how
+ * English pluralises "{count} items" strings (docs/ARCHITECTURE.md); locales
+ * without plural forms carry the same text in both slots. */
+export function t(key: keyof Messages, params?: Record<string, string | number>): string {
   void localeTick(); // subscribe this caller to language changes
   return i18n.t(key, params);
 }

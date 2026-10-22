@@ -4,6 +4,7 @@
 //! searchable in every locale.
 
 import { t, type Messages } from "../i18n";
+import { pluginDisplayName } from "../plugins/pluginName";
 import type { PluginManifest } from "../plugins/types";
 import type { SettingsData } from "./types";
 
@@ -166,8 +167,10 @@ export function buildSettingsCatalog(
         "solar",
         "lunar",
         "主题",
+        "主題",
         "深色",
         "浅色",
+        "淺色",
         "日之耀面",
         "月之暗面",
       ],
@@ -181,7 +184,19 @@ export function buildSettingsCatalog(
       groupKey: "groupAppearanceSkin",
       detailKeys: ["settingsSkinDetail"],
       kind: "segmented",
-      keywords: ["skin", "theme", "style", "quiet", "chromatic", "皮肤", "主題", "风格"],
+      keywords: [
+        "skin",
+        "theme",
+        "style",
+        "quiet",
+        "chromatic",
+        "皮肤",
+        "皮膚",
+        "主题",
+        "主題",
+        "风格",
+        "風格",
+      ],
       value: a.settings_skin,
     }),
     descriptor({
@@ -198,6 +213,8 @@ export function buildSettingsCatalog(
         "palette",
         "theme",
         "主题色",
+        "主題色",
+        "强调色",
         "強調色",
         "调色盘",
         "調色盤",
@@ -221,7 +238,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsHeightHint",
       groupKey: "groupWindow",
       kind: "segmented",
-      keywords: ["height", "max", "content", "高度", "內容"],
+      keywords: ["height", "max", "content", "高度", "内容", "內容"],
       value: `${a.window_height}px`,
     }),
     descriptor({
@@ -232,7 +249,7 @@ export function buildSettingsCatalog(
       groupKey: "groupWindow",
       detailKeys: ["settingsWindowPositionDetail"],
       kind: "segmented",
-      keywords: ["position", "center", "corner", "mouse", "manual", "位置", "鼠标"],
+      keywords: ["position", "center", "corner", "mouse", "manual", "位置", "鼠标", "滑鼠"],
       value: a.remember_position ? t("settingsCustom") : a.window_position,
     }),
     descriptor({
@@ -252,7 +269,15 @@ export function buildSettingsCatalog(
       summaryKey: "settingsShowExplorerHint",
       groupKey: "groupNavBar",
       kind: "switch",
-      keywords: ["explorer", "folder", "资源管理器", "資料夾"],
+      keywords: [
+        "explorer",
+        "folder",
+        "资源管理器",
+        "資源管理器",
+        "文件夹",
+        "資料夾",
+        "檔案總管",
+      ],
       value: onOff(a.show_explorer_bar),
     }),
     descriptor({
@@ -262,7 +287,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsExpandPinnedHint",
       groupKey: "groupNavBar",
       kind: "switch",
-      keywords: ["pinned", "expand", "固定", "展開"],
+      keywords: ["pinned", "expand", "固定", "展开", "展開"],
       value: onOff(a.expand_pinned),
     }),
     descriptor({
@@ -272,7 +297,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsModeIconsHint",
       groupKey: "groupNavBar",
       kind: "switch",
-      keywords: ["mode", "icon", "pill", "模式", "图标"],
+      keywords: ["mode", "icon", "pill", "模式", "图标", "圖示"],
       value: onOff(a.mode_switch_icons_only),
     }),
     descriptor({
@@ -293,7 +318,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsRememberPageHint",
       groupKey: "groupSession",
       kind: "switch",
-      keywords: ["session", "page", "restart", "页面", "重啟"],
+      keywords: ["session", "page", "restart", "页面", "頁面", "重启", "重啟"],
       value: onOff(a.remember_last_page),
     }),
     descriptor({
@@ -304,7 +329,7 @@ export function buildSettingsCatalog(
       groupKey: "groupSession",
       detailKeys: ["perModeQueryHint"],
       kind: "switch",
-      keywords: ["query", "search", "mode", "搜索词", "模式"],
+      keywords: ["query", "search", "mode", "搜索词", "搜尋詞", "模式"],
       value: onOff(a.per_mode_query),
     }),
     descriptor({
@@ -335,7 +360,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsRecentCountHint",
       groupKey: "groupSession",
       kind: "number",
-      keywords: ["recent", "count", "数量", "最近"],
+      keywords: ["recent", "count", "数量", "數量", "最近"],
       value: String(a.recent_count),
     }),
     descriptor({
@@ -345,7 +370,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsPlaceholderHint",
       groupKey: "groupSession",
       kind: "text",
-      keywords: ["placeholder", "search", "apps", "占位符", "提示"],
+      keywords: ["placeholder", "search", "apps", "占位符", "佔位符", "提示"],
       value: a.search_placeholder_apps || t("settingsValueDefault"),
     }),
     descriptor({
@@ -355,7 +380,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsPlaceholderHint",
       groupKey: "groupSession",
       kind: "text",
-      keywords: ["placeholder", "clipboard", "占位符", "剪贴板"],
+      keywords: ["placeholder", "clipboard", "占位符", "佔位符", "剪贴板", "剪貼簿"],
       value: a.search_placeholder_clipboard || t("settingsValueDefault"),
     }),
     descriptor({
@@ -364,7 +389,7 @@ export function buildSettingsCatalog(
       labelKey: "settingsEntrySize",
       groupKey: "groupEntryBox",
       kind: "segmented",
-      keywords: ["entry", "box", "tile", "条目", "格子"],
+      keywords: ["entry", "box", "tile", "条目", "條目", "格子"],
       value: `${a.entry_size}px`,
     }),
     descriptor({
@@ -374,7 +399,7 @@ export function buildSettingsCatalog(
       summaryKey: "roundAppIconsHint",
       groupKey: "groupEntryBox",
       kind: "switch",
-      keywords: ["icon", "circle", "round", "图标", "圆形"],
+      keywords: ["icon", "circle", "round", "图标", "圖示", "圆形", "圓形"],
       value: onOff(a.round_app_icons),
     }),
 
@@ -385,7 +410,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsHistoryCapHint",
       groupKey: "clipGroupHistory",
       kind: "number",
-      keywords: ["history", "limit", "cap", "历史", "上限"],
+      keywords: ["history", "limit", "cap", "历史", "歷史", "上限"],
       value: String(c.history_cap),
     }),
     descriptor({
@@ -395,7 +420,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsRecordImagesHint",
       groupKey: "clipGroupHistory",
       kind: "switch",
-      keywords: ["image", "record", "图片", "記錄"],
+      keywords: ["image", "record", "图片", "圖片", "记录", "記錄"],
       value: onOff(c.record_images),
     }),
     descriptor({
@@ -435,7 +460,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsMergeWindowHint",
       groupKey: "clipGroupMerge",
       kind: "number",
-      keywords: ["merge", "window", "time", "合并窗口", "時間"],
+      keywords: ["merge", "window", "time", "合并窗口", "合併視窗", "时间", "時間"],
       value: `${(c.merge_window_ms / 1000).toFixed(1)}s`,
     }),
     descriptor({
@@ -445,7 +470,7 @@ export function buildSettingsCatalog(
       summaryKey: "clipIgnoreHint",
       groupKey: "clipGroupIgnore",
       kind: "editor",
-      keywords: ["ignore", "privacy", "app", "忽略", "隐私"],
+      keywords: ["ignore", "privacy", "app", "忽略", "隐私", "隱私"],
       value: String(c.ignore_apps?.length ?? 0),
     }),
     descriptor({
@@ -454,7 +479,7 @@ export function buildSettingsCatalog(
       labelKey: "clipShowSource",
       groupKey: "groupDisplay",
       kind: "switch",
-      keywords: ["source", "app", "来源", "應用"],
+      keywords: ["source", "app", "来源", "來源", "应用", "應用"],
       value: onOff(c.show_source_app),
     }),
     descriptor({
@@ -473,7 +498,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsHoverSelectHint",
       groupKey: "groupDisplay",
       kind: "switch",
-      keywords: ["hover", "select", "悬停", "選取"],
+      keywords: ["hover", "select", "悬停", "懸停", "选取", "選取"],
       value: onOff(c.hover_select),
     }),
     descriptor({
@@ -482,7 +507,7 @@ export function buildSettingsCatalog(
       labelKey: "clipFavoritesTop",
       groupKey: "groupDisplay",
       kind: "switch",
-      keywords: ["favorite", "pinned", "收藏", "置顶"],
+      keywords: ["favorite", "pinned", "收藏", "置顶", "置頂"],
       value: onOff(c.favorites_top),
     }),
     descriptor({
@@ -510,7 +535,7 @@ export function buildSettingsCatalog(
       labelKey: "rememberChecks",
       groupKey: "groupPreview",
       kind: "switch",
-      keywords: ["check", "remember", "勾选", "記住"],
+      keywords: ["check", "remember", "勾选", "勾選", "记住", "記住"],
       value: onOff(c.remember_checks),
     }),
 
@@ -521,7 +546,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsSystemIndexHint",
       groupKey: "settingsSystemIndex",
       kind: "editor",
-      keywords: ["desktop", "system32", "start menu", "索引", "目录"],
+      keywords: ["desktop", "system32", "start menu", "索引", "目录", "目錄"],
       value: String(i.system_dirs?.filter((dir) => dir.enabled).length ?? 0),
     }),
     descriptor({
@@ -530,7 +555,7 @@ export function buildSettingsCatalog(
       labelKey: "settingsUserIndex",
       groupKey: "settingsUserIndex",
       kind: "editor",
-      keywords: ["folder", "index", "path", "用户索引", "資料夾"],
+      keywords: ["folder", "index", "path", "用户索引", "使用者索引", "文件夹", "資料夾"],
       value: String(i.user_index?.length ?? 0),
     }),
     descriptor({
@@ -540,7 +565,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsCacheHint",
       groupKey: "groupIndexCache",
       kind: "number",
-      keywords: ["cache", "refresh", "interval", "缓存", "刷新"],
+      keywords: ["cache", "refresh", "interval", "缓存", "快取", "刷新"],
       value: `${i.cache_refresh_interval_minutes} ${t("settingsMinutes")}`,
     }),
     descriptor({
@@ -561,7 +586,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsToggleHotkeyHint",
       groupKey: "settingsHotkeys",
       kind: "text",
-      keywords: ["hotkey", "shortcut", "toggle", "快捷键", "呼出"],
+      keywords: ["hotkey", "shortcut", "toggle", "快捷键", "快捷鍵", "呼出"],
       value: h.toggle,
     }),
     descriptor({
@@ -571,7 +596,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsSwitchHotkeyHint",
       groupKey: "settingsHotkeys",
       kind: "text",
-      keywords: ["hotkey", "tab", "mode", "快捷键", "切换"],
+      keywords: ["hotkey", "tab", "mode", "快捷键", "快捷鍵", "切换", "切換"],
       value: h.switch_mode,
     }),
 
@@ -593,7 +618,7 @@ export function buildSettingsCatalog(
       groupKey: "groupAutomation",
       detailKeys: ["autoForceFocusHint"],
       kind: "switch",
-      keywords: ["focus", "foreground", "焦点", "前景"],
+      keywords: ["focus", "foreground", "焦点", "焦點", "前景"],
       value: onOff(au.force_focus),
     }),
     descriptor({
@@ -604,7 +629,7 @@ export function buildSettingsCatalog(
       groupKey: "groupAutomation",
       detailKeys: ["autoUseAgentHint"],
       kind: "switch",
-      keywords: ["uipi", "agent", "admin", "提权", "代理"],
+      keywords: ["uipi", "agent", "admin", "提权", "提權", "代理"],
       value: onOff(au.use_agent),
     }),
     descriptor({
@@ -635,7 +660,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsAgentStatusHint",
       groupKey: "settingsAgentGroup",
       kind: "action",
-      keywords: ["agent", "status", "代理", "状态"],
+      keywords: ["agent", "status", "代理", "状态", "狀態"],
       value: t("settingsOpenSystem"),
     }),
 
@@ -646,7 +671,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsPluginInstallHint",
       groupKey: "plugins",
       kind: "action",
-      keywords: ["install", "lupx", "安装", "插件"],
+      keywords: ["install", "lupx", "安装", "安裝", "插件", "外掛"],
       value: t("settingsPageAction"),
     }),
     descriptor({
@@ -666,7 +691,7 @@ export function buildSettingsCatalog(
       summaryKey: "pluginsTrustAllHint",
       groupKey: "plugins",
       kind: "switch",
-      keywords: ["trust", "permission", "授权", "信任"],
+      keywords: ["trust", "permission", "授权", "授權", "信任"],
       value: onOff((settings.plugins as any)?.trust_all === true),
     }),
 
@@ -687,7 +712,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsServiceHint",
       groupKey: "settingsSystemService",
       kind: "action",
-      keywords: ["service", "svc", "index", "服务", "索引"],
+      keywords: ["service", "svc", "index", "服务", "服務", "索引"],
       value: t("settingsSystemAction"),
     }),
     descriptor({
@@ -697,7 +722,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsAgentHint",
       groupKey: "settingsAgentGroup",
       kind: "action",
-      keywords: ["agent", "uipi", "admin", "代理", "管理员"],
+      keywords: ["agent", "uipi", "admin", "代理", "管理员", "管理員"],
       value: t("settingsSystemAction"),
     }),
     descriptor({
@@ -727,7 +752,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsRestoreBackupHint",
       groupKey: "settingsImportExport",
       kind: "action",
-      keywords: ["backup", "restore", "恢复", "備份"],
+      keywords: ["backup", "restore", "恢复", "還原", "备份", "備份"],
       value: t("settingsPageAction"),
     }),
     descriptor({
@@ -737,7 +762,7 @@ export function buildSettingsCatalog(
       summaryKey: "settingsRestoreDefaultsHint",
       groupKey: "settingsImportExport",
       kind: "action",
-      keywords: ["default", "reset", "factory", "默认", "重设"],
+      keywords: ["default", "reset", "factory", "默认", "預設", "重设", "重設"],
       value: t("settingsPageAction"),
     }),
 
@@ -756,7 +781,7 @@ export function buildSettingsCatalog(
       labelKey: "aboutLicense",
       groupKey: "about",
       kind: "text",
-      keywords: ["license", "apache", "许可证", "授權"],
+      keywords: ["license", "apache", "许可证", "許可證", "授权", "授權"],
       value: "Apache License 2.0",
     }),
     descriptor({
@@ -765,28 +790,33 @@ export function buildSettingsCatalog(
       labelKey: "aboutHomepage",
       groupKey: "about",
       kind: "action",
-      keywords: ["github", "homepage", "主页", "首頁"],
+      keywords: ["github", "homepage", "主页", "主頁", "首頁"],
       value: "https://github.com/yitao-baka/Lume",
     }),
   ];
 
   for (const plugin of plugins) {
+    // Built-ins resolve their localized name by id (src/plugins/pluginName.ts)
+    // so the search row reads like the plugin card.
+    const name = pluginDisplayName(plugin.id, plugin.name);
     entries.push(
       {
         id: `plugin.${plugin.id}`,
         section: "plugins",
-        path: `${t(SECTION_LABELS.plugins)} › ${plugin.name || plugin.id}`,
-        label: plugin.name || plugin.id,
+        path: `${t(SECTION_LABELS.plugins)} › ${name}`,
+        label: name,
         summary: plugin.description || undefined,
         details: [],
         kind: "action",
         keywords: [
           plugin.name,
+          name,
           plugin.id,
           plugin.description,
           ...plugin.keywords,
           "plugin",
           "插件",
+          "外掛",
         ].filter(Boolean),
         value: plugin.enabled ? t("settingsValueEnabled") : t("settingsValueDisabled"),
       },
@@ -797,7 +827,7 @@ export function buildSettingsCatalog(
       entries.push({
         id: `plugin.${plugin.id}.setting.${setting.key}`,
         section: "plugins",
-        path: `${t(SECTION_LABELS.plugins)} › ${plugin.name || plugin.id} › ${t("pluginSettings")}`,
+        path: `${t(SECTION_LABELS.plugins)} › ${name} › ${t("pluginSettings")}`,
         label: setting.label || setting.key,
         summary: setting.options.map((option) => option.label || option.value).join(" · ") || undefined,
         details: [],
@@ -805,6 +835,7 @@ export function buildSettingsCatalog(
           setting.key,
           ...setting.options.flatMap((option) => [option.label, option.value]),
           plugin.name,
+          name,
           plugin.id,
         ],
         kind:

@@ -399,8 +399,9 @@ pub fn install() -> Result<(), String> {
                 return Err(format!("CreateServiceW failed: {e}"));
             }
         };
-        // Friendly description shown in services.msc.
-        let desc_text = wide("Lume background service (full-drive file index for instant file search)");
+        // Friendly description shown in services.msc — an OS shell surface, so
+        // it follows the Windows UI language, not the launcher's setting.
+        let desc_text = wide(&crate::texts::svc_description(crate::i18n::UiLang::from_system()));
         let desc = SERVICE_DESCRIPTIONW {
             lpDescription: PWSTR(desc_text.as_ptr() as *mut u16),
         };

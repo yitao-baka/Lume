@@ -35,10 +35,11 @@ import { TitleBar } from "./components/TitleBar";
 import type { FeatureEnterInfo, PluginManifest, PluginServices } from "./plugins/types";
 import type { SettingsData } from "./settings/types";
 import { setPermissionSource } from "./plugins/permissions";
-import { createIframeView, injectBridge, injectTitlebarBridge } from "./plugins/iframeBridge";
+import { createIframeView, escapeHtml, injectBridge, injectTitlebarBridge } from "./plugins/iframeBridge";
 import { execHostRpc } from "./plugins/rpc";
 import { fetchDiskFile } from "./plugins/disk";
 import { plog } from "./plugins/log";
+import { resolveLocale, setLocale, t } from "./i18n";
 import "./pluginWindow.css";
 
 const id = new URLSearchParams(location.search).get("plugin") ?? "";
@@ -82,6 +83,9 @@ function App() {
   const cfg = (window as unknown as { __LUME_CONFIG__?: SettingsData }).__LUME_CONFIG__;
   hostColorSetting = cfg?.appearance?.color_mode ?? "system";
   seedPluginColorPrefs(cfg?.plugins?.color_modes);
+  // The chrome and the load-failure page render host text, so follow the
+  // configured language (the injected config already carries it).
+  setLocale(resolveLocale(cfg?.appearance?.language ?? "system"));
   applyWindowTheme();
 
   // Titlebar label — the manifest name once plugin_window_meta answers.
@@ -349,9 +353,12 @@ function App() {
         View.setHtml(injectBridge(html, "window"));
       })
       .catch((err) => {
+        // Raw error to the log; the page shows the localized fallback.
         plog.error(id, "detached view load failed:", err);
         View.setHtml(
-          `<body style="font:13px sans-serif;color:#f66;padding:16px">plugin view load failed: ${String(err)}</body>`
+          `<body style="font:13px sans-serif;color:#f66;padding:16px">${escapeHtml(
+            t("pluginViewLoadFailed")
+          )}</body>`
         );
       });
 

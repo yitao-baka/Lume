@@ -4275,3 +4275,257 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 - 截图：`test/settings-accent-verify/chromatic-dark-default.png`（Chromatic 深色
   默认湖蓝 + 首格浅粉 + 取色器显示 `#5ac8fa`）；scratch 全皮肤截图在
   `test/verify-shots/`（关于页图标、插件列表、外观页三组明暗）。
+## 66. 插件文件搜索就绪探测（`search.status`）
+
+插件原先只能从 `search.files` 的回复里间接推断后端状态（`backend` / `status`），
+不发起查询就无从知道 Everything 是否在运行、LumeSVC 的 USN 索引是否就绪 —— 而
+“页面一挂载就要标注自己状态”（索引构建中 / 后端不可用）正是文件类插件最先要做
+的事。
+
+### 66.1 实现
+
+- **Rust**（`src-tauri/src/filesearch.rs`）：新增 `file_search_status` 命令
+  （async + `spawn_blocking`，权限词与 `search.files` 相同）。Everything 走现成
+  的 IPC 窗口探测（`everything::available`），服务走一次 `{"t":"status"}` 管道
+  往返（`SVC_PROBE_TIMEOUT` = 500ms；缺管道在 connect 预算内快速失败）。回复
+  `{backend, status, everything: {running}, svc: {running, state?, files?, error?}}`：
+  `backend`/`status` 是“现在查询会用哪个后端 + 它的索引是否可用”（Everything
+  优先，与 `run_search` 同一偏好序），`svc.state` 原样透传引擎状态
+  （`ready`/`building`/`off`/`failed`），服务应答但状态无法识别（比 `status`
+  谓词更老的构建）时只有 `svc.running: true`。失败冷却**不**参与：探测报告的是
+  可用性，不是下一次击键会跳过谁（`select_backend` 纯函数 + 单测钉住映射表）。
+  命令注册进 `lib.rs` 的 `generate_handler!`。
+- **插件面**：RPC `search.status`（`rpc.ts` case、`hostApi.ts` 实现、
+  `permissions.ts` 台账 `search.status→search.files`），视图桥
+  （`iframeBridge.tsx`）与逻辑帧（`public/pluginLogicFrame.js`）两侧客户端同步加
+  方法；`src/launcher/types.ts` 的 `FileSearchStatus`、
+  `src/plugins/types.ts` 的 `PluginHostApi.search` 与
+  `examples/plugins/plugin-api.d.ts` 补类型。
+- **参考示例**（`examples/plugins/file-search/view.html`）：页面挂载时探测一次，
+  在提示行上方显示“后端：Everything 运行中 / LumeSVC USN 索引就绪（N 个文件）/
+  索引构建中 / 不可用（state: failed）”。
+- 文档：`docs/PLUGIN_API.md` §6.1 RPC 表、§8.1、§8.2 台账、§11.4，以及
+  `docs/ARCHITECTURE.md` 的 filesearch 模块条目与探测要点。
+
+### 66.2 踩坑
+
+- **`search.files` 的 `status` 词表比命令注释更窄**：`svc_search` 已经把
+  `off`/`failed` 归一到 `unavailable`，探测命令必须复用同一归一化，否则插件会
+  看到 `file_search` 永远不返回的取值。
+- **失败冷却不能算进探测**：Everything 在跑但刚超时进冷却时，按 `run_search`
+  的即时选择会报 `none`，插件据此显示“无后端”就成了假阴性；探测只报可用性，
+  冷却留给查询路径。
+- **`examples/plugins/file-search` 与开发机 `target/debug/plugins/file-search`
+  不是同一个插件**：后者是本机自装的高版本插件，关键字 `秒搜` 会先命中它。
+  验证示例页时把示例复制成 `file-search-example`（改 id 与关键字）再跑，截图后
+  删除副本。
+- **探测命令必须是 async**：服务往返有超时预算，同步命令会卡主线程（既有约定）。
+
+### 66.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm exec tsc -p examples/tsconfig.json`、
+  `pnpm run build`、`cargo check`、`cargo test`（**229 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过。
+- 直接 invoke（无后端）：`{"backend":"none","status":"unavailable",
+  "everything":{"running":false},"svc":{"running":false}}`；起
+  `lume-svc.exe --foreground`（非 SYSTEM 权限）后：`{"backend":"svc",
+  "status":"unavailable","everything":{"running":false},"svc":{"running":true,
+  "state":"failed","files":0,"error":"C:\\: open volume: 拒绝访问。
+  (0x80070005)"}}` —— 状态与失败原因如实透传。
+- 示例插件页截图 `test/filesearch-example-status.png`：页面渲染“后端：不可用 —
+  需要正在运行的 Everything，或已安装并启动 LumeSVC 服务”。
+- `node scripts/cdp_p2b_verify.mjs` **28 passed / 1 failed**：失败项
+  “plugin rows sit below the normal results” 与本轮无关 —— 该断言要求
+  `search_apps("清单")` 至少 1 条原生命中，本机实测 0 条（同机 `cmd` 8 条），
+  纯属索引内容；ctx 面一致性两项 PASS。
+- `node scripts/cdp_filesearch_mode_smoke.mjs` 仍在 `contentDocument` 上失败
+  （沙箱帧为 opaque origin，读取返回 null，属既有失效脚本），示例页改用截图断言。
+
+## 67. 自动化「使用提权代理」开启前校验代理注册
+
+`automation.use_agent` 默认开启，而 `lume-agent.exe` 的计划任务要用户到「系统」页
+注册一次（一次 UAC）。于是常见状态是：开关亮着、代理根本没注册，自动化在提权
+目标上只能走进程内发送。本轮把“开启”这个动作变成一次显式校验。
+
+### 67.1 实现
+
+- `src/settings/AutomationPane.tsx`：
+  - 点击开启先 `invoke("agent_status")`：`installed` 为假时用设置窗共享模态
+    （`requestConfirm`）提示“提权代理尚未注册”，主按钮「前往「系统」页」
+    （`onOpenSystem`），**不写设置** —— 开关保持关闭；查询失败走行内 toast
+    （`autoUseAgentCheckFailed`），同样不写。关闭方向不校验。
+  - 进入本页时探测一次注册状态：已开启但未注册时该行摘要直接显示未注册提示
+    （`autoUseAgentUnregisteredSummary`），探测失败回退通用摘要。默认值保持
+    开启（`settings.rs` 的回归测试钉住“默认开启”，本轮不动默认值）。
+  - 校验期间开关 `disabled`，避免连点。
+- `Settings.tsx` 把 `requestConfirm` 传给 `AutomationPane`；三语新增
+  `autoUseAgentUnregisteredTitle` / `autoUseAgentUnregisteredHint` /
+  `autoUseAgentOpenSystem` / `autoUseAgentCheckFailed` /
+  `autoUseAgentUnregisteredSummary`，并把 `autoUseAgentHint` 改成“注册后才能
+  开启”的口径。
+- 文档：`docs/SETTINGS.md` 的自动化页条目与说明。
+- 新增验证脚本 `scripts/cdp_agent_gate_verify.mjs`。
+
+### 67.2 踩坑
+
+- **`agent_status` 是同步命令**（内部 `schtasks /Query`），点击后要等一次 IPC +
+  一次进程启动；校验期间必须禁用开关，否则连点会重复弹框。
+- **未注册时界面无法把开关重新打开**：验证脚本若要还原“原本开启”的状态，只能
+  走 `save_settings_patch`。这也说明校验刻意只放在 UI 动作上 —— 放进 Rust 保存
+  路径会连带打断导入 / 恢复默认（默认值本身是开启）等合法写入。
+- **摘要断言要等异步探测落地**：首帧读 `.settings-row-summary` 拿到的仍是通用
+  文案，脚本必须先轮询到未注册文案再断言（第一轮就是这么误报的）。
+
+### 67.3 验证
+
+- `node scripts/cdp_agent_gate_verify.mjs` **5/5 PASS**（本机 `agent_status`
+  报 `installed: false`）：未注册 + 已开启 → 行摘要提示未注册；点击关闭不弹窗、
+  立即生效；点击开启 → 模态提示且开关保持 `aria-checked=false`；弹窗主按钮跳转
+  「系统」页；测试后经命令还原 `use_agent=true`。截图
+  `test/agent-gate/summary.png`、`test/agent-gate/gate.png`、
+  `test/agent-gate/system.png`。
+- `node scripts/cdp_settings_smoke.mjs` ALL PASS、
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**（含 560×420 自动化页
+  无横向溢出）。
+## 68. 搜索页「索引目录」条目重排
+
+用户索引行原来是「[文件夹按钮] 名称 → 路径　索引文件 [开关] [删除]」的一条横排：
+箭头把名称和路径拆成两段无关的文字、开关标签没有任何样式、`.settings-row-between`
+的 `space-between` 又把元素拉到面板两端，整行读起来像三个互不相干的片段。
+
+### 68.1 实现
+
+- `src/settings/SearchPane.tsx`：条目改成两层结构 —— 外层 `.settings-index-row`
+  （文件夹按钮 + `.settings-index-copy` + `.settings-index-actions`），复制块里
+  名称与路径各占一行，动作块把「索引文件」小字标签、开关、删除聚成一组。
+  箭头 `settings-index-arrow` 与 `settings-listrow` / `settings-row-between`
+  两个只为旧横排存在的类一并去掉。
+- `src/settings/skins/base.css`：新增 `.settings-index-row`（52px、悬停整行高亮、
+  圆角）、`.settings-index-copy`（`min-width: 0` 的网格）、`.settings-index-name`
+  （13px 主文字 + 省略号）、`.settings-index-actions`（右端成组）、
+  `.settings-index-files-label`（11px 次要文字）、`.settings-index-repair`
+  （文件夹字形默认 0.72 透明度、悬停还原）、条目之间的发丝线与错误行缩进
+  （`padding-left: 42px`，对齐名称起始列）；`.settings-listrow` 从共享 flex
+  组里删除。
+- 行为不变：路径校验、修复路径（文件夹按钮）、删除、索引文件开关与三语文案
+  全部照旧；`docs/SETTINGS.md` 的字段描述本来只讲内容不讲排布，无需改动。
+
+### 68.2 踩坑
+
+- **名称/路径必须分开成块**：只把箭头换成斜杠或空格仍然是"一行塞两个值"，
+  长路径会把名称挤成省略号；两行 + `min-width: 0` 的复制块才能让名称完整、
+  路径单独省略。
+- **开关标签不能丢**：这个开关的语义（索引文件 ↔ 只索引可启动项）没有别的
+  载体，标签改成 11px 次要文字后仍是必需的；删除它会让开关变成无标签控件。
+- **错误行要对齐名称而不是面板左缘**：`.settings-error` 默认块级左对齐，
+  在两层结构下要显式 `padding-left: 42px`（文件夹按钮 32px + 间距 10px）
+  才与名称起始列一致。
+- **临时条目验证后要还原**：开发机 `settings.toml` 的 `user_index` 为空，
+  截图用的两条条目（正常 + 缺失路径）经 `save_settings_patch` 写入，验证完
+  立刻写回 `[]`（顺带确认了 `settings-applied` 会让设置窗重新拉取设置）。
+
+### 68.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  （**229 passed / 9 ignored**）、`pnpm run tauri build --debug --no-bundle`
+  通过。
+- `node scripts/cdp_settings_smoke.mjs` ALL PASS、
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**（含 560×420 搜索页
+  无横向溢出）。
+- CDP 实测（两条临时条目：正常目录 + 不存在目录）：1040 宽与 560 宽下
+  `.settings-listitem` 的 `scrollWidth - clientWidth` 均为 0，文档与
+  `.settings-main` 无横向溢出；缺失路径的行内错误文案为「文件夹不存在。」，
+  计算样式 `padding-left: 42px`。
+- 截图：`test/index-row/wide-scrolled.png`（Quiet 深色，含错误行与新增行）、
+  `test/index-row/narrow-rows.png`（560 宽）、
+  `test/index-row/chromatic-rows.png`（Chromatic 皮肤）。
+## 69. 用户可见文案审查收口（2026-10-22 语义走查）
+
+`docs/UX_TEXT_AUDIT_2026-10-22.md` 的 17 项发现逐条收口：文案语义、术语统一、
+本地化缺口与死键清理。
+
+### 69.1 实现
+
+- **内置插件名本地化**（发现 1）：`languages/*.json` 新增 `pluginNameClipboard` /
+  `pluginNamePreview`；前端 `src/plugins/pluginName.ts` 按 id 取 `t()`，插件页
+  卡片 / 详情 / 无障碍名称 / toast 与设置搜索目录（`src/settings/catalog.ts`）
+  统一走 `pluginDisplayName()`；Rust 的 `BUILTIN_PLUGINS` 名字改为英文兜底
+  （Clipboard history / Satellite preview）。
+- **语义纠偏**（发现 2、5、6、7、15）：`settingsRecentCountHint` 不再承诺固定应用
+  豁免上限；`settingsExpandPinnedHint` 说明每次呼出按设置重置；`settingsToggleHotkeyHint`
+  说明保存即重新注册；`settingsSwitchHotkeyHint` / `hotkeyModeHint` 明确「切换模式」
+  只在启动器窗口内（摘要给结论、详情给增量）；外观 / 启动器页说明补齐页内字段；
+  「恢复应用默认值」范围说明收敛为 `settingsRestoreDefaultsHint` 一条，确认框追加
+  `settingsRestoreDefaultsConfirmHint`（恢复前先写 `backup.toml`，可用恢复备份
+  找回），删除 `settingsRestoreDefaultsHintLong` 与 stale 的
+  `settingsRestoreAppDefaultsHint`。
+- **术语统一**（发现 3、13）：剪贴板 `pinned` 全量改用「收藏」（`keepPinned`、
+  `settingsHistoryCapHint`；「已固定」只留应用栏标题）；服务统一安装 / 卸载
+  （en Install/Uninstall、繁 安裝/解除安裝），提权代理统一注册 / 注销
+  （en Register/Unregister、简 注册/注销、繁 註冊/註銷），确认框、进行中、结果与
+  状态文案同步。
+- **清空提示**（发现 4）：勾选「保留收藏记录」时 toast 走
+  `clipClearedKeptFavorites`，不再谎报「历史已清空」。
+- **错误页本地化**（发现 8）：`registry.ts` / `pluginWindow.tsx` 的插件页加载失败
+  页改用 `pluginViewLoadFailed`（新增 `escapeHtml`，语言文件覆盖不当作可信 HTML），
+  原始错误只进插件日志；预览窗文本 / 图片 / PDF 失败改用 `previewLoadFailed`，
+  原始错误进 console。独立插件窗顺带跟随 `appearance.language`（此前只有预览窗同步）。
+- **Rust 侧文案**（发现 9）：新增 `src-tauri/src/texts.rs` —— 托盘菜单、热键冲突
+  通知、services.msc 服务描述、计划任务描述与设置 / 预览窗标题的文案表，运行时先读
+  `<base>/languages/<lang>.json`（与前端同一批覆盖文件），文件缺失才用编译兜底；
+  `i18n.rs` 新增 `UiLang`（含 zh-TW 子语言判定）与 `text()`；托盘 / 通知 / 窗口
+  标题跟随 `appearance.language`（保存即时刷新），服务与任务描述跟随系统 UI 语言
+  （OS 外壳表面，且提权子进程读不到设置状态）。`index.html` 的 `<noscript>` 改为
+  三语并列。
+- **三语对齐**（发现 10、11）：`autoNotice` / `autoForceFocus` /
+  `settingsClipPreview` / `settingsModeIconsHint` / `pluginsFilterDisk` /
+  `pluginKindProvider` / `pluginsInstallUnsigned` 按实现统一；zh-TW 固定词表
+  （剪貼簿 / 使用者 / 外掛 / 目前 / 快捷鍵）一次性替换，脚本扫描残留为 0。
+- **英文单复数**（发现 12）：`t()` 的 `params` 接受数值 `count`，调用方改传数字；
+  7 条含名词的计数文案在 `languages/*.json` 增加 `_one` / `_other`（中文两份用
+  同一文案占位，保持三语键集合一致）。
+- **帮助与搜索**（发现 14、16）：设置搜索关键词按「英文 + 简体 + 繁体」补齐；
+  新增 `scripts/check_i18n.mjs` 自检（三语键集合一致、键都有引用、中文关键词成对）。
+- **死键清理**（发现 17）：删除 36 条无引用键（含已不存在的「未保存草稿」对话与
+  `autoDelayHint` 等与实现冲突的文案）。
+
+### 69.2 踩坑
+
+- **语言文件是 CRLF，按 `\n` 切分会把行尾 `\r` 带进判断**：删除键时
+  `line.endsWith(",")` 恒为 false，于是把前一行的逗号也删掉，JSON 直接坏掉。批量
+  改语言文件必须按文件自身 EOL 切分，且先 `JSON.parse` 校验再落盘（本轮就是先写盘
+  后校验，靠 `target/debug/languages/` 的构建副本才恢复回来）。
+- **i18next 复数只在 `count` 是数字时触发**：调用方原先传 `String(n)`，`_one` /
+  `_other` 永远不命中；改成数字后 en 的 1 条才显示 "1 item"。中文（zh-CN / zh-TW）
+  没有复数类别，`_other` 必须写中文文案，否则会回落到 en 的 `_other`（实测踩到：
+  繁中页显示英文 "1 items"）。
+- **Rust 读不到设置状态的地方要另定语言来源**：`lume-svc.exe --install` 与
+  `lume-agent.exe --install-task` 是独立提权进程，服务描述 / 任务描述按系统 UI
+  语言取；托盘、通知、窗口标题在 launcher 进程里，按 `appearance.language` 取。
+- **用户可覆盖的语言文件不能当可信 HTML / XML**：错误页与任务 XML 都先转义
+  （`escapeHtml` / `texts::xml_escape`）。
+- **stale CDP 脚本会伪装成回归**：`cdp_agent_smoke.mjs` 仍在按设置重构前的 DOM
+  断言（`.settings-hint`、`.settings-row-between`、保存按钮与独立的「提权代理」
+  分组）。本轮把它更新到现状（状态票券 `system.agent`、帮助对话框里的 UIPI 说明、
+  自动保存、注册门控下改回设置走命令），恢复 ALL PASS。
+
+### 69.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  （**235 passed / 9 ignored**；新增 `texts` 表 6 项断言：编译兜底与
+  `languages/en.json` 逐条一致、三语都带全部键、运行时读文件路径、`{combo}` 替换、
+  zh-TW 用「系統匣」而不是「托盘」、XML 转义）。
+- `node scripts/check_i18n.mjs` **PASS**（558 键 × 3 语言、62 个关键词数组配对、
+  0 条未引用键）。
+- `pnpm run tauri build --debug --no-bundle` 通过；CDP：
+  `cdp_settings_smoke.mjs` ALL PASS、`cdp_settings_skin_verify.mjs` **60/60**、
+  `cdp_settings_accent_verify.mjs` **47/47**、`cdp_plugins_pane_verify.mjs`
+  ALL PASS、`cdp_agent_smoke.mjs` ALL PASS、`cdp_visual_audit_verify.mjs`
+  **28/28**。
+- CDP 实测（`test/` 内的一次性探针）：内置插件名随语言切换（zh-CN 剪贴板 /
+  卫星预览 ↔ en Clipboard / Satellite preview、启动器 pill 同步、设置窗标题
+  Lume Settings、设置搜索行列出 Satellite preview）；9 条改写文案在设置窗渲染为
+  预期文本；剪贴板清空勾选保留收藏后 toast 为「已清空历史，收藏记录已保留」，
+  计数栏为「共 1 条」/ 切换 en 后 "200 items"（单复数由数值 count 解析）；
+  选中一条内容是无效 PDF 的文件行 → 预览窗渲染「无法加载该预览，详情见日志。」，
+  原始 pdf.js 错误不进正文。

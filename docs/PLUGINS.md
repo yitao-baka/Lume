@@ -51,7 +51,9 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
 宿主能力 API（`ctx` / `window.lume`）：`app.hide/toast/setQuery/setPlaceholder/openPath/
 resize/dragWindow/foreground`、`clipboard.readText/writeText`、`storage.get/set/remove`（插件私有
 KV）、`search.files(q, max?)`（全盘文件秒搜 = `file_search` 门面，Everything /
-LumeSVC 引擎自动选择；**空查询 = 最近文件**，引擎默认按修改时间倒序）。
+LumeSVC 引擎自动选择；**空查询 = 最近文件**，引擎默认按修改时间倒序）、
+`search.status()`（同一门面的就绪探测：不查询就能知道 Everything 是否在运行、
+LumeSVC 引擎状态与索引文件数）。
 `app.foreground()` 返回呼出前前台窗口快照 `{process, className, title, path?}`
 （`path` 仅当那是 Explorer 文件夹；权限 `window`，§6H.2）。
 mode 桥接 iframe 还会收到 `lume.on.key` 按键事件
@@ -240,7 +242,7 @@ permissions = ["network", "clipboard", "fs.write"]
 | 系统通知 | `notify` |
 | 文件对话框 | `dialog` |
 | 光标 / 显示器 | `screen` |
-| 全盘文件搜索 | `search.files` |
+| 全盘文件搜索 / 就绪探测 | `search.files`（`search.status` 同词） |
 | 文件读取（文本/缩略图/图标） | `fs.read` |
 | 任意路径写入 | `fs.write` |
 | 回收站删除 | `trash` |

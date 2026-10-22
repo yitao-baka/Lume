@@ -300,8 +300,11 @@ export function createClipboardStore(services: PluginServices) {
   /** Confirm dialog → clear the whole history (optionally keeping pinned). */
   function doClear() {
     setClearOpen(false);
-    void invoke("clear_clipboard", { keepPinned: keepPinned() })
-      .then(() => services.showToast(t("clipCleared")))
+    const keepFavorites = keepPinned();
+    void invoke("clear_clipboard", { keepPinned: keepFavorites })
+      .then(() =>
+        services.showToast(t(keepFavorites ? "clipClearedKeptFavorites" : "clipCleared"))
+      )
       .catch((err) => console.error("clear failed", err));
     setKeepPinned(false);
     setMultiIds(new Set<number>());

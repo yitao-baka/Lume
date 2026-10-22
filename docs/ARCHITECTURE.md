@@ -34,6 +34,8 @@ Rust Core (src-tauri/src/)
   ├─ pins.rs     — 已固定 bar (SQLite `pinned_apps`, WAL connection)
   ├─ recent.rs   — 最近使用 bar (SQLite `recent_apps`, WAL connection)
   ├─ settings.rs — settings.toml / default.toml / backup.toml three-file system
+  ├─ i18n.rs     — languages/*.json runtime overrides + key lookup for Rust text
+  ├─ texts.rs    — tray / notification / service / task / window-title wording
   ├─ tray.rs     — system tray icon, Restart/Exit menu, left-click toggle
   ├─ hotkey.rs   — toggle shortcut: the configured combo (default Alt+Space)
   ├─ svc.rs      — LumeSVC SYSTEM service (SCM + IPC pipe + index dormancy)
@@ -41,7 +43,8 @@ Rust Core (src-tauri/src/)
   ├─ input.rs    — synthetic keys (SendInput) + window/process/token probes
   ├─ pipe.rs     — length-prefixed JSON pipe client (svc + agent share it)
   ├─ everything.rs— Everything voidtools WM_COPYDATA IPC client (no DLL)
-  ├─ filesearch.rs— unified file-search facade (Everything / LumeSVC backends)
+  ├─ filesearch.rs— unified file-search facade (Everything / LumeSVC backends,
+  │                plus the plugin-facing readiness probe)
   ├─ usnidx.rs   — self-hosted NTFS USN/MFT full-drive index (runs in lume-svc)
   ├─ automation.rs / dirwatch.rs — foreground-window rules and index watching
   ├─ explorer.rs / appicon.rs / notify.rs — Explorer context, themed icons,
@@ -120,6 +123,13 @@ backends have timeouts).
   backend enters a process-wide 10s cooldown so per-keystroke typing never
   pays repeated timeouts. Returns `{backend, status, entries}` in `AppEntry`
   shape.
+- **Readiness probe** (`file_search_status`, plugin RPC `search.status`): "is
+  Everything running / is the LumeSVC index ready" without running a query —
+  Everything by its cheap IPC-window probe, the service by one `status` round
+  trip (engine state `ready`/`building`/`off`/`failed` + indexed file count).
+  The failure cooldown is deliberately not applied: the probe reports what is
+  available, not what the next keystroke would skip. Same permission word as
+  `search.files`.
 - **Everything IPC** (`everything.rs`): Everything 1.4's documented
   WM_COPYDATA protocol, no SDK DLL — query = packed `EVERYTHING_IPC_QUERYW`,
   reply = `EVERYTHING_IPC_LISTW`. One worker thread owns a message-only reply
@@ -190,6 +200,8 @@ launcher (reuses `window::toggle_launcher`); the right-click menu has Restart
 (`AppHandle::request_restart`) and Exit (`AppHandle::exit`). Menu labels follow
 `appearance.language` (`zh-CN` / `zh-TW` / `en`); `"system"` falls back to
 `GetUserDefaultUILanguage`, including the Traditional Chinese sublanguage. The
+wording itself comes from `languages/*.json` through `texts::tray` (compiled
+fallbacks in `texts.rs`), so a language-file override reaches the tray too. The
 menu is rebuilt on every settings apply so a language change is immediate.
 
 ### `pins.rs`
@@ -205,7 +217,9 @@ Registers exactly one toggle shortcut through `tauri-plugin-global-shortcut`:
 the configured `hotkeys.toggle` combo (default `Alt+Space`). A conflict with
 another app (uTools and PowerToys Run both claim `Alt+Space` by default) is
 reported in the log and left as-is — there is no automatic switch to a
-different combo; the user frees the combo or records a free one in
+different combo; a release build has no console, so the conflict also raises a
+shell notification in the configured language (`texts::hotkey_conflict`, with a
+distinct zh-TW wording). The user frees the combo or records a free one in the user frees the combo or records a free one in
 设置 → 快捷键, where `validate_hotkey` checks availability live (the tray's
 设置 item keeps that page reachable when no shortcut registered at all).
 
@@ -609,7 +623,15 @@ before adding a field:
   page-level cue. Command-button clicks hand focus back to the search box;
   inputs and modal scopes keep their own focus.
 - **i18n**: all user-facing strings go through `t()` from `src/i18n.ts`
-  (en / zh-CN / zh-TW), keyed off the system language.
+  (en / zh-CN / zh-TW), keyed off the system language. A numeric `count` also
+  selects the `_one` / `_other` variant — English needs it ("1 item" /
+  "2 items"), the Chinese bundles carry one form in both slots. Text Rust has to
+  render without the webview (tray menu, hotkey-conflict notification,
+  services.msc / Task Scheduler descriptions, settings / preview window titles)
+  is read from the same `languages/*.json` files through `i18n::text` with the
+  compiled fallbacks in `texts.rs`; `node scripts/check_i18n.mjs` keeps the
+  three bundles, the key references and the settings-search keyword pairs in
+  step.
 
 ## State & lifecycle
 

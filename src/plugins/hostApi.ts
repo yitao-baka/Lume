@@ -10,6 +10,7 @@ import type {
   DialogOptions,
   DisplayInfo,
   FileSearchOut,
+  FileSearchStatus,
   ForegroundInfo,
   HttpRequest,
   HttpResponse,
@@ -416,6 +417,10 @@ export function createHostApi(
           folder: o.folder,
           pluginId: id,
         });
+      },
+      status: () => {
+        plog.debug(id, "search.status");
+        return inv<FileSearchStatus>("file_search_status", { pluginId: id });
       },
     },
   });

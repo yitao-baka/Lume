@@ -230,7 +230,7 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 | 显示 | `show_source_app`、`time_display`、`hover_select`、`favorites_top`、`paste_close` |
 | 预览 | `preview`、`remember_checks` |
 
-固定记录不计入历史上限。图片以本地缓存保存；文件只保存引用。忽略应用区域使用
+收藏记录不计入历史上限。图片以本地缓存保存；文件只保存引用。忽略应用区域使用
 风险色边界表达隐私含义。
 
 ### 04 搜索（`search`）
@@ -269,7 +269,7 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 |---|---|
 | `automation.enabled` | 自动动作总开关；关闭时规则仍可查看和编辑 |
 | `automation.force_focus` | 延迟结束后尝试抢回目标程序焦点；失败记录日志 |
-| `automation.use_agent` | 通过 `lume-agent.exe` 向提权程序发送按键 |
+| `automation.use_agent` | 通过 `lume-agent.exe` 向提权程序发送按键；开启前用 `agent_status` 校验计划任务已注册，未注册时弹窗提示（主按钮跳转「系统」页）并保持关闭 |
 | `automation.agent_resident` | 登录后常驻代理；依赖 `use_agent`，关闭父项时禁用但可见 |
 | `automation.actions` | 每条规则包含程序、快捷键、延迟、启用状态 |
 | `test_automation_rule` | 规则卡上的“测试”；结果就地显示 |
@@ -278,6 +278,12 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 
 规则以卡片呈现：折叠态用“程序 + 快捷键 + 延迟”形成自然语言摘要，展开后显示
 程序、快捷键、延迟与测试/开关/删除。重复程序显示行内错误和跳转入口。
+
+「使用提权代理」只在代理（计划任务）已注册时才允许打开：点击开启会先问
+`agent_status`，未注册即弹模态提示并把主按钮留给「系统」页（开关不变），
+查询失败则用行内 toast 说明；关闭方向不做检查。进入自动化页时也会探测一次，
+已开启但代理未注册时该行摘要直接提示未注册（默认值仍为开启，探测失败时
+回退通用摘要）。
 
 ### 07 插件（`plugins`）
 
@@ -317,8 +323,11 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
   导入和恢复备份在替换前确认范围；恢复默认值也可从底栏入口触发。失败结果留在
   当前页并显示 `role="alert"`，不关闭页面。
 
-恢复应用默认值只覆盖 `appearance`、`launcher`、`clipboard`、`hotkeys`、`index`
-与 `automation` 对应内容，不修改插件状态、插件开发选项和系统集成。
+恢复应用默认值用出厂 `default.toml` 覆盖整份 `settings.toml` —— 外观、启动器、
+剪贴板、快捷键、搜索索引、自动化与插件状态（启用列表、开发者开关、插件窗口几何与
+配色）一起回到默认值；系统集成（服务 / 提权代理 / 开机自启）不在这份文件里，不受
+影响。恢复前当前值先写入 `backup.toml`，因此可用「恢复备份设置」找回；确认框把
+范围与这条前提一起显示。
 
 ### 09 关于（`about`）
 
@@ -345,6 +354,8 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 
 - 前端：`pnpm exec tsc --noEmit`、`pnpm run build`。
 - Rust：`cargo check`、`cargo test`。
+- 文案自检：`node scripts/check_i18n.mjs`（三语键集合一致、键都有引用、设置搜索
+  关键词简繁成对）。
 - CDP：`node scripts/cdp_settings_smoke.mjs`、
   `node scripts/cdp_settings_skin_verify.mjs` 与
   `node scripts/cdp_settings_accent_verify.mjs`。主题色脚本覆盖首帧属性、四组合

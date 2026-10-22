@@ -915,8 +915,16 @@ fn apply_runtime_settings(
     // Dev-mode plugin watch follows plugins.dev_mode — also on an import /
     // restore, not only a normal save.
     crate::plugin_devwatch::rebuild(app);
-    // Tray labels follow the configured launcher language (zh-CN / zh-TW / en).
+    // Tray labels and the settings / preview window titles follow the
+    // configured launcher language (zh-CN / zh-TW / en).
     let _ = crate::tray::refresh_labels(app);
+    let lang = crate::i18n::UiLang::from_setting(&new.appearance.language);
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.set_title(&crate::texts::window_title_settings(lang));
+    }
+    if let Some(window) = app.get_webview_window("preview") {
+        let _ = window.set_title(&crate::texts::window_title_preview(lang));
+    }
     // Notify the launcher webview (language + entry-box size it renders).
     app.emit("settings-applied", ()).map_err(|e| e.to_string())
 }

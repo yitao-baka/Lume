@@ -26,21 +26,16 @@ impl Default for ActiveHotkey {
 }
 
 /// A release build has no console, so a registration conflict must reach the
-/// user through the shell. Keep the wording to the system's primary language
-/// (the tray uses the same simple split).
-fn notify_unavailable(combo: &str) {
-    use windows::Win32::Globalization::GetUserDefaultUILanguage;
-    let zh = unsafe { (GetUserDefaultUILanguage() & 0x3FF) == 0x04 };
-    let body = if zh {
-        format!(
-            "呼出快捷键 {combo} 被其他程序占用。请从托盘打开设置 → 快捷键，或先释放该组合键。"
-        )
-    } else {
-        format!(
-            "The shortcut {combo} is already in use. Open Settings → Hotkeys from the tray, or free the combo."
-        )
-    };
-    let _ = crate::notify::notify("Lume", &body);
+/// user through the shell. The wording follows the configured launcher language
+/// (falling back to the system UI language), like the tray — including a
+/// distinct Traditional Chinese variant.
+fn notify_unavailable(app: &AppHandle, combo: &str) {
+    let configured = app
+        .try_state::<crate::settings::SettingsState>()
+        .map(|s| s.current().appearance.language)
+        .unwrap_or_else(|| "system".into());
+    let lang = crate::i18n::UiLang::from_setting(&configured);
+    let _ = crate::notify::notify("Lume", &crate::texts::hotkey_conflict(lang, combo));
 }
 
 /// True when `shortcut` is the one we successfully registered.
@@ -79,7 +74,7 @@ pub fn register(app: &tauri::App, combo: &str) {
         Err(e) => {
             eprintln!("[hotkey] {combo} unavailable: {e}");
             eprintln!("[hotkey] no toggle shortcut — free the combo or change it in Settings");
-            notify_unavailable(combo);
+            notify_unavailable(&app.handle(), combo);
         }
     }
 }
@@ -184,7 +179,7 @@ pub fn apply(app: &AppHandle, combo: &str) -> bool {
             if let Some(cur) = active.as_deref() {
                 let _ = app.global_shortcut().register(cur);
             }
-            notify_unavailable(combo);
+            notify_unavailable(app, combo);
             false
         }
     }

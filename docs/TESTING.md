@@ -333,6 +333,11 @@ dev URL instead.
 > status command, defaults) and `node scripts/cdp_agent_verify.mjs` (9
 > assertions: it starts `lume-agent.exe --serve` unelevated itself and proves a
 > real injection lands, by sending Alt+F4 to Notepad and checking it closed).
+> Verify registration through the app (设置→系统→「注册代理」), not by hand-running
+> `schtasks /Create /XML` from a terminal: schtasks decodes the XML file with the
+> **calling console's code page**, so a UTF-8 console (65001) hides failures that
+> the agent hits under `CREATE_NO_WINDOW` (fresh CP936 console) — that is how the
+> localized-description rejection of docs/ROADMAP_HISTORY.md #70 stayed invisible.
 > The steps below are the ones that need a human at the UAC prompt.
 
 1. **Register** — 设置→系统→「注册代理」→ accept UAC → the status line switches

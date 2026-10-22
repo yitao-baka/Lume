@@ -4529,3 +4529,63 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   计数栏为「共 1 条」/ 切换 en 后 "200 items"（单复数由数值 count 解析）；
   选中一条内容是无效 PDF 的文件行 → 预览窗渲染「无法加载该预览，详情见日志。」，
   原始 pdf.js 错误不进正文。
+
+## 70. 提权代理注册失败（schtasks 按控制台代码页解码 XML，2026-10-22）
+
+设置页「注册代理」在自带代理路径上必失败，`%TEMP%\lume-agent-install.result` 记
+`schtasks /Create /XML … /TN Lume\LumeAgent /F failed: 错误: 任务 XML 包含意外节点。
+(4,7):Description:`。#69 引入的本地化任务描述（`taskDescription`）是触发点；
+debug / release 同样失败，任务从未注册成功。
+
+### 70.1 根因
+
+`schtasks /Create /XML <file>` **不按 XML 声明或 BOM 识别编码，而是用调用方的控制台
+代码页把文件字节转成字符串**再交给解析器。代理用 `CREATE_NO_WINDOW` 拉起 schtasks，
+子进程拿到的是**全新隐藏控制台**（CP936/GBK），于是 UTF-8 的中文描述被按 GBK 重新
+配对：
+
+- 描述末尾「。」(E3 80 82) 与紧跟的 `<`(3C) 组成非法 GBK 双字节对，Windows 解码器
+  按 best-fit 把这两字节吃成一个 `?` —— **`</Description>` 开头的 `<` 消失**；
+- `<Description>` 因此永不闭合，下一行的 `<URI>` 成为纯文本元素的子节点；
+- Task Scheduler 报 `(4,7):Description:`：位置是那个意外子节点所在行列（元素列号
+  规则实测为起始列 + 2），行号是元素起点行。
+
+判定依据（同一份字节，本机复测）：UTF-8 控制台（65001）注册成功；
+`CREATE_NO_WINDOW`（新 CP936 控制台）与 `cmd /c "chcp 936 & schtasks …"` 必报
+`(4,7):Description:`；`chcp 65001` 成功；把描述换成纯 ASCII 后在 CP936 下也能注册
+（只被 HighestAvailable 的 ACL 拦成「拒绝访问」，即 XML 已过校验）。列号 +2 的
+偏移用已知非法节点标定（4 空格缩进 → 列 7、8 空格 → 列 11）；`unexpected node`
+与 `too many nodes`（重复节点，位置在元素尾）是不同错误，靠这一点把二者分开。
+控制台代码页与提权无关：中完整性 + `CREATE_NO_WINDOW` 就能复现。
+
+### 70.2 修复
+
+- `texts::xml_escape` 输出**纯 ASCII**：`0x20..=0x7E` 原样（`& < > "` 仍转义），其余
+  码点一律 `&#x…;`；XML 1.0 无法表示的码点（C0 控制符、U+FFFE/U+FFFF）写
+  `&#xFFFD;`；行/制表/回车同样转义，用户文案不能再把换行注进文档结构。
+- `agent::task_xml` 拆出 `task_xml_with_description`，`description` / `command` /
+  `user_sid` 全部过转义（带空格路径的引号变成 `&quot;`，解析后仍是引号）。
+- 临时文件改 `lume-agent-task-<pid>.xml`：便携版 + debug 实例并发注册时，固定名字会
+  互相覆盖/删除（一方删掉另一方正在读的文件会得到 `无法读取 XML 文件`）。
+
+顺带修掉的现象：注册成功后任务计划程序里显示的 Description 不再是乱码（此前按 GBK
+解码 UTF-8 文本后原样存进任务）。
+
+### 70.3 验证
+
+- `cargo check` 通过；`cargo test` **238 passed / 9 ignored**，新增
+  `task_xml_is_pure_ascii_for_localized_descriptions`、
+  `task_xml_never_emits_xml_illegal_characters`、`xml_escape_emits_ascii_only`
+  三条回归（不依赖系统语言的注入式描述）。
+- 复现矩阵见 70.1（UTF-8 控制台 / `CREATE_NO_WINDOW` / `chcp 936` / `chcp 65001` /
+  纯 ASCII 描述）。
+- 提权端到端（release `lume-agent.exe --install-task`）：用只读句柄拦下临时 XML
+  （只共享读写、不共享删除，阻止其自删）实测 **1908 字节、0 个非 ASCII 字节**，描述
+  写成 `&#x63D0;&#x6743;…`；结果文件 `ok`；`Get-ScheduledTask \Lume\LumeAgent` →
+  `State=Ready`、`Execute=E:\Softwares\Lume\lume-agent.exe`、`RunLevel=Highest`、
+  `Description` 为正确中文；`--uninstall-task` 回 `ok` 且任务消失；重注册后
+  `schtasks /Run` 起进程、`\\.\pipe\LumeAgent` 存在。
+- 调试手法留档：agent 用完即删临时 XML，要抓它就在写之前先建同名占位文件并持有
+  **只读**句柄（共享 `ReadWrite`、不共享删除）——写入仍成功、schtasks 仍能读取，但
+  agent 的删除会失败，文件留在磁盘上可供比对；句柄带写权限会让 schtasks 报
+  「另一个程序正在使用此文件」。

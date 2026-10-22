@@ -185,6 +185,28 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **提权代理注册失败：schtasks 按控制台代码页解码任务 XML** — 设置页「注册代理」
+  在自带代理路径下必失败，报 `错误: 任务 XML 包含意外节点。(4,7):Description:`。
+  根因：`schtasks /Create /XML <file>` 不用 XML 声明或 BOM 识别编码，而是用**调用方
+  控制台代码页**把文件字节转成字符串；代理以 `CREATE_NO_WINDOW` 拉起 schtasks，
+  子进程拿到全新隐藏控制台（CP936），于是 UTF-8 中文描述被按 GBK 重新配对 ——
+  「。」(E3 80 82) 与紧跟的 `<`(3C) 组成非法双字节对、被 best-fit 吃成一个 `?`，
+  `</Description>` 的 `<` 消失，下一行 `<URI>` 落进纯文本元素，整份 XML 被拒。
+  同一份字节在 UTF-8 控制台（65001）注册正常，所以从终端/IDE 手跑验证不出来；
+  本地化任务描述（`taskDescription`）是触发点，此前硬编码英文描述是纯 ASCII。
+  修复：`texts::xml_escape` 改为输出纯 ASCII（`0x20..=0x7E` 原样，其余码点写
+  `&#x…;`；XML 1.0 不允许的码点写 `&#xFFFD;`；行/制表/回车同样转义），
+  `agent::task_xml` 的 description / command / user_sid 全部过它，临时文件改
+  `lume-agent-task-<pid>.xml`（便携版与 debug 实例并发注册不再互相覆盖/删除）。
+  顺带修掉注册成功后任务计划程序里 Description 乱码的问题。验证：`cargo check`
+  通过、`cargo test` **238 passed / 9 ignored**（新增 ASCII / 非法码点 / 转义三条
+  回归）；复现矩阵：UTF-8 控制台成功、`CREATE_NO_WINDOW` 与 `chcp 936` 报
+  `(4,7):Description:`、`chcp 65001` 成功、ASCII 描述在 CP936 下通过 XML 校验；
+  提权端到端实测临时 XML 1908 字节 / **0 个非 ASCII 字节**，结果文件 `ok`，
+  `Get-ScheduledTask \Lume\LumeAgent` → `State=Ready`、`Execute=E:\Softwares\Lume\lume-agent.exe`、
+  `RunLevel=Highest`、描述为正确中文；`--uninstall-task` 回 `ok` 且任务消失；
+  `schtasks /Run` 后 `lume-agent.exe` 起进程、`\\.\pipe\LumeAgent` 存在。
+
 - **确认对话框出现动画跳变** — `.settings-confirm` / `.clip-confirm` 复用了底部
   toast 的 `toast-in` 关键帧，而那组关键帧只带 `translateX(-50%)`：动画期间
   对话框的 `translateY(-50%)` 被丢掉，弹窗先出现在偏低半个高度的位置、末帧再

@@ -176,6 +176,13 @@ backends have timeouts).
   by itself once idle unless a client sent `stay`. `lume-agent.exe --serve` also
   runs fine by hand for testing, and `agent_status` never starts it as a side
   effect.
+- **The task XML is pure ASCII** — `texts::xml_escape` writes every code point
+  outside `0x20..=0x7E` as a numeric character reference. `schtasks /Create
+  /XML` decodes the file with the *caller's console code page* (not with the
+  encoding the bytes are), so a localized description would otherwise be
+  mis-decoded, lose markup bytes on a DBCS console and be rejected outright;
+  the agent spawns schtasks with `CREATE_NO_WINDOW`, i.e. a fresh console the
+  caller cannot assume is UTF-8 (docs/ROADMAP_HISTORY.md #70).
 - **Failure honesty**: an injection reports the events `SendInput` actually
   inserted (`sent`), so zero is a real, visible failure — `uipi`/`blocked`/
   `not_elevated`/`needs_agent` instead of a silent no-op. See docs/ROADMAP_HISTORY.md for the

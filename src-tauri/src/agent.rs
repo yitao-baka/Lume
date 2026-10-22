@@ -259,7 +259,24 @@ fn agent_exe_path() -> PathBuf {
 /// default 72-hour limit would kill a resident agent). The logon trigger is
 /// what makes the resident option work; an on-demand agent started by it
 /// simply exits again when idle.
+///
+/// The document must stay pure ASCII — see [`task_xml_with_description`].
 fn task_xml(exe: &Path, user_sid: &str) -> String {
+    task_xml_with_description(
+        exe,
+        user_sid,
+        &crate::texts::task_description(crate::i18n::UiLang::from_system()),
+    )
+}
+
+/// [`task_xml`] with the description passed in, so tests can pin the emitted
+/// bytes whatever the system UI language is.
+///
+/// Every interpolated value goes through [`crate::texts::xml_escape`], which
+/// keeps the document **pure ASCII**: `schtasks /Create /XML` decodes the file
+/// with the caller's console code page, so a UTF-8 description is mis-decoded
+/// on a DBCS console and the markup breaks (docs/ROADMAP_HISTORY.md #70).
+fn task_xml_with_description(exe: &Path, user_sid: &str, description: &str) -> String {
     // Task Scheduler accepts a quoted <Command>, but its own UI writes the
     // bare path — only quote when the path actually needs it.
     let path = exe.to_string_lossy();
@@ -269,10 +286,10 @@ fn task_xml(exe: &Path, user_sid: &str) -> String {
         path.into_owned()
     };
     // Task Scheduler is an OS shell surface: describe the task in the Windows
-    // UI language (escaped — a user-edited language file is not trusted XML).
-    let description = crate::texts::xml_escape(&crate::texts::task_description(
-        crate::i18n::UiLang::from_system(),
-    ));
+    // UI language; escaping keeps the file ASCII-only and markup-safe.
+    let description = crate::texts::xml_escape(description);
+    let command = crate::texts::xml_escape(&command);
+    let user_sid = crate::texts::xml_escape(user_sid);
     format!(
         r#"<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -359,7 +376,10 @@ pub fn install_task() -> Result<(), String> {
     }
     let sid = current_user_sid().ok_or("cannot resolve the current user SID")?;
     let xml = task_xml(&exe, &sid);
-    let tmp = std::env::temp_dir().join("lume-agent-task.xml");
+    // Per-process name: two launchers (portable + debug, or two sessions) must
+    // not overwrite or delete each other's file between the write and
+    // `schtasks` reading it.
+    let tmp = std::env::temp_dir().join(format!("lume-agent-task-{}.xml", std::process::id()));
     std::fs::write(&tmp, xml.as_bytes()).map_err(|e| format!("writing task xml: {e}"))?;
     let result = schtasks(&[
         "/Create",
@@ -1143,8 +1163,13 @@ mod tests {
         assert!(xml.contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"));
         assert!(xml.contains("<LogonTrigger>"), "resident mode starts at logon");
         assert!(xml.contains("<Arguments>--serve</Arguments>"));
-        // A path with spaces must be quoted for Task Scheduler.
-        assert!(xml.contains(r#"<Command>"C:\Program Files\Lume\lume-agent.exe"</Command>"#));
+        // A path with spaces must be quoted for Task Scheduler; the quotes are
+        // escaped like every interpolated character and come back out of the
+        // XML parser unchanged.
+        assert!(
+            xml.contains(r#"<Command>&quot;C:\Program Files\Lume\lume-agent.exe&quot;</Command>"#),
+            "{xml}"
+        );
         // …and one without spaces must not be (the Task Scheduler UI never quotes).
         let plain = task_xml(Path::new(r"C:\Lume\lume-agent.exe"), "S-1-5-21-1-2-3-1001");
         assert!(plain.contains(r"<Command>C:\Lume\lume-agent.exe</Command>"));
@@ -1162,6 +1187,49 @@ mod tests {
         assert!(xml.starts_with("<Task "), "must open with <Task>, was: {}", &xml[..xml.len().min(40)]);
         assert!(!xml.contains("<?xml"), "an encoding declaration breaks schtasks /Create /XML");
         assert!(!xml.contains("encoding="), "the encoding attribute is what schtasks rejects");
+    }
+
+    /// The file handed to `schtasks /Create /XML` must be pure ASCII: the tool
+    /// decodes it with the *caller's console code page* rather than the UTF-8
+    /// the bytes are, and on a CP936 console the mis-decoded `。` ending pulled
+    /// the following `<` into one bogus pair — the `<` that starts
+    /// `</Description>` disappeared, so the next line's `<URI>` became an
+    /// unexpected child of a text-only element and Task Scheduler rejected the
+    /// file. Measured 2026-10-22: identical bytes register from a UTF-8 console
+    /// but fail with `错误: 任务 XML 包含意外节点。(4,7):Description:` when the
+    /// child runs under `CREATE_NO_WINDOW` (fresh CP936 console) — which is
+    /// exactly how the agent spawns schtasks.
+    #[test]
+    fn task_xml_is_pure_ascii_for_localized_descriptions() {
+        let xml = task_xml_with_description(
+            Path::new(r"C:\Lume\lume-agent.exe"),
+            "S-1-5-21-1-2-3-1001",
+            "Lume 提权代理 —— 只向更高权限的窗口注入（仅输入）。",
+        );
+        assert!(
+            xml.is_ascii(),
+            "schtasks decodes the file with the console code page — non-ASCII bytes corrupt it"
+        );
+        assert!(
+            xml.contains("<Description>Lume &#x63D0;&#x6743;&#x4EE3;&#x7406;"),
+            "{xml}"
+        );
+        assert_eq!(xml.matches("</Description>").count(), 1);
+        assert_eq!(xml.matches("<URI>Lume\\LumeAgent</URI>").count(), 1);
+    }
+
+    /// Code points XML cannot represent must never reach the file; a language
+    /// file carrying one used to fail registration with `XML 格式错误`.
+    #[test]
+    fn task_xml_never_emits_xml_illegal_characters() {
+        let xml = task_xml_with_description(
+            Path::new(r"C:\Lume\lume-agent.exe"),
+            "S-1-5-21-1-2-3-1001",
+            "bad\u{1}ctl\u{FFFF}tail",
+        );
+        assert!(xml.is_ascii());
+        assert!(!xml.contains('\u{1}') && !xml.contains('\u{FFFF}'));
+        assert!(xml.contains("bad&#xFFFD;ctl&#xFFFD;tail"), "{xml}");
     }
 
     /// The trigger and principal must both name the installing user.

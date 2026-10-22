@@ -86,13 +86,41 @@ pub fn window_title_preview(lang: UiLang) -> String {
     lookup(lang, "windowTitlePreview")
 }
 
-/// Escape text interpolated into the task XML: a user-edited language file is
-/// not trusted to be well-formed markup.
+/// Escape text that is interpolated into the task XML: a user-edited language
+/// file (or a non-ASCII install path) is not trusted to be well-formed markup.
+///
+/// The result is **pure ASCII** — everything outside `0x20..=0x7E` becomes a
+/// numeric character reference and code points XML 1.0 cannot represent become
+/// `&#xFFFD;`. That is a contract, not cosmetics: `schtasks /Create /XML`
+/// decodes the file with the *caller's console code page* instead of reading
+/// the bytes as the UTF-8 they are, so a locally encoded description loses
+/// markup bytes on a DBCS console (docs/ROADMAP_HISTORY.md #70: a CP936 console
+/// paired the UTF-8 `。` with the following `<` and ate the `<` of
+/// `</Description>`). ASCII bytes decode identically on every code page, and the
+/// XML parser expands the references again, so the text still arrives intact.
 pub fn xml_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\u{20}'..='\u{7E}' => out.push(c),
+            c if is_xml_char(c) => out.push_str(&format!("&#x{:X};", c as u32)),
+            _ => out.push_str("&#xFFFD;"),
+        }
+    }
+    out
+}
+
+/// XML 1.0 `Char`, except for `U+FFFE` / `U+FFFF` (excluded by the `U+FFFD` end
+/// of the range).
+fn is_xml_char(c: char) -> bool {
+    matches!(c, '\u{9}' | '\u{A}' | '\u{D}')
+        || matches!(c, '\u{20}'..='\u{D7FF}')
+        || matches!(c, '\u{E000}'..='\u{FFFD}')
+        || c >= '\u{10000}'
 }
 
 #[cfg(test)]
@@ -179,5 +207,18 @@ mod tests {
             xml_escape(r#"a & b < c > d "e""#),
             "a &amp; b &lt; c &gt; d &quot;e&quot;"
         );
+    }
+
+    /// The task XML has to survive `schtasks` decoding it with the caller's
+    /// console code page, so escaped text is ASCII-only: non-ASCII becomes a
+    /// character reference, whitespace controls become references too (user
+    /// text must not be able to inject a line break into the document), and
+    /// code points XML cannot represent are replaced.
+    #[test]
+    fn xml_escape_emits_ascii_only() {
+        assert_eq!(xml_escape("提权——"), "&#x63D0;&#x6743;&#x2014;&#x2014;");
+        assert_eq!(xml_escape("a\nb\tc\rd"), "a&#xA;b&#x9;c&#xD;d");
+        assert_eq!(xml_escape("a\u{1}b"), "a&#xFFFD;b");
+        assert!(xml_escape("规范·字 mixed utf-8 — ok").is_ascii());
     }
 }

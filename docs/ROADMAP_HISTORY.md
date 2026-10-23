@@ -4776,3 +4776,43 @@ Presenter 名称，值没有持久化或下发路径。
   `cdp_page_runtime_verify` **10/10 PASS**；
   `cdp_settings_smoke` ALL PASS；`cdp_settings_skin_verify`
   **60/60 PASS**；`cdp_visual_audit_verify` **28/28 PASS**。
+
+## 75. 分离窗口 Page Runtime（2026-10-23）
+
+来源：api 2 mode 声明 `detachable` 后，独立窗口仍走旧 view bridge，
+无法挂载 Page Service 发布的新模型或把 Presenter intent 送回同一会话。
+
+### 75.1 实现
+
+- 新增受限跨窗口页面通道：`plugin_page_bridge_call` 只接受独立窗口标签与
+  白名单操作，`plugin_page_bridge_reply` 只接受 main 窗口回复；请求 id、参数、
+  结果和错误均设上限。
+- 启动器 registry 把独立 Presenter 的模型读取、Intent、query/show/hide、enter、
+  settings 与文件拖入调用转发到同一 Page Session；服务发布的新模型再回推到
+  独立窗口。
+- 独立窗口使用 PageRuntimeMode 的镜像会话挂载 Presenter：`getModel` 从启动器
+  读取，所有领域动作仍回到启动器权威会话；Presenter 选择、Presenter 设置、
+  theme 与错误状态走现有 `plugin-state` 事件。
+- `plugin_window_meta` 增加 `pageRuntime`、model、Presenter 列表、默认
+  Presenter、Presenter 设置与高度元数据；legacy view 路径保持可回退。
+- Esc 关闭后由既有 close/report → re-dock 路径回到启动器，模型和查询保持。
+
+### 75.2 踩坑
+
+- `createPageRuntimeMode` 的 `callService(name, ...args)` 是位置参数接口，跨窗口
+  传输却使用结构化 payload；若直接复用，`onIntent` 会变成空参数并报
+  `intent must be an object`。代理层必须按操作显式封装。
+- 窗口握手快照与 Page Model 是两套事实：独立窗口的 Page Session 只镜像
+  model，服务仍只在启动器运行；若在窗口内重新启动 service，会破坏单一权威。
+- 独立窗口的 Presenter 设置必须在挂载前缓存，并由 ready/state 推送重放；
+  只依赖初始 model 会让首次设置落空。
+
+### 75.3 验证
+
+- `node scripts/cdp_detached_page_runtime_verify.mjs` **10/10 PASS**：
+  共享模型、受限 bridge、双向 intent、模型回推、Presenter 设置、Presenter
+  切换、模型 revision 保持、Esc 回流。
+- `cdp_plugin_window_verify` **16/16 PASS**（legacy window 回归）；
+  `cdp_presenter_control_verify` **10/10 PASS**；
+  `cdp_translation_service_verify` **22/22 PASS**。
+- `pnpm exec tsc --noEmit`、`cargo check`、debug `--no-bundle` 构建通过。

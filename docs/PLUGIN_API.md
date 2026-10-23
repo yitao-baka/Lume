@@ -913,9 +913,16 @@ live 状态。
 保存后 Host Runtime 通过 `lume.on.settings` 推送完整键值集合，切换 Presenter
 时新实例会收到同一份已持久化值。Presenter 页面不能用服务设置覆盖这些键。
 
+分离为独立窗口时，Page Service 仍只在启动器窗口运行。Presenter 窗口通过
+`plugin_page_bridge_call` / `plugin_page_bridge_reply` 与同一 Page Session
+交换 `getModel`、Intent 和生命周期调用；Rust 校验调用窗口标签、请求 id、操作
+白名单和 1 MiB 载荷上限。模型、Presenter 选择和 Presenter 设置从启动器推送到
+独立 Presenter；关闭窗口后回到原 Page Session，不重建服务。
+
 完整离线验收见 `examples/plugins/translation-demo/`、
-`scripts/cdp_translation_service_verify.mjs` 与
-`scripts/cdp_presenter_control_verify.mjs`。
+`scripts/cdp_translation_service_verify.mjs`、
+`scripts/cdp_presenter_control_verify.mjs` 与
+`scripts/cdp_detached_page_runtime_verify.mjs`。
 
 ## 7. 内置插件开发 API（TypeScript 贡献）
 

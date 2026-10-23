@@ -59,6 +59,13 @@ delivery and layout response, switches Presenters without replacing the Page
 Model/service, and restores both the Presenter choice and values after a
 process restart.
 
+Detached Page Runtime behavior uses
+`node scripts/cdp_detached_page_runtime_verify.mjs`. It detaches
+`translation-demo`, verifies the restricted Presenter bridge and shared model,
+drives an intent through the launcher-owned Page Service, checks model and
+Presenter-setting pushes, switches Presenter without replacing the session,
+and confirms Esc close re-docks the same model/service.
+
 The Windows/WebView2 behavior is verified with `scripts/cdp_*.mjs`. Those
 scripts launch an already built exe, so rebuild first:
 

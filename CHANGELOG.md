@@ -11,6 +11,16 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **分离窗口 Page Runtime** — api 2 mode 的独立窗口不再需要本地重建业务视图：
+  Presenter 通过 `plugin_page_bridge_call/reply` 把模型读取、Intent 与生命周期
+  调用送回启动器持有的同一 Page Session；Rust 校验调用窗口标签、请求 id、
+  操作白名单、参数/结果大小和回复方。模型、Presenter 选择与 Presenter 设置经
+  `plugin-state` 回推，切换 Presenter 不重建服务，Esc 关闭后回流原会话。
+  验证：`cdp_detached_page_runtime_verify` **10/10 PASS**；
+  `cdp_plugin_window_verify` **16/16 PASS**；
+  `cdp_presenter_control_verify` **10/10 PASS**；
+  `cdp_translation_service_verify` **22/22 PASS**；TypeScript、Rust check 与
+  debug 构建通过。
 - **Presenter 声明式设置控制面** — 设置窗的插件详情会列出 api 2 mode 的兼容
   Presenter 与当前选择，并只渲染所选 Presenter 的 `[[presenter_settings]]`。
   值按 `{presenter: {key: value}}` 存入独立的 `__presenter_settings` 文档，

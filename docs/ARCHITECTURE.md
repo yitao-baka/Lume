@@ -510,6 +510,10 @@ before adding a field:
 - `src/presenters/` — replaceable page renderers. Navigation has the default
   grid and a compact list; clipboard has the full history list and a compact
   history. Each Presenter consumes only the model plus a `dispatch` function.
+- Detached page windows mirror the launcher-owned Page Session: their Presenter
+  calls a bounded, window-label-checked bridge for model/intent/service
+  lifecycle operations, while model and Presenter-setting pushes travel back
+  over the existing plugin-window state channel.
 - `src/plugins/` — **every page below the search box is a plugin**.
   Built-in navigation and clipboard expose a thin `ModeInstance` adapter over
   `PageSession`; disk modes still enter the shared registry through

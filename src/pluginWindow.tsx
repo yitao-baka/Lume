@@ -22,8 +22,8 @@
 //! hidden window never re-loads on re-show, so re-focus only needs a
 //! `plugin-window-shown` → `show` replay.
 
-import { createSignal, onCleanup, onMount } from "solid-js";
-import { render } from "solid-js/web";
+import { createSignal, onCleanup, onMount, type Component } from "solid-js";
+import { Dynamic, render } from "solid-js/web";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
@@ -32,7 +32,15 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyPluginColorMode, normalizePluginColorMode, resolveColorMode } from "./theme";
 import { pluginColorMode, pluginColorPref, seedPluginColorPrefs, setPluginColorPref } from "./plugins/themePrefs";
 import { TitleBar } from "./components/TitleBar";
-import type { FeatureEnterInfo, PluginManifest, PluginServices } from "./plugins/types";
+import type {
+  FeatureEnterInfo,
+  PluginManifest,
+  PluginPresenter,
+  PluginPresenterSetting,
+  PluginServices,
+} from "./plugins/types";
+import { createPageRuntimeMode, type PageRuntimeMode } from "./plugins/pageRuntimeMode";
+import type { PageModel } from "./page-runtime/contracts";
 import type { SettingsData } from "./settings/types";
 import { setPermissionSource } from "./plugins/permissions";
 import { createIframeView, escapeHtml, injectBridge, injectTitlebarBridge } from "./plugins/iframeBridge";
@@ -93,6 +101,8 @@ function App() {
   /** The titlebar page's HTML — set only when the manifest declares a
       `titlebar` file and it loaded (drives the slot in the chrome row). */
   const [titlebarHtml, setTitlebarHtml] = createSignal("");
+  const [runtimeView, setRuntimeView] = createSignal<Component | null>(null);
+  let pageRuntime: PageRuntimeMode | undefined;
 
   // Last state pushed from the launcher, cached: the titlebar page's ready
   // handshake replays it locally (the registry answers only the view's).
@@ -102,6 +112,7 @@ function App() {
     enter?: FeatureEnterInfo | null;
     settings?: Record<string, unknown> | null;
     theme?: string | null;
+    presenter?: string;
     /** Titlebar frame of the last v2 snapshot push — replayed when the
      * slot mounts after the push (it loads asynchronously). */
     snapshotTitlebar?: unknown;
@@ -196,12 +207,17 @@ function App() {
       plog.debug(id, "setPlaceholder ignored in the detached window (no search box here)");
     },
     setQuery: (q) => {
-      // Real here (the launcher's search box is not reachable): a detached
-      // window keeps its query in THIS window's iframes. The titlebar
-      // page's search box drives the view's result list through it; the
-      // echo back to the caller matches the launcher's own setQuery →
-      // on.query round-trip.
+      // Page Runtime windows still route the query to the launcher-owned Page
+      // Service; legacy views keep their historical local fan-out. The echo to
+      // both local frames matches the launcher's setQuery → on.query round-trip.
       lastState.query = q;
+      if (pageRuntime) {
+        void callDetachedService("onQuery", q).catch((err) =>
+          plog.error(id, "detached query failed:", err)
+        );
+        pageRuntime.postEvent("query", q);
+        return;
+      }
       fan("query", q);
     },
     resizeWindow: (size) => {
@@ -237,6 +253,105 @@ function App() {
       return true;
     },
   };
+
+  // Page Runtime calls are mirror requests: the launcher's Page Session owns
+  // the service and answers each request by id. Nothing in this window reaches
+  // native capabilities directly.
+  const pageCalls = new Map<
+    string,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+  >();
+  const callPageService = (name: string, args: Record<string, unknown> = {}) =>
+    new Promise<unknown>((resolve, reject) => {
+      const requestId =
+        typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      const timer = setTimeout(() => {
+        pageCalls.delete(requestId);
+        reject(new Error("detached Page Service call timed out: " + name));
+      }, 10_000);
+      pageCalls.set(requestId, { resolve, reject, timer });
+      void invoke("plugin_page_bridge_call", {
+        id,
+        requestId,
+        name,
+        args,
+      }).catch((error) => {
+        clearTimeout(timer);
+        pageCalls.delete(requestId);
+        reject(new Error(String(error)));
+      });
+    });
+
+  const callDetachedService = (name: string, ...args: unknown[]) => {
+    let payload: Record<string, unknown> = {};
+    if (name === "onIntent") payload = { intent: args[0] };
+    else if (name === "onQuery") payload = { query: args[0] };
+    else if (name === "onEnter") payload = { info: args[0] };
+    else if (name === "onSettings") payload = { values: args[0] };
+    else if (name === "onFilesDropped") payload = { paths: args[0] };
+    return callPageService(name, payload);
+  };
+
+  async function setupPageRuntime(meta: {
+    dir: string;
+    name: string;
+    model: string;
+    defaultPresenter: string;
+    height: number | null;
+    presenters: PluginPresenter[];
+    presenterSettings: PluginPresenterSetting[];
+  }): Promise<void> {
+    const manifest = {
+      id,
+      name: meta.name || id,
+      model: meta.model,
+      defaultPresenter: meta.defaultPresenter,
+      height: meta.height,
+      presenters: meta.presenters,
+      presenterSettings: meta.presenterSettings,
+    } as PluginManifest;
+    const initialPresenterId = (
+      (window as unknown as { __LUME_CONFIG__?: { pages?: { presenters?: Record<string, string> } } })
+        .__LUME_CONFIG__?.pages?.presenters ?? {}
+    )[id];
+    const runtime = createPageRuntimeMode({
+      manifest,
+      services,
+      form: "window",
+      waitForService: async () => {},
+      callService: callDetachedService,
+      fetchPresenter: (presenter) => fetchDiskFile(meta.dir + "\\" + presenter.entry),
+      applyTheme: async (mode) => {
+        if (!mode) throw new Error("Page Runtime theme mode is required");
+        await invoke("set_plugin_color_mode", { id, mode });
+        setPluginColorPref(id, mode, "window");
+        applyWindowTheme();
+        runtime.postTheme(effectiveMode());
+      },
+      initialPresenterId,
+      onReady: () => {
+        void invoke("plugin_window_ready", { id }).catch((err) =>
+          plog.error(id, "Page Runtime ready failed:", err)
+        );
+      },
+      onPresenterState: (state) => {
+        if (state.presenterId) {
+          lastState.presenter = state.presenterId;
+        }
+      },
+    });
+    pageRuntime = runtime;
+    (window as unknown as { __detachedPageRuntime?: unknown }).__detachedPageRuntime = {
+      getModel: () => runtime.currentModel() ?? null,
+      getState: () => runtime.currentPresenterState() ?? null,
+      getPresenter: () => runtime.currentPresenterId() ?? null,
+      dispatch: (intent: unknown) => runtime.dispatch(intent as never),
+      setQuery: (query: string) => runtime.instance.setQuery(query),
+    };
+    setRuntimeView(() => runtime.instance.View);
+  }
 
   const { View, post, snapshot: viewSnapshot } = createIframeView(
     (method, args) => execHostRpc(id, method, args, services),
@@ -277,7 +392,7 @@ function App() {
   const closeWithSnapshot = () => {
     void (async () => {
       const [view, slot] = await Promise.all([
-        viewSnapshot(),
+        pageRuntime ? pageRuntime.instance.snapshot?.() ?? Promise.resolve(null) : viewSnapshot(),
         slotSnapshot ? slotSnapshot() : Promise.resolve(null),
       ]);
       const frames: Record<string, unknown> = {};
@@ -311,11 +426,38 @@ function App() {
   );
 
   onMount(() => {
+    let unlisteners: (UnlistenFn | undefined)[] = [];
+    void listen<{
+      requestId: string;
+      ok: boolean;
+      result?: unknown;
+      error?: string;
+    }>("plugin-page-bridge-reply", (event) => {
+      const reply = event.payload;
+      const pending = pageCalls.get(reply.requestId);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      pageCalls.delete(reply.requestId);
+      if (reply.ok) pending.resolve(reply.result);
+      else pending.reject(new Error(reply.error || "Page Service call failed"));
+    }, { target: WINDOW_LABEL }).then((unlisten) => unlisteners.push(unlisten));
+
     // Fetch + bridge the view page (same as createDiskModeInstance).
     let dir = "";
     let view = "";
-    void invoke<{ dir: string; view: string; titlebar: string; name: string }>("plugin_window_meta", { id })
-      .then((meta) => {
+    void invoke<{
+      dir: string;
+      view: string;
+      titlebar: string;
+      name: string;
+      pageRuntime: boolean;
+      model: string;
+      defaultPresenter: string;
+      height: number | null;
+      presenters: PluginPresenter[];
+      presenterSettings: PluginPresenterSetting[];
+    }>("plugin_window_meta", { id })
+      .then(async (meta) => {
         dir = meta.dir;
         view = meta.view;
         document.title = meta.name || id;
@@ -330,6 +472,11 @@ function App() {
             setPermissionSource((pid) => list.find((x) => x.id === pid));
           })
           .catch((err) => plog.error(id, "permission source wire failed:", err));
+        if (meta.pageRuntime) {
+          await wirePerms;
+          await setupPageRuntime(meta);
+          return;
+        }
         // Titlebar page (optional manifest `titlebar`): same permission-wire
         // order as the view; a failure just leaves the slot empty (the
         // chrome row stays title + controls). setHtml runs BEFORE the signal
@@ -347,10 +494,11 @@ function App() {
             })
             .catch((err) => plog.error(id, "titlebar load failed:", err));
         }
-        return wirePerms.then(() => fetchDiskFile(dir + "\\" + view));
+        await wirePerms;
+        return fetchDiskFile(dir + "\\" + view);
       })
       .then((html) => {
-        View.setHtml(injectBridge(html, "window"));
+        if (html) View.setHtml(injectBridge(html, "window"));
       })
       .catch((err) => {
         // Raw error to the log; the page shows the localized fallback.
@@ -362,8 +510,6 @@ function App() {
         );
       });
 
-    // Launcher pushes: initial state (after ready) and per-activation updates.
-    let unlisteners: (UnlistenFn | undefined)[] = [];
     void listen<{
       show?: boolean;
       query?: string | null;
@@ -372,6 +518,14 @@ function App() {
       theme?: string | null;
       themePref?: string | null;
       snapshot?: unknown;
+      pageRuntime?: boolean;
+      model?: PageModel;
+      presenter?: string;
+      presenterStatus?: string;
+      presenterSettings?: Record<string, Record<string, unknown>>;
+      pageEvent?: unknown;
+      pageError?: unknown;
+      pageClearError?: boolean;
     }>("plugin-state", (e) => {
       const s = e.payload;
       plog.debug(id, "plugin-state:", JSON.stringify(s).slice(0, 200));
@@ -418,6 +572,25 @@ function App() {
       // 会话快照（docs/ROADMAP_HISTORY.md #40）：view 帧在标准回放**之后**投递 —— 页面自身
       // 状态最后落地，覆盖与宿主回放重叠的部分（titlebar 帧见上方 early）。
       if (s.snapshot) routeSnapshot(s.snapshot, "late");
+
+      if (s.pageRuntime && pageRuntime) {
+        if (s.presenterSettings) pageRuntime.applyPresenterSettings(s.presenterSettings);
+        if (s.presenter) {
+          lastState.presenter = s.presenter;
+          pageRuntime.instance.applySettings({
+            pages: { presenters: { [id]: s.presenter } },
+          });
+        }
+        if (s.model) pageRuntime.publishModel(s.model);
+        if (s.pageEvent) pageRuntime.postEvent("event", s.pageEvent);
+        if (s.pageError) pageRuntime.publishError(s.pageError);
+        if (s.pageClearError) pageRuntime.clearError();
+        if (s.theme) pageRuntime.postTheme(s.theme);
+        if (s.show) pageRuntime.postEvent("show");
+        if (typeof s.query === "string") pageRuntime.postEvent("query", s.query);
+        if (s.enter) pageRuntime.postEvent("enter", s.enter);
+        if (s.settings) pageRuntime.postEvent("settings", s.settings);
+      }
     }, { target: WINDOW_LABEL }).then((u) => (unlisteners.push(u), undefined));
 
     // Re-focus: replay `show` into the page (the window never unloads, so
@@ -425,6 +598,7 @@ function App() {
     void listen<string>("plugin-window-shown", () => {
       lastState.show = true;
       fan("show");
+      pageRuntime?.postEvent("show");
     }, { target: WINDOW_LABEL }).then(
       (u) => (unlisteners.push(u), undefined)
     );
@@ -449,6 +623,8 @@ function App() {
           seedPluginColorPrefs(s.plugins?.color_modes);
           applyWindowTheme();
           fan("theme", effectiveMode());
+          pageRuntime?.postTheme(effectiveMode());
+          pageRuntime?.instance.applySettings(s);
         })
         .catch(() => {});
       void invoke<PluginManifest[]>("get_plugins")
@@ -473,6 +649,8 @@ function App() {
     onCleanup(() => {
       window.removeEventListener("keydown", onKey);
       for (const u of unlisteners) u?.();
+      for (const pending of pageCalls.values()) clearTimeout(pending.timer);
+      pageCalls.clear();
       clearTimeout(toastTimer);
     });
   });
@@ -489,7 +667,7 @@ function App() {
         slot={slotHost}
         onClose={() => closeWithSnapshot()}
       />
-      <View />
+      <Dynamic component={runtimeView() ?? View} />
       <div id="plugin-window-toast" role="status" />
     </div>
   );

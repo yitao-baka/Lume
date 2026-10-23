@@ -463,6 +463,8 @@ pub fn run() {
             plugin_window::plugin_window_meta,
             plugin_window::plugin_window_redirect,
             plugin_window::plugin_window_push_state,
+            plugin_window::plugin_page_bridge_call,
+            plugin_window::plugin_page_bridge_reply,
             plugin_window::plugin_window_close,
             plugin_window::plugin_window_close_report,
             plugin_window::set_plugin_color_mode,

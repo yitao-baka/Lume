@@ -63,7 +63,26 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 
 use crate::appicon::{self, PluginIcons};
 use crate::paths::base_dir;
+use crate::plugins::valid_plugin_id;
 use crate::settings::{self, SettingsState};
+
+/// Cap for one detached Page Service request/response. The Page Model has its
+/// own 1 MiB gate; this keeps every other bridge call bounded too.
+const MAX_PAGE_BRIDGE_BYTES: usize = 1024 * 1024;
+
+fn valid_bridge_request_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+}
+
+fn page_bridge_payload_size(value: &serde_json::Value) -> Result<usize, String> {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .map_err(|error| error.to_string())
+}
 
 /// Per-detached-window close bookkeeping: ids whose close is already in
 /// flight (reported, forced, or programmatic). The `CloseRequested`
@@ -347,6 +366,12 @@ pub fn plugin_window_meta(
         "view": if m.view.is_empty() { presenter.map(|p| p.entry.clone()).unwrap_or_default() } else { m.view.clone() },
         "titlebar": if m.titlebar.is_empty() { presenter.map(|p| p.titlebar.clone()).unwrap_or_default() } else { m.titlebar.clone() },
         "name": m.name,
+        "pageRuntime": m.page_runtime,
+        "model": m.model,
+        "defaultPresenter": m.default_presenter,
+        "height": m.height,
+        "presenters": m.presenters,
+        "presenterSettings": m.presenter_settings,
     }))
 }
 
@@ -370,6 +395,98 @@ pub fn plugin_window_redirect(
         serde_json::json!({ "from": from, "pluginId": plugin_id, "info": info }),
     )
     .map_err(|e| e.to_string())
+}
+
+/// A detached Page Runtime asks the launcher-owned Page Service for one
+/// operation. The command only relays the request; the launcher's Page Session
+/// remains the single authority and answers through `plugin_page_bridge_reply`.
+#[tauri::command]
+pub fn plugin_page_bridge_call(
+    id: String,
+    request_id: String,
+    name: String,
+    args: serde_json::Value,
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+) -> Result<(), String> {
+    if window.label() != window_label(&id) {
+        return Err("plugin_page_bridge_call: wrong window".into());
+    }
+    if !valid_bridge_request_id(&request_id) {
+        return Err("plugin_page_bridge_call: invalid request id".into());
+    }
+    if !matches!(
+        name.as_str(),
+        "getModel"
+            | "onIntent"
+            | "onQuery"
+            | "onShow"
+            | "onHide"
+            | "onEnter"
+            | "onSettings"
+            | "onFilesDropped"
+    ) {
+        return Err(format!("plugin_page_bridge_call: unsupported operation \"{name}\""));
+    }
+    let size = page_bridge_payload_size(&args)?;
+    if size > MAX_PAGE_BRIDGE_BYTES {
+        return Err(format!(
+            "plugin_page_bridge_call: args are {size} bytes (cap {MAX_PAGE_BRIDGE_BYTES})"
+        ));
+    }
+    app.emit_to(
+        "main",
+        "plugin-page-bridge-call",
+        serde_json::json!({
+            "id": id,
+            "requestId": request_id,
+            "name": name,
+            "args": args,
+        }),
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// The launcher's Page Runtime resolves one detached bridge request. Only the
+/// main window may reply, and the target must match a real plugin window label.
+#[tauri::command]
+pub fn plugin_page_bridge_reply(
+    to: String,
+    request_id: String,
+    ok: bool,
+    result: Option<serde_json::Value>,
+    error: Option<String>,
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("plugin_page_bridge_reply: main window only".into());
+    }
+    if !valid_plugin_id(&to) || !valid_bridge_request_id(&request_id) {
+        return Err("plugin_page_bridge_reply: invalid target or request id".into());
+    }
+    if let Some(value) = &result {
+        let size = page_bridge_payload_size(value)?;
+        if size > MAX_PAGE_BRIDGE_BYTES {
+            return Err(format!(
+                "plugin_page_bridge_reply: result is {size} bytes (cap {MAX_PAGE_BRIDGE_BYTES})"
+            ));
+        }
+    }
+    if error.as_ref().is_some_and(|text| text.len() > 16 * 1024) {
+        return Err("plugin_page_bridge_reply: error text is too large".into());
+    }
+    app.emit_to(
+        window_label(&to),
+        "plugin-page-bridge-reply",
+        serde_json::json!({
+            "requestId": request_id,
+            "ok": ok,
+            "result": result,
+            "error": error,
+        }),
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// The main window's registry pushes page state (query / enter payload /

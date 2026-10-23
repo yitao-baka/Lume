@@ -27,6 +27,8 @@ export interface PageRuntimeModeDeps {
   applyTheme(mode: ReturnType<typeof normalizePluginColorMode>): Promise<void>;
   initialPresenterId?: string;
   onModel?: (model: PageModel) => void;
+  onPresenterState?: (state: ReturnType<PageSession["snapshot"]>["presenter"]) => void;
+  onReady?: () => void;
 }
 
 export interface PageRuntimeMode {
@@ -36,6 +38,13 @@ export interface PageRuntimeMode {
   publishError(error: unknown): void;
   clearError(): void;
   dispatch(intent: PageIntent): Promise<unknown>;
+  callRemote(name: string, args: Record<string, unknown>): Promise<unknown>;
+  currentModel(): PageModel | undefined;
+  currentPresenterId(): string | undefined;
+  currentPresenterState(): ReturnType<PageSession["snapshot"]>["presenter"] | undefined;
+  currentPresenterSettings(): Record<string, Record<string, unknown>>;
+  postEvent(type: string, payload?: unknown): void;
+  postTheme(mode: string): void;
   switchPresenter(presenterId: string): Promise<void>;
   applyPresenterSettings(values: Record<string, Record<string, unknown>>): void;
   dispose(): Promise<void>;
@@ -105,6 +114,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     presenters: presentersOf(m),
     presenterId: deps.initialPresenterId || m.defaultPresenter || undefined,
     onPresenterState: (state) => {
+      deps.onPresenterState?.(state);
       setModal(state.modal);
       const report = state.layout;
       if (report) {
@@ -187,6 +197,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       await ensureStarted();
       await session!.mount((presenter) => factoryFor(presenter));
       setReady(true);
+      deps.onReady?.();
     })().catch((err) => {
       boot = undefined;
       console.error("[page-runtime] mode mount failed:", err);
@@ -298,6 +309,45 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       }
     },
     dispatch: (intent) => session!.dispatch(intent),
+    callRemote: async (name, args) => {
+      if (name === "getModel") {
+        const current = session?.store.get();
+        if (current) return current;
+      }
+      await ensureStarted();
+      switch (name) {
+        case "getModel":
+          return session!.store.get() ?? null;
+        case "onIntent":
+          return session!.dispatch(args.intent as PageIntent);
+        case "onQuery":
+          await session!.setQuery(String(args.query ?? ""));
+          return null;
+        case "onShow":
+          await session!.show();
+          return null;
+        case "onHide":
+          await session!.hide();
+          return null;
+        case "onEnter":
+          await session!.enter(args.info);
+          return null;
+        case "onSettings":
+          await session!.settings((args.values as Record<string, unknown>) ?? {});
+          return null;
+        case "onFilesDropped":
+          await session!.filesDropped((args.paths as string[]) ?? []);
+          return null;
+        default:
+          throw new Error(`unsupported Page Service operation "${name}"`);
+      }
+    },
+    currentModel: () => session?.store.get(),
+    currentPresenterId: () => session?.snapshot().presenter.presenterId ?? undefined,
+    currentPresenterState: () => session?.snapshot().presenter,
+    currentPresenterSettings: () => presenterSettings,
+    postEvent: (type, payload) => bridge?.post(type, payload),
+    postTheme: (mode) => bridge?.post("theme", mode),
     switchPresenter: async (presenterId) => {
       if (!m.presenters.some((presenter) => presenter.id === presenterId)) {
         throw new Error(`unknown Presenter "${presenterId}"`);

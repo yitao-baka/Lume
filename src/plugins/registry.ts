@@ -472,6 +472,7 @@ function initLogicRelay(): void {
       validatePageModel(model);
       latestPageModels.set(id, model);
       runtime?.publishModel(model);
+      pushDetachedRuntimeState(id, { model });
     } catch (err) {
       plog.error(id, "invalid Page Model dropped:", err);
       runtime?.publishError({ code: "model.invalid", message: String(err) });
@@ -479,12 +480,45 @@ function initLogicRelay(): void {
   });
   void listen<{ id: string; event: unknown }>("plugin-page-event", (e) => {
     pageRuntimeModes.get(e.payload.id)?.emitEvent(e.payload.event);
+    pushDetachedRuntimeState(e.payload.id, { pageEvent: e.payload.event });
   });
   void listen<{ id: string; error: unknown }>("plugin-page-error", (e) => {
     pageRuntimeModes.get(e.payload.id)?.publishError(e.payload.error);
+    pushDetachedRuntimeState(e.payload.id, { pageError: e.payload.error });
   });
   void listen<{ id: string }>("plugin-page-clear-error", (e) => {
     pageRuntimeModes.get(e.payload.id)?.clearError();
+    pushDetachedRuntimeState(e.payload.id, { pageClearError: true });
+  });
+  void listen<{
+    id: string;
+    requestId: string;
+    name: string;
+    args: Record<string, unknown>;
+  }>("plugin-page-bridge-call", (e) => {
+    void (async () => {
+      const { id, requestId, name, args } = e.payload;
+      try {
+        const runtime = pageRuntimeModes.get(id);
+        if (!runtime) throw new Error("Page Runtime is not loaded: " + id);
+        const result = await runtime.callRemote(name, args ?? {});
+        await invoke("plugin_page_bridge_reply", {
+          to: id,
+          requestId,
+          ok: true,
+          result: result ?? null,
+          error: null,
+        });
+      } catch (err) {
+        await invoke("plugin_page_bridge_reply", {
+          to: id,
+          requestId,
+          ok: false,
+          result: null,
+          error: String(err),
+        }).catch(() => {});
+      }
+    })();
   });
   void listen("plugin-logic-host-ready", () => {
     // supervisor 就绪（建窗竞态 / 崩溃恢复）→ 重发全部 load
@@ -1022,8 +1056,15 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           },
           initialPresenterId: ((window as any).__LUME_CONFIG__?.pages?.presenters ?? {})[m.id],
           onModel: (model) => rememberPageModel(m.id, model),
+          onPresenterState: (state) => {
+            pushDetachedRuntimeState(m.id, {
+              presenter: state.presenterId,
+              presenterStatus: state.status,
+            });
+          },
         });
         pageRuntimeModes.set(m.id, runtime);
+        registerPageRuntimeDetachedSupplier(m.id, runtime);
         const navBars = navBarsContribution(m.id, logic, m.dir);
         definePlugin({
           id: m.id,
@@ -1173,6 +1214,10 @@ export async function applyPluginPresenterSettings(id: string): Promise<void> {
       { id }
     )) ?? {};
     runtime.applyPresenterSettings(values);
+    pushDetachedRuntimeState(id, {
+      presenter: runtime.currentPresenterId(),
+      presenterSettings: values,
+    });
   } catch (err) {
     plog.error(id, "Presenter settings load failed:", err);
   }
@@ -1311,6 +1356,53 @@ const detachedSuppliers = new Map<
     onShow: () => void;
   }
 >();
+
+/** Push a model/settings/presenter delta to a detached Page Runtime window.
+ * The launcher's Page Session stays authoritative; the window mirrors the
+ * validated model for its Presenter. */
+function pushDetachedRuntimeState(id: string, patch: Record<string, unknown>): void {
+  if (!detachedIds.has(id) || !detachedSuppliers.has(id)) return;
+  void invoke("plugin_window_push_state", {
+    id,
+    state: { pageRuntime: true, ...patch },
+  }).catch((err) => plog.error(id, "detached Page Runtime push failed:", err));
+}
+
+/** Register the detached-state supplier for an api 2 Page Runtime mode. The
+ * legacy disk-mode supplier is separate so service/provider modes keep their
+ * existing handshake until they migrate. */
+function registerPageRuntimeDetachedSupplier(id: string, runtime: PageRuntimeMode): void {
+  detachedSuppliers.set(id, {
+    push: (show, includeSnapshot = false) => {
+      const frames = includeSnapshot ? takeSessionFrames(id, ["view", "titlebar"]) : null;
+      const model = runtime.currentModel();
+      const presenter = runtime.currentPresenterId();
+      const presenterSettings = runtime.currentPresenterSettings();
+      void invoke("plugin_window_push_state", {
+        id,
+        state: {
+          pageRuntime: true,
+          show,
+          presenter,
+          presenterSettings,
+          theme: pluginColorMode(id, currentThemeMode()),
+          themePref: pluginColorPref(id),
+          ...(model ? { model } : {}),
+          ...(frames ? { snapshot: { v: 2, frames } } : {}),
+        },
+      }).catch((err) => plog.error(id, "detached Page Runtime state push failed:", err));
+    },
+    pushTheme: (theme, pref) => {
+      void invoke("plugin_window_push_state", {
+        id,
+        state: { pageRuntime: true, theme, themePref: pref },
+      }).catch((err) => plog.error(id, "detached Page Runtime theme push failed:", err));
+    },
+    onShow: () => {
+      void runtime.instance.onShow?.();
+    },
+  });
+}
 
 // ── 会话帧快照（docs/ROADMAP_HISTORY.md #40）──
 // 页面状态跨边界（detach / 关闭回灌 / keep-alive 淘汰）只走 launcher/session

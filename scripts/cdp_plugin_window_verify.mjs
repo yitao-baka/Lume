@@ -164,8 +164,11 @@ check("③c enter payload pushed across windows (plugin-state)", pushedEnter ===
 
 // ④ Esc（未消费）关闭窗口 + 几何记忆
 await w.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); "ok"`);
-await sleep(1500);
-const goneAfterEsc = !(await pluginWindowTarget());
+let goneAfterEsc = false;
+for (let i = 0; i < 30 && !goneAfterEsc; i++) {
+  await sleep(200);
+  goneAfterEsc = !(await pluginWindowTarget());
+}
 check("④a Esc closes (destroys) the plugin window", goneAfterEsc);
 const bounds = await invoke("get_settings").then(
   (s) => (s.plugins?.window_bounds ?? {})["hello-mode"] ?? null,

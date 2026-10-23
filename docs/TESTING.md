@@ -9,11 +9,19 @@ Rust unit tests and frontend compile checks are the baseline:
 ```bash
 pnpm install
 pnpm exec tsc --noEmit
+pnpm run test:page-runtime
 pnpm run build
 cd src-tauri
 cargo check
 cargo test
 ```
+
+The Page Runtime foundation has browser-independent checks through
+`pnpm run test:page-runtime` (Vite SSR, no extra runner). It covers model
+revision monotonicity and frame coalescing, JSON/cycle/size rejection,
+resource-scheme validation, intent target/action checks, collection-window
+bounds, Presenter compatibility fallback, model/selection retention across
+Presenter switches, and remount after repeated Presenter failures.
 
 Static text invariants are covered by `node scripts/check_i18n.mjs`: the three
 `languages/*.json` bundles must carry the same key set, every key must be

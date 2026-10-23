@@ -1,0 +1,180 @@
+//! Browser-independent unit checks for the Page Runtime foundation. The
+//! launcher does not import this module; scripts/page_runtime_unit_test.mjs
+//! loads it through Vite SSR.
+
+import type { PageModel } from "./contracts";
+import { validateIntent } from "./intents";
+import { PageModelStore, validatePageModel } from "./modelStore";
+import { selectCompatiblePresenter } from "./presenterHost";
+import { resolveResource } from "./resources";
+import { COLLECTION_SCHEMA, collectionFixture, type CollectionModel } from "./schemas";
+import { PageSession } from "./session";
+import { PresenterHost } from "./presenterHost";
+import { createFixturePresenter, fixturePresenters } from "./fixturePresenter";
+
+function expect(condition: unknown, message: string): void {
+  if (!condition) throw new Error(message);
+}
+
+function expectThrows(run: () => void, contains: string): void {
+  try {
+    run();
+  } catch (err) {
+    const message = String(err);
+    expect(message.includes(contains), `expected "${contains}" in "${message}"`);
+    return;
+  }
+  throw new Error(`expected throw containing "${contains}"`);
+}
+
+function model(revision: number, data: unknown = collectionFixture): PageModel {
+  return {
+    runtime: "lume.page/v1",
+    schema: COLLECTION_SCHEMA,
+    revision,
+    status: "ready",
+    data: data as never,
+  };
+}
+
+export function runPageRuntimeSelfTests(): string[] {
+  const passed: string[] = [];
+  const store = new PageModelStore("selftest-store", {
+    schedule: () => 1,
+    cancel: () => {},
+  });
+  store.publish(model(1));
+  store.publish(model(2));
+  store.publish(model(1));
+  expect(store.get()?.revision === 2, "stale revision must not overwrite");
+  passed.push("model revision monotonicity");
+
+  const scheduled: (() => void)[] = [];
+  const coalesced = new PageModelStore("coalesced", {
+    schedule: (flush) => { scheduled.push(flush); return scheduled.length; },
+    cancel: () => {},
+  });
+  const seen: number[] = [];
+  coalesced.subscribe((next) => seen.push(next.revision));
+  coalesced.publish(model(1));
+  coalesced.publish(model(2));
+  expect(seen.length === 0, "updates must wait for the animation-frame boundary");
+  scheduled[0]();
+  expect(seen.length === 1 && seen[0] === 2, "high-frequency updates must coalesce to the latest model");
+  passed.push("model update frame coalescing");
+
+  expectThrows(() => validatePageModel(model(1, { fn: () => 1 })), "unsupported function");
+  const cyclic: Record<string, unknown> = {};
+  cyclic.self = cyclic;
+  expectThrows(() => validatePageModel(model(1, cyclic)), "cyclic value");
+  expectThrows(() => validatePageModel(model(1, { text: "x".repeat(800) }), 400), "exceeds");
+  passed.push("model JSON and size validation");
+
+  expectThrows(
+    () => validatePageModel(model(1, { icon: { kind: "thumbnail", src: "javascript:alert(1)" } })),
+    "scheme refused"
+  );
+  const resource = resolveResource(
+    { kind: "url", src: "asset://icons/a.svg", light: "data:image/svg+xml;base64,PHN2Zy8+", dark: "asset://icons/a-dark.svg" },
+    "dark"
+  );
+  expect(resource.src === "asset://icons/a-dark.svg", "dark resource variant");
+  passed.push("resource scheme whitelist and selection");
+
+  const intentModel = model(1, {
+    items: [{ id: "item-1", label: "One", actions: ["open"] }],
+  });
+  expect(
+    validateIntent({ type: "item.action", targetId: "item-1", actionId: "open" }, intentModel) === null,
+    "declared action must pass"
+  );
+  expect(
+    validateIntent({ type: "item.action", targetId: "item-1", actionId: "delete" }, intentModel)?.status === "failed",
+    "undeclared action must fail"
+  );
+  expect(
+    validateIntent({ type: "item.activate", targetId: "ghost" }, intentModel)?.status === "failed",
+    "unknown target must fail"
+  );
+  expect(
+    validateIntent({ type: "viewport.request", payload: { offset: 0, limit: 5001 } }, intentModel)?.status === "failed",
+    "oversized viewport must fail"
+  );
+  expect(
+    validateIntent({ type: "viewport.request", payload: { offset: 40, limit: 40 } }, intentModel) === null,
+    "valid collection window must pass"
+  );
+  passed.push("intent target/action and collection window validation");
+
+  expect(
+    selectCompatiblePresenter(fixturePresenters, COLLECTION_SCHEMA, "missing")?.id === "fixture-grid",
+    "incompatible request must fall back"
+  );
+  expect(
+    selectCompatiblePresenter(fixturePresenters, "fixture.other/v1", "fixture-grid")?.id === "fixture-other",
+    "schema compatibility must be enforced"
+  );
+  passed.push("Presenter compatibility fallback");
+
+  return passed;
+}
+
+export async function runPageRuntimeAsyncSelfTests(): Promise<string[]> {
+  const passed: string[] = [];
+  const initial = model(1, collectionFixture as CollectionModel as never);
+  const session = new PageSession({
+    pageId: "selftest-session",
+    schema: COLLECTION_SCHEMA,
+    presenters: fixturePresenters,
+    presenterId: "fixture-grid",
+    modelStore: { schedule: () => 1, cancel: () => {} },
+  });
+  let intents = 0;
+  await session.start({
+    getModel: () => initial,
+    onIntent: (intent) => {
+      intents++;
+      return { status: "accepted", requestId: intent.requestId };
+    },
+  });
+  const grid = createFixturePresenter("grid");
+  const first = await session.mount(() => grid.factory);
+  expect(first.status === "ready", "fixture Presenter must become ready");
+  expect(grid.models[0]?.revision === 1, "fixture Presenter receives the initial model");
+  await session.dispatch({
+    type: "item.action",
+    targetId: "row:1",
+    actionId: "open",
+  });
+  expect(intents === 1, "valid intent reaches the Page Service");
+  passed.push("fixture Presenter ready and intent routing");
+
+  const before = session.store.get();
+  const list = createFixturePresenter("list");
+  const switched = await session.switchPresenter("fixture-list", () => list.factory);
+  expect(switched.status === "ready" && list.models[0]?.revision === before?.revision, "Presenter switch keeps model");
+  expect(grid.disposed(), "old Presenter is disposed after switch");
+  expect(session.store.get() === before, "Presenter switch does not rebuild the model store");
+  passed.push("Presenter switch preserves model and selection");
+
+  const modelBeforeFailure = session.store.get();
+  const quietHost = new PresenterHost("selftest-session", { logErrors: false });
+  const failed = await quietHost.mount({
+    pageId: session.pageId,
+    presenters: fixturePresenters,
+    requestedId: "fixture-grid",
+    schema: COLLECTION_SCHEMA,
+    store: session.store,
+    dispatch: (intent) => session.dispatch(intent),
+    factory: (presenter) => createFixturePresenter(presenter.id, true).factory,
+  });
+  expect(failed.status === "error", "repeated Presenter failures end in an error state");
+  expect(session.store.get() === modelBeforeFailure, "Presenter failure keeps the authoritative model");
+  const recovered = await session.switchPresenter("fixture-list", () => createFixturePresenter("recovery").factory);
+  expect(recovered.status === "ready", "session can remount a Presenter after failure");
+  passed.push("Presenter crash isolation and remount");
+
+  await session.dispose();
+  return passed;
+}
+

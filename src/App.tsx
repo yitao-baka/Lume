@@ -55,8 +55,10 @@ import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
 import { createClipboardPlugin } from "./plugins/clipboard";
 import { createPreviewPlugin } from "./plugins/preview";
 import { rasterizePluginIcon } from "./plugins/windowIcon";
+import { installPageRuntimeProbes } from "./page-runtime/diagnostics";
 
 function App() {
+  installPageRuntimeProbes();
   const [mode, setMode] = createSignal<ModeId>(NAVIGATE_MODE_ID);
   // ── Synchronous initial config from Rust initialization_script ──
   // Window starts hidden; the Rust setup() reads settings.toml and injects

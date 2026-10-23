@@ -11,6 +11,17 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **Page Runtime 基座** — 新增 `PageSession`、带 revision/1 MiB 上限与
+  动画帧合并的 `PageModelStore`、Intent 白名单和 target/action 校验、
+  Presenter 兼容选择/重试/回退/重挂、资源 scheme 白名单，以及只服务于
+  迁移期内置页的 `migrationAdapter`。会话在 Presenter 切换或重复崩溃后保留
+  服务与模型；`window.__pageModels`、`__pageIntents`、
+  `__presenterStates`、`__pageResources` 探针已接入，fixture Presenter 不注册
+  为用户可见页面。验证：`pnpm run test:page-runtime` **9/9 PASS**；
+  `pnpm exec tsc --noEmit`、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 通过；
+  `node scripts/cdp_plugin_window_verify.mjs` **16/16 PASS**；
+  `node scripts/cdp_settings_smoke.mjs` ALL PASS。
 - **Page Model / Presenter 公共契约与 api 2 门禁** — 新增
   `src/page-runtime/contracts.ts`、内置 `lume.navigate/v1` /
   `lume.clipboard/v1` / `lume.collection/v1` 类型和 JSON fixture；插件清单

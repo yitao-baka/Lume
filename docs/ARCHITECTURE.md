@@ -26,6 +26,8 @@ Rust Core (src-tauri/src/)
   ├─ plugin_install.rs / plugin_sign.rs — `.lupx` inspect/install/uninstall,
   │                staging swap, private-file preservation, ed25519 signatures
   ├─ plugin_logic.rs / plugin_devwatch.rs — logic-host protocol and dev reload
+  ├─ plugin_page.rs — service-role Page Model/event channel (role token + 1 MiB gate)
+  ├─ plugin_secret.rs — service-only Windows Credential Manager secret slots
   ├─ apps.rs     — file search from the index caches, fuzzy + pinyin scoring,
   │                ShellExecuteW launch (+ records recent-opens)
   ├─ cache.rs    — System32 / user / icons SQLite index caches

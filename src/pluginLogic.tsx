@@ -175,7 +175,7 @@ async function loadPlugin(id: string) {
     callSeq: 0,
   };
   try {
-    await invoke("plugin_logic_register_tokens", { entries: [{ id, token }] });
+    await invoke("plugin_logic_register_tokens", { entries: [{ id, token, role: "service" }] });
   } catch (err) {
     plog.error(id, "logic host: token register failed:", err);
     return;
@@ -285,6 +285,30 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
         postTo(entry, { __lumeRpcResult: { id: rpc.id, ok: false, result: null, error: String(err2) } });
       }
     };
+    if (rpc.method.startsWith("page.") || rpc.method.startsWith("secrets.")) {
+      const serviceCall = async (): Promise<unknown> => {
+        switch (rpc.method) {
+          case "page.publish":
+            return invoke("plugin_page_publish", { token: entry.token, model: rpc.args?.model });
+          case "page.patch":
+            throw new Error("page.patch is reserved; publish a full snapshot");
+          case "page.emit":
+            return invoke("plugin_page_emit", { token: entry.token, event: rpc.args?.event });
+          case "page.error":
+            return invoke("plugin_page_error", { token: entry.token, error: rpc.args?.error });
+          case "page.clearError":
+            return invoke("plugin_page_clear_error", { token: entry.token });
+          case "secrets.has":
+            return invoke("plugin_secret_service_has", { token: entry.token, key: String(rpc.args?.key ?? "") });
+          case "secrets.get":
+            return invoke("plugin_secret_service_get", { token: entry.token, key: String(rpc.args?.key ?? "") });
+          default:
+            throw new Error("unknown Page Service rpc: " + rpc.method);
+        }
+      };
+      serviceCall().then((result) => reply(true, result)).catch((err) => reply(false, null, String(err)));
+      return;
+    }
     if (rpc.method === "__readPluginFile") {
       readPluginFile(entry, String(rpc.args?.path ?? ""))
         .then((text) => reply(true, text))

@@ -63,7 +63,10 @@ async function connect(url) {
   const send = (method, params) => new Promise((res) => { const k = ++id; p.set(k, res); ws.send(JSON.stringify({ id: k, method, params })); });
   const evalJs = async (expr) => {
     const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
-    if (r?.result?.exceptionDetails) throw new Error(String(r.result.exceptionDetails.exception?.description ?? "eval failed"));
+    if (r?.result?.exceptionDetails) {
+    const ex = r.result.exceptionDetails;
+    throw new Error(String(ex.exception?.description ?? ex.text ?? JSON.stringify(ex)));
+  }
     return r?.result?.result?.value;
   };
   const shot = async (name) => {
@@ -115,7 +118,8 @@ for (let i = 0; i < 40 && !mainT; i++) {
 }
 if (!mainT) { console.error("launcher window missing"); process.exit(1); }
 const m = await connect(mainT.webSocketDebuggerUrl);
-const invoke = (cmd, args = {}) => m.evalJs(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
+await sleep(1500);
+const invoke = (cmd, args = {}) => m.evalJs(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)}).catch((e) => { throw new Error(${JSON.stringify(cmd)} + ": " + String(e)); })`);
 
 // 夹具必须处于启用态：`settings.plugins.disabled` 是逐机状态，其它脚本或
 // 手工操作可能把它们关过。幂等启用（已启用则不动；settings-applied 会让
@@ -297,6 +301,9 @@ await sleep(1200);
 names = await rowNames();
 const enterRow = names.find((n) => n.startsWith("进入") && n.includes("清单"));
 check("list-demo keyword row offered", !!enterRow, JSON.stringify(names));
+await type("e");
+await sleep(1600);
+names = await rowNames();
 // #43：非空查询也分块 —— 正常结果（原生索引 + 文件搜索）在上，插件行在
 // 「推荐使用」分隔行之下。
 const split = await m.evalJs(`(() => {
@@ -310,8 +317,10 @@ check("non-empty query shows the 推荐使用 block",
   !!split && split.title.includes("推荐使用"), JSON.stringify(split));
 check("plugin rows sit below the normal results",
   !!split && split.normal > 0 && split.plugin > 0, JSON.stringify(split));
+await type("");
+await sleep(700);
 if (enterRow) {
-  await clickRow(enterRow);
+  await m.evalJs('[...document.querySelectorAll(".mode-switch-item")].find((el) => el.textContent.includes("清单"))?.click(); "ok"');
   await sleep(1800);
   const listNames = await m.evalJs(
     `Array.from(document.querySelectorAll(".plugin-list-row .plugin-list-name")).map((n) => n.textContent)`
@@ -416,9 +425,27 @@ const rpcCases = new Set(
 const bridgeCalls = callsOf("src/plugins/iframeBridge.tsx");
 const logicCalls = callsOf("public/pluginLogicFrame.js");
 const missingInLogic = [...bridgeCalls].filter((x) => !logicCalls.has(x));
-const missingRpc = [...logicCalls].filter((x) => !rpcCases.has(x));
+const serviceOnlyCalls = new Set([
+  "page.publish",
+  "page.patch",
+  "page.emit",
+  "page.error",
+  "page.clearError",
+  "secrets.has",
+  "secrets.get",
+]);
+const supervisorSource = readFileSync("src/pluginLogic.tsx", "utf8");
+const missingRpc = [...logicCalls].filter(
+  (method) => !serviceOnlyCalls.has(method) && !rpcCases.has(method),
+);
+const missingServiceCases = [...serviceOnlyCalls].filter(
+  (method) => logicCalls.has(method) && !supervisorSource.includes('case "' + method + '"'),
+);
+const roleLeaks = [...serviceOnlyCalls].filter((method) => bridgeCalls.has(method));
 check("logic-frame ctx mirrors the view bridge", missingInLogic.length === 0, JSON.stringify(missingInLogic));
-check("every ctx method has an rpc.ts case", missingRpc.length === 0, JSON.stringify(missingRpc));
+check("every shared ctx method has an rpc.ts case", missingRpc.length === 0, JSON.stringify(missingRpc));
+check("service-only page/secrets RPCs stay out of Presenter bridges", roleLeaks.length === 0, JSON.stringify(roleLeaks));
+check("service-only page/secrets RPCs have supervisor cases", missingServiceCases.length === 0, JSON.stringify(missingServiceCases));
 
 // 收尾：撤销 #43 预置的 pin（重排段通常已撤销；重复 unpin 幂等）。
 await invoke("unpin_app", { path: "C:\Windows\System32\cmd.exe" });

@@ -259,6 +259,16 @@ impl PresenterSetting {
     }
 }
 
+/// One declared secret slot. Values live only in Windows Credential Manager;
+/// manifests expose the key and human-readable label, never a value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct SecretSpec {
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+}
+
 /// A plugin manifest, parsed from `<base>/plugins/<id>/plugin.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -293,6 +303,12 @@ pub struct PluginManifest {
     /// Presenter-scoped declarative settings.
     #[serde(default)]
     pub presenter_settings: Vec<PresenterSetting>,
+    /// Internal migration switch for the api 2 Page Service/Presenter path.
+    #[serde(default)]
+    pub page_runtime: bool,
+    /// Service-only secret slots shown in the settings pane.
+    #[serde(default)]
+    pub secrets: Vec<SecretSpec>,
     /// Transitional adapter HTML. api 2 manifests declare `[[presenters]]`.
     #[serde(default)]
     pub view: String,
@@ -429,6 +445,11 @@ pub struct PluginInfo {
     /// Presenter-scoped declarative settings.
     #[serde(rename = "presenterSettings")]
     pub presenter_settings: Vec<PresenterSettingInfo>,
+    /// Internal Page Service/Presenter migration switch.
+    #[serde(rename = "pageRuntime")]
+    pub page_runtime: bool,
+    /// Service-only secret slots (status is queried separately).
+    pub secrets: Vec<SecretSpec>,
     /// Transitional adapter view. api 2 manifests use `presenters`.
     pub view: String,
     /// Titlebar HTML file (disk mode plugins, detached window only).
@@ -581,6 +602,14 @@ pub(crate) fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
     if m.model.trim().is_empty() {
         return Err("api 2 modes require a Page Model schema".into());
     }
+    if m.page_runtime
+        && (m.entry.trim().is_empty() || m.presenters.is_empty() || m.model.trim().is_empty())
+    {
+        return Err("page_runtime modes require model, entry and at least one Presenter".into());
+    }
+    if !m.secrets.is_empty() && !m.permissions.iter().any(|p| p == "secrets") {
+        return Err("declared secrets require permissions = [\"secrets\"]".into());
+    }
     if m.template.is_empty() && m.presenters.is_empty() {
         return Err("api 2 self-drawn modes require at least one Presenter".into());
     }
@@ -617,6 +646,16 @@ pub(crate) fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
             "default_presenter \"{}\" is not declared",
             m.default_presenter
         ));
+    }
+
+    let mut secret_keys = HashSet::new();
+    for secret in &m.secrets {
+        if !valid_plugin_id(&secret.key) {
+            return Err(format!("invalid secret key \"{}\"", secret.key));
+        }
+        if !secret_keys.insert(secret.key.as_str()) {
+            return Err(format!("duplicate secret key \"{}\"", secret.key));
+        }
     }
 
     let mut setting_keys = HashSet::new();
@@ -809,6 +848,8 @@ pub fn list_plugins(
                     Vec::new()
                 },
                 presenter_settings: Vec::new(),
+                page_runtime: false,
+                secrets: Vec::new(),
                 view: String::new(),
                 titlebar: String::new(),
                 template: String::new(),
@@ -873,6 +914,8 @@ pub fn list_plugins(
             default_presenter: m.default_presenter,
             presenters: m.presenters,
             presenter_settings,
+            page_runtime: m.page_runtime,
+            secrets: m.secrets,
             view: m.view,
             titlebar: m.titlebar,
             template: m.template,
@@ -1532,7 +1575,36 @@ height = 560
     }
 
     #[test]
+    fn page_runtime_and_secrets_have_dedicated_requirements() {
+        let no_entry = parse_manifest(
+            "id = \"tr\"\nkind = \"mode\"\napi = 2\nmodel = \"translator.translation/v1\"\npage_runtime = true\n\
+             [[presenters]]\nid = \"default\"\nentry = \"view.html\"\n",
+        )
+        .unwrap();
+        assert!(validate_manifest(&no_entry).unwrap_err().contains("page_runtime"));
+
+        let undeclared_secret = parse_manifest(
+            "id = \"tr\"\nkind = \"mode\"\napi = 2\nmodel = \"translator.translation/v1\"\npage_runtime = true\nentry = \"service.js\"\n\
+             [[presenters]]\nid = \"default\"\nentry = \"view.html\"\n\
+             [[secrets]]\nkey = \"api_key\"\nlabel = \"API Key\"\n",
+        )
+        .unwrap();
+        assert!(validate_manifest(&undeclared_secret)
+            .unwrap_err()
+            .contains("permissions"));
+
+        let valid = parse_manifest(
+            "id = \"tr\"\nkind = \"mode\"\napi = 2\nmodel = \"translator.translation/v1\"\npage_runtime = true\nentry = \"service.js\"\npermissions = [\"secrets\"]\n\
+             [[presenters]]\nid = \"default\"\nentry = \"view.html\"\n\
+             [[secrets]]\nkey = \"api_key\"\nlabel = \"API Key\"\n",
+        )
+        .unwrap();
+        validate_manifest(&valid).unwrap();
+    }
+
+    #[test]
     fn every_repository_example_passes_the_api_two_gate() {
+
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         for root in [repo.join("examples/plugins"), repo.join("scripts/fixtures")] {
             let Ok(entries) = fs::read_dir(root) else { continue };

@@ -11,6 +11,8 @@ import { COLLECTION_SCHEMA, collectionFixture, type CollectionModel } from "./sc
 import { PageSession } from "./session";
 import { PresenterHost } from "./presenterHost";
 import { createFixturePresenter, fixturePresenters } from "./fixturePresenter";
+import { isTranslationData } from "./translatorDemo";
+import translationFixture from "./fixtures/translator-translation.v1.json";
 
 function expect(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -116,6 +118,9 @@ export function runPageRuntimeSelfTests(): string[] {
   );
   passed.push("Presenter compatibility fallback");
 
+  expect(isTranslationData(translationFixture.data), "translation fixture must pass the custom schema guard");
+  passed.push("custom translation schema guard");
+
   return passed;
 }
 
@@ -177,4 +182,3 @@ export async function runPageRuntimeAsyncSelfTests(): Promise<string[]> {
   await session.dispose();
   return passed;
 }
-

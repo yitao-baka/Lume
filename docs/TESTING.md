@@ -37,6 +37,14 @@ primitives, automation helpers and the elevation-agent boundary. The Rust
 suite intentionally does not register a service, show UAC, touch the real
 registry or perform a real injection.
 
+Page Service / Presenter role checks use
+`node scripts/cdp_translation_service_verify.mjs`. The script starts a local
+HTTP endpoint, installs `examples/plugins/translation-demo`, checks the opaque
+Presenter sandbox and its capability surface, stores/clears a declared secret
+through the settings UI, verifies that only the service reads it, exercises
+cache hits, two Presenters, engine switching, cancellation, timeout and network
+failure, and asserts that the API key never appears in the Page Model.
+
 The Windows/WebView2 behavior is verified with `scripts/cdp_*.mjs`. Those
 scripts launch an already built exe, so rebuild first:
 

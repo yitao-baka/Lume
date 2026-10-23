@@ -74,6 +74,7 @@ windows = { version = "0.61", features = [
   "Win32_System_IO",          # ReadFile / WriteFile / ConnectNamedPipe / DisconnectNamedPipe
   "Win32_Storage_FileSystem", # CreateFileW (pipe client)
   "Win32_Security",           # TokenElevation check, GetTokenInformation
+  "Win32_Security_Credentials", # plugin_secret: Windows Credential Manager
   "Win32_Security_Authorization", # pipe SDDL (ConvertStringSecurityDescriptorToSecurityDescriptorW)
   "Win32_System_Threading",   # GetCurrentProcess / OpenProcessToken
   "Win32_System_Environment", # envwatch: SetEnvironmentVariableW / ExpandEnvironmentStringsW
@@ -102,4 +103,3 @@ windows-sys = { version = "0.59", features = [
 # debuginfo, so debugging Lume's own code is unaffected. Remove to restore.
 [profile.dev.package."*"]
 debug = "line-tables-only"
-

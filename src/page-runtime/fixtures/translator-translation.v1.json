@@ -1,0 +1,65 @@
+{
+  "runtime": "lume.page/v1",
+  "schema": "translator.translation/v1",
+  "revision": 3,
+  "status": "ready",
+  "data": {
+    "sourceText": "hello",
+    "translatedText": "HELLO",
+    "sourceLang": "auto",
+    "targetLang": "en",
+    "engine": "upper",
+    "engines": [
+      {
+        "id": "local",
+        "label": "Local translator"
+      },
+      {
+        "id": "upper",
+        "label": "Upper-case translator"
+      }
+    ],
+    "languages": [
+      {
+        "id": "auto",
+        "label": "Auto"
+      },
+      {
+        "id": "zh",
+        "label": "Chinese"
+      },
+      {
+        "id": "en",
+        "label": "English"
+      }
+    ],
+    "phase": "ready",
+    "requestId": 2,
+    "cacheHit": false,
+    "hasApiKey": true,
+    "notice": "",
+    "actionTarget": {
+      "id": "translation",
+      "actions": [
+        "translate",
+        "cancel",
+        "swap-languages",
+        "select-engine"
+      ]
+    },
+    "timeoutMs": 8000
+  },
+  "selection": {
+    "primaryId": "translation",
+    "selectedIds": [
+      "translation"
+    ]
+  },
+  "actions": [
+    {
+      "id": "translate",
+      "label": "Translate",
+      "kind": "primary"
+    }
+  ]
+}

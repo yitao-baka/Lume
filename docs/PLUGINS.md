@@ -37,7 +37,9 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   模式切换栏（只能从导航页搜索结果进入，示例 `examples/plugins/hidden-mode/`）
   + `detachable = true` 允许分离为独立窗口（
   见 `docs/PLUGIN_API.md` §6G；示例 `examples/plugins/hello-mode/`；
-  基于宿主 `search.files` 能力的完整文件搜索模式见
+  Page Service + 双 Presenter 的离线示例见
+  `examples/plugins/translation-demo/`（同一模型由左右对照与紧凑页渲染，网络、
+  缓存、取消和 API Key 都留在 service）；基于宿主 `search.files` 能力的完整文件搜索模式见
   `examples/plugins/file-search/`；`template = "list"` 复用宿主 collection Presenter，见
   `examples/plugins/list-demo/`；可分离模式还可声明 `titlebar` HTML ——
   独立窗口标题栏内嵌第二个桥接 iframe（uTools 式搜索框等自由内容），

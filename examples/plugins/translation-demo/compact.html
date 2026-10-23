@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; --accent: #5ac8fa; --border: rgba(127,127,127,.24); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--lume-page-bg, #1e1e20); color: CanvasText; font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", sans-serif; }
+  body { padding: 18px 20px 20px; }
+  button, select, textarea { font: inherit; }
+  button { border: 1px solid var(--border); background: rgba(127,127,127,.09); color: inherit; border-radius: 8px; min-height: 32px; padding: 0 12px; cursor: pointer; }
+  button.primary { border-color: transparent; background: var(--accent); color: #081018; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  select, textarea { border: 1px solid var(--border); background: rgba(127,127,127,.06); color: inherit; border-radius: 8px; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .status { min-height: 20px; opacity: .72; font-size: 12px; }
+  .error { color: #ff7b72; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <select id="engine" aria-label="Engine"></select>
+  <button id="swap" type="button">⇄</button>
+  <span id="secret" class="status"></span>
+</div>
+<textarea id="input" rows="4" placeholder="Type text" style="width:100%;margin-top:10px"></textarea>
+<div class="bar" style="margin-top:10px">
+  <button id="translate" class="primary" type="button">Translate</button>
+  <button id="cancel" type="button">Cancel</button>
+  <span id="status" class="status" role="status"></span>
+</div>
+<div id="output" style="border:1px solid var(--border);border-radius:8px;padding:12px;white-space:pre-wrap;min-height:120px;margin-top:10px"></div>
+<script>
+(async function () {
+  var model = await lume.page.ready();
+  var input = document.getElementById("input");
+  var output = document.getElementById("output");
+  var status = document.getElementById("status");
+  var engine = document.getElementById("engine");
+  function fill(rows, value) {
+    engine.innerHTML = "";
+    rows.forEach(function (row) {
+      var option = document.createElement("option");
+      option.value = row.id;
+      option.textContent = row.label || row.id;
+      option.selected = row.id === value;
+      engine.appendChild(option);
+    });
+  }
+  function render(next) {
+    if (!next) return;
+    model = next;
+    var data = next.data || {};
+    fill(data.engines || [], data.engine);
+    if (document.activeElement !== input) input.value = data.sourceText || "";
+    output.textContent = data.translatedText || "";
+    status.textContent = (data.phase === "loading" ? "Translating… " : data.phase === "error" ? "Error: " : data.phase === "canceled" ? "Canceled — " : "") + (data.notice || "");
+    status.className = "status" + (data.phase === "error" ? " error" : "");
+    document.getElementById("secret").textContent = data.hasApiKey ? "Key set" : "No key";
+    document.getElementById("translate").disabled = data.phase === "loading";
+    document.getElementById("cancel").disabled = data.phase !== "loading";
+  }
+  function dispatch(actionId, payload) {
+    return lume.page.dispatch({ type: "item.action", targetId: "translation", actionId: actionId, ...(payload ? { payload: payload } : {}) });
+  }
+  lume.on.model = render;
+  lume.on.query = function (q) { if (document.activeElement !== input) input.value = q || ""; };
+  document.getElementById("translate").onclick = function () {
+    lume.page.dispatch({ type: "query.submit", payload: { query: input.value } });
+  };
+  document.getElementById("cancel").onclick = function () { lume.page.dispatch({ type: "page.cancel" }); };
+  document.getElementById("swap").onclick = function () { dispatch("swap-languages"); };
+  engine.onchange = function () { dispatch("select-engine", { engine: engine.value }); };
+  lume.page.subscribe(render);
+  render(model);
+})();
+</script>
+</body>
+</html>

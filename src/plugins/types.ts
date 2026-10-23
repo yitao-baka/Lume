@@ -60,6 +60,12 @@ export interface PluginPresenter {
   models: string[];
 }
 
+/** One service-only secret slot. The value never enters Page Models or logs. */
+export interface PluginSecretSpec {
+  key: string;
+  label: string;
+}
+
 /** A Presenter-scoped declarative setting. */
 export interface PluginPresenterSetting extends PluginSetting {
   presenter: string;
@@ -91,6 +97,10 @@ export interface PluginManifest {
   presenters: PluginPresenter[];
   /** Presenter-scoped declarative settings. */
   presenterSettings: PluginPresenterSetting[];
+  /** Internal migration switch for the Page Service/Presenter runtime. */
+  pageRuntime: boolean;
+  /** Service-only secret slots exposed by the settings pane. */
+  secrets: PluginSecretSpec[];
   /** Transitional adapter view. api 2 declares `[[presenters]]`. */
   view: string;
   /** Transitional adapter titlebar. api 2 Presenters own this slot. */

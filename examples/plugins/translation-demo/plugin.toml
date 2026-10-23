@@ -1,0 +1,61 @@
+# Translation service/presenter fixture (api 2). Two real HTML Presenters
+# share one Page Service model; network, cache, cancellation and secrets stay
+# in the service entry.
+id = "translation-demo"
+name = "Translation Demo"
+version = "2.0.0"
+kind = "mode"
+api = 2
+description = "离线可验证的翻译 Page Service + 左右对照/紧凑双 Presenter"
+keywords = ["translate-demo", "翻译演示"]
+entry = "service.js"
+model = "translator.translation/v1"
+page_runtime = true
+permissions = ["network", "secrets"]
+network_allow = ["127.0.0.1", "localhost"]
+height = 560
+detachable = true
+default_presenter = "default"
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["translator.translation/v1"]
+
+[[presenters]]
+id = "compact"
+name = "Compact"
+entry = "compact.html"
+models = ["translator.translation/v1"]
+
+[[settings]]
+key = "endpoint"
+label = "Local endpoint"
+type = "text"
+default = "http://127.0.0.1:18765/translate"
+
+[[settings]]
+key = "timeout_ms"
+label = "Timeout (ms)"
+type = "text"
+default = "8000"
+
+[[presenter_settings]]
+presenter = "default"
+key = "density"
+label = "Density"
+type = "select"
+default = "comfortable"
+
+[[presenter_settings.options]]
+value = "comfortable"
+label = "Comfortable"
+
+[[presenter_settings.options]]
+value = "compact"
+label = "Compact"
+
+[[secrets]]
+key = "api_key"
+label = "API Key"

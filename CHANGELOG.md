@@ -11,6 +11,22 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+
+- **Page Service / Presenter 安全角色与翻译验收** — 逻辑宿主令牌增加
+  `service` 角色；Page Service 通过 `ctx.page` 发布完整模型和事件，通过
+  `ctx.secrets` 读取 Windows Credential Manager，Presenter 桥只暴露
+  `lume.page`、主题和外壳安全动作，sandbox 不授予 `allow-same-origin`。
+  设置窗可从清单 `[[secrets]]` 声明生成“未设置 / 已设置 / 替换 / 清除”控件，
+  明文只写不读；服务端模型通道有 1 MiB 上限，Presenter 模型/资源和 intent 仍由
+  Host Runtime 校验。新增 `examples/plugins/translation-demo/`：左右对照与紧凑
+  两个 Presenter 共享翻译服务，覆盖多引擎、语言交换、缓存、取消、超时、网络
+  失败和 key 配置状态。验证：`node scripts/cdp_translation_service_verify.mjs`
+  **22/22 PASS**（本地 HTTP，key 仅出现在授权头，模型无明文）；`cargo test`
+  **245 passed / 9 ignored**；`node scripts/cdp_p2b_verify.mjs` **31/31 PASS**；
+  `node scripts/cdp_plugin_window_verify.mjs` **16/16 PASS**；
+  `node scripts/cdp_settings_smoke.mjs` ALL PASS；
+  `pnpm exec tsc --noEmit`、示例类型检查、Vite 构建与 debug 打包通过。
+
 - **Page Runtime 基座** — 新增 `PageSession`、带 revision/1 MiB 上限与
   动画帧合并的 `PageModelStore`、Intent 白名单和 target/action 校验、
   Presenter 兼容选择/重试/回退/重挂、资源 scheme 白名单，以及只服务于

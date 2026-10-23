@@ -856,6 +856,57 @@ lume.app.setPlaceholder("");                        // 传 "" 恢复默认
 
 ---
 
+### 6.11 Page Service 与 Presenter 角色
+
+api 2 mode 的 `entry` 是 Page Service，`[[presenters]]` 中的 HTML 是 Presenter。
+两者运行在不同沙箱，通过 Host Runtime 的 Page Model 和 Page Intent 通信：
+
+```toml
+id = "translation-demo"
+kind = "mode"
+api = 2
+model = "translator.translation/v1"
+entry = "service.js"
+permissions = ["network", "secrets"]
+default_presenter = "default"
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["translator.translation/v1"]
+
+[[secrets]]
+key = "api_key"
+label = "API Key"
+```
+
+Page Service 的 `ctx.page`：
+
+- `publish(model)`：发布完整快照；revision 必须递增。
+- `emit(event)`：发送瞬时事件。
+- `setError(error)` / `clearError()`：统一错误状态。
+- `patch(update)`：协议保留位，当前实现拒绝并提示发布完整快照。
+
+Page Service 还独有 `ctx.secrets.has(key)` / `ctx.secrets.get(key)`。秘密值只存在
+Windows Credential Manager，不进入模型、事件、日志、快照或 Presenter。设置窗
+通过 `plugin_secret_status/set/clear` 管理清单声明的槽位，并且从不回读明文。
+
+Presenter 的 `lume.page`：
+
+- `ready()`、`getModel()`、`subscribe(fn)`。
+- `dispatch(intent)`、`reportLayout(report)`、`setModal(open)`、
+  `requestSearchFocus()`。
+- 安全外壳动作仅限 `app.toast/resize/dragWindow/detach/setQuery` 与
+  `theme.get/set`。
+- `lume.http/storage/db/fs/clipboard/dialog/screen/search/secrets` 均不存在；
+  任何其它 RPC 都会被拒绝。Presenter 不能直接调用 Tauri 命令。
+
+同一模型可声明多个 Presenter，切换只替换 iframe，不重建 Page Service；
+`__presenterStates`、`__pageModels`、`__pageIntents` 和 `__pageResources`
+提供脱敏诊断。完整离线验收见 `examples/plugins/translation-demo/` 与
+`scripts/cdp_translation_service_verify.mjs`。
+
 ## 7. 内置插件开发 API（TypeScript 贡献）
 
 > 这一节面向**第一方/编译进二进制**的插件（clipboard/preview 即此形态）。

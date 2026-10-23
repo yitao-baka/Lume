@@ -17,7 +17,7 @@ import { t, type Messages } from "../i18n";
 import { pickIcon, resolveThemedIcon } from "../launcher/iconSpec";
 import { pluginDisplayName } from "../plugins/pluginName";
 import type { PickedIcon } from "../launcher/types";
-import type { PluginManifest, PluginPresenter, PluginSetting } from "../plugins/types";
+import type { PluginManifest, PluginPresenter, PluginSecretSpec, PluginSetting } from "../plugins/types";
 import { Chip, Toggle } from "./controls";
 import { settingsError } from "./errors";
 import type { ConfirmState } from "./types";
@@ -37,6 +37,7 @@ interface LupxInfo {
   model: string;
   defaultPresenter: string;
   presenters: PluginPresenter[];
+  secrets: PluginSecretSpec[];
   fileCount: number;
   totalBytes: number;
   existingVersion: string | null;
@@ -52,6 +53,93 @@ interface LupxInfo {
   signature: "valid" | "unsigned";
   /** SHA-256 of the whole archive file (integrity display). */
   sha256: string;
+}
+
+/** Password-like secret editor. Values are sent only to Credential Manager
+ * commands and are never read back into the settings window. */
+function SecretField(props: { id: string; spec: PluginSecretSpec }) {
+  const [status, setStatus] = createSignal<"unknown" | "set" | "unset" | "busy">("unknown");
+  const [value, setValue] = createSignal("");
+  const [error, setError] = createSignal("");
+  const refresh = async () => {
+    try {
+      const next = await invoke<{ set: boolean }>("plugin_secret_status", {
+        id: props.id,
+        key: props.spec.key,
+      });
+      setStatus(next.set ? "set" : "unset");
+    } catch (err) {
+      setStatus("unknown");
+      setError(settingsError(err));
+    }
+  };
+  onMount(() => void refresh());
+  const save = async () => {
+    if (!value()) return;
+    setStatus("busy");
+    setError("");
+    try {
+      await invoke("plugin_secret_set", {
+        id: props.id,
+        key: props.spec.key,
+        value: value(),
+      });
+      setValue("");
+      setStatus("set");
+    } catch (err) {
+      setStatus("unknown");
+      setError(settingsError(err));
+    }
+  };
+  const clear = async () => {
+    setStatus("busy");
+    setError("");
+    try {
+      await invoke("plugin_secret_clear", { id: props.id, key: props.spec.key });
+      setStatus("unset");
+    } catch (err) {
+      setStatus("unknown");
+      setError(settingsError(err));
+    }
+  };
+  return (
+    <div class="plg-secret">
+      <div class="settings-row-between">
+        <span class="settings-sub-label">{props.spec.label || props.spec.key}</span>
+        <span class="plg-note">
+          {status() === "set"
+            ? t("pluginSecretConfigured")
+            : status() === "busy"
+              ? t("settingsSaving")
+              : t("pluginSecretNotConfigured")}
+        </span>
+      </div>
+      <div class="settings-row">
+        <input
+          class="settings-text-input"
+          type="password"
+          autocomplete="new-password"
+          placeholder={status() === "set" ? t("pluginSecretReplace") : t("pluginSecretSet")}
+          value={value()}
+          onInput={(e) => setValue(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void save();
+          }}
+        />
+        <button class="settings-link" type="button" disabled={!value() || status() === "busy"} onClick={() => void save()}>
+          {t("pluginSecretSave")}
+        </button>
+        <Show when={status() === "set"}>
+          <button class="settings-link" type="button" disabled={status() === "busy"} onClick={() => void clear()}>
+            {t("pluginSecretClear")}
+          </button>
+        </Show>
+      </div>
+      <Show when={error()}>
+        <span class="plg-note warn">{error()}</span>
+      </Show>
+    </div>
+  );
 }
 
 /** Localized label for a plugin kind. */
@@ -578,6 +666,16 @@ function InstallFacts(props: { info: LupxInfo }) {
           </div>
         </div>
       </Show>
+      <Show when={props.info.secrets.length > 0}>
+        <div class="plg-dsec">
+          <span class="plg-dlabel">{t("pluginSecrets")}</span>
+          <div class="plg-chiprow">
+            <For each={props.info.secrets}>
+              {(secret) => <span class="plg-kw-chip">{secret.label || secret.key}</span>}
+            </For>
+          </div>
+        </div>
+      </Show>
       <div class="plg-dsec">
         <span class="plg-dlabel">{t("pluginPermissions")}</span>
         <Show
@@ -855,6 +953,15 @@ function PluginCard(props: {
                 </div>
               </Show>
               <span class="plg-note">{t("pluginPermEnforcedHint")}</span>
+            </div>
+          </Show>
+
+          <Show when={p().secrets.length > 0}>
+            <div class="plg-dsec">
+              <span class="plg-dlabel">{t("pluginSecrets")}</span>
+              <For each={p().secrets}>
+                {(secret) => <SecretField id={p().id} spec={secret} />}
+              </For>
             </div>
           </Show>
 

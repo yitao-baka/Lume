@@ -22,6 +22,8 @@ export interface PageSessionOptions {
   presenters: PresenterDescriptor[];
   presenterId?: string;
   modelStore?: ModelStoreOptions;
+  onPresenterState?: (state: PresenterHostState) => void;
+  onModel?: (model: PageModel) => void;
 }
 
 export interface PageSessionSnapshot {
@@ -43,6 +45,7 @@ export class PageSession {
   private readonly router: IntentRouter;
   private query = "";
   private destroyed = false;
+  private readonly unsubscribeModel: () => void;
 
   constructor(options: PageSessionOptions) {
     this.pageId = options.pageId;
@@ -50,7 +53,8 @@ export class PageSession {
     this.presenters = [...options.presenters];
     this.presenterId = options.presenterId;
     this.store = new PageModelStore(options.pageId, options.modelStore);
-    this.presenterHost = new PresenterHost(options.pageId);
+    this.presenterHost = new PresenterHost(options.pageId, { onState: options.onPresenterState });
+    this.unsubscribeModel = this.store.subscribe((model) => options.onModel?.(model));
     this.router = new IntentRouter(options.pageId, async (intent) => {
       if (!this.service) {
         return { status: "failed", code: "service.missing", message: "Page Service is not ready" };
@@ -151,6 +155,7 @@ export class PageSession {
     this.presenterHost.dispose();
     await this.service?.dispose?.();
     this.service = null;
+    this.unsubscribeModel();
     this.store.dispose();
   }
 

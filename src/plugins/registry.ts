@@ -17,6 +17,9 @@ import { HOST_PLUGIN_API } from "./types";
 import { createIframeView, escapeHtml, injectBridge } from "./iframeBridge";
 import { dropSessionFrames, putSessionFrame, takeSessionFrames } from "../launcher/session";
 import { createListTemplateMode } from "./listTemplate";
+import { createPageRuntimeMode, type PageRuntimeMode } from "./pageRuntimeMode";
+import type { PageModel } from "../page-runtime/contracts";
+import { validatePageModel } from "../page-runtime/modelStore";
 import { fetchDiskFile } from "./disk";
 import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
@@ -48,6 +51,28 @@ const [manifests, setManifests] = createSignal<PluginManifest[]>([]);
  * and a fast settings-applied refresh can otherwise land out of order and
  * resurrect a stale `enabled=false` view. */
 let refreshSeq = 0;
+const pageRuntimeModes = new Map<string, PageRuntimeMode>();
+const latestPageModels = new Map<string, PageModel>();
+
+type PageRuntimeProbeWindow = Window & {
+  __pageRuntimeDispatch?: (id: string, intent: unknown) => Promise<unknown>;
+  __pageRuntimeSwitchPresenter?: (id: string, presenterId: string) => Promise<void>;
+  __pageRuntimeLatestModel?: (id: string) => PageModel | undefined;
+};
+if (typeof window !== "undefined") {
+  const probe = window as PageRuntimeProbeWindow;
+  probe.__pageRuntimeDispatch = (id, intent) => {
+    const runtime = pageRuntimeModes.get(id);
+    if (!runtime) return Promise.reject(new Error("Page Runtime not loaded: " + id));
+    return runtime.dispatch(intent as never);
+  };
+  probe.__pageRuntimeSwitchPresenter = (id, presenterId) => {
+    const runtime = pageRuntimeModes.get(id);
+    if (!runtime) return Promise.reject(new Error("Page Runtime not loaded: " + id));
+    return runtime.switchPresenter(presenterId);
+  };
+  probe.__pageRuntimeLatestModel = (id) => latestPageModels.get(id);
+}
 
 /** Register a plugin. Call once per plugin at composition time. */
 export function definePlugin(plugin: LauncherPlugin) {
@@ -185,6 +210,30 @@ const circuitLog: { id: string; why: string; at: number }[] = [];
 // logic-loaded action）到达前，hook 一律快速失败（"logic not loaded" 前缀，
 // 不计熔断）。
 const logicPendingReady = new Set<string>();
+
+const logicReadyWaiters = new Map<string, Set<() => void>>();
+
+function resolveLogicReady(id: string): void {
+  const waiters = logicReadyWaiters.get(id);
+  if (!waiters) return;
+  logicReadyWaiters.delete(id);
+  for (const resolve of waiters) resolve();
+}
+
+function waitForLogicReady(id: string, timeoutMs = 12_000): Promise<void> {
+  if (!logicPendingReady.has(id)) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const waiters = logicReadyWaiters.get(id) ?? new Set<() => void>();
+    waiters.add(resolve);
+    logicReadyWaiters.set(id, waiters);
+    window.setTimeout(() => {
+      const current = logicReadyWaiters.get(id);
+      current?.delete(resolve);
+      if (current?.size === 0) logicReadyWaiters.delete(id);
+      reject(new Error(`Page Service did not become ready: ${id}`));
+    }, timeoutMs);
+  });
+}
 
 function noteLogicFailure(id: string, why: string): void {
   if (logicOffline.has(id)) return;
@@ -347,6 +396,7 @@ function handleLogicAction(id: string, action: string, args: Record<string, unkn
       // （applyPluginSettings 的首投可能早于逻辑就绪而落空）。
       {
         logicPendingReady.delete(id);
+        resolveLogicReady(id);
         const values = pendingLogicSettings.get(id);
         if (values) {
           pendingLogicSettings.delete(id);
@@ -411,6 +461,27 @@ function initLogicRelay(): void {
     "plugin-logic-action",
     (e) => handleLogicAction(e.payload.id, e.payload.action, e.payload.args)
   );
+  void listen<{ id: string; model: PageModel }>("plugin-page-model", (e) => {
+    const { id, model } = e.payload;
+    const runtime = pageRuntimeModes.get(id);
+    try {
+      validatePageModel(model);
+      latestPageModels.set(id, model);
+      runtime?.publishModel(model);
+    } catch (err) {
+      plog.error(id, "invalid Page Model dropped:", err);
+      runtime?.publishError({ code: "model.invalid", message: String(err) });
+    }
+  });
+  void listen<{ id: string; event: unknown }>("plugin-page-event", (e) => {
+    pageRuntimeModes.get(e.payload.id)?.emitEvent(e.payload.event);
+  });
+  void listen<{ id: string; error: unknown }>("plugin-page-error", (e) => {
+    pageRuntimeModes.get(e.payload.id)?.publishError(e.payload.error);
+  });
+  void listen<{ id: string }>("plugin-page-clear-error", (e) => {
+    pageRuntimeModes.get(e.payload.id)?.clearError();
+  });
   void listen("plugin-logic-host-ready", () => {
     // supervisor 就绪（建窗竞态 / 崩溃恢复）→ 重发全部 load
     for (const id of logicLoadedIds) pushLogicLoad(id);
@@ -796,6 +867,10 @@ function createDiskModeInstance(
 export async function unloadDiskPlugin(id: string): Promise<boolean> {
   clearFeatureRegexCache(id);
   if (!registeredDiskIds.has(id)) return false;
+  const runtime = pageRuntimeModes.get(id);
+  pageRuntimeModes.delete(id);
+  latestPageModels.delete(id);
+  void runtime?.dispose();
   registeredDiskIds.delete(id);
   loadedDiskIds.delete(id);
   for (let i = plugins.length - 1; i >= 0; i--) {
@@ -926,6 +1001,50 @@ export async function loadDiskPlugins(seq = refreshSeq) {
         void applyPluginSettings(m.id);
         loadedAny = true;
         plog.info(m.id, `registered provider proxy (entry=${m.entry})`);
+      } else if (m.kind === "mode" && m.pageRuntime) {
+        pushLogicLoad(m.id);
+        const logic = logicProxy(m.id);
+        const runtime = createPageRuntimeMode({
+          manifest: m,
+          services: services!,
+          form: "launcher",
+          waitForService: () => waitForLogicReady(m.id),
+          callService: (name, ...args) => logicCall(m.id, name, args),
+          fetchPresenter: (presenter) => fetchDiskFile(m.dir + "\\" + presenter.entry),
+          applyTheme: async (mode) => {
+            if (!mode) throw new Error("theme mode is required");
+            await services!.setPluginColorMode(m.id, mode);
+            applyPluginColorMode(m.id, mode);
+          },
+        });
+        pageRuntimeModes.set(m.id, runtime);
+        const navBars = navBarsContribution(m.id, logic, m.dir);
+        definePlugin({
+          id: m.id,
+          icon: manifestIconSpec(m),
+          modeMeta: {
+            labelKey: "",
+            placeholderKey: "",
+            icon: manifestIconSpec(m),
+            label: m.name || m.id,
+          },
+          keywords: m.keywords,
+          keywordsPinyin: m.keywordsPinyin ?? [],
+          features: m.features ?? [],
+          dir: m.dir,
+          pluginName: m.name || m.id,
+          mode: runtime.instance,
+          ...(navBars ? { navBars } : {}),
+        });
+        const pendingModel = latestPageModels.get(m.id);
+        if (pendingModel) runtime.publishModel(pendingModel);
+        registeredDiskIds.add(m.id);
+        void applyPluginSettings(m.id);
+        loadedAny = true;
+        plog.info(
+          m.id,
+          "registered Page Service mode (model=" + m.model + ", presenters=" + m.presenters.length + ", entry=" + m.entry + ")"
+        );
       } else if (m.kind === "mode" && m.template === "list" && m.entry) {
         // Built-in list template : no view HTML — the entry logic runs
         // host-side (provider trust model) and the built-in list component

@@ -2423,6 +2423,8 @@ button.settings-toggle.on .settings-toggle-knob {
 .plg-note { color: var(--settings-muted); font-size: 11px; line-height: 1.45; }
 .plg-note.warn { color: var(--settings-signal-text); }
 .plg-note.ok { color: var(--settings-success); }
+.plg-secret { display: grid; gap: 6px; padding: 9px 10px; border: 1px solid var(--settings-border); border-radius: 8px; }
+.plg-secret .settings-text-input { min-width: 0; flex: 1; }
 .plg-kv { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .plg-k { flex: 0 0 44px; color: var(--settings-muted); font-size: 10px; }
 .plg-v { min-width: 0; overflow: hidden; color: var(--settings-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; user-select: text; }

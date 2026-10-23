@@ -7,3 +7,4 @@ export * from "./resources";
 export * from "./schemas";
 export * from "./session";
 export * from "./migrationAdapter";
+export * from "./translatorDemo";

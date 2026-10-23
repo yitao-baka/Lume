@@ -32,7 +32,7 @@ use zip::ZipArchive;
 
 use crate::paths::base_dir;
 use crate::plugin_sign::{verify_sign_blob, SIGN_ENTRY};
-use crate::plugins::{parse_manifest, valid_plugin_id, validate_manifest, PluginManifest, PresenterManifest};
+use crate::plugins::{parse_manifest, valid_plugin_id, validate_manifest, PluginManifest, PresenterManifest, SecretSpec};
 
 /// Cap on one extracted file, applied to the **measured** decompressed bytes
 /// (never the header's declaration). A plugin is view HTML + a JS bundle +
@@ -60,6 +60,7 @@ pub struct LupxInfo {
     #[serde(rename = "defaultPresenter")]
     pub default_presenter: String,
     pub presenters: Vec<PresenterManifest>,
+    pub secrets: Vec<SecretSpec>,
     /// File entries in the archive (directory entries excluded).
     #[serde(rename = "fileCount")]
     pub file_count: usize,
@@ -718,6 +719,7 @@ fn inspect_lupx(source_path: &str) -> Result<LupxInfo, String> {
         model: arch.manifest.model.clone(),
         default_presenter: arch.manifest.default_presenter.clone(),
         presenters: arch.manifest.presenters.clone(),
+        secrets: arch.manifest.secrets.clone(),
         file_count: arch.file_count,
         total_bytes: arch.total_bytes,
         existing_version: existing,
@@ -808,6 +810,7 @@ pub async fn plugin_lupx_install(
                 model: arch.manifest.model,
                 default_presenter: arch.manifest.default_presenter,
                 presenters: arch.manifest.presenters,
+                secrets: arch.manifest.secrets,
                 file_count,
                 total_bytes,
                 existing_version: None, // installed by now; the card is gone

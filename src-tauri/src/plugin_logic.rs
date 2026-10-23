@@ -95,11 +95,17 @@ pub fn plugin_logic_meta(
     }))
 }
 
+fn default_host_role() -> String {
+    "service".into()
+}
+
 /// One token entry: `token = None` drops every token of that plugin (unload).
 #[derive(serde::Deserialize)]
 pub struct HostTokenEntry {
     pub id: String,
     pub token: Option<String>,
+    #[serde(default = "default_host_role")]
+    pub role: String,
 }
 
 /// The supervisor registers each logic iframe's token (per plugin load).
@@ -115,7 +121,7 @@ pub fn plugin_logic_register_tokens(
     }
     for e in entries {
         match e.token {
-            Some(token) => crate::plugin_perm::register_host_token(&perms, &token, &e.id),
+            Some(token) => crate::plugin_perm::register_host_token(&perms, &token, &e.id, &e.role),
             None => crate::plugin_perm::drop_host_tokens(&perms, &e.id),
         }
     }

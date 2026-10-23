@@ -22,7 +22,9 @@ mod plugin_install;
 mod plugin_logic;
 mod plugin_devwatch;
 mod plugin_net;
+mod plugin_page;
 mod plugin_perm;
+mod plugin_secret;
 pub mod plugin_sign;
 mod plugin_store;
 mod plugin_window;
@@ -472,6 +474,15 @@ pub fn run() {
             plugin_logic::plugin_logic_action,
             plugin_logic::plugin_logic_result,
             plugin_logic::plugin_logic_supervisor_ready,
+            plugin_secret::plugin_secret_status,
+            plugin_secret::plugin_secret_set,
+            plugin_secret::plugin_secret_clear,
+            plugin_secret::plugin_secret_service_has,
+            plugin_secret::plugin_secret_service_get,
+            plugin_page::plugin_page_publish,
+            plugin_page::plugin_page_emit,
+            plugin_page::plugin_page_error,
+            plugin_page::plugin_page_clear_error,
             plugin_store::plugin_db_get,
             plugin_store::plugin_db_put,
             plugin_store::plugin_db_remove,

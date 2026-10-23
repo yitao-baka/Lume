@@ -50,10 +50,18 @@ struct CapsEntry {
 /// Managed permission cache: plugin id → declared capabilities, plus the
 /// logic-host token map (token → plugin id; issued per iframe load by
 /// the supervisor, registered via `plugin_logic_register_tokens`).
+#[derive(Debug, Clone, Default)]
+pub struct TokenOwner {
+    pub id: String,
+    /// `service` is the only role allowed to publish Page Models or read
+    /// secrets. Presenter calls never receive a logic-host token.
+    pub role: String,
+}
+
 #[derive(Default)]
 pub struct PluginPermState {
     caps: Mutex<HashMap<String, CapsEntry>>,
-    host_tokens: Mutex<HashMap<String, String>>,
+    host_tokens: Mutex<HashMap<String, TokenOwner>>,
 }
 
 /// Drop the whole cache (get_plugins re-scans disk anyway — piggyback on it).
@@ -68,60 +76,72 @@ pub fn invalidate(state: &PluginPermState, id: &str) {
         .host_tokens
         .lock()
         .unwrap()
-        .retain(|_, owner| owner != id);
+        .retain(|_, owner| owner.id != id);
 }
 
 /// Register (or replace) the token → id entries for one plugin's logic
 /// iframe. Called by the shared host window's supervisor on every (re)load;
 /// a plugin's stale tokens from a previous iframe are dropped first.
-pub fn register_host_token(state: &PluginPermState, token: &str, id: &str) {
+pub fn register_host_token(state: &PluginPermState, token: &str, id: &str, role: &str) {
     let mut map = state.host_tokens.lock().unwrap();
-    map.retain(|_, owner| owner != id);
-    map.insert(token.to_string(), id.to_string());
+    map.retain(|_, owner| owner.id != id);
+    map.insert(token.to_string(), TokenOwner { id: id.to_string(), role: role.to_string() });
 }
 
 /// Drop every token of one plugin (iframe unload / plugin invalidate).
 pub fn drop_host_tokens(state: &PluginPermState, id: &str) {
-    state.host_tokens.lock().unwrap().retain(|_, owner| owner != id);
+    state.host_tokens.lock().unwrap().retain(|_, owner| owner.id != id);
 }
 
 /// The shared logic host window's label.
 pub const LOGIC_HOST_LABEL: &str = "plugin-logic-host";
 
-/// Resolve the effective plugin id of one call (attribution). See the
-/// module docs for the label rules. `Ok(None)` = first-party/native path.
+/// Resolve the effective plugin id and role of one call. A host token is
+/// authoritative regardless of the calling label; logic-host calls without a
+/// token fail closed. \`Ok(None)\` is the native first-party path.
+pub fn resolve_plugin_caller_role(
+    state: &PluginPermState,
+    window: &tauri::WebviewWindow,
+    plugin_id: Option<&str>,
+    host_token: Option<&str>,
+) -> Result<(Option<String>, String), String> {
+    let label = window.label();
+    if let Some(token) = host_token {
+        let map = state.host_tokens.lock().unwrap();
+        let owner = map.get(token).ok_or_else(|| {
+            "permission denied: unknown host token (stale iframe?)".to_string()
+        })?;
+        return Ok((Some(owner.id.clone()), owner.role.clone()));
+    }
+    if label == LOGIC_HOST_LABEL {
+        return Err(
+            "permission denied: plugin-logic-host calls require a host token".to_string(),
+        );
+    }
+    if let Some(owner) = label.strip_prefix("plugin-") {
+        // Legacy detached presenter window: the label is the ground truth.
+        if valid_plugin_id(owner) {
+            return Ok((Some(owner.to_string()), "legacy-presenter".into()));
+        }
+        return Err(format!("permission denied: bad plugin window label \"{label}\""));
+    }
+    // First-party windows: the claimed id passes through (None = native).
+    if plugin_id.is_none() && label != "main" {
+        return Err(format!(
+            "permission denied: native path (no plugin id) is main-window only — caller is \"{label}\""
+        ));
+    }
+    Ok((plugin_id.map(|s| s.to_string()), "launcher".into()))
+}
+
+/// Back-compat helper for callers that only need the id.
 pub fn resolve_plugin_caller(
     state: &PluginPermState,
     window: &tauri::WebviewWindow,
     plugin_id: Option<&str>,
     host_token: Option<&str>,
 ) -> Result<Option<String>, String> {
-    let label = window.label();
-    if label == LOGIC_HOST_LABEL {
-        let token = host_token.ok_or_else(|| {
-            "permission denied: plugin-logic-host calls require a host token".to_string()
-        })?;
-        let map = state.host_tokens.lock().unwrap();
-        let id = map.get(token).ok_or_else(|| {
-            "permission denied: unknown host token (stale logic iframe?)".to_string()
-        })?;
-        return Ok(Some(id.clone()));
-    }
-    if let Some(owner) = label.strip_prefix("plugin-") {
-        // Detached view window `plugin-<id>`: the label is the ground truth.
-        if valid_plugin_id(owner) {
-            return Ok(Some(owner.to_string()));
-        }
-        return Err(format!("permission denied: bad plugin window label \"{label}\""));
-    }
-    // First-party windows: the claimed id passes through (None = native).
-    let _ = plugin_id;
-    if plugin_id.is_none() && label != "main" {
-        return Err(format!(
-            "permission denied: native path (no plugin id) is main-window only — caller is \"{label}\""
-        ));
-    }
-    Ok(plugin_id.map(|s| s.to_string()))
+    resolve_plugin_caller_role(state, window, plugin_id, host_token).map(|(id, _)| id)
 }
 
 /// The cached capability set for `id`, reading the manifest from disk on a

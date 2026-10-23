@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Translation Presenter titlebar</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  button {
+    width: 100%; height: 100%; border: 0; border-radius: 6px;
+    background: rgba(127,127,127,.1); color: inherit;
+    font: 12px "Segoe UI", sans-serif; cursor: pointer;
+  }
+  button:hover { background: rgba(90,200,250,.22); }
+</style>
+</head>
+<body>
+<button id="cycle" type="button" title="Switch translation engine">
+  Engine: <span id="engine">loading</span>
+</button>
+<script>
+  var engine = document.getElementById("engine");
+  function render(model) {
+    engine.textContent = model && model.data && model.data.engine ? model.data.engine : "unknown";
+  }
+  lume.page.getModel().then(render);
+  lume.page.subscribe(render);
+  document.getElementById("cycle").onclick = function () {
+    var current = engine.textContent === "upper" ? "local" : "upper";
+    lume.page.dispatch({
+      type: "item.action",
+      targetId: "translation",
+      actionId: "select-engine",
+      payload: { engine: current }
+    });
+  };
+</script>
+</body>
+</html>

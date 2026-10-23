@@ -11,6 +11,18 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **独立窗口 Presenter titlebar 槽位** — Presenter 清单的 `titlebar` 在独立窗口
+  中挂载为第二个沙箱 Presenter iframe，并复用 `lume.page`、主题、外壳安全
+  动作和同一 Page Session。titlebar 接收共享模型与 Presenter 设置，页面按钮
+  可通过 Intent 驱动服务；空白区默认拖拽调用 `app.dragWindow`，交互控件不
+  触发拖拽。切换到无 titlebar 的 Presenter 时槽位移除。
+  `examples/plugins/translation-demo` 增加可点击的 titlebar Presenter。
+  验证：`cdp_detached_page_runtime_verify` **12/12 PASS**（真实鼠标点击
+  titlebar、Intent 回流、模型/设置同步、无 titlebar Presenter 切换和 re-dock）；
+  `cdp_plugin_window_verify` **16/16 PASS**（legacy slot 回归）；
+  `cdp_translation_service_verify` **22/22 PASS**；
+  `cdp_page_runtime_verify` **10/10 PASS**；TypeScript、Rust check 与 debug
+  构建通过。
 - **分离窗口 Page Runtime** — api 2 mode 的独立窗口不再需要本地重建业务视图：
   Presenter 通过 `plugin_page_bridge_call/reply` 把模型读取、Intent 与生命周期
   调用送回启动器持有的同一 Page Session；Rust 校验调用窗口标签、请求 id、

@@ -89,15 +89,28 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
     if (e.defaultPrevented) return;
     parent.postMessage({ __lumeKey: { seq: ++seq, key: e.key, code: e.code, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey } }, "*");
   });
+  if (window.__LUME_TITLEBAR__) {
+    document.addEventListener("mousedown", function (e) {
+      if (e.button !== 0) return;
+      var t = e.target;
+      if (t && t.closest && t.closest("button, input, textarea, select, a, [contenteditable]")) return;
+      rpc("app.dragWindow").catch(function () {});
+    });
+  }
   function announce() { parent.postMessage({ __lumeReady: { frame: window.name } }, "*"); }
   if (document.readyState === "complete") announce(); else window.addEventListener("load", announce);
 })();`;
 
-export function injectPresenterBridge(html: string, form: "launcher" | "window"): string {
+export function injectPresenterBridge(
+  html: string,
+  form: "launcher" | "window",
+  titlebar = false
+): string {
   const injection =
     '<base target="_blank">' +
     '<style>html{background:var(--lume-page-bg,' + PANEL_SURFACE_BG[currentThemeMode()] + ')}</style>' +
     '<script>window.__LUME_HOST_FORM__=' + JSON.stringify(form) + ';</script>' +
+    (titlebar ? '<script>window.__LUME_TITLEBAR__=true;</script>' : '') +
     '<script>' + PRESENTER_BRIDGE_SCRIPT + '</script>';
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + injection);
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + injection);
@@ -118,6 +131,8 @@ export interface PresenterBridgeOptions {
   themeGet(): unknown;
   themeSet(mode: unknown): Promise<void>;
   settings?(): Record<string, unknown>;
+  titlebar?: boolean;
+  iframeClass?: string;
 }
 
 export interface PresenterBridge {
@@ -181,9 +196,13 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
       post("settings", opts.settings?.() ?? {});
       post("theme", currentThemeMode());
     },
-    { class: "plugin-frame presenter-frame", name: "presenter:" + opts.pageId + ":" + opts.presenter.id, id: opts.pageId }
+    {
+      class: opts.iframeClass ?? "plugin-frame presenter-frame",
+      name: "presenter:" + opts.pageId + ":" + opts.presenter.id,
+      id: opts.pageId,
+    }
   );
-  View.setHtml(injectPresenterBridge(opts.html, opts.form));
+  View.setHtml(injectPresenterBridge(opts.html, opts.form, opts.titlebar === true));
   return {
     View,
     post,

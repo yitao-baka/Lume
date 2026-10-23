@@ -3,7 +3,7 @@
 # in the service entry.
 id = "translation-demo"
 name = "Translation Demo"
-version = "2.0.0"
+version = "2.1.0"
 kind = "mode"
 api = 2
 description = "离线可验证的翻译 Page Service + 左右对照/紧凑双 Presenter"
@@ -21,6 +21,7 @@ default_presenter = "default"
 id = "default"
 name = "Default"
 entry = "view.html"
+titlebar = "titlebar.html"
 models = ["translator.translation/v1"]
 
 [[presenters]]

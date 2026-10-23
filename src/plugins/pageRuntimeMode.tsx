@@ -2,7 +2,7 @@
 //! restricted Presenter bridge. The service is reached through the shared logic
 //! host; the Presenter never receives its token or sensitive capabilities.
 
-import { createSignal, onMount, Show } from "solid-js";
+import { createSignal, onMount, Show, type Component } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { PageIntent, PageModel, PageService, PresenterDescriptor } from "../page-runtime/contracts";
 import { COLLECTION_SCHEMA, type CollectionModel } from "../page-runtime/schemas";
@@ -24,6 +24,7 @@ export interface PageRuntimeModeDeps {
   waitForService(): Promise<void>;
   callService(name: string, ...args: unknown[]): Promise<unknown>;
   fetchPresenter(presenter: PluginPresenter): Promise<string>;
+  fetchTitlebar?(presenter: PluginPresenter): Promise<string>;
   applyTheme(mode: ReturnType<typeof normalizePluginColorMode>): Promise<void>;
   initialPresenterId?: string;
   onModel?: (model: PageModel) => void;
@@ -43,6 +44,10 @@ export interface PageRuntimeMode {
   currentPresenterId(): string | undefined;
   currentPresenterState(): ReturnType<PageSession["snapshot"]>["presenter"] | undefined;
   currentPresenterSettings(): Record<string, Record<string, unknown>>;
+  titlebarView: Component;
+  titlebarAvailable: () => boolean;
+  titlebarLive: () => boolean;
+  postTitlebar(type: string, payload?: unknown): void;
   postEvent(type: string, payload?: unknown): void;
   postTheme(mode: string): void;
   switchPresenter(presenterId: string): Promise<void>;
@@ -80,11 +85,13 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
   const [ready, setReady] = createSignal(false);
   const [modal, setModal] = createSignal(false);
   const [bridgeView, setBridgeView] = createSignal<ReturnType<typeof createPresenterBridge>["View"]>();
+  const [titlebarView, setTitlebarView] = createSignal<Component>();
   const [layout, setLayout] = createSignal<{ sizing: "fit" | "fixed"; height?: number; expanded?: boolean }>({
     sizing: "fixed",
   });
   let session: PageSession | undefined;
   let bridge: PresenterBridge | undefined;
+  let titlebarBridge: PresenterBridge | undefined;
   let boot: Promise<void> | undefined;
   let started = false;
   let presenterSettings: Record<string, Record<string, unknown>> = {};
@@ -129,6 +136,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       setSelected(selectedIndex(model));
       deps.onModel?.(model);
       bridge?.postModel(model);
+      titlebarBridge?.postModel(model);
       if (model.status !== "loading") setReady(true);
     },
   });
@@ -158,34 +166,81 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     await session!.start(remoteService);
   }
 
+  function bridgeOptions(
+    declared: PluginPresenter,
+    descriptor: PresenterDescriptor,
+    html: string,
+    titlebar = false
+  ) {
+    return {
+      pageId: m.id,
+      presenter: descriptor,
+      html,
+      form: deps.form,
+      session: session!,
+      titlebar,
+      iframeClass: titlebar ? "plugin-frame titlebar-frame" : "plugin-frame presenter-frame",
+      showToast: (text: string, opts?: { undo?: () => void; duration?: number }) =>
+        deps.services.showToast(text, opts),
+      resizeWindow: (width?: number, height?: number) =>
+        deps.services.resizeWindow({ width, height }),
+      dragWindow: () => deps.services.dragWindow(),
+      detach: () => deps.services.detachMode(m.id),
+      setQuery: (q: string) => deps.services.setQuery(q),
+      themeGet: () => deps.services.pluginColorState(m.id),
+      themeSet: async (mode: unknown) => {
+        const pref = normalizePluginColorMode(mode);
+        if (!pref) throw new Error('theme.set expects "system", "light" or "dark"');
+        await deps.applyTheme(pref);
+      },
+      settings: () => presenterSettings[declared.id] ?? {},
+    };
+  }
+
   function factoryFor(presenter: PresenterDescriptor) {
     return async (ctx: { model: PageModel }) => {
+      const declared = m.presenters.find((item) => item.id === presenter.id) ?? m.presenters[0];
+      if (!declared) throw new Error("Presenter declaration missing");
       const html = await presenterHtml(presenter);
-      const next = createPresenterBridge({
-        pageId: m.id,
-        presenter,
-        html,
-        form: deps.form,
-        session: session!,
-        showToast: (text, opts) => deps.services.showToast(text, opts),
-        resizeWindow: (width, height) => deps.services.resizeWindow({ width, height }),
-        dragWindow: () => deps.services.dragWindow(),
-        detach: () => deps.services.detachMode(m.id),
-        setQuery: (q) => deps.services.setQuery(q),
-        themeGet: () => deps.services.pluginColorState(m.id),
-        themeSet: async (mode) => {
-          const pref = normalizePluginColorMode(mode);
-          if (!pref) throw new Error('theme.set expects "system", "light" or "dark"');
-          await deps.applyTheme(pref);
-        },
-        settings: () => presenterSettings[presenter.id] ?? {},
-      });
+      const next = createPresenterBridge(bridgeOptions(declared, presenter, html));
       bridge = next;
+      titlebarBridge = undefined;
+      setTitlebarView(undefined);
       setBridgeView(() => next.View);
+
+      if (deps.form === "window" && declared.titlebar && deps.fetchTitlebar) {
+        try {
+          const titlebarKey = declared.id + ":titlebar";
+          let titlebarHtml = htmlCache.get(titlebarKey);
+          if (titlebarHtml === undefined) {
+            titlebarHtml = await deps.fetchTitlebar(declared);
+            htmlCache.set(titlebarKey, titlebarHtml);
+          }
+          const titlebarDescriptor: PresenterDescriptor = {
+            ...presenter,
+            id: presenter.id + ":titlebar",
+          };
+          const titlebar = createPresenterBridge(
+            bridgeOptions(declared, titlebarDescriptor, titlebarHtml, true)
+          );
+          titlebarBridge = titlebar;
+          setTitlebarView(() => titlebar.View);
+          titlebar.postModel(ctx.model);
+        } catch (err) {
+          console.error("[page-runtime] titlebar Presenter load failed:", err);
+        }
+      }
+
       next.postModel(ctx.model);
       return {
-        ready: () => waitLive(next),
-        update: (model: PageModel) => next.postModel(model),
+        ready: async () => {
+          await waitLive(next);
+          if (titlebarBridge) await waitLive(titlebarBridge);
+        },
+        update: (model: PageModel) => {
+          next.postModel(model);
+          titlebarBridge?.postModel(model);
+        },
         dispose: () => {},
       };
     };
@@ -214,6 +269,17 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
         {(view) => <Dynamic component={view()} />}
       </Show>
     );
+  };
+
+  const TitlebarView = () => (
+    <Show when={titlebarView()}>
+      {(view) => <Dynamic component={view()} />}
+    </Show>
+  );
+
+  const postBoth = (type: string, payload?: unknown) => {
+    bridge?.post(type, payload);
+    titlebarBridge?.post(type, payload);
   };
 
   const instance: ModeInstance = {
@@ -276,8 +342,8 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     },
     onShow: async () => { await session?.show(); },
     onHide: async () => { await session?.hide(); },
-    onEnter: (info) => { void session?.enter(info); bridge?.post("enter", info); },
-    onSettings: (values) => { void session?.settings(values); bridge?.post("settings", values); },
+    onEnter: (info) => { void session?.enter(info); postBoth("enter", info); },
+    onSettings: (values) => { void session?.settings(values); postBoth("settings", values); },
     onFilesDropped: (paths) => { void session?.filesDropped(paths); },
     snapshot: () => bridge?.snapshot() ?? Promise.resolve(null),
     View,
@@ -288,7 +354,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     publishModel: (model) => {
       session!.publish(model);
     },
-    emitEvent: (event) => { bridge?.post("event", event); },
+    emitEvent: (event) => { postBoth("event", event); },
     publishError: (error) => {
       const model = session?.store.get();
       if (model) {
@@ -346,8 +412,12 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     currentPresenterId: () => session?.snapshot().presenter.presenterId ?? undefined,
     currentPresenterState: () => session?.snapshot().presenter,
     currentPresenterSettings: () => presenterSettings,
-    postEvent: (type, payload) => bridge?.post(type, payload),
-    postTheme: (mode) => bridge?.post("theme", mode),
+    titlebarView: TitlebarView,
+    titlebarAvailable: () => Boolean(titlebarView()),
+    titlebarLive: () => titlebarBridge?.live() ?? false,
+    postTitlebar: (type, payload) => titlebarBridge?.post(type, payload),
+    postEvent: (type, payload) => postBoth(type, payload),
+    postTheme: (mode) => postBoth("theme", mode),
     switchPresenter: async (presenterId) => {
       if (!m.presenters.some((presenter) => presenter.id === presenterId)) {
         throw new Error(`unknown Presenter "${presenterId}"`);
@@ -363,7 +433,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       presenterSettings = values;
       const presenterId = session?.snapshot().presenter.presenterId;
       const delivered = presenterId ? presenterSettings[presenterId] ?? {} : {};
-      if (presenterId) bridge?.post("settings", delivered);
+      if (presenterId) postBoth("settings", delivered);
       const probe = window as unknown as { __presenterSettings?: unknown[] };
       (probe.__presenterSettings ??= []).push({
         pageId: m.id,

@@ -2,7 +2,7 @@
 // answers intents from a Presenter mounted in the plugin window; model,
 // settings, presenter selection and re-dock remain shared.
 import { spawn, execSync } from "node:child_process";
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 
 const PORT = 9250;
 const PLUGIN_ID = "translation-demo";
@@ -84,6 +84,20 @@ async function waitFor(client, expression, timeout = 10000) {
   }
   return false;
 }
+async function clickSelector(client, selector) {
+  const rect = await client.evalJs(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width, height: r.height };
+  })()`);
+  if (!rect) return null;
+  await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rect.x, y: rect.y, button: "none" });
+  await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: rect.x, y: rect.y, button: "left", buttons: 1, clickCount: 1 });
+  await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rect.x, y: rect.y, button: "left", buttons: 0, clickCount: 1 });
+  return rect;
+}
+
 async function pressEscape(client) {
   await client.send("Input.dispatchKeyEvent", {
     type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
@@ -157,6 +171,17 @@ try {
   const synced = await detached.evalJs('window.__detachedPageRuntime.getModel()');
   check("model update returns to the detached Presenter", synced?.data?.engine === "upper", JSON.stringify({ engine: synced?.data?.engine, revision: synced?.revision }));
 
+  await waitFor(detached, 'window.__detachedPageRuntime.titlebarLive() === true');
+  const titlebar = await detached.evalJs('!!document.querySelector("iframe.titlebar-frame")');
+  const titlebarSrcdoc = await detached.evalJs('document.querySelector("iframe.titlebar-frame")?.getAttribute("srcdoc") || ""');
+  check("detached Presenter mounts its titlebar slot", titlebar && /lume\.page/.test(titlebarSrcdoc) && !/lume\.(http|storage|db|fs|clipboard|secrets)/.test(titlebarSrcdoc) && /__LUME_TITLEBAR__/.test(titlebarSrcdoc) && /app\.dragWindow/.test(titlebarSrcdoc), JSON.stringify({ titlebar, srcdoc: titlebarSrcdoc.slice(0, 120) }));
+  const titlebarShot = await detached.send("Page.captureScreenshot", { format: "png" });
+  if (titlebarShot.result?.data) writeFileSync("test/detached-runtime-titlebar.png", Buffer.from(titlebarShot.result.data, "base64"));
+  const titlebarRect = await clickSelector(detached, "iframe.titlebar-frame");
+  await waitFor(main, 'window.__pageRuntimeLatestModel("translation-demo")?.data?.engine === "local"');
+  const titlebarResult = await main.evalJs('window.__pageRuntimeLatestModel("translation-demo")');
+  check("titlebar Presenter dispatches into the same session", !!titlebarRect && titlebarResult?.data?.engine === "local", JSON.stringify({ rect: titlebarRect, engine: titlebarResult?.data?.engine }));
+
   await invoke("plugin_presenter_settings_put", {
     id: PLUGIN_ID, presenter: "default", key: "density", value: "comfortable",
   });
@@ -170,13 +195,13 @@ try {
   await waitFor(detached, 'window.__detachedPageRuntime.getPresenter() === "compact" && window.__detachedPageRuntime.getState()?.status === "ready"');
   const switched = await detached.evalJs('window.__detachedPageRuntime.getState()');
   const afterPresenter = await main.evalJs('window.__pageRuntimeLatestModel("translation-demo")');
-  check("detached Presenter switches without replacing the Page Model", switched?.presenterId === "compact" && afterPresenter?.revision >= beforePresenter.revision && afterPresenter?.data?.engine === "upper", JSON.stringify({ switched, before: beforePresenter?.revision, after: afterPresenter?.revision }));
+  check("detached Presenter switches without replacing the Page Model", switched?.presenterId === "compact" && afterPresenter?.revision >= beforePresenter.revision && afterPresenter?.data?.engine === "local" && !(await detached.evalJs('!!document.querySelector("iframe.titlebar-frame")')), JSON.stringify({ switched, before: beforePresenter?.revision, after: afterPresenter?.revision }));
 
   await pressEscape(detached);
   await waitFor(main, 'document.querySelector(".mode-host[data-mode=\"translation-demo\"]")?.classList.contains("active")');
   await waitFor(main, 'window.__presenterStates.filter((state) => state.pageId === "translation-demo").at(-1)?.presenterId === "compact" && window.__presenterStates.filter((state) => state.pageId === "translation-demo").at(-1)?.status === "ready"');
   const redocked = await main.evalJs('window.__pageRuntimeLatestModel("translation-demo")');
-  check("closing the detached window re-docks the same Page Session", redocked?.revision >= afterPresenter.revision && redocked?.data?.engine === "upper", JSON.stringify({ revision: redocked?.revision, engine: redocked?.data?.engine }));
+  check("closing the detached window re-docks the same Page Session", redocked?.revision >= afterPresenter.revision && redocked?.data?.engine === "local", JSON.stringify({ revision: redocked?.revision, engine: redocked?.data?.engine }));
 } catch (error) {
   console.error("DETACHED PAGE RUNTIME ERROR", error);
   failures++;

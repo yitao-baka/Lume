@@ -919,6 +919,11 @@ live 状态。
 白名单和 1 MiB 载荷上限。模型、Presenter 选择和 Presenter 设置从启动器推送到
 独立 Presenter；关闭窗口后回到原 Page Session，不重建服务。
 
+Presenter 的 `titlebar` 文件在独立窗口的 chrome 槽位中以第二个受限 Presenter
+iframe 挂载。它同样只能使用 `lume.page`、主题和外壳安全动作，接收相同模型与
+Presenter 设置；空白区域使用注入的 `app.dragWindow` 拖拽兜底，按钮/输入等
+交互目标不触发拖拽。
+
 完整离线验收见 `examples/plugins/translation-demo/`、
 `scripts/cdp_translation_service_verify.mjs`、
 `scripts/cdp_presenter_control_verify.mjs` 与

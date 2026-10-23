@@ -513,7 +513,9 @@ before adding a field:
 - Detached page windows mirror the launcher-owned Page Session: their Presenter
   calls a bounded, window-label-checked bridge for model/intent/service
   lifecycle operations, while model and Presenter-setting pushes travel back
-  over the existing plugin-window state channel.
+  over the existing plugin-window state channel. A Presenter's declared
+  `titlebar` mounts as a second restricted Presenter iframe in the window
+  chrome and dispatches through the same session.
 - `src/plugins/` — **every page below the search box is a plugin**.
   Built-in navigation and clipboard expose a thin `ModeInstance` adapter over
   `PageSession`; disk modes still enter the shared registry through

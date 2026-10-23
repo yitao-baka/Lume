@@ -4816,3 +4816,42 @@ Presenter 名称，值没有持久化或下发路径。
   `cdp_presenter_control_verify` **10/10 PASS**；
   `cdp_translation_service_verify` **22/22 PASS**。
 - `pnpm exec tsc --noEmit`、`cargo check`、debug `--no-bundle` 构建通过。
+
+## 76. 独立窗口 Presenter titlebar 槽位（2026-10-23）
+
+来源：分离窗口主 Presenter 已接入 Page Runtime，但清单中 Presenter 的
+`titlebar` 仍未挂载，页面只能使用 legacy titlebar bridge。
+
+### 76.1 实现
+
+- Presenter bridge 增加 titlebar 模式：独立 iframe 只暴露 `lume.page`、
+  `lume.theme` 与安全外壳动作；空白区注入 `app.dragWindow`，按钮/输入等
+  目标不触发拖拽。
+- PageRuntimeMode 在定义窗口时加载当前 Presenter 的 `titlebar` 文件，创建
+  第二个受限 Presenter 实例，并与主 Presenter 共享模型、设置、enter 和 theme
+  推送。
+- 独立窗口把该实例挂到 TitleBar slot；切换到没有 titlebar 的 Presenter 时
+  销毁槽位实例。主窗口忽略 titlebar 文件。
+- translation-demo 的 default Presenter 增加可点击 titlebar，按钮通过
+  `lume.page.dispatch` 切换翻译引擎。
+
+### 76.2 踩坑
+
+- PageRuntime titlebar 与 legacy slot 同时挂载会出现两个 `.titlebar-frame`；
+  第一个 srcdoc 为空会让探针误判。运行时槽位存在时不再渲染 legacy iframe。
+- slot 的可见性必须同时依赖运行时组件信号和 titlebar bridge 的 live 信号；
+  只看非响应式的运行时变量会让宿主持续保留 `titlebar-slot-empty`。
+- titlebar Presenter 的事件仍须广播到模型、settings、enter 和 theme 两条桥；
+  只给主 Presenter 推送会让标题栏显示旧状态。
+- 翻译 fixture 的引擎 id 是 `upper` / `local`，测试不能用不存在的
+  `echo`；无效动作会让模型保持不变，看起来像点击事件丢失。
+
+### 76.3 验证
+
+- `node scripts/cdp_detached_page_runtime_verify.mjs` **12/12 PASS**：
+  主 Presenter、受限 titlebar bridge、真实鼠标点击 titlebar、Intent 回流、
+  模型/设置同步、Presenter 切换和 re-dock。
+- `cdp_plugin_window_verify` **16/16 PASS**（legacy titlebar slot 回归）；
+  `cdp_translation_service_verify` **22/22 PASS**；
+  `cdp_page_runtime_verify` **10/10 PASS**。
+- `pnpm exec tsc --noEmit`、`cargo check`、debug `--no-bundle` 构建通过。

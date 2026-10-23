@@ -22,7 +22,7 @@
 //! hidden window never re-loads on re-show, so re-focus only needs a
 //! `plugin-window-shown` → `show` replay.
 
-import { createSignal, onCleanup, onMount, type Component } from "solid-js";
+import { createSignal, onCleanup, onMount, Show, type Component } from "solid-js";
 import { Dynamic, render } from "solid-js/web";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -102,6 +102,7 @@ function App() {
       `titlebar` file and it loaded (drives the slot in the chrome row). */
   const [titlebarHtml, setTitlebarHtml] = createSignal("");
   const [runtimeView, setRuntimeView] = createSignal<Component | null>(null);
+  const [runtimeTitlebar, setRuntimeTitlebar] = createSignal<Component | null>(null);
   let pageRuntime: PageRuntimeMode | undefined;
 
   // Last state pushed from the launcher, cached: the titlebar page's ready
@@ -323,6 +324,8 @@ function App() {
       waitForService: async () => {},
       callService: callDetachedService,
       fetchPresenter: (presenter) => fetchDiskFile(meta.dir + "\\" + presenter.entry),
+      fetchTitlebar: (presenter) =>
+        fetchDiskFile(meta.dir + "\\" + presenter.titlebar),
       applyTheme: async (mode) => {
         if (!mode) throw new Error("Page Runtime theme mode is required");
         await invoke("set_plugin_color_mode", { id, mode });
@@ -347,10 +350,13 @@ function App() {
       getModel: () => runtime.currentModel() ?? null,
       getState: () => runtime.currentPresenterState() ?? null,
       getPresenter: () => runtime.currentPresenterId() ?? null,
+      titlebarLive: () => runtime.titlebarLive(),
+      postTitlebar: (type: string, payload: unknown) => runtime.postTitlebar(type, payload),
       dispatch: (intent: unknown) => runtime.dispatch(intent as never),
       setQuery: (query: string) => runtime.instance.setQuery(query),
     };
     setRuntimeView(() => runtime.instance.View);
+    setRuntimeTitlebar(() => runtime.titlebarView);
   }
 
   const { View, post, snapshot: viewSnapshot } = createIframeView(
@@ -420,8 +426,17 @@ function App() {
   // instance, one listener, one live iframe; plugins without a titlebar page
   // just keep it empty and non-interactive (the drag region shows through).
   const slotHost = (
-    <div class="titlebar-slot-host" classList={{ "titlebar-slot-empty": titlebarHtml() === "" }}>
-      <slotView.View />
+    <div
+      class="titlebar-slot-host"
+      classList={{
+        "titlebar-slot-empty":
+          titlebarHtml() === "" && !(runtimeTitlebar() && pageRuntime?.titlebarAvailable()),
+      }}
+    >
+      <Show when={!runtimeTitlebar()}>
+        <slotView.View />
+      </Show>
+      <Show when={runtimeTitlebar()}>{(view) => <Dynamic component={view()} />}</Show>
     </div>
   );
 

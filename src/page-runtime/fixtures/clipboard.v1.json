@@ -6,8 +6,16 @@
   "data": {
     "query": "",
     "categories": [
-      { "id": "all", "label": "All", "count": 2 },
-      { "id": "text", "label": "Text", "count": 2 }
+      {
+        "id": "all",
+        "label": "All",
+        "count": 2
+      },
+      {
+        "id": "text",
+        "label": "Text",
+        "count": 2
+      }
     ],
     "activeCategory": "all",
     "items": [
@@ -19,16 +27,48 @@
         "pinned": false,
         "sourceApp": "notepad",
         "timeLabel": "now",
-        "actions": ["copy", "paste", "pin", "delete", "preview"]
+        "actions": [
+          "copy",
+          "paste",
+          "pin",
+          "delete",
+          "preview"
+        ],
+        "content": "hello",
+        "createdAt": 1,
+        "hasHtml": false,
+        "mergedCount": 1,
+        "valid": true
       }
     ],
     "total": 2,
-    "window": { "offset": 0, "limit": 40 },
-    "selectedIds": ["clip:1"],
+    "window": {
+      "offset": 0,
+      "limit": 40
+    },
+    "selectedIds": [
+      "clip:1"
+    ],
     "primaryId": "clip:1",
     "paused": false,
-    "status": { "total": 2, "selected": 1, "text": "1 selected" },
-    "clearState": { "open": false, "keepPinned": true }
+    "status": {
+      "total": 2,
+      "selected": 1,
+      "text": "1 selected"
+    },
+    "clearState": {
+      "open": false,
+      "keepPinned": true
+    },
+    "showSourceApp": true,
+    "timeDisplay": "relative",
+    "hoverSelect": false,
+    "previewEnabled": true
   },
-  "selection": { "primaryId": "clip:1", "selectedIds": ["clip:1"] }
+  "selection": {
+    "primaryId": "clip:1",
+    "selectedIds": [
+      "clip:1"
+    ]
+  }
 }

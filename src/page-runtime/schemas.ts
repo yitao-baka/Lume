@@ -17,14 +17,20 @@ export interface NavigateItem {
   actions: string[];
   pluginId?: string;
   disabled?: boolean;
+  mono?: boolean;
+  wrap?: boolean;
 }
 
 export interface NavigateSection {
   id: string;
   title: string;
   items: NavigateItem[];
+  actions: string[];
   expandable: boolean;
   expanded: boolean;
+  selectedIndex?: number;
+  draggable?: boolean;
+  wrap?: boolean;
 }
 
 export interface NavigateModel {
@@ -80,9 +86,16 @@ export interface ClipboardRowModel {
   title: string;
   description?: string;
   icon?: ResourceRef;
+  content: string;
+  createdAt: number;
+  thumb?: ResourceRef;
   pinned: boolean;
   sourceApp?: string;
   timeLabel?: string;
+  hasHtml: boolean;
+  mergedCount: number;
+  valid: boolean;
+  checked?: number[] | null;
   disabled?: boolean;
   actions: string[];
 }
@@ -99,6 +112,10 @@ export interface ClipboardModel {
   paused: boolean;
   status: { total: number; selected: number; text: string };
   clearState?: { open: boolean; keepPinned: boolean };
+  showSourceApp: boolean;
+  timeDisplay: "relative" | "absolute";
+  hoverSelect: boolean;
+  previewEnabled: boolean;
   emptyText?: string;
 }
 
@@ -108,6 +125,7 @@ export const navigateFixture: JsonValue = {
     {
       id: "recent",
       title: "Recent",
+      actions: ["toggle"],
       expandable: true,
       expanded: false,
       items: [

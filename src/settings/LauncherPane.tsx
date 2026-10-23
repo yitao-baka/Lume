@@ -96,8 +96,10 @@ function EntrySizeControl(props: {
 export default function LauncherPane(props: {
   settings: SettingsData;
   onChange: (patch: Partial<SettingsData["appearance"]>) => void;
+  onChangePages: (patch: Partial<SettingsData["pages"]>) => void;
 }) {
   const a = () => props.settings.appearance;
+  const p = () => props.settings.pages;
   return (
     <>
       <SettingGroup title={t("groupWindow")} number="02.1">
@@ -333,6 +335,37 @@ export default function LauncherPane(props: {
           />
         </SettingRow>
       </SettingGroup>
+      <SettingGroup title={t("groupPagePresenters")} number="02.5">
+        <SettingRow
+          id="pages.presenters.apps"
+          label={t("settingsNavigatePresenter")}
+          summary={t("settingsPagePresenterHint")}
+        >
+          <select
+            class="settings-text-input settings-input-fixed"
+            value={p().presenters.apps || "navigate-grid"}
+            onChange={(e) => props.onChangePages({ presenters: { ...p().presenters, apps: e.currentTarget.value } })}
+          >
+            <option value="navigate-grid">{t("settingsPresenterNavigateGrid")}</option>
+            <option value="navigate-list">{t("settingsPresenterNavigateList")}</option>
+          </select>
+        </SettingRow>
+        <SettingRow
+          id="pages.presenters.clipboard"
+          label={t("settingsClipboardPresenter")}
+          summary={t("settingsPagePresenterHint")}
+        >
+          <select
+            class="settings-text-input settings-input-fixed"
+            value={p().presenters.clipboard || "clipboard-list"}
+            onChange={(e) => props.onChangePages({ presenters: { ...p().presenters, clipboard: e.currentTarget.value } })}
+          >
+            <option value="clipboard-list">{t("settingsPresenterClipboardList")}</option>
+            <option value="clipboard-compact">{t("settingsPresenterClipboardCompact")}</option>
+          </select>
+        </SettingRow>
+      </SettingGroup>
+
     </>
   );
 }

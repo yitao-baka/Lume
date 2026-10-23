@@ -201,6 +201,19 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 | `appearance.mode_switch_icons_only` | 模式切换栏仅显示图标 |
 | `appearance.shift_enter_admin` | Shift+Enter 以管理员身份启动 |
 
+#### 页面展示器
+
+页面展示器选择写入 `settings.toml` 的 `[pages.presenters]` 映射，键为页面
+id，值为 Presenter id。缺省或未知值回落到页面清单声明的默认 Presenter。
+
+| 字段 | 控件 | 语义 |
+|---|---|---|
+| `pages.presenters.apps` | 网格（默认）/ 紧凑列表 | 导航页共用同一 Page Service 与 `lume.navigate/v1` 模型 |
+| `pages.presenters.clipboard` | 历史列表（默认）/ 紧凑历史 | 剪贴板页共用同一窗口化 `lume.clipboard/v1` 模型 |
+
+切换只替换 Presenter，不重建页面服务、不重新查询、不清空选择。选择即时生效，
+搜索目录会索引字段标签、摘要和当前值。
+
 #### 会话与搜索
 
 | 字段 | 行为 |

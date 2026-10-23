@@ -2779,3 +2779,14 @@ body.settings-window #root {
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+
+
+/* Page Model presenter fallback: compact Navigate list. */
+.nav-list-presenter { display: grid; gap: 10px; padding: 10px 14px 14px; max-height: 100%; overflow: auto; }
+.nav-list-section { display: grid; gap: 2px; }
+.nav-list-heading { display: flex; justify-content: space-between; align-items: center; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; padding: 4px 6px; cursor: pointer; }
+.nav-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 34px; padding: 5px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.nav-list-row:hover, .nav-list-row.active { background: var(--selection); border-color: var(--border-strong); }
+.nav-list-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-list-desc { color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-list-results { display: grid; gap: 3px; }

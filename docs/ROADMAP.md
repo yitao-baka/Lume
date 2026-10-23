@@ -39,10 +39,11 @@ Lume 的开放事项清单：**只记录尚未开始或尚未收尾的工作**�
 
 ### 工程治理
 
-- **页面模型与可替换展示器运行时** — 把 mode 页面拆成 Page Service、
-  可序列化 Page Model、Intent 路由与可替换 Presenter；导航和剪贴板先用同一
-  契约迁移，公开插件契约直接切到 api 2；现有 `file-search` 与 `translator`
-  同步升级，不保留 api 1 兼容。契约、所有权、实施顺序和验收门槛见
+- **页面模型与可替换展示器运行时收口** — 导航和剪贴板当前共用 Page
+  Session、序列化 Model、Intent 路由与可替换 Presenter。待收口项：磁盘 mode
+  的 Page Service/Presenter 接入、分离窗口 titlebar 槽位、Presenter 声明式设置、
+  `file-search` 与 `translator` 的 api 2 清单升级，以及迁移 adapter 和旧 Solid
+  View 外壳契约的移除。契约、所有权和验收门槛见
   [PAGE_MODEL_PRESENTER.md](PAGE_MODEL_PRESENTER.md)
 - **搜索源 provider 化** — 把原生索引 / 文件搜索抽成 first-party
   `SearchSource`，与插件 provider 走同一合并管线

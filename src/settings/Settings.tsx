@@ -431,6 +431,13 @@ export default function Settings() {
     queueSave({ clipboard: patch } as SettingsPatch);
   }
 
+  function commitPages(patch: Partial<SettingsData["pages"]>) {
+    const current = settings();
+    if (!current) return;
+    setSettings({ ...current, pages: { ...current.pages, ...patch } });
+    queueSave({ pages: patch } as SettingsPatch);
+  }
+
   function commitHotkeys(patch: Partial<SettingsData["hotkeys"]>) {
     const current = settings();
     if (!current) return;
@@ -958,6 +965,7 @@ export default function Settings() {
                   section={section()}
                   settings={settings()!}
                   onUpdateAppearance={commitAppearance}
+                  onUpdatePages={commitPages}
                   onUpdateHotkeys={commitHotkeys}
                   onUpdateIndex={commitIndex}
                   onUpdateClipboard={commitClipboard}
@@ -1075,6 +1083,7 @@ function SectionBody(props: {
   section: SectionId;
   settings: SettingsData;
   onUpdateAppearance: (patch: Partial<SettingsData["appearance"]>) => void;
+  onUpdatePages: (patch: Partial<SettingsData["pages"]>) => void;
   onUpdateHotkeys: (patch: Partial<SettingsData["hotkeys"]>) => void;
   onUpdateIndex: (patch: Partial<SettingsData["index"]>) => void;
   onUpdateClipboard: (patch: Partial<SettingsData["clipboard"]>) => void;
@@ -1101,7 +1110,7 @@ function SectionBody(props: {
         />
       </Match>
       <Match when={props.section === "launcher"}>
-        <LauncherPane settings={props.settings} onChange={props.onUpdateAppearance} />
+        <LauncherPane settings={props.settings} onChange={props.onUpdateAppearance} onChangePages={props.onUpdatePages} />
       </Match>
       <Match when={props.section === "clipboard"}>
         <ClipboardPane

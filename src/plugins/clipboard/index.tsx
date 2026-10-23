@@ -1,104 +1,89 @@
-//! Clipboard plugin — the first `mode` contribution (docs/ROADMAP_HISTORY.md #7).
-//!
-//! Owns a full launcher page: the history store (`store.ts`), the view
-//! (`ClipboardView.tsx`), the mode-specific keyboard handling, the
-//! 记住上次所在页面 page kind and the settings slice it renders live. The
-//! satellite preview is NOT part of this plugin — the mode only *reports*
-//! the selected row's preview target; the `preview` service plugin decides
-//! what to do with it.
+//! Clipboard contribution: Rust-backed ClipboardStore is owned by the Page
+//! Service; default and compact Presenters consume lume.clipboard/v1.
 
-import type { LauncherPlugin, ModeInstance, ModeKeyContext, PluginServices } from "../../plugins/types";
-import { previewTarget } from "../../launcher/clipData";
-import { isImeComposing } from "../../launcher/keyInput";
+import { createEffect, createSignal, Show } from "solid-js";
 import clipboardIconUrl from "../../../res/icons/clipboard.svg";
-import { createClipboardStore } from "./store";
-import { ClipboardView } from "./ClipboardView";
+import type { SettingsData } from "../../settings/types";
+import { CLIPBOARD_SCHEMA, type ClipboardModel } from "../../page-runtime/schemas";
+import { PageSession } from "../../page-runtime/session";
+import type { PageIntent, PageModel, PresenterDescriptor } from "../../page-runtime/contracts";
+import { pushDiagnostic } from "../../page-runtime/diagnostics";
+import type { LauncherPlugin, ModeInstance, ModeKeyContext, PageRow, PluginServices } from "../types";
+import { createClipboardPageService } from "../../page-services/clipboard/service";
+import { rememberPageModel } from "../registry";
+import { ClipboardListPresenter } from "../../presenters/clipboard-list/ClipboardListPresenter";
+import { ClipboardCompactPresenter } from "../../presenters/clipboard-compact/ClipboardCompactPresenter";
+
+const CLIPBOARD_PRESENTERS: PresenterDescriptor[] = [
+  { id: "clipboard-list", name: "History list", models: [CLIPBOARD_SCHEMA], builtin: true },
+  { id: "clipboard-compact", name: "Compact history", models: [CLIPBOARD_SCHEMA], builtin: true },
+];
 
 export function createClipboardPlugin(services: PluginServices): LauncherPlugin {
-  const clip = createClipboardStore(services);
-
-  /** Mode-specific keys (the root handles Esc/mode-switch/shared ↑↓ Enter
-   * bookkeeping before calling this). Original clipboard bindings: ←/→
-   * switch categories on an empty query; Space toggles multi-select; Del
-   * deletes; Enter activates (the root calls `activate` for Enter/↑↓). */
-  function onKey(e: KeyboardEvent, ctx: ModeKeyContext): boolean {
-    if (isImeComposing(e)) return false;
-    // The clear-history confirmation is modal: native button/checkbox
-    // semantics (Enter/Space/Tab) stay inside the dialog, while every other
-    // shortcut is swallowed before it can reach the history behind it.
-    if (clip.clearOpen()) {
-      if (
-        e.key === "ArrowUp" || e.key === "ArrowDown" ||
-        e.key === "ArrowLeft" || e.key === "ArrowRight" ||
-        e.key === "Home" || e.key === "End"
-      ) {
-        e.preventDefault();
-      }
-      return true;
-    }
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      if (clip.clipQuery() === "") {
-        e.preventDefault();
-        clip.switchCategory(e.key === "ArrowLeft" ? -1 : 1);
-        return true;
-      }
-      return false;
-    }
-    if (e.key === " ") {
-      if (ctx.editing) return false; // the search box owns Space
-      if (ctx.hasResults) {
-        e.preventDefault();
-        clip.toggleMulti(clip.selected());
-        return true;
-      }
-      return false;
-    }
-    if (e.key === "Delete") {
-      if (ctx.editing || !ctx.hasResults) return false;
-      e.preventDefault();
-      void clip.deleteSelected();
-      return true;
-    }
-    return false;
-  }
-
-  /** Shift+F10 / Menu key: open the shared context menu for the selected row. */
-  function openContextMenu(): boolean {
-    const item = clip.clips()[clip.selected()];
-    if (!item) return false;
-    const el = document.querySelector<HTMLElement>(".clip-row[aria-selected='true']");
-    const rect = el?.getBoundingClientRect();
-    const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
-    const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
-    services.openMenu({ kind: "clip", x, y, item });
-    return true;
-  }
+  const cfg = (window as any).__LUME_CONFIG__ as SettingsData | undefined;
+  const [presenterId, setPresenterId] = createSignal(cfg?.pages?.presenters?.clipboard || "clipboard-list");
+  const [model, setModel] = createSignal<PageModel>();
+  const page = createClipboardPageService({ services });
+  const session = new PageSession({
+    pageId: "clipboard",
+    schema: CLIPBOARD_SCHEMA,
+    presenters: CLIPBOARD_PRESENTERS,
+    presenterId: presenterId(),
+    onModel: (next) => { setModel(next); rememberPageModel("clipboard", next); },
+  });
+  void session.start(page.service);
+  createEffect(() => session.publish(page.snapshot()));
+  createEffect(() => pushDiagnostic("__presenterStates", { pageId: "clipboard", presenterId: presenterId(), status: "ready" }));
 
   const instance: ModeInstance = {
-    query: clip.clipQuery,
-    setQuery: clip.setClipQuery,
-    search: clip.search,
-    reset: clip.reset,
-    selected: clip.selected,
-    setSelected: clip.setSelected,
-    rows: clip.clips,
-    activate: clip.activate,
-    onKey,
-    openContextMenu,
-    onEscape: clip.onEscape,
-    modal: () => clip.clearOpen(),
-    previewTarget: () => previewTarget(clip.clips()[clip.selected()], clip.rememberChecks()),
-    previewEnabled: clip.previewEnabled,
-    measureViewport: clip.measureViewport,
-    ready: clip.loaded,
-    placeholder: clip.placeholder,
-    pageKind: clip.pageKind,
-    restorePage: clip.restorePage,
-    applySettings: clip.applySettings,
-    // The shared context menu's clipboard actions (the store satisfies the
-    // narrow `ClipMenuActions` interface menu.ts declares).
-    menuActions: () => clip as unknown,
-    View: () => <ClipboardView clip={clip} services={services} />,
+    query: page.store.clipQuery,
+    setQuery: (query) => { void session.setQuery(query); },
+    search: async (query) => { await session.setQuery(query); },
+    reset: page.store.reset,
+    selected: page.store.selected,
+    setSelected: page.store.setSelected,
+    rows: () => page.store.clips() as PageRow[],
+    activate: () => {
+      const id = model()?.selection?.primaryId;
+      if (id) void session.dispatch({ type: "item.activate", targetId: id });
+    },
+    onKey: (event: KeyboardEvent, ctx: ModeKeyContext) => page.onKey(event, ctx),
+    openContextMenu: page.openContextMenu,
+    onEscape: page.store.onEscape,
+    modal: page.modal,
+    previewTarget: () => (model()?.preview?.payload as never) ?? null,
+    previewEnabled: page.store.previewEnabled,
+    measureViewport: page.store.measureViewport,
+    ready: page.ready,
+    placeholder: page.store.placeholder,
+    pageKind: page.store.pageKind,
+    restorePage: page.store.restorePage,
+    applySettings: (settings) => {
+      page.applySettings(settings);
+      const chosen = (settings as SettingsData).pages?.presenters?.clipboard;
+      if (chosen && CLIPBOARD_PRESENTERS.some((p) => p.id === chosen)) setPresenterId(chosen);
+    },
+    onShow: async () => { await session.show(); },
+    menuActions: () => page.store as unknown,
+    snapshot: () => Promise.resolve({ pageRuntime: model() }),
+    View: () => (
+      <Show
+        when={presenterId() === "clipboard-compact"}
+        fallback={
+          <ClipboardListPresenter
+            data={() => model()?.data as ClipboardModel | undefined}
+            selectedId={() => model()?.selection?.primaryId}
+            dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
+          />
+        }
+      >
+        <ClipboardCompactPresenter
+          data={() => model()?.data as ClipboardModel | undefined}
+          selectedId={() => model()?.selection?.primaryId}
+          dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
+        />
+      </Show>
+    ),
   };
 
   return {

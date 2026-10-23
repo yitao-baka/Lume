@@ -11,7 +11,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
-
+- **内置导航与剪贴板迁移到 Page Service / Presenter** — 导航页的栏目、
+  合并搜索、动作和拖拽重排归入 Navigate Page Service，剪贴板 store 归入
+  Clipboard Page Service 并只向 Presenter 发布窗口化行；两个页面各有网格 /
+  列表与历史 / 紧凑两套 Presenter，选择、查询和页面服务在切换时不重建。
+  设置新增 `[pages.presenters]` 与“页面展示器”选择器，缺失或不合法的页面、
+  Presenter 值回落到清单默认项。验证：Page Runtime 单测 **10/10**；
+  `cdp_page_runtime_verify` **10/10**；`cdp_p2b_verify` **31/31**；
+  `cdp_mode_query_verify` **47/47**；`cdp_idle_reset_verify` **48/48**；
+  `cdp_visual_audit_verify` **28/28**；`cdp_plugin_state_verify` **54/54**；
+  `cdp_plugin_theme_verify` **28/28**；`cdp_sandbox_verify` **14/14**；
+  `cdp_translation_service_verify` **22/22**；`cdp_plugin_window_verify`
+  **16/16**；插件总验证、剪贴板 smoke / pause + merge、熔断与设置 smoke PASS；
+  `cargo test` **246 passed / 9 ignored**；`check_i18n` **576 键 × 3 语言**；
+  TypeScript、示例类型检查、Vite、debug 与 release 构建通过。
 - **Page Service / Presenter 安全角色与翻译验收** — 逻辑宿主令牌增加
   `service` 角色；Page Service 通过 `ctx.page` 发布完整模型和事件，通过
   `ctx.secrets` 读取 Windows Credential Manager，Presenter 桥只暴露

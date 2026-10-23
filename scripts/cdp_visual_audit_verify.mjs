@@ -148,6 +148,26 @@ async function findPage(testExpression) {
   return null;
 }
 
+async function ensureLauncherVisible(invoke) {
+  const visible = () => invoke("plugin:window|is_visible", { label: "main" });
+  if (!(await visible())) {
+    await invoke("toggle_launcher");
+    await sleep(800);
+  }
+  if (!(await visible())) throw new Error("launcher window is not visible");
+}
+
+async function waitFor(client, expression, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (await client.evalJs(expression)) return true;
+    } catch {}
+    await sleep(120);
+  }
+  return false;
+}
+
 async function findPreview() {
   for (let i = 0; i < 40; i++) {
     const pages = (await targets()).filter((t) => t.type === "page");
@@ -227,6 +247,10 @@ const fakePin = "C:\\__lume_visual_audit_missing__\\missing.exe";
 try {
   main = await findPage(`!!document.getElementById("search-input")`);
   if (!main) throw new Error("launcher target missing");
+  // The window starts hidden and Rust finishes setup asynchronously after the
+  // first CDP target is available. Toggling too early can hide the window
+  // again, leaving later page switches outside their show lifecycle.
+  await sleep(1600);
   const invoke = (cmd, args = {}) =>
     main.evalJs(
       `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`
@@ -245,8 +269,7 @@ try {
       },
     },
   });
-  await invoke("toggle_launcher");
-  await sleep(1800);
+  await ensureLauncherVisible(invoke);
   await main.evalJs(`(() => {
     const names = ["导航", "導航", "Navigate"];
     const pill = [...document.querySelectorAll(".mode-switch-item")].find(
@@ -255,6 +278,9 @@ try {
     pill?.click();
     return !!pill;
   })()`);
+  if (!(await waitFor(main, `!!document.querySelector('.mode-host[data-mode="apps"].active')`))) {
+    throw new Error("navigate page did not activate");
+  }
   await sleep(900);
 
   // Seed enough distinct text rows for the virtual list and a hidden-action
@@ -496,7 +522,13 @@ try {
     pill?.click();
     return !!pill;
   })()`);
-  await sleep(1100);
+  if (!(await waitFor(main, `!!document.querySelector('.mode-host[data-mode="clipboard"].active')`))) {
+    throw new Error("clipboard page did not activate");
+  }
+  if (!(await waitFor(main, `!!document.querySelector('.mode-host[data-mode="clipboard"].active .clip-row')`))) {
+    throw new Error("clipboard page did not produce rows");
+  }
+  await sleep(500);
 
   const clip = await main.evalJs(`(() => {
     const meta = document.querySelector(".clip-row-meta");
@@ -713,17 +745,16 @@ try {
   // format setup needed because the window itself is under test here).
   await invoke("close_settings");
   await sleep(300);
-  await invoke("toggle_launcher");
-  await sleep(500);
+  await ensureLauncherVisible(invoke);
+  // Let the launcher-shown search and its debounced preview sync settle before
+  // injecting the direct preview request under test.
+  await sleep(1800);
   await invoke("show_preview", {
     req: { kind: "image", content: null, path: IMAGE, id: null },
   });
   preview = await findPreview();
   if (!preview) throw new Error("preview target missing");
   await sleep(700);
-  preview.ws.close();
-  preview = await findPreview();
-  if (!preview) throw new Error("preview target missing after update");
   const previewInfo = await preview.evalJs(`(() => {
     const title = document.querySelector(".preview-title");
     const close = document.querySelector(".preview-close");

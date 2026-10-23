@@ -428,6 +428,7 @@ export function createClipboardStore(services: PluginServices) {
     clipScrollTop,
     setClipScrollTop,
     clipViewportH,
+    setClipViewportH,
     clipStart,
     clipEnd,
     bindScrollEl: (el: HTMLDivElement) => {

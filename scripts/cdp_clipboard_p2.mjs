@@ -11,6 +11,7 @@ const CDP_PORT = 9222;
 const APP = "src-tauri/target/release/lume.exe";
 const SETTINGS = "src-tauri/target/release/settings/settings.toml";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const runId = Date.now();
 
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
 
@@ -127,7 +128,7 @@ console.log("[pause] button =", JSON.stringify(pauseBtnText));
 const before = await count();
 await evalJs(`document.querySelector(".clip-status-btn")?.click(); "paused"`);
 await sleep(300);
-setClip("paused-probe-should-not-record");
+setClip(`paused-probe-${runId}`);
 await sleep(800);
 await refresh();
 const whilePaused = await count();
@@ -135,7 +136,7 @@ console.log("[pause] count before=", before, " while paused=", whilePaused, "→
 
 await evalJs(`document.querySelector(".clip-status-btn")?.click(); "resumed"`);
 await sleep(300);
-setClip("resumed-probe-should-record");
+setClip(`resumed-probe-${runId}`);
 await sleep(800);
 await refresh();
 const afterResume = await count();
@@ -145,9 +146,9 @@ console.log("[pause] after resume=", afterResume, "→", afterResume > whilePaus
 // fresh row, then copy twice quickly → one 「合并复制 2 条」 row. ──
 await sleep(4000);
 const beforeRows = await count();
-setClip("merge-alpha-p2");
+setClip(`merge-alpha-${runId}`);
 await sleep(350);
-setClip("merge-beta-p2");
+setClip(`merge-beta-${runId}`);
 await sleep(900);
 await refresh();
 const mergedRows = await count();

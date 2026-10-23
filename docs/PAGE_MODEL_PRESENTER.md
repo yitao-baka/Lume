@@ -1,9 +1,9 @@
 # Page Model / Presenter 运行时重构方案
 
-本文定义 Lume 启动器页面运行时的目标架构、公共契约和迁移顺序。它描述的
-是待实施设计，不是当前已经生效的 API；当前插件契约仍以
-[PLUGIN_API.md](PLUGIN_API.md)、`src/plugins/types.ts` 和
-`src-tauri/src/plugins.rs` 为准。
+本文定义 Lume 启动器页面运行时的目标架构、公共契约和迁移顺序。公开插件
+契约以 [PLUGIN_API.md](PLUGIN_API.md)、`src/plugins/types.ts` 和
+`src-tauri/src/plugins.rs` 中的 api 2 定义为准；迁移期的内置页面同时保留
+`ModeInstance` 外壳适配，页面内部的数据与展示职责按下文边界拆分。
 
 ## 结论
 
@@ -1266,7 +1266,8 @@ Rust 单测需要覆盖：
 - Presenter 无法直接访问网络、数据库、文件、剪贴板或秘密。
 - 切换 Presenter 不重置 Page Service、查询结果和选择。
 - 分离窗口、titlebar 槽位、回流、主题、懒加载、插页尺寸和键盘契约保持。
-- `file-search` 和 `translator` 已完成 api 2 升级。
+- `file-search` 和 `translator` 的插件包声明 `api = 2`，并以 Page Service /
+Presenter 角色运行。
 - api 1 插件包被明确拒绝，不存在隐式兼容路径。
 - provider、navBars、list template 和 detached window 没有回归。
 - 设置窗可以持久化 Presenter 选择，并保留旧设置值。

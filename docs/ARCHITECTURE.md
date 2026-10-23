@@ -500,19 +500,28 @@ before adding a field:
   plugin's canvas, `theme` events, detached-window chrome and taskbar icon
   follow the override — the launcher keeps its own `data-theme`, and other
   plugins' pages are untouched (`src/plugins/themePrefs.ts`).
-- `src/plugins/` — **every page below the search box is a plugin**
-  implementing the `ModeInstance` page contract (`src/plugins/types.ts`):
+- `src/page-runtime/` — the framework-independent page contract and host
+  runtime: serializable `PageModel`, revisioned model store, Page Intent
+  routing, Presenter compatibility/fallback and built-in model schemas.
+- `src/page-services/` — built-in pages' logic layer. `navigate/service.ts`
+  owns the bar registry, merged search pipeline, actions and drag-reorder;
+  `clipboard/service.ts` wraps the Rust-backed clipboard store and publishes
+  only the visible row window.
+- `src/presenters/` — replaceable page renderers. Navigation has the default
+  grid and a compact list; clipboard has the full history list and a compact
+  history. Each Presenter consumes only the model plus a `dispatch` function.
+- `src/plugins/` — **every page below the search box is a plugin**.
+  Built-in navigation and clipboard expose a thin `ModeInstance` adapter over
+  `PageSession`; disk modes still enter the shared registry through
+  `createDiskModeInstance`:
   - `navigate/` — the built-in **home page** (id `"apps"`, `home: true`, the
-    only `heightPolicy: "fit"` page): `store.ts` (the bars 栏目 registry —
-    最近使用 / 已固定 / 推荐使用 / plugin bars / Explorer — plus app actions
-    and the continuous bar-grid navigation + pinned drag reorder), `search.ts` (the
-    merged search pipeline: native index → 全局关键字 rows → declarative
-    feature rows → file-search hits → plugin providers; provider drill-down;
-    the summon-scoped file-drop / clipboard-image / foreground-window feature
-    rows), `NavigateView.tsx` (bars + results grid), `index.tsx`
-    (`createNavigatePlugin(services, host)`).
-  - `clipboard/` — the clipboard-history page (store + view + keys + search
-    + the settings slice it renders live).
+    only `heightPolicy: "fit"` page). Its `index.tsx` joins the navigation
+    Page Service to the grid/list Presenters while preserving bar expansion,
+    keyboard/mouse selection, context menus and pinned drag reorder.
+  - `clipboard/` — the clipboard-history contribution. Its `index.tsx`
+    joins the clipboard Page Service to the history/compact Presenters and
+    retains the settings, preview, modal and keyboard lifecycle exposed by
+    `ModeInstance`.
   - `preview/` — a service contribution (satellite-preview routing shared by
     every page that exposes previewable rows).
   - `registry.ts` + `types.ts` — the registry all plugins plug into

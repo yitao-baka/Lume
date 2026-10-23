@@ -36,6 +36,9 @@ pub struct Settings {
     /// 自动动作 — send a hotkey when a configured program comes to the foreground.
     #[serde(default)]
     pub automation: Automation,
+    /// Page/Presenter selection. Missing table = manifest defaults.
+    #[serde(default)]
+    pub pages: Pages,
 }
 
 impl Settings {
@@ -49,6 +52,14 @@ impl Settings {
         self.appearance.settings_accent_custom =
             normalize_settings_accent(&self.appearance.settings_accent_custom);
     }
+}
+
+/// Page-level control plane. The id → Presenter map stores only explicit user
+/// choices; absent ids fall back to the page manifest default.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Pages {
+    #[serde(default)]
+    pub presenters: HashMap<String, String>,
 }
 
 /// Plugin enable/disable state. Plugins not listed are enabled; the ids here
@@ -641,6 +652,7 @@ impl Default for Settings {
                 agent_resident: false,
                 actions: Vec::new(),
             },
+            pages: Pages::default(),
             clipboard: Clipboard {
                 history_cap: 200,
                 record_images: true,
@@ -1846,6 +1858,20 @@ mod tests {
         assert!(!not_dir.ok);
         assert_eq!(not_dir.reason, Some("not_dir"));
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn page_presenter_selection_defaults_and_round_trips() {
+        let base = temp_base("pages-presenters");
+        let mut s = read_settings(&base);
+        assert!(s.pages.presenters.is_empty());
+        s.pages.presenters.insert("apps".into(), "navigate-list".into());
+        s.pages.presenters.insert("clipboard".into(), "clipboard-compact".into());
+        write_settings_light(&base, &s).unwrap();
+        let loaded = read_settings(&base);
+        assert_eq!(loaded.pages.presenters.get("apps").map(String::as_str), Some("navigate-list"));
+        assert_eq!(loaded.pages.presenters.get("clipboard").map(String::as_str), Some("clipboard-compact"));
+        fs::remove_dir_all(&base).ok();
     }
 
 }

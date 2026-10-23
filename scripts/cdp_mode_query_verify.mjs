@@ -247,23 +247,14 @@ try {
   const s = await findSettings();
   check("B1 设置窗口打开", !!s);
   if (s) {
-    await s.evalJs(`(() => {
-      const names = ["导航页", "導航頁", "Navigation"];
-      const b = [...document.querySelectorAll(".settings-nav")].find((x) => names.some((n) => x.textContent.includes(n)));
-      b?.click();
-      return !!b;
-    })()`);
-    await sleep(500);
+    await s.evalJs('document.querySelector("#settings-tab-launcher")?.click(); "ok"');
+    await sleep(1200);
   }
-  const rowLabels = ["各模式使用独立搜索词", "各模式使用獨立搜尋詞", "Independent search text per mode"];
-  const rowSel = `(() => {
-    const labels = ${JSON.stringify(rowLabels)};
-    return [...document.querySelectorAll(".settings-row-between")].find((r) => labels.some((l) => r.textContent.includes(l))) ?? null;
-  })()`;
-  const rowBefore = s ? await s.evalJs(`(() => { const r = ${rowSel}; return r ? { label: r.textContent.trim(), checked: r.querySelector(".settings-toggle")?.getAttribute("aria-checked") } : null; })()`) : null;
+
+  const rowBefore = s ? await s.evalJs(`(() => { const r=[...document.querySelectorAll("[data-setting-id]")].find((x)=>x.dataset.settingId==="appearance.per_mode_query"); return r ? { label:r.textContent.trim(), checked:r.querySelector(".settings-toggle")?.getAttribute("aria-checked") } : null; })()`) : null;
   check("B2 导航页有此开关且当前为关（默认共享）", !!rowBefore && rowBefore.checked === "false", JSON.stringify(rowBefore));
   if (s && rowBefore) {
-    await s.evalJs(`(() => { const r = ${rowSel}; r?.querySelector(".settings-toggle")?.click(); return "ok"; })()`);
+    await s.evalJs(`(() => { const r=[...document.querySelectorAll("[data-setting-id]")].find((x)=>x.dataset.settingId==="appearance.per_mode_query"); r?.querySelector(".settings-toggle")?.click(); return "ok"; })()`);
     await sleep(300);
     await s.evalJs(`Array.from(document.querySelectorAll(".settings-footer .settings-action"))[1]?.click(); "ok"`);
     await sleep(1300);

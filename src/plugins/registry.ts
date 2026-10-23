@@ -52,6 +52,10 @@ const [manifests, setManifests] = createSignal<PluginManifest[]>([]);
  * resurrect a stale `enabled=false` view. */
 let refreshSeq = 0;
 const pageRuntimeModes = new Map<string, PageRuntimeMode>();
+
+export function rememberPageModel(id: string, model: PageModel): void {
+  latestPageModels.set(id, model);
+}
 const latestPageModels = new Map<string, PageModel>();
 
 type PageRuntimeProbeWindow = Window & {

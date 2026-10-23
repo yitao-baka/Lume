@@ -128,6 +128,10 @@ export interface SettingsData {
     remember_checks: boolean;
   };
   /** 自动动作 — send a hotkey when a configured program comes to the foreground. */
+  pages: {
+    /** Page id → Presenter id. Absent = manifest default. */
+    presenters: Record<string, string>;
+  };
   automation: {
     /** Master switch for the whole watcher. */
     enabled: boolean;
@@ -235,6 +239,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
     agent_resident: false,
     actions: [],
   },
+  pages: { presenters: {} },
 };
 
 /** A nested partial settings object — only the leaf values that differ. */

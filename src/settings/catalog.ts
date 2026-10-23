@@ -140,6 +140,7 @@ export function buildSettingsCatalog(
   const i = settings.index;
   const h = settings.hotkeys;
   const au = settings.automation;
+  const p = settings.pages;
   const entries: SettingDescriptor[] = [
     descriptor({
       id: "appearance.language",
@@ -401,6 +402,27 @@ export function buildSettingsCatalog(
       kind: "switch",
       keywords: ["icon", "circle", "round", "图标", "圖示", "圆形", "圓形"],
       value: onOff(a.round_app_icons),
+    }),
+
+    descriptor({
+      id: "pages.presenters.apps",
+      section: "launcher",
+      labelKey: "settingsNavigatePresenter",
+      summaryKey: "settingsPagePresenterHint",
+      groupKey: "groupPagePresenters",
+      kind: "segmented",
+      keywords: ["presenter", "navigate", "grid", "list"],
+      value: p.presenters.apps === "navigate-list" ? t("settingsPresenterNavigateList") : t("settingsPresenterNavigateGrid"),
+    }),
+    descriptor({
+      id: "pages.presenters.clipboard",
+      section: "launcher",
+      labelKey: "settingsClipboardPresenter",
+      summaryKey: "settingsPagePresenterHint",
+      groupKey: "groupPagePresenters",
+      kind: "segmented",
+      keywords: ["presenter", "clipboard", "list", "compact"],
+      value: p.presenters.clipboard === "clipboard-compact" ? t("settingsPresenterClipboardCompact") : t("settingsPresenterClipboardList"),
     }),
 
     descriptor({

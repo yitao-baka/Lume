@@ -4679,3 +4679,55 @@ debug / release 同样失败，任务从未注册成功。
   验证机的 `settings.toml` 里可能已有用户自己的规则（本机即有一条 `notepad.exe`），
   此前「删第一张卡片」的写法会误伤用户数据 —— 本次靠脚本运行前后的 `settings.toml`
   备份 / 还原兜住，实测还原后与运行前逐字节一致。
+
+## 73. 内置导航与剪贴板页面迁移（2026-10-23）
+
+来源：页面模型 / Presenter 重构的导航、剪贴板阶段。目标是让两页共用
+`PageSession`、序列化模型、Intent 路由和可替换 Presenter，同时保持现有交互、
+视觉与设置行为。
+
+### 73.1 实现
+
+- 新增 `src/page-services/navigate/service.ts`：栏目、合并搜索、激活、菜单、
+  pin / recent / folder 动作和拖拽重排由 Page Service 持有；网格与紧凑列表
+  Presenter 只消费 `lume.navigate/v1` 并发出 selection / item / section intent。
+- 新增 `src/page-services/clipboard/service.ts`：包装现有 Rust-backed
+  ClipboardStore，只发布视口窗口内的 `lume.clipboard/v1` 行；历史列表与紧凑
+  历史 Presenter 共用分类、选择、清空、暂停和窗口请求 intent。
+- 内置页的 `ModeInstance` 外壳保留为迁移 adapter；Presenter 切换不重建
+  Page Service。设置增加 `[pages.presenters]`、启动器页选择器、三语文案和目录
+  索引；缺失或不合法的值回落清单默认项。
+- 剪贴板默认 Presenter 恢复既有视觉 DOM 契约：`.result-selected`、
+  `.clip-row-actions`、16px `.clip-act-icon`，仅选中行的动作进入 Tab 顺序。
+  视口高度随 `viewport.request` 回传 Page Service，窗口化行与滚动遮罩保持一致。
+
+### 73.2 踩坑
+
+- Presenter 迁移不能只复制数据和样式：旧视觉探针依赖稳定的选中类、动作容器、
+  图标尺寸和 Tab 门控；缺少这些契约时页面仍“能看”，但键盘与视觉回归会同时失败。
+- 剪贴板模型只知道滚动位置、不知道视口高度时会保留过大的窗口并让滚动遮罩判定
+  失真；`viewport.request` 必须同时回传 `scrollTop` 与 `clientHeight`。
+- CDP 中 `document.visibilityState` 不能代替原生窗口可见性。视觉审计改用
+  `plugin:window|is_visible` 控制呼出时机，并等待页面模型和预览 debounce 稳定；
+  预览请求在异步搜索结束前注入会被正常关闭。
+- `cdp_clipboard_p2` 的固定探针文本在去重开启后二次运行不会新增行，看起来像
+  pause / merge 回归。探针改用每次运行唯一的文本，验证才是幂等的。
+
+### 73.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm exec tsc -p examples/tsconfig.json`、
+  `pnpm run test:page-runtime`（**10/10 PASS**）、`pnpm run build`、
+  debug / release `--no-bundle` 构建通过；`cargo check`、`cargo test`
+  **246 passed / 9 ignored**；`node scripts/check_i18n.mjs`
+  PASS（**576 键 × 3 语言**、64 组关键词配对）。
+- `cdp_page_runtime_verify` **10/10 PASS**：导航双 Presenter、剪贴板双 Presenter、
+  选择保持、窗口化模型、设置持久化与重启恢复。
+- `cdp_p2b_verify` **31/31 PASS**、`cdp_mode_query_verify` **47/47 PASS**、
+  `cdp_idle_reset_verify` **48/48 PASS**、`cdp_visual_audit_verify`
+  **28/28 PASS**、`cdp_plugin_state_verify` **54/54 PASS**、
+  `cdp_plugin_theme_verify` **28/28 PASS**、`cdp_sandbox_verify`
+  **14/14 PASS**、`cdp_translation_service_verify` **22/22 PASS**、
+  `cdp_plugin_window_verify` **16/16 PASS**。
+- `cdp_plugin_verify`、`cdp_clipboard_smoke`、`cdp_clipboard_p2`（pause 与
+  merge 均为 OK）、`cdp_circuit_verify`（无 failCount / offline，entry hook
+  3 次派发且 0 pending）和 `cdp_settings_smoke` 全部 PASS。

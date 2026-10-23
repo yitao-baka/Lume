@@ -1,46 +1,31 @@
-//! Navigate plugin — the built-in **home page** (mode contribution, id
-//! "apps"). This is the launcher's own page below the search box, registered
-//! through the same registry path as every plugin mode (固有组件插件化):
-//! bars (最近使用 / 已固定 / 推荐使用 / plugin bars / Explorer), the merged
-//! search grid and the page's own key handling. The id "apps" is persisted
-//! in `appearance.last_page` and must never change.
+//! Navigate contribution: a Page Service owns bars/search/actions, while the
+//! selected built-in Presenter renders the shared lume.navigate/v1 model.
 
-import { createSignal } from "solid-js";
+import { createEffect, createSignal, Show } from "solid-js";
 import { t } from "../../i18n";
 import navigateIcon from "../../../res/icons/navigate.svg";
 import type { SettingsData } from "../../settings/types";
-import type { AppEntry, MenuState } from "../../launcher/types";
-import { isImeComposing } from "../../launcher/keyInput";
-import type {
-  LauncherPlugin,
-  ModeInstance,
-  ModeKeyContext,
-  PluginServices,
-} from "../types";
-import { navBarPlugins } from "../registry";
-import {
-  createNavigateStore,
-  GRID_ZONE,
-  type ContributedBar,
-  type NavigateStore,
-} from "./store";
-import { createNavigateSearch } from "./search";
-import { NavigateView } from "./NavigateView";
+import { NAVIGATE_SCHEMA, type NavigateModel } from "../../page-runtime/schemas";
+import { PageSession } from "../../page-runtime/session";
+import type { PageIntent, PageModel, PresenterDescriptor } from "../../page-runtime/contracts";
+import { pushDiagnostic } from "../../page-runtime/diagnostics";
+import type { AppEntry } from "../../launcher/types";
+import type { LauncherPlugin, ModeInstance, ModeKeyContext, PageRow, PluginServices } from "../types";
+import { navBarPlugins, rememberPageModel } from "../registry";
+import { createNavigatePageService } from "../../page-services/navigate/service";
+import { NavigateGridPresenter } from "../../presenters/navigate-grid/NavigateGridPresenter";
+import { NavigateListPresenter } from "../../presenters/navigate-list/NavigateListPresenter";
 
-/** The home page id — persisted as `appearance.last_page = "apps"`. */
 export const NAVIGATE_MODE_ID = "apps";
 
-/** Shell-side extras the home page needs (not part of PluginServices): the
- * icon pipeline, the sizer's measured bar column count and the work-area
- * invalidation on expand toggles. */
+const NAVIGATE_PRESENTERS: PresenterDescriptor[] = [
+  { id: "navigate-grid", name: "Grid", models: [NAVIGATE_SCHEMA], builtin: true },
+  { id: "navigate-list", name: "List", models: [NAVIGATE_SCHEMA], builtin: true },
+];
+
 export interface NavigateHost {
-  icons: {
-    loadIcons(apps: AppEntry[]): Promise<void>;
-    iconFor(path: string): string | undefined;
-  };
-  /** Measured column count of a bar grid (one row when collapsed). */
+  icons: { loadIcons(apps: AppEntry[]): Promise<void>; iconFor(path: string): string | undefined };
   barCols: () => number;
-  /** An expand/collapse or bar-list change re-measures against the work area. */
   invalidateWorkArea: () => void;
 }
 
@@ -48,268 +33,134 @@ export function createNavigatePlugin(
   services: PluginServices,
   host: NavigateHost
 ): LauncherPlugin & { refreshBars(): Promise<void> } {
-  // ── Initial config (synchronous, injected by Rust before page load) ──
-  const cfg = (window as any).__LUME_CONFIG__?.appearance;
-  /** Settings-driven: show the 「最近使用」 bar (display-only toggle). */
-  const [showRecent, setShowRecent] = createSignal(cfg?.show_recent ?? true);
-  /** Settings-driven: show the 「Windows 资源管理器」 bar. */
-  const [showExplorerBar, setShowExplorerBar] = createSignal(cfg?.show_explorer_bar ?? true);
-  /** Settings-driven: start the 「已固定」 bar expanded. */
-  const [expandPinned, setExpandPinned] = createSignal(cfg?.expand_pinned ?? false);
-  /** Settings-driven: custom search placeholder ("" = default text). */
-  const [placeholderApps, setPlaceholderApps] = createSignal(cfg?.search_placeholder_apps || "");
+  const cfg = (window as any).__LUME_CONFIG__ as SettingsData | undefined;
+  const [showRecent, setShowRecent] = createSignal(cfg?.appearance?.show_recent ?? true);
+  const [showExplorerBar, setShowExplorerBar] = createSignal(cfg?.appearance?.show_explorer_bar ?? true);
+  const [expandPinned, setExpandPinned] = createSignal(cfg?.appearance?.expand_pinned ?? false);
+  const [placeholderApps, setPlaceholderApps] = createSignal(cfg?.appearance?.search_placeholder_apps || "");
+  const [presenterId, setPresenterId] = createSignal(cfg?.pages?.presenters?.apps || "navigate-grid");
+  const [model, setModel] = createSignal<PageModel>();
 
-  const nav = createNavigateStore({
+  const page = createNavigatePageService({
+    services,
     showRecent,
     showExplorerBar,
-    barCols: host.barCols,
     icons: host.icons,
+    barCols: host.barCols,
     scheduleResize: () => services.scheduleResize(),
     invalidateWorkArea: host.invalidateWorkArea,
-    openMenu: (m: MenuState) => {
-      if (m) services.openMenu(m);
-    },
-    showToast: (text, opts) => services.showToast(text, opts),
-    markEntryOpened: () => services.markEntryOpened(),
-    resetAndHide: () => void services.resetAndHide(),
+    placeholderApps,
+    expandPinned,
+    navBarPlugins,
   });
 
-  const search = createNavigateSearch({
-    id: NAVIGATE_MODE_ID,
-    services,
-    nav,
-    icons: host.icons,
+  const session = new PageSession({
+    pageId: NAVIGATE_MODE_ID,
+    schema: NAVIGATE_SCHEMA,
+    presenters: NAVIGATE_PRESENTERS,
+    presenterId: presenterId(),
+    onModel: (next) => { setModel(next); rememberPageModel(NAVIGATE_MODE_ID, next); },
   });
+  void session.start(page.service);
+  createEffect(() => {
+    const next = page.snapshot();
+    session.publish(next);
+  });
+  createEffect(() => pushDiagnostic("__presenterStates", { pageId: NAVIGATE_MODE_ID, presenterId: presenterId(), status: "ready" }));
+  void page.store.refreshTermIcons();
+  page.store.installDragReorder();
 
-  /** Pull plugin-contributed Navigate bars (the `navBars` hook) into the
-   * section registry. Runs on composition and whenever the plugin set
-   * changes (启停 / reload). */
-  async function refreshBars() {
-    const contribs: ContributedBar[] = [];
-    for (const p of navBarPlugins()) {
-      try {
-        const bars = await p.navBars();
-        if (Array.isArray(bars)) contribs.push(...bars);
-      } catch (err) {
-        console.error("navBars failed:", p.id, err);
-      }
-    }
-    nav.setPluginBars(contribs);
-  }
-
-  /** Summon-scoped refresh: bar data, the Explorer folder context and the
-   * captured foreground window (feature rows), then auto-select the first
-   * section of the empty-query main menu. */
-  async function onShow() {
-    await Promise.all([nav.refreshRecent(), nav.refreshPins()]);
-    await refreshBars();
-    await nav.refreshFolderCtx();
-    search.fetchFgContext();
-    // Auto-select the first entry of the empty-query main menu: the first
-    // section in the registry (最近使用 when visible, else 已固定, else
-    // 推荐使用, else a plugin bar, else the explorer bar). (The bars'
-    // highlight requires `zoneActive`, so a resting zone of "grid" would
-    // leave nothing selected on summon.)
-    if (search.appsQuery() === "" && nav.zone() === GRID_ZONE) {
-      const first = nav.sections()[0];
-      if (first) nav.setZone(first.id);
-    }
-  }
-
-  /** Page-owned keys: grid arrows while a query/feature rows are up, the
-   * continuous section-grid navigation on the empty main menu. Enter and the
-   * shared ↑/↓ fall through to the shell's generic bindings. */
-  function onKey(e: KeyboardEvent, ctx: ModeKeyContext): boolean {
-    if (isImeComposing(e)) return false;
-    // Empty query = the bar menu (plugin context rows live in the
-    // 「推荐使用」 section, not a grid); any query = the results grid.
-    const empty = search.appsQuery() === "";
-    if (!empty) {
-      // Grid navigation always wins when there is a query, regardless of
-      // `zone` — the zone signal belongs to the bar view and may carry a
-      // stale value from a prior empty-query interaction.
-      if (!ctx.hasResults) return false;
-      if (
-        e.key === "ArrowLeft" ||
-        e.key === "ArrowRight" ||
-        e.key === "ArrowDown" ||
-        e.key === "ArrowUp"
-      ) {
-        e.preventDefault();
-        ctx.markKeyboard();
-        const delta =
-          e.key === "ArrowLeft"
-            ? -1
-            : e.key === "ArrowRight"
-              ? 1
-              : e.key === "ArrowDown"
-                ? ctx.gridCols()
-                : -ctx.gridCols();
-        ctx.moveSelection(delta);
-        return true;
-      }
-      return false;
-    }
-    // ── empty-query bar navigation (the section registry, one continuous grid)
-    if (nav.sections().length === 0) return false;
-    if (
-      e.key === "ArrowLeft" ||
-      e.key === "ArrowRight" ||
-      e.key === "ArrowDown" ||
-      e.key === "ArrowUp"
-    ) {
-      ctx.markKeyboard();
-      e.preventDefault();
-      nav.moveBarSelection(
-        e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0,
-        e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0
-      );
-      return true;
-    }
-    if (e.key === "Delete") {
-      if (ctx.editing) return false; // native text deletion owns Delete
-      // Remove the selected entry of a section that supports it (最近使用's
-      // soft delete). In the grid zone (typing) Delete falls through to text
-      // editing in the search input.
-      const sec = nav.activeSection();
-      if (sec?.onDelete) {
-        e.preventDefault();
-        sec.onDelete(sec.selected());
-        return true;
-      }
-    }
-    return false;
-  }
-
-  function reset() {
-    search.resetState();
-    nav.setZone(GRID_ZONE);
-    nav.resetSelections();
-    nav.setRecentExpanded(false); // don't persist the expanded state across shows
-    nav.setPinnedExpanded(expandPinned());
-    nav.setRecommendedExpanded(false); // summon-scoped rows, summon-scoped expand
-    nav.setNavHidden(false); // fresh show always starts with the nav box visible
-  }
-
-  /** Shift+F10 / Menu key: open the shared context menu for the selected bar
-   * tile or result row, anchored to its painted box. */
-  function openContextMenu(): boolean {
-    const anchor = (selector: string) => {
-      const el = document.querySelector<HTMLElement>(selector);
-      if (el) {
-        const r = el.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-      }
-      return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-    };
-    // On the empty-query menu the zone may still be "grid" right after the
-    // user clears the search box. Fall back to the first bar so the keyboard
-    // entry always has a concrete target.
-    const section =
-      nav.activeSection() ??
-      (search.appsQuery() === "" ? nav.sections()[0] : undefined);
-    if (section) {
-      nav.setZone(section.id);
-      const idx = nav.activateIndex(section);
-      if (idx < 0) return false;
-      const item = section.items[idx];
-      if (!item) return false;
-      const pos = anchor(
-        `.bar-grid[data-bar-id="${section.id}"] .result-box[aria-selected="true"]`
-      );
-      if (section.id === "folder") {
-        services.openMenu({ kind: "folder", ...pos, idx });
-      } else {
-        services.openMenu({
-          kind: "app",
-          ...pos,
-          app: { id: item.id, name: item.name, path: item.path },
-          fromRecent: section.id === "recent",
-        });
-      }
-      return true;
-    }
-    const item = search.apps()[search.selected()];
-    if (!item) return false;
-    services.openMenu({
-      kind: "app",
-      ...anchor(".result-grid .result-box[aria-selected='true']"),
-      app: item,
-    });
-    return true;
-  }
+  const rows = (): PageRow[] => {
+    const section = page.store.activeSection();
+    return (section ? section.items : page.search.apps()) as unknown as PageRow[];
+  };
+  const selected = () => {
+    const section = page.store.activeSection();
+    return section ? section.selected() : page.search.selected();
+  };
 
   const instance: ModeInstance = {
-    query: search.appsQuery,
-    setQuery: search.setAppsQuery,
-    search: search.search,
-    reset,
-    selected: search.selected,
-    setSelected: (i) => {
-      search.setSelected(i);
-      nav.setNavHidden(false); // arrow nav reveals the highlight
+    query: page.search.appsQuery,
+    setQuery: (q) => {
+      void session.setQuery(q);
     },
-    rows: search.apps,
-    activate: search.activate,
-    onKey,
-    openContextMenu,
-    handleQuery: search.handleQuery,
-    onEscape: () => search.popDrill(),
+    search: async (q) => {
+      await session.setQuery(q);
+      services.scheduleResize();
+    },
+    reset: () => {
+      page.reset();
+    },
+    selected,
+    setSelected: (index) => {
+      const section = page.store.activeSection();
+      if (section) section.setSelected(index);
+      else page.search.setSelected(index);
+      page.store.setNavHidden(false);
+    },
+    rows,
+    activate: () => {
+      const id = model()?.selection?.primaryId;
+      if (id) void session.dispatch({ type: "item.activate", targetId: id });
+    },
+    handleQuery: page.search.handleQuery,
+    onKey: (event: KeyboardEvent, ctx: ModeKeyContext) => page.onKey(event, ctx),
+    openContextMenu: page.openContextMenu,
+    onEscape: () => page.search.popDrill(),
     previewTarget: () => null,
     previewEnabled: () => false,
-    measureViewport: () => {},
-    // The home page auto-fits its content (bars / grid); every other page
-    // uses the fixed-height model below the search box.
+    measureViewport: () => services.scheduleResize(),
     heightPolicy: () => "fit",
-    anyExpanded: nav.anyExpanded,
+    anyExpanded: page.store.anyExpanded,
     home: true,
     placeholder: () => placeholderApps() || t("searchApps"),
     pageKind: () => "all",
     restorePage: () => {},
     applySettings: (s) => {
-      const a = (s as SettingsData).appearance;
+      const next = s as SettingsData;
+      const a = next.appearance;
       setShowRecent(a.show_recent);
       setShowExplorerBar(a.show_explorer_bar ?? true);
       setExpandPinned(a.expand_pinned || false);
       setPlaceholderApps(a.search_placeholder_apps || "");
+      const chosen = next.pages?.presenters?.apps;
+      if (chosen && NAVIGATE_PRESENTERS.some((p) => p.id === chosen)) setPresenterId(chosen);
     },
-    onShow,
-    onFilesDropped: search.onFilesDropped,
-    // The shared context menu's app/folder actions (the store satisfies the
-    // narrow `NavMenuActions` interface menu.ts declares).
-    menuActions: () => nav as unknown,
+    onShow: async () => { await session.show(); },
+    onHide: async () => { await session.hide(); },
+    onFilesDropped: (paths) => { void session.filesDropped(paths); },
+    menuActions: () => page.store as unknown,
+    snapshot: () => Promise.resolve({ pageRuntime: model() }),
     View: () => (
-      <NavigateView
-        apps={search.apps}
-        appsQuery={search.appsQuery}
-        selected={search.selected}
-        nav={nav as NavigateStore}
-        pluginStart={search.pluginStart}
-        barCols={host.barCols}
-        iconFor={host.icons.iconFor}
-        activate={() => search.activate()}
-        markMouse={() => services.markMouse()}
-        openMenu={(m) => {
-          if (m) services.openMenu(m);
-        }}
-        setSelected={search.setSelected}
-      />
+      <Show
+        when={presenterId() === "navigate-list"}
+        fallback={
+          <NavigateGridPresenter
+            data={() => model()?.data as NavigateModel | undefined}
+            selectedId={() => model()?.selection?.primaryId}
+            barCols={host.barCols}
+            iconFor={host.icons.iconFor}
+            dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
+            markMouse={() => services.markMouse()}
+          />
+        }
+      >
+        <NavigateListPresenter
+          data={() => model()?.data as NavigateModel | undefined}
+          selectedId={() => model()?.selection?.primaryId}
+          barCols={host.barCols}
+          iconFor={host.icons.iconFor}
+          dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
+          markMouse={() => services.markMouse()}
+        />
+      </Show>
     ),
   };
 
-  // Terminal icons for the Explorer bar tiles and the pointer listeners for
-  // pinned-bar reordering (window-lifetime document listeners).
-  void nav.refreshTermIcons();
-  nav.installDragReorder();
-
   return {
     id: NAVIGATE_MODE_ID,
-    modeMeta: {
-      labelKey: "navigate",
-      placeholderKey: "",
-      icon: navigateIcon,
-    },
+    modeMeta: { labelKey: "navigate", placeholderKey: "", icon: navigateIcon },
     mode: instance,
-    refreshBars,
+    refreshBars: page.refreshBars,
   };
 }

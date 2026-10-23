@@ -32,7 +32,7 @@ export interface ResourceRef {
 }
 
 export interface PagePreview {
-  kind: "text" | "image" | "file" | "audio" | "video" | "pdf";
+  kind: "text" | "textfile" | "image" | "file" | "filelist" | "audio" | "video" | "pdf";
   targetId: string;
   payload: JsonValue;
 }

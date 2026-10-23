@@ -45,6 +45,13 @@ through the settings UI, verifies that only the service reads it, exercises
 cache hits, two Presenters, engine switching, cancellation, timeout and network
 failure, and asserts that the API key never appears in the Page Model.
 
+Built-in Page Service / Presenter migration uses
+`node scripts/cdp_page_runtime_verify.mjs`. It switches the navigation and
+clipboard pages between their two Presenters, checks that model, query/results
+and selection survive the switch, exercises the windowed clipboard model, and
+verifies the `pages.presenters` setting persists and is restored after a
+process restart.
+
 The Windows/WebView2 behavior is verified with `scripts/cdp_*.mjs`. Those
 scripts launch an already built exe, so rebuild first:
 

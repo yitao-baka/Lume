@@ -313,8 +313,11 @@ id，值为 Presenter id。缺省或未知值回落到页面清单声明的默�
   `overflow-y: auto`，滚动左侧列表不会移动右侧详情，滚动详情也不会带动列表。
 - 更窄时切换为“列表 → 详情 → 返回”。
 - 筛选支持全部 / 已启用 / 已停用 / 磁盘插件和关键词输入。
-- 声明式设置 `toggle` / `select` / `text` 使用统一行控件；写入仍走
+- 声明式服务设置 `toggle` / `select` / `text` 使用统一行控件；写入仍走
   `plugin_settings_put`。
+- api 2 mode 的 Presenter 选择写入 `settings.pages.presenters.<plugin-id>`；
+  Presenter 自己的 `[[presenter_settings]]` 只显示当前选项，写入插件库的
+  `__presenter_settings` 文档并立即推送给 live Presenter。
 - `plugins.keep_session_overrides` 由三态控件维护：跟随清单 / 强制保留 / 强制重置。
 - 开发者选项位于详情底部折叠区：`plugins.dev_mode`；开启后显示
   `plugins.trust_all`，全部授权需要确认并在页面顶部持续显示安全警告。

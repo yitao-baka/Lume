@@ -52,6 +52,13 @@ and selection survive the switch, exercises the windowed clipboard model, and
 verifies the `pages.presenters` setting persists and is restored after a
 process restart.
 
+Presenter-scoped settings use `node scripts/cdp_presenter_control_verify.mjs`.
+It opens the plugin detail pane, checks the compatible-Presenter selector and
+the selected Presenter's declared controls, verifies live `lume.on.settings`
+delivery and layout response, switches Presenters without replacing the Page
+Model/service, and restores both the Presenter choice and values after a
+process restart.
+
 The Windows/WebView2 behavior is verified with `scripts/cdp_*.mjs`. Those
 scripts launch an already built exe, so rebuild first:
 

@@ -1020,6 +1020,8 @@ export async function loadDiskPlugins(seq = refreshSeq) {
             await services!.setPluginColorMode(m.id, mode);
             applyPluginColorMode(m.id, mode);
           },
+          initialPresenterId: ((window as any).__LUME_CONFIG__?.pages?.presenters ?? {})[m.id],
+          onModel: (model) => rememberPageModel(m.id, model),
         });
         pageRuntimeModes.set(m.id, runtime);
         const navBars = navBarsContribution(m.id, logic, m.dir);
@@ -1044,6 +1046,7 @@ export async function loadDiskPlugins(seq = refreshSeq) {
         if (pendingModel) runtime.publishModel(pendingModel);
         registeredDiskIds.add(m.id);
         void applyPluginSettings(m.id);
+        void applyPluginPresenterSettings(m.id);
         loadedAny = true;
         plog.info(
           m.id,
@@ -1158,6 +1161,23 @@ export async function loadDiskPlugins(seq = refreshSeq) {
  * settings window changes a value (the Rust `plugin-settings` event) — the
  * plugin instance lives in this window, the pane lives in the settings one, so
  * the values have to be pushed across. */
+/** Load one plugin's Presenter-scoped values and push them into its live
+ * Page Runtime. The settings window and the launcher are separate windows, so
+ * the Rust event only names the plugin; the effective values are re-read here. */
+export async function applyPluginPresenterSettings(id: string): Promise<void> {
+  const runtime = pageRuntimeModes.get(id);
+  if (!runtime) return;
+  try {
+    const values = (await invoke<Record<string, Record<string, unknown>>>(
+      "plugin_presenter_settings_get",
+      { id }
+    )) ?? {};
+    runtime.applyPresenterSettings(values);
+  } catch (err) {
+    plog.error(id, "Presenter settings load failed:", err);
+  }
+}
+
 export async function applyPluginSettings(id: string): Promise<void> {
   const p = plugins.find((x) => x.id === id);
   if (!p) return;

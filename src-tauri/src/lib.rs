@@ -490,6 +490,8 @@ pub fn run() {
             plugin_store::plugin_db_bulk_docs,
             plugin_store::plugin_settings_get,
             plugin_store::plugin_settings_put,
+            plugin_store::plugin_presenter_settings_get,
+            plugin_store::plugin_presenter_settings_put,
             plugin_fs::plugin_fs_private_write,
             plugin_fs::plugin_fs_private_write_b64,
             plugin_fs::plugin_fs_private_read,

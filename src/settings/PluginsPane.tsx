@@ -214,14 +214,22 @@ const FILTERS: { id: Filter; label: keyof Messages }[] = [
 ];
 
 function pluginSearchText(p: PluginManifest): string {
-  const settings = p.settings.flatMap((s) => [
+  const settingText = (s: PluginSetting) => [
     s.label,
     s.key,
     ...s.options.flatMap((o) => [o.label, o.value]),
+  ];
+  const settings = p.settings.flatMap(settingText);
+  const presenters = p.presenters.flatMap((presenter) => [
+    presenter.name,
+    presenter.id,
+    ...p.presenterSettings
+      .filter((setting) => setting.presenter === presenter.id)
+      .flatMap(settingText),
   ]);
   return `${pluginDisplayName(p.id, p.name)} ${p.name} ${p.id} ${p.description} ${p.keywords.join(
     " "
-  )} ${settings.join(" ")}`.toLowerCase();
+  )} ${settings.join(" ")} ${presenters.join(" ")}`.toLowerCase();
 }
 
 export default function PluginsPane(props: {
@@ -246,6 +254,11 @@ export default function PluginsPane(props: {
   const [openId, setOpenId] = createSignal<string | null>(null);
   /** Declared-setting values per plugin id (loaded when its detail opens). */
   const [values, setValues] = createSignal<Record<string, Record<string, unknown>>>({});
+  /** Presenter-scoped values and the page id → Presenter choice map. */
+  const [presenterValues, setPresenterValues] = createSignal<
+    Record<string, Record<string, Record<string, unknown>>>
+  >({});
+  const [presenterChoices, setPresenterChoices] = createSignal<Record<string, string>>({});
   const [filter, setFilter] = createSignal<Filter>("all");
   const [needle, setNeedle] = createSignal("");
   let statusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -277,6 +290,10 @@ export default function PluginsPane(props: {
         setDevMode(pluginsSlice?.dev_mode === true);
         setTrustAll(pluginsSlice?.trust_all === true);
         setKeepOverrides({ ...(pluginsSlice?.keep_session_overrides ?? {}) });
+        const choices = (
+          s as { pages?: { presenters?: Record<string, string> } }
+        ).pages?.presenters;
+        setPresenterChoices({ ...(choices ?? {}) });
       })
       .catch((err) => showStatus(false, settingsError(err, "settingsLoadFailed")));
   });
@@ -380,14 +397,28 @@ export default function PluginsPane(props: {
       return;
     }
     setOpenId(p.id);
+    const loads: Promise<void>[] = [];
     if (p.settings.length > 0 && values()[p.id] === undefined) {
-      try {
-        const v = await invoke<Record<string, unknown>>("plugin_settings_get", { id: p.id });
-        setValues((all) => ({ ...all, [p.id]: v ?? {} }));
-      } catch (err) {
-        showStatus(false, settingsError(err, "pluginsActionFailed"));
-      }
+      loads.push(
+        invoke<Record<string, unknown>>("plugin_settings_get", { id: p.id })
+          .then((v) => {
+            setValues((all) => ({ ...all, [p.id]: v ?? {} }));
+          })
+          .catch((err) => showStatus(false, settingsError(err, "pluginsActionFailed")))
+      );
     }
+    if (p.presenterSettings.length > 0 && presenterValues()[p.id] === undefined) {
+      loads.push(
+        invoke<Record<string, Record<string, unknown>>>("plugin_presenter_settings_get", {
+          id: p.id,
+        })
+          .then((v) => {
+            setPresenterValues((all) => ({ ...all, [p.id]: v ?? {} }));
+          })
+          .catch((err) => showStatus(false, settingsError(err, "pluginsActionFailed")))
+      );
+    }
+    await Promise.all(loads);
   }
 
   /** Write one setting; the plugin hears about it through the
@@ -399,6 +430,49 @@ export default function PluginsPane(props: {
       await invoke("plugin_settings_put", { id: p.id, key, value });
     } catch (err) {
       setValues((all) => ({ ...all, [p.id]: before }));
+      showStatus(false, settingsError(err, "pluginsActionFailed"));
+    }
+  }
+
+  async function putPresenterSetting(
+    p: PluginManifest,
+    presenter: string,
+    key: string,
+    value: unknown
+  ) {
+    const before = presenterValues()[p.id] ?? {};
+    const presenterBefore = { ...(before[presenter] ?? {}) };
+    setPresenterValues((all) => ({
+      ...all,
+      [p.id]: { ...before, [presenter]: { ...presenterBefore, [key]: value } },
+    }));
+    try {
+      await invoke("plugin_presenter_settings_put", {
+        id: p.id,
+        presenter,
+        key,
+        value,
+      });
+    } catch (err) {
+      setPresenterValues((all) => ({
+        ...all,
+        [p.id]: { ...before, [presenter]: presenterBefore },
+      }));
+      showStatus(false, settingsError(err, "pluginsActionFailed"));
+    }
+  }
+
+  async function selectPresenter(p: PluginManifest, presenterId: string) {
+    const before = { ...presenterChoices() };
+    const next = { ...before, [p.id]: presenterId };
+    setPresenterChoices(next);
+    try {
+      await invoke("save_settings_patch", {
+        patch: { pages: { presenters: next } },
+      });
+      showStatus(true, t("pluginToastSettingsSaved"));
+    } catch (err) {
+      setPresenterChoices(before);
       showStatus(false, settingsError(err, "pluginsActionFailed"));
     }
   }
@@ -574,6 +648,10 @@ export default function PluginsPane(props: {
                 keepSessionOverridden={keepOverrides()[p.id] !== undefined}
                 searchNeedle={(props.searchQuery ?? "").trim()}
                 settingValues={values()[p.id] ?? ({} as Record<string, unknown>)}
+                presenterValues={presenterValues()[p.id] ?? {}}
+                presenterChoice={
+                  presenterChoices()[p.id] || p.defaultPresenter || p.presenters[0]?.id || ""
+                }
                 onToggleOpen={() => void toggleOpen(p)}
                 onToggleEnabled={(v) => void toggle(p, v)}
                 onToggleKeepSession={(v) => void toggleKeepSession(p, v)}
@@ -583,6 +661,10 @@ export default function PluginsPane(props: {
                 onToggleDevMode={(v) => void toggleDevMode(v)}
                 onToggleTrustAll={(v) => void toggleTrustAll(v)}
                 onPutSetting={(key, value) => void putSetting(p, key, value)}
+                onSelectPresenter={(presenterId) => void selectPresenter(p, presenterId)}
+                onPutPresenterSetting={(presenter, key, value) =>
+                  void putPresenterSetting(p, presenter, key, value)
+                }
               />
             )}
           </For>
@@ -609,6 +691,13 @@ export default function PluginsPane(props: {
                 keepSessionOverridden={keepOverrides()[p().id] !== undefined}
                 searchNeedle={(props.searchQuery ?? "").trim()}
                 settingValues={values()[p().id] ?? ({} as Record<string, unknown>)}
+                presenterValues={presenterValues()[p().id] ?? {}}
+                presenterChoice={
+                  presenterChoices()[p().id] ||
+                  p().defaultPresenter ||
+                  p().presenters[0]?.id ||
+                  ""
+                }
                 headStatic
                 onToggleEnabled={(v) => void toggle(p(), v)}
                 onToggleKeepSession={(v) => void toggleKeepSession(p(), v)}
@@ -618,6 +707,10 @@ export default function PluginsPane(props: {
                 onToggleDevMode={(v) => void toggleDevMode(v)}
                 onToggleTrustAll={(v) => void toggleTrustAll(v)}
                 onPutSetting={(key, value) => void putSetting(p(), key, value)}
+                onSelectPresenter={(presenterId) => void selectPresenter(p(), presenterId)}
+                onPutPresenterSetting={(presenter, key, value) =>
+                  void putPresenterSetting(p(), presenter, key, value)
+                }
               />
             )}
           </Show>
@@ -750,6 +843,8 @@ function PluginCard(props: {
   /** The global settings query, used to highlight matching declared rows. */
   searchNeedle: string;
   settingValues: Record<string, unknown>;
+  presenterValues: Record<string, Record<string, unknown>>;
+  presenterChoice: string;
   /** Omitted by the detail pane's card, whose head must not toggle. */
   onToggleOpen?: () => void;
   /** Static head: no toggle role, no click/keyboard activation. */
@@ -762,12 +857,24 @@ function PluginCard(props: {
   onToggleDevMode: (v: boolean) => void;
   onToggleTrustAll: (v: boolean) => void;
   onPutSetting: (key: string, value: unknown) => void;
+  onSelectPresenter: (presenterId: string) => void;
+  onPutPresenterSetting: (presenter: string, key: string, value: unknown) => void;
 }) {
   const p = () => props.p;
   const icon = () => pluginIcon(p());
   const tileChar = () =>
     pluginDisplayName(p().id, p().name).trim().charAt(0).toUpperCase() || "·";
   const desc = () => pluginDescription(p());
+  const chosenPresenter = () =>
+    p().presenters.find((presenter) => presenter.id === props.presenterChoice) ??
+    p().presenters.find((presenter) => presenter.id === p().defaultPresenter) ??
+    p().presenters[0];
+  const chosenPresenterSettings = () => {
+    const presenter = chosenPresenter();
+    return presenter
+      ? p().presenterSettings.filter((setting) => setting.presenter === presenter.id)
+      : [];
+  };
   return (
     <div
       class="plg-card"
@@ -924,6 +1031,50 @@ function PluginCard(props: {
             </div>
           </Show>
 
+          <Show when={p().presenters.length > 0}>
+            <div class="plg-dsec">
+              <span class="plg-dlabel">{t("pluginPresenters")}</span>
+              <div class="settings-row-between">
+                <div class="settings-setting-copy">
+                  <span class="settings-sub-label">{chosenPresenter()?.name || chosenPresenter()?.id}</span>
+                  <span class="settings-row-summary">{p().model}</span>
+                </div>
+                <select
+                  class="settings-text-input settings-input-fixed"
+                  data-setting-id={`plugin.${p().id}.presenter`}
+                  aria-label={t("pluginPresenters")}
+                  value={chosenPresenter()?.id ?? ""}
+                  onChange={(e) => props.onSelectPresenter(e.currentTarget.value)}
+                >
+                  <For each={p().presenters}>
+                    {(presenter) => (
+                      <option value={presenter.id}>
+                        {presenter.name || presenter.id} · {presenter.models.join(", ") || p().model}
+                      </option>
+                    )}
+                  </For>
+                </select>
+              </div>
+              <Show when={chosenPresenterSettings().length > 0}>
+                <span class="plg-dlabel">{t("pluginPresenterSettings")}</span>
+                <For each={chosenPresenterSettings()}>
+                  {(setting) => (
+                    <SettingRow
+                      pluginId={p().id}
+                      presenter={setting.presenter}
+                      setting={setting}
+                      value={props.presenterValues[setting.presenter]?.[setting.key]}
+                      searchNeedle={props.searchNeedle}
+                      onCommit={(value) =>
+                        props.onPutPresenterSetting(setting.presenter, setting.key, value)
+                      }
+                    />
+                  )}
+                </For>
+              </Show>
+            </div>
+          </Show>
+
           <Show when={p().id === "clipboard"}>
             <div class="plg-dsec">
               <span class="plg-note warn">{t("settingsClipboardPluginHint")}</span>
@@ -1041,6 +1192,7 @@ function featureTypeLabel(type: string): string {
  * A non-default value shows the factory default underneath for context. */
 function SettingRow(props: {
   pluginId: string;
+  presenter?: string;
   setting: PluginSetting;
   value: unknown;
   searchNeedle: string;
@@ -1069,7 +1221,7 @@ function SettingRow(props: {
     <div
       class="plg-setting"
       classList={{ "search-hit": searchHit() }}
-      data-setting-id={`plugin.${props.pluginId}.setting.${props.setting.key}`}
+      data-setting-id={`plugin.${props.pluginId}${props.presenter ? `.presenter.${props.presenter}` : ""}.setting.${props.setting.key}`}
       tabIndex={-1}
     >
       <div class="settings-row-between">

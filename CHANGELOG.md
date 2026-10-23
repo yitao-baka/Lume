@@ -11,6 +11,17 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **Presenter 声明式设置控制面** — 设置窗的插件详情会列出 api 2 mode 的兼容
+  Presenter 与当前选择，并只渲染所选 Presenter 的 `[[presenter_settings]]`。
+  值按 `{presenter: {key: value}}` 存入独立的 `__presenter_settings` 文档，
+  与服务设置命名空间隔离；保存后通过 `lume.on.settings` 实时下发，Presenter
+  切换或首次挂载会重放已持久化值。Presenter bridge 会缓存首帧前的事件，避免
+  页面处理器尚未安装时丢失设置。验证：`cdp_presenter_control_verify`
+  **10/10 PASS**（选择器、实时设置/layout、Presenter 切换、模型/服务保持、
+  重启恢复）；`cargo test` **247 passed / 9 ignored**；
+  `cdp_translation_service_verify` **22/22 PASS**；
+  `cdp_settings_skin_verify` **60/60 PASS**；Page Runtime 单测 **10/10 PASS**；
+  TypeScript、示例类型检查、i18n（577 键 × 3 语言）与 debug 构建通过。
 - **内置导航与剪贴板迁移到 Page Service / Presenter** — 导航页的栏目、
   合并搜索、动作和拖拽重排归入 Navigate Page Service，剪贴板 store 归入
   Clipboard Page Service 并只向 Presenter 发布窗口化行；两个页面各有网格 /

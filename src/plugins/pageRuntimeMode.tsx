@@ -25,6 +25,8 @@ export interface PageRuntimeModeDeps {
   callService(name: string, ...args: unknown[]): Promise<unknown>;
   fetchPresenter(presenter: PluginPresenter): Promise<string>;
   applyTheme(mode: ReturnType<typeof normalizePluginColorMode>): Promise<void>;
+  initialPresenterId?: string;
+  onModel?: (model: PageModel) => void;
 }
 
 export interface PageRuntimeMode {
@@ -35,6 +37,7 @@ export interface PageRuntimeMode {
   clearError(): void;
   dispatch(intent: PageIntent): Promise<unknown>;
   switchPresenter(presenterId: string): Promise<void>;
+  applyPresenterSettings(values: Record<string, Record<string, unknown>>): void;
   dispose(): Promise<void>;
 }
 
@@ -75,6 +78,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
   let bridge: PresenterBridge | undefined;
   let boot: Promise<void> | undefined;
   let started = false;
+  let presenterSettings: Record<string, Record<string, unknown>> = {};
   const htmlCache = new Map<string, string>();
 
   const remoteService: PageService = {
@@ -99,7 +103,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     pageId: m.id,
     schema: m.model || COLLECTION_SCHEMA,
     presenters: presentersOf(m),
-    presenterId: m.defaultPresenter || undefined,
+    presenterId: deps.initialPresenterId || m.defaultPresenter || undefined,
     onPresenterState: (state) => {
       setModal(state.modal);
       const report = state.layout;
@@ -113,6 +117,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     },
     onModel: (model) => {
       setSelected(selectedIndex(model));
+      deps.onModel?.(model);
       bridge?.postModel(model);
       if (model.status !== "loading") setReady(true);
     },
@@ -163,6 +168,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
           if (!pref) throw new Error('theme.set expects "system", "light" or "dark"');
           await deps.applyTheme(pref);
         },
+        settings: () => presenterSettings[presenter.id] ?? {},
       });
       bridge = next;
       setBridgeView(() => next.View);
@@ -243,7 +249,20 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     desiredHeight: () => layout().height ?? m.height,
     pageKind: () => "main",
     restorePage: () => {},
-    applySettings: () => {},
+    applySettings: (settings) => {
+      const chosen = (settings as { pages?: { presenters?: Record<string, string> } })
+        .pages?.presenters?.[m.id];
+      if (!chosen || !m.presenters.some((presenter) => presenter.id === chosen)) return;
+      const current = session?.snapshot().presenter;
+      if (current?.presenterId === chosen) return;
+      if (!current || current.status === "idle") {
+        session?.setRequestedPresenter(chosen);
+      } else {
+        void session
+          ?.switchPresenter(chosen, (presenter) => factoryFor(presenter))
+          .then(() => setReady(true));
+      }
+    },
     onShow: async () => { await session?.show(); },
     onHide: async () => { await session?.hide(); },
     onEnter: (info) => { void session?.enter(info); bridge?.post("enter", info); },
@@ -280,9 +299,28 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     },
     dispatch: (intent) => session!.dispatch(intent),
     switchPresenter: async (presenterId) => {
-      await ensureStarted();
+      if (!m.presenters.some((presenter) => presenter.id === presenterId)) {
+        throw new Error(`unknown Presenter "${presenterId}"`);
+      }
+      if (!started) {
+        session!.setRequestedPresenter(presenterId);
+        return;
+      }
       await session!.switchPresenter(presenterId, (presenter) => factoryFor(presenter));
       setReady(true);
+    },
+    applyPresenterSettings: (values) => {
+      presenterSettings = values;
+      const presenterId = session?.snapshot().presenter.presenterId;
+      const delivered = presenterId ? presenterSettings[presenterId] ?? {} : {};
+      if (presenterId) bridge?.post("settings", delivered);
+      const probe = window as unknown as { __presenterSettings?: unknown[] };
+      (probe.__presenterSettings ??= []).push({
+        pageId: m.id,
+        presenterId,
+        values: delivered,
+        live: bridge?.live() ?? false,
+      });
     },
     dispose: async () => {
       await session?.dispose();

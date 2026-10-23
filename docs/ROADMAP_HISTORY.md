@@ -4731,3 +4731,48 @@ debug / release 同样失败，任务从未注册成功。
 - `cdp_plugin_verify`、`cdp_clipboard_smoke`、`cdp_clipboard_p2`（pause 与
   merge 均为 OK）、`cdp_circuit_verify`（无 failCount / offline，entry hook
   3 次派发且 0 pending）和 `cdp_settings_smoke` 全部 PASS。
+
+## 74. Presenter 声明式设置控制面（2026-10-23）
+
+来源：磁盘 api 2 mode 已声明 `[[presenter_settings]]`，但设置窗只展示
+Presenter 名称，值没有持久化或下发路径。
+
+### 74.1 实现
+
+- 设置窗插件详情增加兼容 Presenter 选择，写入 `settings.pages.presenters`；
+  选择改变会通过 `settings-applied` 驱动 Page Runtime 挂载新 Presenter。
+- Presenter 设置按 `{presenter: {key: value}}` 存入插件库的
+  `__presenter_settings` 文档，与 `__settings` 服务命名空间分离；Rust 在写入前
+  校验 Presenter id 与 key 都已在清单声明。
+- 设置窗只显示当前 Presenter 的设置。保存后 Rust 发出
+  `plugin-presenter-settings`，启动器重新读取有效值并把当前 Presenter 的键值
+  通过 `lume.on.settings` 下发。
+- Presenter bridge 在页面 handler 安装前缓存事件；首次 mount、切换 Presenter
+  和设置更新都使用同一套下发路径。
+- Presenter 模型探针同步 PageRuntimeMode 的初始模型，使首次 getModel 后也能从
+  `__pageRuntimeLatestModel` 读取当前模型。
+
+### 74.2 踩坑
+
+- Rust 事件载荷是 `{id, presenter}`，前端若把整个对象当页面 id 查询，事件会
+  静默 no-op；监听器类型和取值必须与 wire payload 一致。
+- Presenter 页面通常在 `await lume.page.ready()` 之后才安装
+  `lume.on.settings`，首帧事件会丢失。bridge 用 Proxy 在 handler 赋值时重放
+  缓存事件。
+- CDP 用 `some()` 查 Presenter 状态会命中历史中的旧状态，切回默认 Presenter
+  时提前判通过；验收必须读取 `filter(...).at(-1)`。
+- 固定测试前置会把上一次残留的 Presenter 选择带进本轮。探针先显式建立默认
+  状态，并在 finally 中恢复原选择与原值。
+
+### 74.3 验证
+
+- `cargo test` **247 passed / 9 ignored**；`cargo check`、
+  `pnpm exec tsc --noEmit`、示例类型检查、Page Runtime 单测 **10/10**、
+  i18n（**577 键 × 3 语言**）与 debug 构建通过。
+- `node scripts/cdp_presenter_control_verify.mjs` **10/10 PASS**：Presenter
+  选择器、选中 Presenter 设置、live `lume.on.settings` + layout、切换不替换
+  Page Model/Service、选择与值持久化、进程重启恢复。
+- `cdp_translation_service_verify` **22/22 PASS**；
+  `cdp_page_runtime_verify` **10/10 PASS**；
+  `cdp_settings_smoke` ALL PASS；`cdp_settings_skin_verify`
+  **60/60 PASS**；`cdp_visual_audit_verify` **28/28 PASS**。

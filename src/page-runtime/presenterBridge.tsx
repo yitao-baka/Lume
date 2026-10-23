@@ -25,6 +25,18 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
     });
   }
   var handlers = {};
+  var pendingEvents = {};
+  var on = new Proxy(handlers, {
+    set: function (target, key, value) {
+      target[key] = value;
+      var queued = pendingEvents[key];
+      if (typeof value === "function" && queued) {
+        delete pendingEvents[key];
+        for (var i = 0; i < queued.length; i++) value(queued[i]);
+      }
+      return true;
+    }
+  });
   window.lume = {
     env: { form: window.__LUME_HOST_FORM__ === "window" ? "window" : "launcher" },
     page: {
@@ -47,7 +59,7 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       detach: function () { return rpc("app.detach"); },
       setQuery: function (q) { return rpc("app.setQuery", { q: q }); }
     },
-    on: handlers
+    on: on
   };
   window.addEventListener("message", function (e) {
     if (e.source !== parent) return;
@@ -68,6 +80,7 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       }
       var h = handlers[ev.type];
       if (typeof h === "function") h(ev.payload);
+      else (pendingEvents[ev.type] || (pendingEvents[ev.type] = [])).push(ev.payload);
     }
   });
   document.addEventListener("keydown", function (e) {
@@ -104,6 +117,7 @@ export interface PresenterBridgeOptions {
   setQuery?(query: string): void;
   themeGet(): unknown;
   themeSet(mode: unknown): Promise<void>;
+  settings?(): Record<string, unknown>;
 }
 
 export interface PresenterBridge {
@@ -164,6 +178,7 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
     },
     () => {
       post("model", opts.session.store.get());
+      post("settings", opts.settings?.() ?? {});
       post("theme", currentThemeMode());
     },
     { class: "plugin-frame presenter-frame", name: "presenter:" + opts.pageId + ":" + opts.presenter.id, id: opts.pageId }

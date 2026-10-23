@@ -42,6 +42,9 @@ pub const MAX_BULK: usize = 1000;
 pub const INTERNAL_PREFIX: &str = "__";
 /// The plugin's settings values (manifest defaults ⊕ user changes).
 pub const SETTINGS_DOC: &str = "__settings";
+/// Presenter-scoped settings, stored as `{presenter: {key: value}}` and kept
+/// separate from Page Service settings so equal keys never collide.
+pub const PRESENTER_SETTINGS_DOC: &str = "__presenter_settings";
 /// The v1 `storage.*` KV shim's backing document.
 pub const STORAGE_DOC: &str = "__storage";
 
@@ -417,6 +420,87 @@ fn settings_values_with(
     out
 }
 
+/// The plugin's effective Presenter settings, grouped by Presenter id.
+pub fn presenter_settings_values(
+    base: &Path,
+    id: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let conn = open_migrated(base)?;
+    Ok(presenter_settings_values_with(&conn, base, id))
+}
+
+fn presenter_settings_values_with(
+    conn: &Connection,
+    base: &Path,
+    id: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let declared = crate::plugins::manifest_presenter_settings(base, id);
+    let stored: serde_json::Map<String, serde_json::Value> =
+        read_internal(conn, id, PRESENTER_SETTINGS_DOC)
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+    let mut out = serde_json::Map::new();
+    for setting in declared {
+        let value = stored
+            .get(&setting.presenter)
+            .and_then(|value| value.as_object())
+            .and_then(|value| value.get(&setting.key))
+            .cloned()
+            .unwrap_or(setting.default_value);
+        let presenter = out
+            .entry(setting.presenter)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let Some(values) = presenter.as_object_mut() {
+            values.insert(setting.key, value);
+        }
+    }
+    out
+}
+
+/// Store one declared Presenter setting. Both the Presenter id and the key
+/// are validated against the manifest before anything is written.
+pub fn presenter_settings_put(
+    base: &Path,
+    id: &str,
+    presenter: &str,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let declared = crate::plugins::manifest_presenter_settings(base, id);
+    if !declared
+        .iter()
+        .any(|setting| setting.presenter == presenter && setting.key == key)
+    {
+        return Err(format!(
+            "unknown Presenter setting \"{presenter}.{key}\" for plugin \"{id}\" (declare it as [[presenter_settings]] in plugin.toml)"
+        ));
+    }
+    let mut conn = open_migrated(base)?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    let mut stored: serde_json::Map<String, serde_json::Value> =
+        read_internal(&tx, id, PRESENTER_SETTINGS_DOC)
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+    let presenter_values = stored
+        .entry(presenter.to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let Some(values) = presenter_values.as_object_mut() else {
+        return Err(format!("invalid stored Presenter settings for \"{presenter}\""));
+    };
+    let size = serde_json::to_string(&value).map(|text| text.len()).unwrap_or(0);
+    eprintln!("[plugins] presenter setting set ({id}) {presenter}.{key} = <{size} bytes>");
+    values.insert(key.to_string(), value);
+    write_internal(
+        &tx,
+        id,
+        PRESENTER_SETTINGS_DOC,
+        &serde_json::to_string(&stored).map_err(|e| e.to_string())?,
+    )?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
 /// Store one declared setting. The manifest is the schema: an undeclared key
 /// is refused (a typo'd key would otherwise be silently accepted forever).
 pub fn settings_put(base: &Path, id: &str, key: &str, value: serde_json::Value) -> Result<(), String> {
@@ -703,6 +787,43 @@ let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), h
     app.emit("plugin-settings", id).map_err(|e| e.to_string())
 }
 
+/// Effective Presenter-scoped settings grouped by Presenter id.
+#[tauri::command]
+pub fn plugin_presenter_settings_get(
+    id: String,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let id =
+        crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+            .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
+    presenter_settings_values(&base_dir(), &id)
+}
+
+/// Store one declared Presenter setting and notify the launcher runtime.
+#[tauri::command]
+pub fn plugin_presenter_settings_put(
+    id: String,
+    presenter: String,
+    key: String,
+    value: serde_json::Value,
+    window: tauri::WebviewWindow,
+    host_token: Option<String>,
+    perms: tauri::State<crate::plugin_perm::PluginPermState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let id =
+        crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), host_token.as_deref())?
+            .ok_or_else(|| "permission denied: this call needs a plugin id".to_string())?;
+    presenter_settings_put(&base_dir(), &id, &presenter, &key, value)?;
+    app.emit(
+        "plugin-presenter-settings",
+        serde_json::json!({ "id": id, "presenter": presenter }),
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -947,6 +1068,62 @@ mod tests {
         // The manifest is the schema: undeclared keys are refused.
         let err = settings_put(&root, "demo", "nope", serde_json::json!(1)).unwrap_err();
         assert!(err.contains("unknown setting"), "{err}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn presenter_settings_are_namespaced_and_manifest_guarded() {
+        let root = std::env::temp_dir().join(format!("lume-pstore-presenter-{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        let demo = root.join("plugins").join("demo");
+        std::fs::create_dir_all(&demo).unwrap();
+        std::fs::write(
+            demo.join("plugin.toml"),
+            "name = \"Demo\"\n\
+             [[presenter_settings]]\n\
+             presenter = \"default\"\n\
+             key = \"density\"\n\
+             label = \"Density\"\n\
+             type = \"select\"\n\
+             default = \"comfortable\"\n",
+        )
+        .unwrap();
+        let conn = open(&root).unwrap();
+        let values = presenter_settings_values_with(&conn, &root, "demo");
+        assert_eq!(
+            values
+                .get("default")
+                .and_then(|value| value.get("density")),
+            Some(&serde_json::json!("comfortable"))
+        );
+
+        presenter_settings_put(
+            &root,
+            "demo",
+            "default",
+            "density",
+            serde_json::json!("compact"),
+        )
+        .unwrap();
+        let values = presenter_settings_values_with(&conn, &root, "demo");
+        assert_eq!(
+            values
+                .get("default")
+                .and_then(|value| value.get("density")),
+            Some(&serde_json::json!("compact"))
+        );
+        // Service settings and Presenter settings are separate namespaces.
+        let service = settings_values_with(&conn, &root, "demo");
+        assert!(service.is_empty());
+        let err = presenter_settings_put(
+            &root,
+            "demo",
+            "default",
+            "unknown",
+            serde_json::json!(1),
+        )
+        .unwrap_err();
+        assert!(err.contains("unknown Presenter setting"), "{err}");
         std::fs::remove_dir_all(&root).ok();
     }
 }

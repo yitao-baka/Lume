@@ -88,14 +88,19 @@ export class PageSession {
     });
   }
 
-  async switchPresenter(
-    presenterId: string,
-    factory: (presenter: PresenterDescriptor) => PresenterFactory
-  ): Promise<PresenterHostState> {
+  /** Choose the Presenter for the next mount without mounting it yet. */
+  setRequestedPresenter(presenterId: string): void {
     if (!this.presenters.some((p) => p.id === presenterId)) {
       throw new Error(`unknown Presenter "${presenterId}"`);
     }
     this.presenterId = presenterId;
+  }
+
+  async switchPresenter(
+    presenterId: string,
+    factory: (presenter: PresenterDescriptor) => PresenterFactory
+  ): Promise<PresenterHostState> {
+    this.setRequestedPresenter(presenterId);
     return this.mount(factory);
   }
 

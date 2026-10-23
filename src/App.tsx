@@ -33,6 +33,7 @@ import {
   applyPluginColorMode,
   applyPluginColorPrefsFromSettings,
   applyPluginSettings,
+  applyPluginPresenterSettings,
   definePlugin,
   deliverFeature,
   deliverSubInput,
@@ -1122,6 +1123,14 @@ function App() {
       void applyPluginSettings(e.payload);
     });
     onCleanup(() => unlistenPluginSettings());
+
+    const unlistenPresenterSettings = await listen<{ id: string; presenter: string }>(
+      "plugin-presenter-settings",
+      (e) => {
+        void applyPluginPresenterSettings(e.payload.id);
+      }
+    );
+    onCleanup(() => unlistenPresenterSettings());
 
     // OS file drop : the Tauri drag-drop handler (enabled on this
     // window only) delivers real paths — WebView2's HTML5 drop never exposes

@@ -549,6 +549,14 @@ pub(crate) fn manifest_settings(base: &Path, id: &str) -> Vec<PluginSettingInfo>
         .unwrap_or_default()
 }
 
+/// One plugin's declared Presenter-scoped settings — the schema used by the
+/// separate `__presenter_settings` store document.
+pub(crate) fn manifest_presenter_settings(base: &Path, id: &str) -> Vec<PresenterSettingInfo> {
+    manifest_for_id(base, id)
+        .map(|m| m.presenter_settings.iter().map(|s| s.info()).collect())
+        .unwrap_or_default()
+}
+
 /// The canonical manifest for `id`, using the same deterministic duplicate-id
 /// resolution as `get_plugins`. The permission layer must call this rather
 /// than running its own scan: otherwise plugin code and capability checks can

@@ -904,14 +904,25 @@ Presenter 的 `lume.page`：
 
 同一模型可声明多个 Presenter，切换只替换 iframe，不重建 Page Service；
 `__presenterStates`、`__pageModels`、`__pageIntents` 和 `__pageResources`
-提供脱敏诊断。完整离线验收见 `examples/plugins/translation-demo/` 与
-`scripts/cdp_translation_service_verify.mjs`。
+提供脱敏诊断。`__presenterSettings` 记录最近一次下发给 Presenter 的设置和
+live 状态。
+
+`[[presenter_settings]]` 是 Presenter 自己的声明式设置 schema。设置值存于
+插件库的宿主内部文档 `__presenter_settings`，按
+`{presenter: {key: value}}` 隔离；设置窗只展示当前被选 Presenter 的设置。
+保存后 Host Runtime 通过 `lume.on.settings` 推送完整键值集合，切换 Presenter
+时新实例会收到同一份已持久化值。Presenter 页面不能用服务设置覆盖这些键。
+
+完整离线验收见 `examples/plugins/translation-demo/`、
+`scripts/cdp_translation_service_verify.mjs` 与
+`scripts/cdp_presenter_control_verify.mjs`。
 
 ## 7. 内置插件开发 API（TypeScript 贡献）
 
 > 这一节面向**第一方/编译进二进制**的插件（clipboard/preview 即此形态）。
-> 磁盘 mode/service 同样走 registry 与启停路径（`kind = "mode"` + `view` /
-> `kind = "service"` + `entry`）；本节是内置贡献契约的权威描述。
+> 磁盘 mode/service 同样走 registry 与启停路径（`kind = "mode"` +
+> `[[presenters]]` / `kind = "service"` + `entry`）；本节是内置贡献契约的
+> 权威描述。
 > 契约定义：`src/plugins/types.ts`。
 
 ### 7.1 `LauncherPlugin` — 注册单元

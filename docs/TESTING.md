@@ -45,12 +45,19 @@ through the settings UI, verifies that only the service reads it, exercises
 cache hits, two Presenters, engine switching, cancellation, timeout and network
 failure, and asserts that the API key never appears in the Page Model.
 
-Built-in Page Service / Presenter migration uses
+Built-in Page Service / Presenter integration uses
 `node scripts/cdp_page_runtime_verify.mjs`. It switches the navigation and
 clipboard pages between their two Presenters, checks that model, query/results
 and selection survive the switch, exercises the windowed clipboard model, and
 verifies the `pages.presenters` setting persists and is restored after a
 process restart.
+
+The disk plugin reference path uses
+`node scripts/cdp_file_search_presenter_verify.mjs`. It mounts
+`examples/plugins/file-search` as a Page Service, checks the restricted
+Presenter surface, drives a query into the service model, switches to the
+alternate Presenter, and confirms the query/model survive without a service
+restart.
 
 Presenter-scoped settings use `node scripts/cdp_presenter_control_verify.mjs`.
 It opens the plugin detail pane, checks the compatible-Presenter selector and
@@ -471,7 +478,7 @@ dev URL instead.
    rows + sandboxed mode page + plugin pane), then
    `node scripts/cdp_plugin_v2_verify.mjs` for the expanded host API. The
    feature series (file drop / clipboard image / list template / tile reorder)
-   plus the static ctx-surface parity checks (logic-frame ctx ≡ view bridge ≡
+   plus the static ctx-surface parity checks (logic-frame ctx ≡ Presenter bridge ≡
    rpc.ts cases) run as `node scripts/cdp_p2b_verify.mjs`; it enables its two
    fixture plugins itself.
 2. **Sandbox and permissions** — `node scripts/cdp_sandbox_verify.mjs` proves

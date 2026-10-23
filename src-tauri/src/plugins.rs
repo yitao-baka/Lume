@@ -309,15 +309,6 @@ pub struct PluginManifest {
     /// Service-only secret slots shown in the settings pane.
     #[serde(default)]
     pub secrets: Vec<SecretSpec>,
-    /// Transitional adapter HTML. api 2 manifests declare `[[presenters]]`.
-    #[serde(default)]
-    pub view: String,
-    /// Mode plugins: titlebar HTML file (relative to the plugin dir) for the
-    /// detached window — a second sandboxed iframe rendered between the
-    /// title and the window controls (docs/PLUGIN_API.md §6G). Unused while
-    /// the mode lives inside the launcher.
-    #[serde(default)]
-    pub titlebar: String,
     /// Mode plugins: `template = "list"` declares the built-in list template —
     /// the plugin ships only `entry` logic and the host renders its rows in
     /// the standard list component (`view` is not needed).
@@ -450,10 +441,6 @@ pub struct PluginInfo {
     pub page_runtime: bool,
     /// Service-only secret slots (status is queried separately).
     pub secrets: Vec<SecretSpec>,
-    /// Transitional adapter view. api 2 manifests use `presenters`.
-    pub view: String,
-    /// Titlebar HTML file (disk mode plugins, detached window only).
-    pub titlebar: String,
     /// Mode plugins: `"list"` = built-in list template (no `view` needed).
     pub template: String,
     /// Global keywords (mode plugins).
@@ -598,9 +585,6 @@ pub(crate) fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
         return Ok(());
     }
 
-    if !m.view.is_empty() || !m.titlebar.is_empty() {
-        return Err("api 2 modes declare [[presenters]], not top-level view/titlebar".into());
-    }
     if m.presenters.len() > 16 {
         return Err("a mode may declare at most 16 Presenters".into());
     }
@@ -683,6 +667,9 @@ pub(crate) fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
                 setting.key, setting.presenter
             ));
         }
+    }
+    if !m.page_runtime && m.template != "list" {
+        return Err("api 2 self-drawn modes require page_runtime = true".into());
     }
     Ok(())
 }
@@ -858,8 +845,6 @@ pub fn list_plugins(
                 presenter_settings: Vec::new(),
                 page_runtime: false,
                 secrets: Vec::new(),
-                view: String::new(),
-                titlebar: String::new(),
                 template: String::new(),
                 keywords: Vec::new(),
                 height: None,
@@ -924,8 +909,6 @@ pub fn list_plugins(
             presenter_settings,
             page_runtime: m.page_runtime,
             secrets: m.secrets,
-            view: m.view,
-            titlebar: m.titlebar,
             template: m.template,
             keywords: m.keywords,
             height: m.height,
@@ -1074,7 +1057,7 @@ mod tests {
         fs::create_dir_all(dir.join("dist")).unwrap();
         fs::write(
             dir.join("plugin.toml"),
-            "id = \"real-id\"\nkind = \"mode\"\nview = \"view.html\"\nentry = \"dist\"\n",
+            "id = \"real-id\"\nkind = \"mode\"\napi = 2\nmodel = \"lume.collection/v1\"\nentry = \"dist\"\npage_runtime = true\n[[presenters]]\nid = \"default\"\nentry = \"presenter.html\"\n",
         )
         .unwrap();
         fs::write(dir.join("view.html"), "<html></html>").unwrap();
@@ -1083,7 +1066,7 @@ mod tests {
         let p = all.iter().find(|p| p.id == "real-id").unwrap();
         assert_eq!(p.dir, dir.to_string_lossy().into_owned());
         assert_eq!(p.entry, "dist/index.js", "entry resolves against the real dir");
-        assert_eq!(p.view, "view.html");
+        assert_eq!(p.presenters[0].entry, "presenter.html");
         fs::remove_dir_all(&root).ok();
     }
 
@@ -1174,18 +1157,24 @@ mod tests {
     }
 
     #[test]
-    fn manifest_carries_keywords_and_view() {
+    fn manifest_carries_keywords_and_presenter() {
         let m = parse_manifest(
             "id = \"m\"
 kind = \"mode\"
-view = \"view.html\"
+api = 2
+model = \"lume.collection/v1\"
+entry = \"service.js\"
+page_runtime = true
 icon = \"icon.svg\"
 keywords = [\"clip\", \"剪贴板\"]
 height = 560
+[[presenters]]
+id = \"default\"
+entry = \"view.html\"
 ",
         )
         .unwrap();
-        assert_eq!(m.view, "view.html");
+        assert_eq!(m.presenters[0].entry, "view.html");
         assert_eq!(m.icon, "icon.svg");
         assert_eq!(m.keywords, vec!["clip".to_string(), "剪贴板".to_string()]);
         assert_eq!(m.height, Some(560));

@@ -33,6 +33,7 @@ writeFileSync(`${FIX}/plugin.toml`, `id = "icon-demo"
 name = "Icon Demo"
 version = "1.0.0"
 kind = "provider"
+api = 2
 description = "CDP fixture: 结果行图标（显式相对路径 / 清单 icon 缺省）"
 icon = "custom.svg"
 entry = "main.js"

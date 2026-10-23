@@ -47,10 +47,12 @@ The goal is:
   summon; remember-last-page and remember-checks persist across shows
 - Whole-drive file search — Everything IPC first, then the LumeSVC
   NTFS USN/MFT index, exposed through one async search facade
-- Plugin platform — provider / mode / service contributions, sandboxed UI,
-  Rust-side permission checks, `.lupx` install/signature support, detached
-  windows, declarative settings, private storage, development hot reload, and
-  light/dark plugin icon pairs picked per surface theme
+- Plugin platform — provider / mode / service contributions; api 2 page modes
+  split into Page Service and replaceable Presenters over a serialized Page
+  Model; sandboxed UI, Rust-side permission checks, `.lupx` install/signature
+  support, detached windows, declarative settings, private storage,
+  development hot reload, and light/dark plugin icon pairs picked per surface
+  theme
 - Automation + elevation agent — foreground-window rules can send a
   configured hotkey, including to elevated targets through the minimal
   `lume-agent.exe` helper
@@ -156,9 +158,11 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
   `lume-svc.exe`; the service is registered through UAC and answers over a
   scoped named pipe
 - Plugin platform — first-party pages and disk plugins share one registry:
-  `provider` contributes search rows, `mode` contributes full pages (optional
-  logic entry, detached windows, titlebar slot and list template), and
-  `service` contributes lifecycle hooks. Mode pages run in opaque-origin
+  `provider` contributes search rows, `mode` contributes a Page Service plus
+  one or more Presenters (detached windows, titlebar Presenter and list
+  template included), and `service` contributes lifecycle hooks. Page Model
+  and Page Intent cross the restricted Presenter boundary; sensitive
+  capabilities stay in the Page Service. Mode pages run in opaque-origin
   sandboxes; plugin capabilities are checked in Rust by manifest permission;
   `.lupx` packages support install/uninstall, signature verification and
   private-file preservation across upgrades

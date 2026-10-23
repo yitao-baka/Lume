@@ -8,10 +8,12 @@
 //      切模式/再次呼出自动释放。
 //   ⑤ redirect：跳到 hello-mode（进入载荷回显）＋ 目标不存在时 toast 提示。
 import { spawn, execSync } from "node:child_process";
-import { writeFileSync, mkdirSync, readFileSync, openSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync, openSync, cpSync, rmSync } from "node:fs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
+rmSync("src-tauri/target/debug/plugins/hello-mode", { recursive: true, force: true });
+cpSync("examples/plugins/hello-mode", "src-tauri/target/debug/plugins/hello-mode", { recursive: true });
 const logFd = openSync("test/p2_lume.log", "w");
 spawn("src-tauri/target/debug/lume.exe", [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9223" },
@@ -128,31 +130,32 @@ await clickRow("在 Hello Mode 里打开");
 await sleep(2000);
 const activeModeName = await m.evalJs(`document.querySelector(".mode-switch-item.active")?.textContent?.trim() ?? ""`);
 check("redirect switched to hello-mode", activeModeName.includes("Hello Mode"), activeModeName);
-const enterEcho = await m.evalJs(`(() => { const f = document.querySelector("iframe.plugin-frame"); const d = f && f.contentDocument; return d ? (d.getElementById("enterView")?.textContent ?? "(no node)") : "(no iframe)"; })()`);
-check("mode received the redirect payload (enter event)", String(enterEcho).includes("from-text-tools") && String(enterEcho).includes("hello drill"), String(enterEcho));
+const enterModel = await m.evalJs('window.__pageRuntimeLatestModel("hello-mode")?.data?.enter ?? null');
+check("mode received the redirect payload (enter event)", enterModel?.code === "from-text-tools" && String(enterModel?.payload || "").length > 0, JSON.stringify(enterModel));
 await m.shot("p2_redirect_enter.png");
 
 // ── ④ 子输入框：接管 → 按键进插件 → 交还 ──
-const clickInFrame = (id) => m.evalJs(`(() => { const f = document.querySelector("iframe.plugin-frame"); const d = f && f.contentDocument; const el = d && d.getElementById(${JSON.stringify(id)}); if (!el) return "missing"; el.click(); return "clicked"; })()`);
-check("hello-mode subInput button clicked", (await clickInFrame("sub")) === "clicked");
+const dispatchHello = (actionId) => m.evalJs('window.__pageRuntimeDispatch("hello-mode", { type: "item.action", actionId: ' + JSON.stringify(actionId) + ' })');
+const subStart = await dispatchHello("sub-input");
+check("hello-mode subInput action completed", subStart?.status === "completed", JSON.stringify(subStart));
 await sleep(800);
 const ph = await placeholder();
-check("subInput placeholder took over the box", ph.includes("子输入框"), ph);
+check("subInput placeholder took over the box", ph.includes("子输入框"), JSON.stringify({ ph, calls: await m.evalJs("window.__subInputCalls ?? []") }));
 await type("sub-input probe");
 await sleep(800);
-const subEcho = await m.evalJs(`(() => { const f = document.querySelector("iframe.plugin-frame"); const d = f && f.contentDocument; return d ? (d.getElementById("subView")?.textContent ?? "") : ""; })()`);
+const subEcho = await m.evalJs('window.__pageRuntimeLatestModel("hello-mode")?.data?.subInputText ?? ""');
 check("keystrokes reached the plugin's onSubInput", subEcho === "sub-input probe", subEcho);
 const subModeQuery = await m.evalJs(`document.getElementById("search-input").value`);
 check("the box still shows what the user typed", subModeQuery === "sub-input probe", subModeQuery);
 await m.shot("p2_subinput.png");
 
 // 交还搜索框
-await clickInFrame("subEnd");
+await dispatchHello("sub-input-remove");
 await sleep(600);
 check("removeSubInput released the box (placeholder back to mode default)", !(await placeholder()).includes("子输入框"), await placeholder());
 
 // 切模式释放所有权（再接管后切回导航页）
-await clickInFrame("sub");
+await dispatchHello("sub-input");
 await sleep(600);
 await invoke("toggle_launcher"); // hide
 await sleep(800);

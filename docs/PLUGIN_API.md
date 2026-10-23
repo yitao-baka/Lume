@@ -24,7 +24,7 @@ Lume 插件 = **一份清单**（`plugin.toml`）+ **零或多份贡献**（cont
 | 贡献 | 契约 | 动态加载 | 内置示例 | 磁盘示例 |
 |---|---|---|---|---|
 | `provider` | `ProviderInstance` — 向 Navigate 搜索追加结果 | 支持 | `web-search`（examples/） | — |
-| `mode` | **Page Service + 一个或多个 Presenter**；内置页在迁移期通过内部 adapter 接入 | 支持 | `clipboard` | `hello-mode`、`file-search`（examples/） |
+| `mode` | **Page Service + 一个或多个 Presenter**；内置页通过启动器内部的 shell adapter 接入 | 支持 | `clipboard` | `hello-mode`、`file-search`（examples/） |
 | `service` | `PreviewService`（内置）/ **生命周期钩子**（磁盘） | 支持 | `preview` | — |
 | `navBars` | `NavBarContribution[]` — 导航页栏目（§5.7，任意 kind 可选钩子） | 支持 | — | `nav-bar`（examples/） |
 
@@ -99,13 +99,14 @@ export default {
 | `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。`mode` 声明 Page Service 与 Presenter；provider/service 需要 `entry`。 |
 | `description` | string | `""` | 设置页与安装确认展示的说明。 |
 | `permissions` | string[] | `[]` | **能力声明**：台账（§8.2）里的能力没声明就调用 → 明确拒绝（fail-closed），设置页每行显示这些 chip。「全部授权」可整插件放行（§11.4）。 |
-| `api` | integer | `1`（缺失即 v1） | **必须显式为 `2`**。api 1 / 缺失版本的插件在发现、安装确认和权限边界均被拒绝。 |\n| `entry` | string | `""` | 入口 JS（相对插件目录）。provider/service 必填；api 2 mode 是 Page Service 入口。**可以是目录**（多文件打包产物）— 此时实际加载其中的 `index.js`，目录内文件的相对 `import` 由宿主改写为 blob URL（§5.5）。 |\n| `model` | string | `""` | **api 2 mode 必填** — Page Service 发布的 Page Model schema，例如 `lume.collection/v1`。 |\n| `default_presenter` | string | `""` | 默认 Presenter id。空值选择第一个兼容 Presenter；`template = "list"` 可使用宿主内置 `collection-list`。 |\n| `[[presenters]]` | table[] | `[]` | **api 2 mode** 的展示器清单：`id`、`name`、`entry`、可选 `titlebar`/`models`。id 唯一，至少一个 Presenter 支持顶层 `model`。 |\n| `[[presenter_settings]]` | table[] | `[]` | Presenter 自己的声明式设置：`presenter`、`key`、`label`、`type`、`default`、`options`。键按 Presenter 隔离。 |
-| `view` | string | `""` | 迁移期内部字段；api 2 清单用 `[[presenters]]` 的 `entry` 声明页面。 |
-| `titlebar` | string | `""` | 迁移期内部字段；api 2 由 Presenter 的 `titlebar` 声明独立窗口标题栏槽位。 |
-| `template` | string | `""` | mode 插件：`"list"` = 用内置列表模板渲染 `entry` 逻辑的行，**免 `view` HTML**（§10.4） |
-| `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。行图标 = 插件自己的图标集（两套按所在表面主题选）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.6）。 |
-| `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§4.4）。 |
-| `api` | integer | `1` | **目标宿主 API 版本** — 插件针对的契约版本（§16）。缺省 = 当前宿主版本（旧清单零改动）；声明**高于**宿主支持的版本（`HOST_PLUGIN_API`）→ 加载期明确拒绝 + toast 提示，而不是静默半坏。 |
+| `api` | integer | — | **必须显式为 `2`**。api 1 / 缺失版本的插件在发现、安装确认和权限边界均被拒绝。 |
+| `entry` | string | `""` | 入口 JS（相对插件目录）。provider/service 必填；`page_runtime = true` 的 mode 是 Page Service 入口。**可以是目录**（多文件打包产物）— 此时实际加载其中的 `index.js`，目录内文件的相对 `import` 由宿主改写为 blob URL（§5.5）。 |
+| `model` | string | `""` | **page-runtime mode 必填** — Page Service 发布的 Page Model schema，例如 `lume.collection/v1`。 |
+| `page_runtime` | bool | `false` | 自绘 mode 必须为 `true`：`entry` 是 Page Service，至少一个 `[[presenters]]` 消费模型。`template = "list"` 的宿主列表页不需要它。 |
+| `default_presenter` | string | `""` | 默认 Presenter id。空值选择第一个兼容 Presenter；`template = "list"` 可使用宿主内置 `collection-list`。 |
+| `[[presenters]]` | table[] | `[]` | **page-runtime mode** 的展示器清单：`id`、`name`、`entry`、可选 `titlebar`/`models`。id 唯一，至少一个 Presenter 支持顶层 `model`。 |
+| `[[presenter_settings]]` | table[] | `[]` | Presenter 自己的声明式设置：`presenter`、`key`、`label`、`type`、`default`、`options`。键按 Presenter 隔离。 |
+| `template` | string | `""` | mode 插件：`"list"` = 用宿主内置 collection Presenter 渲染 `entry` 逻辑的行，不需要自绘 Presenter HTML（§10.4）。 |
 | `network_allow` | string[] | `[]` | **网络白名单** — `network` 能力的私网放行名单（§8.1 http）：默认拒绝回环/私网/链路本地目标（防 SSRF），`network_allow = ["192.168.1.10", "*.internal.example.com"]` 声明的 host（精确或 `*.` 通配后缀，大小写不敏感）跳过该检查。公网访问无需声明。 |
 | `settings` | array of table | `[]` | **声明式设置**（§11.3）——`[[settings]]` 子表：`key`、`label`、`type`（`toggle`/`select`/`text`）、`default`、`[[settings.options]]`（`value`/`label`）。设置 → 插件 自动渲染，值存插件 `__settings` 文档，插件经 `ctx.settings.get/all` 读、`onSettings` 感知变更。 |
 | `features` | array of table | `[]` | **声明式进入规则**（任意 kind，§9.1）——`[[features]]` 子表，字段 `code`（必填，进入时下发）、`label`（结果行文案）、`regex`（正则匹配输入）、`over`（匹配任意非空文本）、`min_length`/`max_length`（长度界）、`icon`（旧版单图行图标）、`icon_light`/`icon_dark`（两套行图标；显式变体优先，一组都没给 → 用插件自己的图标集）。命中的查询在导航结果里出现「<label>」行，激活把该查询作为 payload 投递给插件的 `onFeature`/`onEnter`。`type = "files"`（文件拖入，含 `file_type` 类别，§9.2）、`"img"`（剪贴板图片，§9.3）与 `"window"`（活动窗口匹配，§9.4）规则见对应小节。 |
@@ -618,8 +619,15 @@ await lume.theme.set(next);          // 本插件专属；启动器不动
 
 ```toml
 kind = "mode"
-view = "view.html"
+api = 2
+model = "lume.collection/v1"
+entry = "service.js"
+page_runtime = true
 detachable = true     # 允许分离为独立窗口
+
+[[presenters]]
+id = "default"
+entry = "view.html"
 ```
 
 #### 6.8.1 生命周期
@@ -679,17 +687,24 @@ detachable = true     # 允许分离为独立窗口
   `scripts/cdp_plugin_window_verify.mjs` + `plugins/file-search/scripts/
   verify-host.mjs`（标题栏槽位/setQuery 扇出/按键中继/双页主题推送/权限链路）。
 
-#### 6.8.4 标题栏页（清单 `titlebar`）
+#### 6.8.4 标题栏 Presenter（`[[presenters]].titlebar`）
 
-可分离模式可以在清单里声明 `titlebar = "titlebar.html"`：独立窗口的标题栏
+可分离 Presenter 可以声明 `titlebar = "titlebar.html"`：独立窗口的标题栏
 中间（标题与窗口控制按钮之间）会渲染**第二个桥接 iframe**——与 `view` 同一
-沙箱（opaque origin，无宿主 DOM / Tauri 内部访问）、同一 `window.lume`
-能力、同一权限台账；页面高度约为 30px（单行工具条/搜索框的尺寸）。
+沙箱（opaque origin，无宿主 DOM / Tauri 内部访问）和同一受限 Presenter
+能力面；页面高度约为 30px（单行工具条/搜索框的尺寸）。
 
 ```toml
 kind = "mode"
+api = 2
+model = "lume.collection/v1"
+entry = "service.js"
+page_runtime = true
 detachable = true
-view = "view.html"
+
+[[presenters]]
+id = "default"
+entry = "view.html"
 titlebar = "titlebar.html"   # 可选；launcher 内嵌时忽略
 ```
 
@@ -808,8 +823,15 @@ mode 插件可以用两种互补的方式决定启动器窗口大小：
 
 ```toml
 kind = "mode"
-view = "view.html"
+api = 2
+model = "lume.collection/v1"
+entry = "service.js"
+page_runtime = true
 height = 560        # 本模式页面的窗口高度（逻辑 px）
+
+[[presenters]]
+id = "default"
+entry = "view.html"
 ```
 
 切换进该模式时，sizer 的 fixed-height 分支取清单 `height`，未声明时回退
@@ -947,7 +969,7 @@ interface LauncherPlugin {
     placeholderKey: string;          //   i18n 键（搜索框占位，v1 占位实际仍按 id 特判）
     icon: string;                    //   SVG import 的 URL
   };
-  mode?: ModeInstance;               // mode 贡献（§7.2）
+  mode?: ModeInstance;               // 内部 shell adapter（§7.2）
   preview?: PreviewService;          // service 贡献（§7.2）
   provider?: ProviderInstance;       // provider 贡献（§5）
   clipMenuActions?: () => unknown;   // 共享右键菜单的剪贴板动作（§7.3）
@@ -958,148 +980,123 @@ interface LauncherPlugin {
 磁盘插件之前的合并顺序**。注册发生在 App 组件作用域内——mode 实例里的
 Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 
-### 7.2 `PluginServices` / `ModeInstance` / `ModeKeyContext` / `PreviewService`
+### 7.2 内置页面与外壳适配
 
-#### 7.2.1 `PluginServices` — 组合根开放给内置插件的能力
+磁盘 mode 的公开契约是 Page Service + `[[presenters]]`，见
+[PAGE_MODEL_PRESENTER.md](PAGE_MODEL_PRESENTER.md)。`ModeInstance` 只存在于
+启动器源码，是内置页面接入外壳的内部适配层；它不是磁盘插件可以实现的接口。
+
+#### 7.2.1 `PluginServices` — 第一方页面使用的外壳能力
 
 | 方法 | 语义 |
 |---|---|
-| `showToast(text, opts?)` | 底部 toast。`opts.undo` 撤销回调（3s 窗口）；`opts.duration` 覆盖默认停留（1.6s）。 |
-| `markEntryOpened()` | 标记「已使用条目」。下一次呼出时若停在**导航首页**，首页清空自己的查询后重搜；插件页的查询与页面状态不受影响，也不会强制切回导航页。launch/paste/开链接类动作都应调用。 |
-| `resetAndHide()` | 隐藏启动器（`endSummon` + `hide_launcher`）。**不清理** mode/query/页面状态，会话续存不受影响。 |
-| `persistLastPage()` | 防抖 400ms 持久化「记住上次所在页面」（读活动模式的 `pageKind`）；它只决定**重启恢复**，会话内续存始终开启。模式内切换分类/页面时调用。 |
-| `runSearch(q)` | **根搜索管线**：重置选中 + 令牌 +1 → 活动页 `instance.search(q)`。页面内部刷新数据应调它而不是自己的 `search`，以保证选中态/令牌一致。 |
-| `scheduleResize()` | 下一帧重测窗口高度（内容变化后调用）。 |
-| `searchToken()` | 单调递增令牌——根每次搜索 +1。异步结果落地前比对，令牌变了就丢弃（防乱序）。 |
-| `nextSearchToken()` | 令牌 +1 并返回——页面自己的异步链（如下钻过滤）按同一时间线丢弃陈旧结果。 |
-| `selectionSource()` | `"keyboard" \| "mouse" \| "other"`——最后一次选中变更的来源。hover 门控（键盘导航中悬停不接管）读它。 |
-| `markMouse()` | `selectionSource = "mouse"`。视图的 onMouseMove/onClick 调用。 |
-| `openMenu(m)` | 打开共享右键菜单（根渲染；`m` 为 `MenuState` 结构：`{kind, x, y, app?/item?/idx?}`）。 |
-| `mode()` | 当前活动模式 id（`"apps"` 或插件模式 id）。 |
-| `requestMode(id)` | 请求切模式（等价于用户点 pill → `switchMode`）。 |
-| `setModePlaceholder(pluginId, text)` | 设置某插件模式的搜索框占位文字（`""` = 默认；按插件 id 隔离，见 §6.10）。内置插件一般用不到——`createHostApi` 会自动带上调用方自己的 id。 |
+| `showToast(text, opts?)` | 底部 toast；`opts.undo` 提供撤销回调，`opts.duration` 覆盖停留时间。 |
+| `markEntryOpened()` | 标记条目已使用；驱动呼出级的首页重置语义。 |
+| `resetAndHide()` | 隐藏启动器；不清理页面会话。 |
+| `persistLastPage()` | 防抖持久化「记住上次所在页面」。 |
+| `runSearch(q)` | 走外壳搜索管线；页面内部刷新应使用它，而不是直接调用自己的搜索。 |
+| `scheduleResize()` | 下一帧重测窗口高度。 |
+| `searchToken()` / `nextSearchToken()` | 异步搜索的单调令牌，用于丢弃乱序结果。 |
+| `selectionSource()` / `markMouse()` | 区分键盘与鼠标选择，供 hover-select 等交互使用。 |
+| `openMenu(menu)` | 打开共享右键菜单。 |
+| `mode()` / `requestMode(id)` | 读取或切换当前页面。 |
+| `setModePlaceholder(pluginId, text)` | 设置某页面自己的搜索框占位文字。 |
+| `setSubInput(pluginId, opts)` | 接管或交还搜索框。 |
+| `enterPlugin(id, info)` | 把声明式进入载荷交给目标插件。 |
+| `detachMode(id)` | 请求把可分离页面移入独立窗口。 |
 
-#### 7.2.2 `ModeInstance` — 整页模式契约
+这些服务只供编译进启动器的第一方页面和内部 Page Runtime adapter 使用。
+磁盘插件通过沙箱桥中的 `lume.app.*` 与 `ctx.app.*` 获得同类能力，并由清单
+权限约束。
 
-每个方法都标注**调用方与时机**——实现必须能在这些时机被安全调用：
+#### 7.2.2 内置 Page Session 与外壳
 
-| 成员 | 调用方 / 时机 |
-|---|---|
-| `query()` / `setQuery(q)` | 组合根读取/设置当前页面查询。默认是**全局共享一份**：最新输入为准，切模式把该值灌入本页并按其搜索，`app.setQuery` 也写这份值；设置「各模式使用独立搜索词」开启后恢复逐页独立 query。hide/show 都不清（会话续存）；打开首页条目后的下次呼出 / 闲置重置会清空共享值。 |
-| `search(q)` | 根 `runSearch` 对**活动页**的统一分发（导航首页同样走此路径）。实现须：取 `services.searchToken()` 快照 → 异步取数 → 令牌不一致则丢弃 → 写自己的 rows → `setSelected(0)` + 复位滚动 → `services.scheduleResize()`。 |
-| `reset()` | 每次**呼出**（`launcher-shown` → `beginSummon`，仅活动页）、页面挂载与启动页恢复时调用；切模式**不**调用，也不负责清 query/页面状态。实现只清多选/对话框/动画态等**每呼出状态**；rows 清空后由随后的 `runSearch` 重填。 |
-| `selected()` / `setSelected(i)` | 根 `moveSelection`（↑↓/网格移动）、`runSearch` 复位、Enter 激活前的对齐。 |
-| `rows()` | `currentResults()`（键盘移动的边界）与 Enter 激活。返回 `PageRow[]`（`AppEntry \| ClipboardItem`；任意模式自定义行模型仍留待后续）。 |
-| `activate(opts?)` | Enter / 点击选中行的激活（`opts.elevated` = Shift+Enter 提权请求，应用启动类页面消费它）：多选 → 合并粘贴；单选 → 粘贴。 |
-| `onKey(e, ctx)` | 键盘路由先交给**活动页**处理；返回 `true` = 已消费。首页自管网格四向键与栏分区导航，剪贴板消费 ←/→（切分类）、Space（多选）、Del（删除）——未消费的 ↑/↓/Enter 落到根的通用绑定（`ctx.moveSelection`、根 `activate`）。`ctx = { hasResults, moveSelection, gridCols, markKeyboard }`。 |
-| `handleQuery?(q)` | 可选 — 输入拦截（先于 subInput 路由与常规搜索管线）：返回 `true` = 本页消费了这次击键（首页的 provider 下钻过滤用它）。 |
-| `onEscape()` | Esc 分层：菜单 → **页面**（如退下钻层/退出多选，返回 true）→ 卫星预览 → 隐藏。 |
-| `previewTarget()` | 卫星预览插件每次选中变化时轮询：当前选中行的预览请求（`PreviewReq`）或 `null`（隐藏）。行失效 → `null`。 |
-| `previewEnabled()` | 该页面当前是否想要卫星预览（对应 设置 → 开启预览）。 |
-| `measureViewport()` | 窗口尺寸变化（sizer 定高分支 + 根视口 effect）时触发；重测页面内部虚拟列表视口。 |
-| `ready?()` | 可选 — **加载门控**（反应式）：本页当前是否有内容可显示。返回 false 时壳隐藏 `.results`、sizer 把窗口收拢到搜索行、该页 pill 显示加载态（强调色 + 图标转圈）——**页面不完整就不显示**。磁盘页在页面桥接 `__lumeReady` 前为 false（每次重挂载都重新加载；3s 宽限兜底，异常页不会永远转圈），模板/剪贴板页在首次取数落定前为 false（之后不再回退）。省略 = 永远就绪（导航首页——空态由它自己负责）。 |
-| `heightPolicy?()` | 可选 — `"fit"` = 窗口随内容自适应（导航首页）；`"fixed"`（默认）= 搜索框下方定高拼接。sizer 的分支选择依据。 |
-| `anyExpanded?()` | 可选 — 是否有展开态栏目（fit 页专用，sizer 工作区封顶）。 |
-| `desiredHeight?()` | 可选 — sizer 定高分支读取：本页面的固定窗口高度（清单 `height`），`null` = 用全局设置高度（§6.10）。 |
-| `home?` | 可选 — 主页标记（导航页）。所有保活页面都跨模式留存（不切入即重置）；该标记用于 **keep-alive LRU 豁免**（首页永不被淘汰）。 |
-| `placeholder?()` | 可选 — 本页激活时搜索框占位符（subInput 接管优先，然后本值，最后 `app.setPlaceholder` 映射）。 |
-| `menuActions?()` | 可选 — 共享右键菜单动作来源（窄结构接口，见 §7.3）。 |
-| `pageKind()` / `restorePage(kind)` | 记住上次所在页面：持久化当前页（如剪贴板分类）/ 恢复；切到该页面时根先 `restorePage("all")` 复位。 |
-| `applySettings(s)` | 每次 `settings-applied`（对**所有**页面实例，含未激活的）：应用自己的设置切片（栏目显示、剪贴板显示类开关、占位符…）。 |
-| `onShow?()` | 可选 — 呼出（召唤搜索之后）时对**所有**页面调用：刷新呼出级数据（首页的栏数据 / 资源管理器栏 / 前台窗口行 / 空菜单自动选中）。 |
-| `onFilesDropped?(paths)` | 可选 — 系统文件拖入：主页据此生成 feature 行（行状态随呼出一次性）。 |
-| `View` | 无 props 的 Solid 组件——活动时经 `<Dynamic>` 渲染为整页内容（拼接在搜索框部件下方）。内部通过闭包持有自己的 store 与 `services`。 |
+导航和剪贴板都创建一个 `PageSession`：
 
-**模式 pill**：`modeMeta.labelKey` 提供文案（i18n），`icon` 提供图标；
-关闭插件的 pill 自动消失，Tab 循环也随之跳过。**清单 `hidden = true`
-的模式不渲染 pill、Tab 循环也跳过** —— 它的唯一入口是导航搜索结果（keywords
-/ feature 行）与插件互跳；模式激活时切换键从导航页重新开始循环（此时无 pill
-高亮）。导航首页是注册表中的第一个 mode（id `"apps"`，`home: true`），
-它的 pill 即最左侧「导航」。
+- Page Service 拥有数据、查询、动作和持久化；
+- `lume.navigate/v1` / `lume.clipboard/v1` 是页面事实；
+- 两套 Presenter 消费同一模型；
+- `ModeInstance` shell adapter 只负责把活动 Presenter 的 Solid 组件、
+  键盘、尺寸、预览和右键菜单接到启动器外壳。
 
-**拼接面（页面画布）**——宿主对页面的三条保证：
+外壳通过这些内部成员协调页面：
 
-1. **几何**：搜索行与页面共用一块连续面板。面板是不透明 `--surface`（同一
-   值也刷在窗口外缘的 DWM 边框条上），搜索行 / 页面 / 四角像素级同色；搜索行
-   无下边框、页面区无内衬，页面内容直贴搜索行底边与窗口的左/右/下边；需要
-   留白就由页面自己给（现有页面的内衬见 ARCHITECTURE「拼接几何」）。`fit`
-   页的窗口高度含 `WINDOW_PAD` 余量。
-2. **画布**：磁盘插件的 `view` 页是**不透明源（sandbox）iframe**——宿主元素背景
-   对它不可见。暗色 `color-scheme`（镜像主题配色的插件都会设）下，根背景透明的
-   文档会被 Chromium 画成**不透明 #121212 画布**，在拼接处露出明显色阶。宿主
-   因此在 `injectBridge` 注入默认画布
-   `html{background:var(--lume-page-bg,<主题 --surface>)}`，桥接在 `theme` 事件
-   到来时切换该变量（主题翻转即时跟随）。该默认值就是启动器面板自身的颜色
-   （暗 #1e1e20 / 浅 #fbfbfd），所以默认画布与面板在拼接处完全同色。插件用
-   `theme.set` 定过自己的明暗时，这个变量与事件都取**本插件生效的**那一侧
-   （页面上就不再与面板同色 —— 那时页面的底色由插件自己负责，见 §6.7）。**插件
-   自己写 `html`/`body` 背景即覆盖该默认**（文档更靠后，优先级更高）；自绘
-   背景时请与 `lume.on.theme` 给出的明暗保持一致，否则拼接处会出现色阶
-   （此时页面已不等于面板色）。
-3. **加载门控**：页面**未就绪就不显示**。`ModeInstance.ready()` 返回 false 期间，
-   壳隐藏 `.results`、sizer 把窗口收拢到搜索行、该页 pill 显示加载态（强调色 +
-   图标转圈）；就绪后才按页面高度展开。磁盘插件无需做任何事（宿主以页面的
-   `__lumeReady` 桥接握手为准，3s 宽限兜底），但**别在页面里做长时间同步 IPC**：
-   Tauri 的同步命令跑在主线程上，会把宿主的 resize（乃至加载门控的收拢）一起
-   卡住——重活放 `async`/`spawn_blocking`（见 ARCHITECTURE `clipboard.rs`）。
+- `query()` / `setQuery(q)`：页面查询镜像；共享查询与逐页查询由外壳决定。
+- `search(q)`：`PageSession.setQuery` 的统一入口。
+- `reset()`：呼出级清理；不清除需要跨 hide/show 保留的会话状态。
+- `selected()` / `setSelected(i)`：渲染层选择；实际选择写入 Page Model。
+- `rows()`：外壳键盘边界的快速视图；领域动作仍通过 Intent 执行。
+- `onKey(e, ctx)` / `onEscape()`：页面快捷键和 Esc 分层。
+- `modal()`：模态页面暂停全局快捷键。
+- `previewTarget()` / `previewEnabled()`：预览服务读取模型选择。
+- `measureViewport()`、`heightPolicy()`、`anyExpanded()`、`desiredHeight()`：
+  尺寸协议。
+- `ready()`：Presenter 就绪前的加载门控。
+- `applySettings(s)`：应用外壳、页面服务与 Presenter 设置切片。
+- `onShow()` / `onFilesDropped()` / `onEnter()`：生命周期事件。
+- `snapshot()`：保存 Presenter 私有的键控表单和 custom 状态。
+- `View`：活动 Presenter 的 Solid 挂载点，不直接持有 Page Service 业务状态。
 
-#### 7.2.3 `ModeKeyContext`
+模式 pill 由注册表元数据生成；`hidden = true` 的页面不进入 pill 与切换键循环。
+导航首页是 `id = "apps"` 的第一方页面，并参与 keep-alive LRU。
+
+**拼接面**：
+
+1. 搜索行与页面共用不透明 `--surface`；页面不自带额外边框、圆角或底色。
+2. Presenter 运行在 opaque-origin iframe；Presenter bridge 注入
+   `html{background:var(--lume-page-bg,<surface>)}` 并在主题事件中更新。
+3. 加载门控在 Presenter 未就绪时折叠到搜索行；就绪后按 Presenter 报告的
+   布局展开。宿主不接受 Presenter 直接设置窗口尺寸。
+
+#### 7.2.3 `ModeKeyContext`（内部）
 
 ```ts
-{ hasResults: boolean; moveSelection(delta: number): void; gridCols(): number; markKeyboard(): void }
+{
+  hasResults: boolean;
+  moveSelection(delta: number): void;
+  gridCols(): number;
+  markKeyboard(): void;
+  editing: boolean;
+}
 ```
 
-`hasResults` = 当前 rows 非空；`moveSelection` = 根的选中移动（含
-selectionSource 标记、自动滚动）；`gridCols` = 结果网格列数（网格页 ↑↓
-按列移动）；`markKeyboard` = 标记 selectionSource 为键盘（栏分区导航用）。
+`gridCols` 供网格页面计算上下移动；`editing` 表示按键来自文本编辑控件，
+页面不得抢走原生编辑语义。
 
-#### 7.2.4 `PreviewService` — 卫星预览服务
+#### 7.2.4 `PreviewService`（内部）
 
 ```ts
 { currentPreview(): PreviewReq | null; clear(): void }
 ```
 
-- 组合根把「活动模式的 `previewTarget()`/`previewEnabled()`」组装成依赖
-  注入 preview 插件；插件内部跑 100ms 防抖 effect（show/close IPC）。
-- `currentPreview` 是**同步**信号——Esc 分层在预览防抖未落地前也能正确
-  判断「预览开着」并优先关它。
-- `clear()` = 立即清空（卫星窗 × 按钮 / Rust 侧 teardown 的
-  `preview-closed` 事件回调）。
+预览插件监听活动 Page Session 的模型选择并做约 100ms 防抖。`currentPreview`
+是同步信号，Esc 分层在预览窗口更新前也能正确判断。`clear()` 用于响应预览窗
+自身关闭或 Rust teardown 的 `preview-closed` 事件。
 
-### 7.3 共享右键菜单集成（menuActions）
+### 7.3 共享右键菜单
 
-右键菜单由根渲染（`buildMenuItems`），目标条目的动作由所属页面以**窄
-接口**供给（`menu.ts::NavMenuActions` / `ClipMenuActions`）。组合根取各页
-`mode.menuActions()` 传入——菜单不依赖插件的完整类型，只依赖这份结构；
-插件端直接返回自己的 store（结构天然满足）。
+右键菜单由外壳渲染。页面只提供 `NavMenuActions` / `ClipMenuActions` 窄接口，
+或通过 Page Intent 的 `item.action` 声明动作。菜单不依赖 Page Service 的
+完整类型，也不直接调用 Tauri。
 
-### 7.4 完整内置示例：剪贴板插件
+### 7.4 内置页面结构
 
-`src/plugins/clipboard/` 的目录结构即推荐的内置插件布局：
+```text
+src/plugins/navigate/index.tsx
+  ├─ PageSession(lume.navigate/v1)
+  ├─ page-services/navigate/service.ts
+  └─ presenters/navigate-grid | navigate-list
 
-```
-src/plugins/clipboard/
-├── index.tsx          ← createClipboardPlugin(services)：建 store、
-│                        实现 ModeInstance 契约、返回 LauncherPlugin
-├── store.ts           ← 全部信号与动作（rows/selection/虚拟列表/设置切片
-│                        + 键盘滚动跟随 effect——在组件 owner 内创建）
-└── ClipboardView.tsx  ← 纯渲染（读 store + services，交互经回调）
+src/plugins/clipboard/index.tsx
+  ├─ PageSession(lume.clipboard/v1)
+  ├─ page-services/clipboard/service.ts
+  └─ presenters/clipboard-list | clipboard-compact
 ```
 
-关键实现要点（照抄即可避坑）：
-
-- **store 工厂只依赖 `PluginServices`**——rows/selection/viewport 都是
-  自己的信号，不向根索要。
-- 内部数据刷新（撤销/清空/pin/删除后）调 `services.runSearch(query)` 走
-  根管线，而不是自己的 `search`——保持选中复位/zone/令牌语义一致。
-- 视图的悬停选中要同时满足：`hoverSelect` 设置开启 +
-  `services.selectionSource() !== "keyboard"`；点击先
-  `services.markMouse()`。
-- `search` 第一行取令牌：`const token = services.searchToken()`；落地前
-  `token !== services.searchToken()` 则丢弃。
-
-
----
+- 内置 Presenter 切换不重建 `PageService`、模型或选择。
+- 剪贴板 Page Service 只把当前视口窗口内的历史行放进模型。
+- 预览由模型选择驱动，不读取 Presenter DOM。
+- 页面禁用不改变 Rust 剪贴板采集配置。
 
 ## 8. 宿主能力面
 
@@ -1908,18 +1905,16 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
 
 ## 16. 兼容性与版本化
 
-- **宿主 API 版本契约**：宿主实现的版本 = `HOST_PLUGIN_API`（当前
-  **1**，Rust `plugins.rs` 与前端 `types.ts` 双侧镜像）。清单 `api` 字段缺省
-  = 当前版本；声明更高版本 → 加载期拒绝 + 明确提示（前端加载门 + 逻辑宿主
-  二次校验）。演进规则：**破坏性变更必须 bump 版本**；非破坏性新增（新能力、
-  新 hook、新字段）不 bump；废弃的 API 先标注、保留至少一个版本周期后再在
-  bump 时移除。v1 之前以「字段只增不改义」演进的历史照旧成立。
+- **宿主 API 版本契约**：宿主实现的版本 = `HOST_PLUGIN_API`（当前 **2**，
+  Rust `plugins.rs` 与前端 `types.ts` 双侧镜像）。清单必须显式声明
+  `api = 2`；api 1、缺失版本和顶层旧页面字段都会被拒绝，不存在隐式兼容
+  路径。破坏性变更必须 bump 版本；非破坏性新增不 bump。
 - **图标两套是增量字段**：`icon_light`/`icon_dark` 与运行时
   `icon: {light,dark}` 未 bump 版本；旧宿主忽略新字段后回退 `icon`（仍无则
   无图），需要兼容旧宿主的插件保留一个 `icon` 兜底即可。
 - `kind` 是分发键，新增贡献类型会引入新的 kind 值。
-- `ModeInstance.rows` 已泛化为 `PageRow`（`AppEntry | ClipboardItem`，
-  主窗口部件化改造）；任意模式自定义行模型仍留待后续。
+- `ModeInstance` 是启动器内部的 shell adapter，不参与磁盘插件 API 版本；
+  Page Service / Presenter 的公开契约由 `HOST_PLUGIN_API` 版本化。
 - 磁盘插件的 JS 在 blob URL 中执行：可用标准 Web API 与标准 ESM 语法
   （`export`），但**不能 `import` 项目内部模块或第三方包**（无解析根）；
   blob 带 `//# sourceURL=lume-plugin/<id>/<相对路径>`，DevTools 按真实

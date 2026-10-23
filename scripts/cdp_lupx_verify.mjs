@@ -90,11 +90,11 @@ const MAIN_JS = `export default {
     return [{ name: "LUPX 测试条目", description: "lupx-demo provider", path: "https://example.com/" }];
   },
 };`;
-const manifest = (v) => `id = "lupx-demo"\nname = "Lupx Demo"\nversion = "${v}"\nkind = "provider"\ndescription = ".lupx 验证插件"\nentry = "main.js"\n`;
+const manifest = (v) => `id = "lupx-demo"\nname = "Lupx Demo"\nversion = "${v}"\nkind = "provider"\napi = 2\ndescription = ".lupx 验证插件"\nentry = "main.js"\n`;
 
 const ZIP_V1 = makeZip([["plugin.toml", manifest("1.0.0")], ["main.js", MAIN_JS]]);
 const ZIP_V2 = makeZip([["plugin.toml", manifest("2.0.0")], ["main.js", MAIN_JS]]);
-const manifestPerms = (v) => `id = "lupx-demo"\nname = "Lupx Demo"\nversion = "${v}"\nkind = "provider"\ndescription = ".lupx 验证插件"\nentry = "main.js"\npermissions = ["clipboard", "network"]\n`;
+const manifestPerms = (v) => `id = "lupx-demo"\nname = "Lupx Demo"\nversion = "${v}"\nkind = "provider"\napi = 2\ndescription = ".lupx 验证插件"\nentry = "main.js"\npermissions = ["clipboard", "network"]\n`;
 const ZIP_PERMS = makeZip([["plugin.toml", manifestPerms("3.0.0")], ["main.js", MAIN_JS]]);
 const ZIP_SUBDIR = makeZip([
   ["lupx-demo/plugin.toml", manifest("1.0.0")],

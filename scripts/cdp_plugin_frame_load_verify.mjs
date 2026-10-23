@@ -11,20 +11,19 @@
 //
 // 走 Page.reload 路径（同一 bug 在重载后同样可复现，便于注入预文档 shim）。
 import { spawn, execSync } from "node:child_process";
-import { mkdirSync, rmSync, openSync, cpSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, openSync, cpSync } from "node:fs";
 
 const CYCLES = Number(process.argv[2]) || 5;
 const MODE = (process.argv.find((a) => a.startsWith("--mode=")) ?? "--mode=empty").split("=")[1];
-const PLUGIN = "file-search";
+const PLUGIN = "titlebar-demo";
 const PORT = 9243;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
 rmSync("test/frame_load", { recursive: true, force: true });
 mkdirSync("test/frame_load", { recursive: true });
-if (!existsSync(`src-tauri/target/release/plugins/${PLUGIN}`)) {
-  cpSync(`examples/plugins/${PLUGIN}`, `src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true });
-}
+rmSync(`src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true, force: true });
+cpSync(`examples/plugins/${PLUGIN}`, `src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true });
 const fd = openSync("test/frame_load/lume.log", "w");
 spawn("src-tauri/target/release/lume.exe", [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
@@ -96,12 +95,16 @@ for (let i = 1; i <= CYCLES; i++) {
   // dropfirst 要留给看门狗两次机会（首次吞掉 + 700ms 重试）
   await sleep(MODE === "dropfirst" ? 5000 : 3500);
   const writes = await c.evalJs(`window.__srcdocWrites ?? null`);
-  const states = await c.evalJs(`((window).__frameStates||[]).filter((s) => s.reason === "ready").map((s) => s.name === "" ? "view" : s.name)`);
-  const viewReady = Array.isArray(states) && states.includes("view");
+  const runtime = await c.evalJs(`(() => {
+    const r = window.__detachedPageRuntime;
+    const f = document.querySelector("iframe.presenter-frame");
+    return { status: r?.getState?.()?.status ?? null, srcdocLength: (f?.getAttribute("srcdoc") || "").length };
+  })()`);
+  const viewReady = runtime?.status === "ready" && runtime.srcdocLength > 0;
   const emptyWrites = Array.isArray(writes) ? writes.filter((n) => n === 0).length : -1;
   const ok = viewReady && (MODE === "dropfirst" || emptyWrites === 0);
   if (!ok) fail++;
-  console.log(`cycle ${i}: ${ok ? "ok" : "*** FAIL ***"} ready=[${states}] srcdocWrites=[${writes}] emptyWrites=${emptyWrites}`);
+  console.log(`cycle ${i}: ${ok ? "ok" : "*** FAIL ***"} runtime=${JSON.stringify(runtime)} srcdocWrites=[${writes}] emptyWrites=${emptyWrites}`);
   c.ws.close();
   await invoke("plugin_window_close", { id: PLUGIN });
   await sleep(900);

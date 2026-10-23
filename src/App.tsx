@@ -510,6 +510,8 @@ function App() {
       void getCurrentWindow().startDragging();
     },
     setSubInput: (pluginId, opts) => {
+      const probe = window as unknown as { __subInputCalls?: unknown[] };
+      (probe.__subInputCalls ??= []).push({ pluginId, opts, activeMode: mode() });
       // — one owner at a time; `null` releases. Releasing is a no-op when
       // some other plugin holds the box (a plugin can never steal or drop
       // another's ownership by accident).
@@ -528,6 +530,9 @@ function App() {
       const kind = pluginKind(pluginId);
       if (!kind) return false;
       if (kind === "mode") {
+        // A declarative entry is a fresh page session. Drop any frame that
+        // predates this payload before the new Presenter can consume it.
+        dropSessionFrames(pluginId);
         // #48: a payload entry consumes the box — the target page must not be
         // filtered by the entry trigger (matches the pre-#48 empty box).
         consumeSharedQuery();

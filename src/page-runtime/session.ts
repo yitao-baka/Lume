@@ -137,6 +137,10 @@ export class PageSession {
     await this.service?.onQuery?.(query);
   }
 
+  async subInput(text: string): Promise<void> {
+    await this.service?.onSubInput?.(text);
+  }
+
   async show(): Promise<void> { await this.service?.onShow?.(); }
   async hide(): Promise<void> { await this.service?.onHide?.(); }
   async enter(info: unknown): Promise<void> { await this.service?.onEnter?.(info); }

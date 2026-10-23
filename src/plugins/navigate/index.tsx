@@ -82,7 +82,9 @@ export function createNavigatePlugin(
   const instance: ModeInstance = {
     query: page.search.appsQuery,
     setQuery: (q) => {
-      void session.setQuery(q);
+      // Mirror only. App.setQuery runs before handleQuery; provider drill
+      // filters must get the keystroke before the normal search pipeline.
+      page.search.setAppsQuery(q);
     },
     search: async (q) => {
       await session.setQuery(q);

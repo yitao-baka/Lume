@@ -43,7 +43,7 @@ body,
 /* The launcher panel: opaque `--surface`, edge to edge. One uniform color is
    the contract — the same value paints DWM's visible-frame strip (window.rs
    `set_panel_frame_border`) and is the default plugin-page canvas
-   (iframeBridge `injectBridge`), so search row / page / corners / frame strip
+   (page-runtime `presenterBridge`), so search row / page / corners / frame strip
    are one surface with no seam. Do NOT reintroduce: ① a border — the 1px
    hairline read as a bright ring (its arc was the four-corner artifact);
    ② `border-radius` — Win11 rounding is DWM's job; a CSS radius only exposes
@@ -1339,7 +1339,7 @@ body.reorder-dragging {
    search row. Flex-fill (not a `100vh - N` guess): the frame's height follows
    the actual results box, so no strip or clipped row at the bottom. The frame
    element paints nothing — the page's canvas comes from the host-injected
-   default (iframeBridge `injectBridge`), which is the only thing that can
+   default (page-runtime `presenterBridge`), which is the only thing that can
    reach a sandboxed page's root. */
 .plugin-frame {
   flex: 1 1 auto;

@@ -39,13 +39,6 @@ Lume 的开放事项清单：**只记录尚未开始或尚未收尾的工作**�
 
 ### 工程治理
 
-- **页面模型与可替换展示器运行时收口** — 导航、剪贴板和
-  `page_runtime` 磁盘 mode 当前共用 Page Session、序列化 Model、Intent 路由、
-  可替换 Presenter、独立窗口镜像、Presenter 设置控制面和 titlebar 槽位。待收口
-  项：剩余 legacy 自绘 mode 的 Page Service 迁移、`file-search` 与
-  `translator` 的 api 2 清单升级，以及迁移 adapter 和旧 Solid View 外壳契约的
-  移除。契约、所有权和验收门槛见
-  [PAGE_MODEL_PRESENTER.md](PAGE_MODEL_PRESENTER.md)
 - **搜索源 provider 化** — 把原生索引 / 文件搜索抽成 first-party
   `SearchSource`，与插件 provider 走同一合并管线
 - **逐击键路径的异步化** — `search_apps` 等仍在主线程的命令，若输入卡顿

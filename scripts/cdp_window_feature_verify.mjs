@@ -40,13 +40,28 @@ rmSync(TEST_PLUGIN, { recursive: true, force: true });
 mkdirSync(TEST_PLUGIN, { recursive: true });
 writeFileSync(
   `${TEST_PLUGIN}/plugin.toml`,
-  'id = "window-test"\nname = "Window Test"\nkind = "provider"\nentry = "main.js"\npermissions = ["window"]\n\n' +
+  'id = "window-test"\nname = "Window Test"\nkind = "provider"\napi = 2\nentry = "main.js"\npermissions = ["window"]\n\n' +
     '[[features]]\ncode = "editor"\nlabel = "窗口工具：编辑器（process）"\ntype = "window"\nprocess = ["powershell", "pwsh"]\n\n' +
     '[[features]]\ncode = "editor-verified"\nlabel = "窗口工具：编辑器（验证用）"\ntype = "window"\nprocess = ["powershell", "pwsh"]\ntitle = ["LUME_WINDOW_B"]\n'
 );
 writeFileSync(
   `${TEST_PLUGIN}/main.js`,
   'export default function create(ctx) { return { async search(q) { return []; }, onFeature(info) { const w = info.window ?? {}; ctx.app.toast("命中窗口规则「" + info.code + "」：进程 " + w.process + "｜类名 " + w.className + "｜标题「" + w.title + "」"); } }; }\n'
+);
+
+// A valid api 2 provider without the `window` capability, used for the
+// fail-closed permission probe. It is generated locally so the assertion does
+// not depend on whatever copy of an example happens to be installed.
+const NO_WINDOW_PLUGIN = `${BASE}/plugins/no-window-test`;
+rmSync(NO_WINDOW_PLUGIN, { recursive: true, force: true });
+mkdirSync(NO_WINDOW_PLUGIN, { recursive: true });
+writeFileSync(
+  `${NO_WINDOW_PLUGIN}/plugin.toml`,
+  'id = "no-window-test"\nname = "No Window Test"\nversion = "1.0.0"\nkind = "provider"\napi = 2\nentry = "main.js"\n'
+);
+writeFileSync(
+  `${NO_WINDOW_PLUGIN}/main.js`,
+  'export default { async search() { return []; } };\n'
 );
 
 // Fixture windows: A has no marker (AND-rule negative), B carries the ASCII
@@ -330,7 +345,7 @@ check("前台不再是编辑器：process 规则消失",
   !names.some((n) => n.includes("窗口工具：编辑器（process）")), JSON.stringify(names.filter((n) => n.includes("窗口"))));
 
 // ── ⑤ app.foreground：权限拒绝 + 放行形状 ──
-const denied = await tryInvoke("plugin_foreground_context", { pluginId: "web-search" });
+const denied = await tryInvoke("plugin_foreground_context", { pluginId: "no-window-test" });
 check("未声明 window 权限 → 明确拒绝",
   denied.err && denied.err.includes("window"), denied.err);
 const granted = await tryInvoke("plugin_foreground_context", { pluginId: "window-test" });

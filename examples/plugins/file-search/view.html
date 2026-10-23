@@ -3,213 +3,76 @@
 <head>
 <meta charset="utf-8">
 <style>
-  body { font: 13px "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0;
-         background: transparent; color: inherit; user-select: none;
-         overflow: hidden; }
+  :root { color-scheme: light dark; }
+  body { font: 13px "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background: transparent; color: inherit; user-select: none; overflow: hidden; }
   #hint { padding: 26px 24px; opacity: .55; line-height: 1.7; }
-  #meta { position: fixed; right: 14px; top: 12px; font-size: 11px;
-          opacity: .45; pointer-events: none; }
-  #building { padding: 6px 24px 0; font-size: 12px; opacity: .7; }
+  #meta { position: fixed; right: 14px; top: 12px; font-size: 11px; opacity: .45; pointer-events: none; }
   #backend { padding: 6px 24px 0; font-size: 11px; opacity: .55; }
-  #list .empty { padding: 20px 24px; opacity: .55; line-height: 1.7; }
-  #list { position: absolute; top: 30px; bottom: 0; left: 0; right: 0;
-          overflow-y: auto; padding-bottom: 10px; }
-  .row { display: flex; align-items: center; gap: 12px; padding: 6px 18px 6px 14px;
-         border-left: 3px solid transparent; }
+  #list { position: absolute; top: 30px; bottom: 0; left: 0; right: 0; overflow-y: auto; padding-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 6px 18px 6px 14px; border-left: 3px solid transparent; }
   .row.sel { background: rgba(128,150,200,.22); border-left-color: rgba(120,160,255,.9); }
-  .glyph { flex: 0 0 34px; height: 34px; border-radius: 8px; display: flex;
-           align-items: center; justify-content: center; font-size: 12px;
-           font-weight: 600; background: rgba(128,128,128,.16); }
-  .glyph.dir { font-size: 17px; }
+  .glyph { flex: 0 0 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; background: rgba(128,128,128,.16); }
   .body { flex: 1 1 auto; min-width: 0; }
   .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .path { font-size: 11px; opacity: .55; white-space: nowrap; overflow: hidden;
-          text-overflow: ellipsis; direction: rtl; text-align: left; }
-  .copy { flex: 0 0 auto; opacity: 0; font-size: 11px; padding: 3px 9px;
-          border: 1px solid rgba(128,128,128,.5); border-radius: 6px;
-          background: transparent; color: inherit; cursor: pointer; }
+  .path { font-size: 11px; opacity: .55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  .copy { flex: 0 0 auto; opacity: 0; font-size: 11px; padding: 3px 9px; border: 1px solid rgba(128,128,128,.5); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
   .row.sel .copy, .row:hover .copy { opacity: .8; }
-  .copy:hover { background: rgba(128,128,128,.2); }
+  .empty { padding: 20px 24px; opacity: .55; line-height: 1.7; }
 </style>
 </head>
 <body>
-  <div id="building" style="display:none">⏳ LumeSVC 索引构建中 — 结果可能不全</div>
   <div id="backend"></div>
   <div id="meta"></div>
-  <div id="hint">输入以搜索全盘文件 — Everything / LumeSVC 引擎自动选择<br>
-    <span style="font-size:12px">↑/↓ 选择 · Enter 打开 · Ctrl+Enter 复制路径 · 点击打开</span></div>
+  <div id="hint">输入以搜索全盘文件 — 结果来自 Page Service<br><span style="font-size:12px">↑↓ 选择 · Enter 打开 · Ctrl+Enter 复制路径 · 点击打开</span></div>
   <div id="list"></div>
   <script>
+  (async function () {
+    var model = await lume.page.ready();
     var list = document.getElementById("list");
     var hint = document.getElementById("hint");
-    var hintDefault = hint.innerHTML;
-    var meta = document.getElementById("meta");
-    var building = document.getElementById("building");
-    var backendLine = document.getElementById("backend");
-    var rows = [];        // [{name, path, isFolder}]
-    var sel = 0;
-    var seq = 0;          // stale-response guard
-    var timer = null;
-    var lastQuery = "";
-    // Explicit empty-state reason. Never infer it from an empty row list:
-    // "backend unavailable", "index building", "searching" and "no match"
-    // are four different user-facing outcomes.
-    var emptyState = null; // null | "backend" | "building" | "searching" | "noresult"
-
-    // 后端就绪探测（search.status，权限同 search.files）：不发起查询就能
-    // 知道现在会用哪个后端、索引是否可用 —— 用户还没输入也看得到状态。
-    function renderBackend(backend, status, svc) {
-      var files = svc && svc.files ? "（" + svc.files + " 个文件）" : "";
-      if (backend === "everything") {
-        backendLine.textContent = "后端：Everything 运行中（实时索引）";
-      } else if (backend === "svc" && status === "ready") {
-        backendLine.textContent = "后端：LumeSVC USN 索引就绪" + files;
-      } else if (backend === "svc" && status === "building") {
-        backendLine.textContent = "后端：LumeSVC 索引构建中，结果可能不全" + files;
-      } else if (backend === "svc") {
-        backendLine.textContent = "后端：LumeSVC 索引不可用"
-          + (svc && svc.state ? "（state: " + svc.state + "）" : "");
-      } else {
-        backendLine.textContent = "后端：不可用 — 需要正在运行的 Everything，"
-          + "或已安装并启动 LumeSVC 服务";
+    function esc(text) { return String(text).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
+    function ext(name) { return String(name).split(".").pop().toUpperCase().slice(0, 4); }
+    function render(next) {
+      if (!next) return;
+      model = next;
+      var data = next.data || {};
+      var items = data.items || [];
+      document.getElementById("backend").textContent = data.notice || "";
+      document.getElementById("meta").textContent = (data.backend || "") + " · " + items.length + " 项";
+      hint.style.display = items.length ? "none" : "block";
+      if (!items.length) {
+        list.innerHTML = '<div class="empty">' + esc(data.empty || "无结果") + '</div>';
+        return;
       }
+      list.innerHTML = items.map(function (item) {
+        return '<div class="row' + (item.id === data.selectedId ? " sel" : "") + '" data-id="' + esc(item.id) + '">'
+          + '<div class="glyph">' + esc(ext(item.label)) + '</div>'
+          + '<div class="body"><div class="name">' + esc(item.label) + '</div>'
+          + '<div class="path">' + esc(item.description || "") + '&nbsp;</div></div>'
+          + '<button class="copy" data-copy="' + esc(item.id) + '">复制路径</button></div>';
+      }).join("");
     }
-
-    lume.search.status().then(function (s) {
-      if (s) renderBackend(s.backend, s.status, s.svc);
-    }).catch(function (err) {
-      console.error("[file-search] status probe failed:", err);
+    document.addEventListener("click", function (event) {
+      var copy = event.target.closest("[data-copy]");
+      if (copy) {
+        lume.page.dispatch({ type: "item.action", targetId: copy.dataset.copy, actionId: "copy-path" });
+        return;
+      }
+      var row = event.target.closest(".row");
+      if (row) lume.page.dispatch({ type: "item.activate", targetId: row.dataset.id });
     });
-
-    function esc(s) {
-      var d = document.createElement("div");
-      d.textContent = s == null ? "" : String(s);
-      return d.innerHTML;
-    }
-
-    function ext(name) {
-      var i = name.lastIndexOf(".");
-      return i > 0 ? name.slice(i + 1, i + 5).toUpperCase() : "FILE";
-    }
-
-    function render() {
-      building.style.display = "none";
-      if (!lastQuery) {
-        list.innerHTML = "";
-        hint.innerHTML = hintDefault;
-        hint.style.display = "block";
-        meta.textContent = "";
-        return;
+    lume.on.key = function (key) {
+      var items = model.data.items || [];
+      var index = items.findIndex(function (item) { return item.id === model.data.selectedId; });
+      if (key.key === "ArrowDown") lume.page.dispatch({ type: "selection.move", payload: { delta: 1 } });
+      else if (key.key === "ArrowUp") lume.page.dispatch({ type: "selection.move", payload: { delta: -1 } });
+      else if (key.key === "Enter" && items[index]) {
+        lume.page.dispatch({ type: key.ctrlKey ? "item.action" : "item.activate", targetId: items[index].id, actionId: key.ctrlKey ? "copy-path" : undefined });
       }
-      if (emptyState === "backend") {
-        list.innerHTML = "";
-        hint.innerHTML = "文件搜索后端不可用 — 需要正在运行的 Everything，"
-          + "或已安装并启动 LumeSVC 服务";
-        hint.style.display = "block";
-        return;
-      }
-      hint.style.display = "none";
-      if (!rows.length) {
-        var text = emptyState === "searching"
-          ? "搜索中…"
-          : emptyState === "building"
-            ? "LumeSVC 正在建立索引，完成前可能还搜不到文件"
-            : "无结果";
-        list.innerHTML = '<div class="empty">' + text + "</div>";
-        return;
-      }
-      var html = "";
-      for (var i = 0; i < rows.length; i++) {
-        var r = rows[i];
-        html += '<div class="row' + (i === sel ? " sel" : "") + '" data-i="' + i + '">'
-          + '<div class="glyph' + (r.isFolder ? " dir" : "") + '">'
-          + (r.isFolder ? "📁" : esc(ext(r.name))) + "</div>"
-          + '<div class="body"><div class="name">' + esc(r.name) + "</div>"
-          + '<div class="path">' + esc(r.path) + "&nbsp;</div></div>"
-          + '<button class="copy" data-i="' + i + '">复制路径</button></div>';
-      }
-      list.innerHTML = html;
-      var el = list.querySelector(".row.sel");
-      if (el) el.scrollIntoView({ block: "nearest" });
-    }
-
-    function search(q) {
-      lastQuery = q;
-      var token = ++seq;
-      if (!q) { rows = []; sel = 0; emptyState = null; render(); return; }
-      emptyState = "searching";
-      rows = [];
-      sel = 0;
-      render();
-      lume.search.files(q, 50).then(function (out) {
-        if (token !== seq) return; // a newer query already landed
-        rows = (out && out.entries) || [];
-        sel = 0;
-        meta.textContent = (out ? out.backend : "") + " · " + rows.length + " 项";
-        if (out && out.status === "building") building.style.display = "block";
-        if (out && out.backend === "none") {
-          emptyState = "backend";
-          rows = [];
-        } else if (!rows.length && out && out.status === "building") {
-          emptyState = "building";
-        } else if (!rows.length) {
-          emptyState = "noresult";
-        } else {
-          emptyState = null;
-        }
-        render();
-      }).catch(function () {
-        if (token !== seq) return;
-        rows = [];
-        emptyState = "backend";
-        render();
-      });
-    }
-
-    function openRow(i) {
-      var r = rows[i];
-      if (!r) return;
-      lume.app.openPath(r.path);   // launch_app → 文件/文件夹都走 ShellExecuteW
-      lume.app.hide();
-    }
-
-    lume.on.query = function (q) {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(function () { search(q || ""); }, 60);
     };
-    lume.on.show = function () { sel = 0; render(); };
-    lume.on.key = function (k) {
-      if (!rows.length) return;
-      if (k.key === "ArrowDown") { sel = Math.min(sel + 1, rows.length - 1); render(); }
-      else if (k.key === "ArrowUp") { sel = Math.max(sel - 1, 0); render(); }
-      else if (k.key === "PageDown") { sel = Math.min(sel + 8, rows.length - 1); render(); }
-      else if (k.key === "PageUp") { sel = Math.max(sel - 8, 0); render(); }
-      else if (k.key === "Home") { sel = 0; render(); }
-      else if (k.key === "End") { sel = rows.length - 1; render(); }
-      else if (k.key === "Enter" && k.ctrlKey) {
-        var r = rows[sel];
-        if (r) {
-          lume.clipboard.writeText(r.path);
-          lume.app.toast("已复制路径");
-        }
-      } else if (k.key === "Enter") { openRow(sel); }
-    };
-
-    list.addEventListener("click", function (e) {
-      var btn = e.target.closest(".copy");
-      if (btn) {
-        var r = rows[+btn.dataset.i];
-        if (r) { lume.clipboard.writeText(r.path); lume.app.toast("已复制路径"); }
-        e.stopPropagation();
-        return;
-      }
-      var row = e.target.closest(".row");
-      if (row) { sel = +row.dataset.i; openRow(sel); }
-    });
-    list.addEventListener("mousemove", function (e) {
-      var row = e.target.closest(".row");
-      if (row && sel !== +row.dataset.i) { sel = +row.dataset.i; render(); }
-    });
+    lume.page.subscribe(render);
+    render(model);
+  })();
   </script>
 </body>
 </html>

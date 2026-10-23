@@ -7,13 +7,15 @@
 # otherwise). ↑/↓ select, Enter opens, Ctrl+Enter copies the path, click opens.
 id = "file-search"
 name = "文件秒搜"
-version = "1.0.0"
+version = "2.0.0"
 kind = "mode"
 api = 2
 description = "全盘文件秒搜模式：宿主 search.files 能力（Everything / LumeSVC 引擎）+ 键盘导航"
 keywords = ["秒搜", "file"]
+entry = "service.js"
 permissions = ["search.files", "clipboard"] # 起强制：宿主 search.files 能力 + 复制路径
 model = "lume.collection/v1"
+page_runtime = true
 default_presenter = "default"
 height = 560          # 本模式页面的窗口高度（逻辑 px）
 
@@ -21,4 +23,10 @@ height = 560          # 本模式页面的窗口高度（逻辑 px）
 id = "default"
 name = "Default"
 entry = "view.html"
+models = ["lume.collection/v1"]
+
+[[presenters]]
+id = "compact"
+name = "Compact"
+entry = "compact.html"
 models = ["lume.collection/v1"]

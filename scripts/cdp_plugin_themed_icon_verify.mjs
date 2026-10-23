@@ -36,12 +36,38 @@ mkdirSync(FIX, { recursive: true });
 writeFileSync(`${FIX}/plugin.toml`, `# 任务栏图标 #44 回归夹具（脚本自建，仅测试用）。
 id = "themed-window"
 name = "Themed Window"
+version = "2.0.0"
 kind = "mode"
-view = "view.html"
+api = 2
+entry = "service.js"
+model = "lume.collection/v1"
+page_runtime = true
+default_presenter = "default"
 detachable = true
 keywords = ["themedwin"]
 icon_light = "light.svg"
 icon_dark = "dark.svg"
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]
+`);
+writeFileSync(`${FIX}/service.js`, `export default function create() {
+  let revision = 0;
+  return {
+    getModel() {
+      return {
+        runtime: "lume.page/v1",
+        schema: "lume.collection/v1",
+        revision: ++revision,
+        status: "ready",
+        data: { items: [], total: 0, window: { offset: 0, limit: 0 } },
+      };
+    },
+  };
+}
 `);
 writeFileSync(`${FIX}/view.html`, `<!doctype html><html><body style="margin:0;font:13px sans-serif;background:inherit"></body></html>`);
 writeFileSync(`${FIX}/light.svg`, `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" fill="#2e8b57"/></svg>`);
@@ -54,11 +80,37 @@ const FIX_LEGACY = `${OUT}/fixture/themed-window-legacy`;
 mkdirSync(FIX_LEGACY, { recursive: true });
 writeFileSync(`${FIX_LEGACY}/plugin.toml`, `id = "themed-window-legacy"
 name = "Themed Window Legacy"
+version = "2.0.0"
 kind = "mode"
-view = "view.html"
+api = 2
+entry = "service.js"
+model = "lume.collection/v1"
+page_runtime = true
+default_presenter = "default"
 detachable = true
 keywords = ["themedlegacy"]
 icon = "light.svg"
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]
+`);
+writeFileSync(`${FIX_LEGACY}/service.js`, `export default function create() {
+  let revision = 0;
+  return {
+    getModel() {
+      return {
+        runtime: "lume.page/v1",
+        schema: "lume.collection/v1",
+        revision: ++revision,
+        status: "ready",
+        data: { items: [], total: 0, window: { offset: 0, limit: 0 } },
+      };
+    },
+  };
+}
 `);
 writeFileSync(`${FIX_LEGACY}/view.html`, `<!doctype html><html><body style="margin:0;font:13px sans-serif;background:inherit"></body></html>`);
 writeFileSync(`${FIX_LEGACY}/light.svg`, `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" fill="#2e8b57"/></svg>`);

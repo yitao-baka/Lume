@@ -6,7 +6,9 @@ name = "Sandbox Probe"
 kind = "mode"
 api = 2
 keywords = ["sbprobe"]
+entry = "service.js"
 model = "lume.collection/v1"
+page_runtime = true
 default_presenter = "default"
 
 [[presenters]]

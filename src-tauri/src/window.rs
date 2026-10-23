@@ -952,7 +952,7 @@ pub fn clear_dwm_border(win: &WebviewWindow) {
 /// light-gray ring around the whole window (historically the Acrylic backdrop,
 /// nowadays the desktop shining through the transparent window). The launcher
 /// panel is opaque `--surface` (src/App.css `.launcher`) and so is the default
-/// plugin-page canvas (`injectBridge`), so painting the strip in that same
+/// plugin-page canvas (the Presenter bridge), so painting the strip in that same
 /// value makes panel, strip and page read as one uniform surface — corners
 /// included, since DWM rounds them. Do not give the strip its own color or
 /// make the panel translucent: the two can never match over an arbitrary

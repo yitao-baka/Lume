@@ -11,9 +11,10 @@ kind = "mode"
 api = 2
 description = "示例模式插件：iframe 自由 UI + 插件存储 + toast + 剪贴板 + 自定窗口高度 + 自定搜索框占位文字 + 独立窗口分离 + 本插件颜色模式（theme.set）"
 keywords = ["hello", "你好"]
-entry = "main.js"     # 可选 — 逻辑钩子（onQuery/onShow/onHide）
+entry = "service.js"
 permissions = ["clipboard"] # 起强制：示例页要用剪贴板读写
 model = "lume.collection/v1"
+page_runtime = true
 default_presenter = "default"
 height = 560          # 可选 — 本模式页面的窗口高度（逻辑 px）；省略 = 全局设置高度
 detachable = true # — 允许分离为独立窗口（模式页右上角悬停显现按钮）

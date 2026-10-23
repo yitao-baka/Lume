@@ -8,12 +8,14 @@
 # #tb = payload + "-TB"，用于区分两帧）。
 id = "state-probe"
 name = "State Probe"
-version = "1.0.0"
+version = "2.0.0"
 kind = "mode"
 api = 2
 description = "会话与分离状态探针（docs/ROADMAP_HISTORY.md #40 验证夹具）"
 keywords = ["stateprobe", "状态探针"]
+entry = "service.js"
 model = "lume.collection/v1"
+page_runtime = true
 default_presenter = "default"
 height = 480
 detachable = true

@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <title>State Probe</title>
 <style>
-  body { font: 13px "Segoe UI", sans-serif; margin: 0; padding: 14px; }
+  :root { color-scheme: light dark; }
+  body { font: 13px "Segoe UI", sans-serif; margin: 0; padding: 14px; background: transparent; color: inherit; }
   .row { margin: 8px 0; }
   input[type="text"] { width: 320px; }
   #note { border: 1px dashed rgba(128,128,128,.5); padding: 6px; min-height: 20px; }
@@ -15,37 +16,45 @@
 <body>
   <div class="row"><input id="src" type="text" placeholder="src"></div>
   <div class="row"><label><input id="flag" type="checkbox"> flag</label></div>
-  <div class="row">
-    <select id="multi" multiple size="3">
-      <option value="a">a</option>
-      <option value="b">b</option>
-      <option value="c">c</option>
-    </select>
-  </div>
-  <div class="row"><div id="note" contenteditable="true">note…</div></div>
+  <div class="row"><select id="multi" multiple size="3"><option value="a">a</option><option value="b">b</option><option value="c">c</option></select></div>
+  <div class="row"><div id="note" contenteditable="true">note</div></div>
   <div class="row"><input id="jsn" type="text" readonly placeholder="js counter"> <input id="scrollmirror" type="text" readonly placeholder="scrollTop"></div>
   <div class="row"><input id="evt" type="text" readonly placeholder="last event" style="width:320px"></div>
   <div id="scroller"><div style="height:600px">scrollable content</div></div>
   <script>
-    var n = 0;
+  (async function () {
+    var model = await lume.page.ready();
     var src = document.getElementById("src");
     var flag = document.getElementById("flag");
     var multi = document.getElementById("multi");
     var note = document.getElementById("note");
+    var jsn = document.getElementById("jsn");
     var scroller = document.getElementById("scroller");
     var mirror = document.getElementById("scrollmirror");
+    var evt = document.getElementById("evt");
     var late = null;
 
-    function setN(v) {
-      n = v;
-      document.getElementById("jsn").value = String(n);
+    function render(next) {
+      if (!next) return;
+      model = next;
+      var data = next.data || {};
+      var fields = data.fields || {};
+      src.value = fields.src || "";
+      flag.checked = !!fields.flag;
+      Array.from(multi.options).forEach(function (option) { option.selected = (fields.multi || []).indexOf(option.value) >= 0; });
+      if (note.innerText !== String(fields.note || "")) note.innerText = String(fields.note || "");
+      // #jsn is Presenter-local state: it survives hide/show and frame
+      // snapshots, but is not part of the Page Model. A fresh mount starts at
+      // the empty placeholder; a declarative re-entry drops stale frames.
+      mirror.value = String(fields.scroll == null ? "0" : fields.scroll);
+      scroller.scrollTop = Number(fields.scroll || 0);
+      evt.value = fields.lastEvent || "";
+      if (late) late.value = fields.late || "";
+      lume.page.reportLayout({ sizing: "fixed", height: 480 });
     }
-    scroller.addEventListener("scroll", function () {
-      mirror.value = String(scroller.scrollTop);
-    });
-
-    // 「迟到 DOM」（docs/ROADMAP_HISTORY.md #40 验证）：load 后 600ms 才插入。宿主恢复若在
-    // ready 时立刻应用会错过它——必须靠恢复重试在插入后补上。
+    function dispatchField(id, value, checked, selected) {
+      lume.page.dispatch({ type: "item.action", actionId: "set-field", payload: { id: id, value: value, checked: checked, selected: selected } });
+    }
     setTimeout(function () {
       if (document.getElementById("late")) return;
       late = document.createElement("input");
@@ -54,37 +63,24 @@
       late.placeholder = "late";
       late.style.width = "220px";
       document.body.appendChild(late);
+      late.addEventListener("input", function () { dispatchField("late", late.value); });
+      render(model);
+      late.dispatchEvent(new Event("input", { bubbles: true }));
     }, 600);
-
-    var evt = document.getElementById("evt");
-    function mark(v) { if (evt) evt.value = String(v).slice(0, 60); }
-    lume.on.query = function (q) {
-      var t = String(q == null ? "" : q);
-      mark("q:" + t);
-      var m;
-      if ((m = /^src:(.*)$/.exec(t))) src.value = m[1];
-      else if (t === "flag:on") flag.checked = true;
-      else if (t === "flag:off") flag.checked = false;
-      else if ((m = /^multi:(.*)$/.exec(t))) {
-        var want = m[1].split(",");
-        for (var i = 0; i < multi.options.length; i++) {
-          multi.options[i].selected = want.indexOf(multi.options[i].value) !== -1;
-        }
-      }
-      else if ((m = /^note:(.*)$/.exec(t))) note.innerText = m[1];
-      else if ((m = /^js:(\d+)$/.exec(t))) setN(Number(m[1]));
-      else if ((m = /^scroll:(\d+)$/.exec(t))) scroller.scrollTop = Number(m[1]);
-      else if ((m = /^late:(.*)$/.exec(t)) && late) late.value = m[1];
-      // late 不存在时刻意不缓存：这条路径要留给「宿主恢复重试」验证。
+    src.addEventListener("input", function () { dispatchField("src", src.value); });
+    flag.addEventListener("change", function () { dispatchField("flag", "", flag.checked); });
+    multi.addEventListener("change", function () { dispatchField("multi", "", false, Array.from(multi.selectedOptions).map(function (o) { return o.value; })); });
+    note.addEventListener("input", function () { dispatchField("note", note.innerText); });
+    scroller.addEventListener("scroll", function () { mirror.value = String(scroller.scrollTop); dispatchField("scrollmirror", mirror.value); });
+    lume.on.query = function (query) {
+      var match = /^js:(\d+)$/.exec(String(query || ""));
+      if (match) jsn.value = match[1];
     };
-    lume.on.enter = function (info) {
-      mark("enter:" + (info && info.payload));
-      if (info && info.payload != null) src.value = String(info.payload);
-    };
-    lume.on.snapshot = function () { return { n: n }; };
-    lume.on.restore = function (s) {
-      if (s && typeof s.n === "number") setN(s.n);
-    };
+    lume.on.snapshot = function () { return { n: Number(jsn.value || 0) }; };
+    lume.on.restore = function (snapshot) { if (snapshot && snapshot.n != null) jsn.value = String(snapshot.n); };
+    lume.page.subscribe(render);
+    render(model);
+  })();
   </script>
 </body>
 </html>

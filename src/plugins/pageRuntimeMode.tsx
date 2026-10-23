@@ -8,6 +8,7 @@ import type { PageIntent, PageModel, PageService, PresenterDescriptor } from "..
 import { COLLECTION_SCHEMA, type CollectionModel } from "../page-runtime/schemas";
 import { PageSession } from "../page-runtime/session";
 import { createPresenterBridge, type PresenterBridge } from "../page-runtime/presenterBridge";
+import { dropSessionFrames, takeSessionFrames } from "../launcher/session";
 import { normalizePluginColorMode } from "../theme";
 import type {
   ModeInstance,
@@ -46,6 +47,7 @@ export interface PageRuntimeMode {
   currentPresenterSettings(): Record<string, Record<string, unknown>>;
   titlebarView: Component;
   titlebarAvailable: () => boolean;
+  snapshotTitlebar(): Promise<unknown | null>;
   titlebarLive: () => boolean;
   postTitlebar(type: string, payload?: unknown): void;
   postEvent(type: string, payload?: unknown): void;
@@ -108,6 +110,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       return (result as never) ?? { status: "accepted" };
     },
     onQuery: async (q) => { await deps.callService("onQuery", q); },
+    onSubInput: async (text) => { await deps.callService("onSubInput", text); },
     onShow: async () => { await deps.callService("onShow"); },
     onHide: async () => { await deps.callService("onHide"); },
     onEnter: async (info) => { await deps.callService("onEnter", info); },
@@ -179,7 +182,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       form: deps.form,
       session: session!,
       titlebar,
-      iframeClass: titlebar ? "plugin-frame titlebar-frame" : "plugin-frame presenter-frame",
+      iframeClass: titlebar ? "titlebar-frame" : "plugin-frame presenter-frame",
       showToast: (text: string, opts?: { undo?: () => void; duration?: number }) =>
         deps.services.showToast(text, opts),
       resizeWindow: (width?: number, height?: number) =>
@@ -194,6 +197,12 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
         await deps.applyTheme(pref);
       },
       settings: () => presenterSettings[declared.id] ?? {},
+      // The launcher restores a saved frame only after the replacement
+      // Presenter is live. Detached windows receive their frames from the
+      // authoritative launcher through plugin-state instead.
+      ...(deps.form === "launcher" && !titlebar
+        ? { takeSnapshot: () => takeSessionFrames(m.id, ["view"])?.view ?? null }
+        : {}),
     };
   }
 
@@ -285,16 +294,19 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
   const instance: ModeInstance = {
     query,
     setQuery: (q) => {
+      // Mirror only; the shell's runSearch() invokes search() once after
+      // handleQuery interception has had a chance to claim the keystroke.
       setQuery(q);
-      void session?.setQuery(q);
     },
     search: async (q) => {
       setQuery(q);
       await session?.setQuery(q);
+      postBoth("query", q);
       deps.services.scheduleResize();
     },
     reset: () => {
-      setQuery("");
+      // Summon reset is page-state scoped; the session query is preserved
+      // unless the shell explicitly calls setQuery("") (idle reset / user input).
       setSelected(0);
     },
     selected,
@@ -309,9 +321,19 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       const id = selectedId(model, selected());
       if (id) void session?.dispatch({ type: "item.activate", targetId: id });
     },
-    onKey: (_e: KeyboardEvent, _ctx: ModeKeyContext) => {
-      // The Presenter receives in-page DOM keys directly. Forwarded keys are
-      // replayed through lume.on.key for pages that use the semantic surface.
+    onSubInput: (text) => {
+      void session?.subInput(text);
+    },
+    onKey: (e: KeyboardEvent, _ctx: ModeKeyContext) => {
+      // The Presenter already saw the original DOM key. The host-routed copy
+      // is replayed through lume.on.key for pages that use the semantic
+      // surface; returning false lets the shell keep its own Tab/Esc routing.
+      bridge?.post("key", {
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+      });
       return false;
     },
     openContextMenu: () => false,
@@ -342,7 +364,13 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     },
     onShow: async () => { await session?.show(); },
     onHide: async () => { await session?.hide(); },
-    onEnter: (info) => { void session?.enter(info); postBoth("enter", info); },
+    onEnter: (info) => {
+      // A new declarative entry is a new page session payload: stale
+      // view/titlebar frames from the previous visit must not overwrite it.
+      dropSessionFrames(m.id);
+      void session?.enter(info);
+      postBoth("enter", info);
+    },
     onSettings: (values) => { void session?.settings(values); postBoth("settings", values); },
     onFilesDropped: (paths) => { void session?.filesDropped(paths); },
     snapshot: () => bridge?.snapshot() ?? Promise.resolve(null),
@@ -389,6 +417,9 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
         case "onQuery":
           await session!.setQuery(String(args.query ?? ""));
           return null;
+        case "onSubInput":
+          await session!.subInput(String(args.text ?? ""));
+          return null;
         case "onShow":
           await session!.show();
           return null;
@@ -396,6 +427,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
           await session!.hide();
           return null;
         case "onEnter":
+          dropSessionFrames(m.id);
           await session!.enter(args.info);
           return null;
         case "onSettings":
@@ -414,10 +446,15 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     currentPresenterSettings: () => presenterSettings,
     titlebarView: TitlebarView,
     titlebarAvailable: () => Boolean(titlebarView()),
+    snapshotTitlebar: () => titlebarBridge?.snapshot() ?? Promise.resolve(null),
     titlebarLive: () => titlebarBridge?.live() ?? false,
     postTitlebar: (type, payload) => titlebarBridge?.post(type, payload),
     postEvent: (type, payload) => postBoth(type, payload),
-    postTheme: (mode) => postBoth("theme", mode),
+    postTheme: (mode) => {
+      postBoth("theme", mode);
+      const probe = window as unknown as { __presenterThemes?: unknown[] };
+      (probe.__presenterThemes ??= []).push({ pageId: m.id, mode });
+    },
     switchPresenter: async (presenterId) => {
       if (!m.presenters.some((presenter) => presenter.id === presenterId)) {
         throw new Error(`unknown Presenter "${presenterId}"`);

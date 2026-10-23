@@ -7,12 +7,13 @@ import { spawn, execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 const CDP_PORT = 9222;
-const APP = "src-tauri/target/release/lume.exe";
+const APP = "src-tauri/target/debug/lume.exe";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Clean slate: stop any prior instance so the single-instance mutex is free.
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
+try { execSync("taskkill /F /IM msedgewebview2.exe 2>NUL", { stdio: "ignore" }); } catch {}
 
 const app = spawn(APP, [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}` },
@@ -24,7 +25,9 @@ async function getWsUrl() {
     try {
       const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`);
       const targets = await res.json();
-      const page = targets.find((t) => t.type === "page");
+      const page = targets.find(
+        (t) => t.type === "page" && t.url.includes("tauri.localhost")
+      );
       if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl;
     } catch {}
     await sleep(500);
@@ -45,14 +48,23 @@ async function probeLauncher(url) {
   w.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pend.has(m.id)) { pend.get(m.id)(m); pend.delete(m.id); } };
   const snd = (method, params) => new Promise((res) => { const k = ++i; pend.set(k, res); w.send(JSON.stringify({ id: k, method, params })); });
   await new Promise((res, rej) => { w.onopen = res; w.onerror = rej; });
-  const r = await snd("Runtime.evaluate", { expression: "!!document.querySelector('.search')", returnByValue: true });
+  const r = await snd("Runtime.evaluate", { expression: "!!document.getElementById('search-input')", returnByValue: true });
   w.close();
   return r.result?.result?.value === true;
 }
 
 let wsUrl = null;
-for (const t of targets.filter((x) => x.type === "page")) {
-  if (await probeLauncher(t.webSocketDebuggerUrl)) { wsUrl = t.webSocketDebuggerUrl; break; }
+for (let attempt = 0; attempt < 40 && !wsUrl; attempt++) {
+  targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json().catch(() => []);
+  for (const t of targets.filter(
+    (x) => x.type === "page" && x.url.includes("tauri.localhost")
+  )) {
+    if (await probeLauncher(t.webSocketDebuggerUrl)) {
+      wsUrl = t.webSocketDebuggerUrl;
+      break;
+    }
+  }
+  if (!wsUrl) await sleep(300);
 }
 if (!wsUrl) throw new Error("launcher page not found");
 console.log("[smoke] using launcher ws:", wsUrl);

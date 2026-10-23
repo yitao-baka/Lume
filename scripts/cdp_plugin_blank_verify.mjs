@@ -13,7 +13,7 @@ import { writeFileSync, mkdirSync, rmSync, openSync, cpSync, existsSync } from "
 
 const CYCLES = Number(process.argv[2]) || 20;
 const KEEP = process.argv.includes("--keep");
-const PLUGIN = (process.argv.find((a) => a.startsWith("--plugin=")) ?? "--plugin=file-search").split("=")[1];
+const PLUGIN = (process.argv.find((a) => a.startsWith("--plugin=")) ?? "--plugin=titlebar-demo").split("=")[1];
 const PORT = 9233;
 const APP = "src-tauri/target/release/lume.exe";
 
@@ -22,11 +22,10 @@ try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {
 mkdirSync("test/blank_repro", { recursive: true });
 rmSync("test/blank_repro", { recursive: true, force: true });
 mkdirSync("test/blank_repro", { recursive: true });
-// Fixture: prefer the installed copy (the file-search fixture ships here with
-// titlebar + detachable); fall back to the example.
-if (!existsSync(`src-tauri/target/release/plugins/${PLUGIN}`)) {
-  cpSync(`examples/plugins/${PLUGIN}`, `src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true });
-}
+// Fixture: prefer the installed copy (the default titlebar-demo fixture has
+// both a Presenter and a titlebar Presenter); fall back to the example.
+rmSync(`src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true, force: true });
+cpSync(`examples/plugins/${PLUGIN}`, `src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true });
 
 const logFd = openSync("test/blank_repro/lume.log", "w");
 spawn(APP, [], {
@@ -100,14 +99,18 @@ if (disabled) {
 
 const PROBE = `(() => {
   const root = document.getElementById("root");
-  const states = (window).__frameStates || [];
+  const runtime = window.__detachedPageRuntime;
+  const state = runtime?.getState?.() ?? null;
+  const viewFrame = document.querySelector("iframe.presenter-frame");
+  const titlebarFrame = document.querySelector("iframe.titlebar-frame");
   const res = (performance.getEntriesByType("resource") || []).map((r) => r.name.split("/").pop() + ":" + Math.round(r.duration)).join(",");
   return {
     rootChildren: root ? root.childElementCount : -1,
     hasRoot: !!document.querySelector(".plugin-window-root"),
-    titlebarReady: states.some((s) => s.name === "titlebar" && s.reason === "ready"),
-    viewReady: states.some((s) => s.name === "" && s.reason === "ready"),
-    viewTicks: states.filter((s) => s.name === "" && s.reason === "tick").length,
+    titlebarReady: !!titlebarFrame && (runtime?.titlebarLive?.() ?? false),
+    viewReady: state?.status === "ready" && !!viewFrame && (viewFrame.getAttribute("srcdoc") || "").length > 0,
+    presenter: state?.presenterId ?? null,
+    frameStates: ((window).__frameStates || []).length,
     pluginStates: ((window).__pluginStates || []).length,
     resources: res,
   };

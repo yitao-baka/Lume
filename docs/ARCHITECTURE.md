@@ -415,8 +415,8 @@ before adding a field:
   switching, mount-time listeners),
   wires the `PluginServices` every page receives via a late-bound deps
   object, and composes the uTools-style surface — the `SearchBox` widget on
-  top and the active page widget (`ModeInstance.View`) spliced below it,
-  plus the shared overlays (toast, context menu).
+  top and the active Page Session's Presenter spliced below it through the
+  internal shell adapter, plus the shared overlays (toast, context menu).
 - **Session continuation / keep-alive（docs/ROADMAP_HISTORY.md）**：已访问页面挂载后只
   隐藏不卸载（`src/launcher/session.ts` 的主机栈，LRU 8 + 淘汰前 view 帧
   快照，一次溢出只淘汰应淘汰的页数）；hide/show 与模式切换不重置
@@ -441,10 +441,10 @@ before adding a field:
   最后查询并入。设置「各模式使用独立搜索词」`appearance.per_mode_query`
   （默认关）开启后恢复逐页独立 query（仍仅会话内存）。经关键字 /
   feature 行**进入**某模式会消耗共享值——入口触发词不是目标页的过滤条件。
-- **Bridge host-form constant（docs/ROADMAP_HISTORY.md）**：`injectBridge` /
-  `injectTitlebarBridge` pin a synchronous `lume.env.form` on every plugin
-  frame — `"launcher"` (inside the launcher window) or `"window"` (a
-  detached plugin window; logic frames are always `"launcher"`). Pages must
+- **Bridge host-form constant（docs/ROADMAP_HISTORY.md）**：the Presenter
+  bridges pin a synchronous `lume.env.form` on every Presenter iframe —
+  `"launcher"` (inside the launcher window) or `"window"` (a detached plugin
+  window; logic frames are always `"launcher"`). Pages must
   use it instead of counting parent-document iframes: keep-alive (docs/ROADMAP_HISTORY.md) keeps
   several mode pages mounted at once, so frame counting misjudges the form
   (translator lost its detach button this way). §6C/§6G.3.
@@ -481,14 +481,15 @@ before adding a field:
   one without the other leaves an empty strip under the content or clips the
   page. Two states have **no page area at all** — the window is the search row
   alone: an empty home menu (no bar sections) and a page that is still
-  loading (`ModeInstance.ready`; the pill carries the spinner meanwhile).
+  loading (the internal shell adapter's ready gate; the pill carries the
+  spinner meanwhile).
 - **Page canvas (disk plugin pages)**: a mode page is an opaque-origin iframe.
   With a dark `color-scheme` — every mirrored-palette plugin sets one —
   Chromium paints an **opaque #121212 canvas** for a transparent root
   background, and host-painted backgrounds are invisible under such a frame
   (`background` on the iframe element does nothing); the splice then shows a
   near-black page inside the panel. The host therefore injects the page's
-  default canvas in `injectBridge` — the same `--surface` the panel itself
+  default canvas in the Presenter bridge — the same `--surface` the panel itself
   paints, so the page is literally the panel at the splice:
   `html{background:var(--lume-page-bg,<the theme's --surface>)}`, and the
   bridge keeps `--lume-page-bg` in step with theme flips (the `theme` event).
@@ -517,9 +518,9 @@ before adding a field:
   `titlebar` mounts as a second restricted Presenter iframe in the window
   chrome and dispatches through the same session.
 - `src/plugins/` — **every page below the search box is a plugin**.
-  Built-in navigation and clipboard expose a thin `ModeInstance` adapter over
-  `PageSession`; disk modes still enter the shared registry through
-  `createDiskModeInstance`:
+  Built-in navigation and clipboard expose a thin internal `ModeInstance`
+  shell adapter over `PageSession`; disk page modes enter the shared registry
+  through `createPageRuntimeMode`:
   - `navigate/` — the built-in **home page** (id `"apps"`, `home: true`, the
     only `heightPolicy: "fit"` page). Its `index.tsx` joins the navigation
     Page Service to the grid/list Presenters while preserving bar expansion,
@@ -531,8 +532,9 @@ before adding a field:
   - `preview/` — a service contribution (satellite-preview routing shared by
     every page that exposes previewable rows).
   - `registry.ts` + `types.ts` — the registry all plugins plug into
-    (`definePlugin` for built-ins, disk discovery + `createDiskModeInstance`
-    for on-disk plugins); the Rust side discovers manifests
+    (`definePlugin` for built-ins, disk discovery + `createPageRuntimeMode`
+    for on-disk page modes, plus list-template/provider/service adapters); the
+    Rust side discovers manifests
     (`<base>/plugins/<id>/plugin.toml`) in `plugins.rs` and carries the
     enabled set in `settings.plugins.disabled`. Adding a launcher page no
     longer touches the shell. The registry also owns the mode-pill data:
@@ -564,14 +566,14 @@ before adding a field:
     auto-size to content; fixed pages splice in under the search box at the
     manifest/`window_height` height), bar column measurement, work-area cap,
     virtual-list viewport measurement. Two special cases: a **loading** page
-    (`ModeInstance.ready` false) collapses the window to the search row alone,
+    (the shell adapter's ready gate is false) collapses the window to the search row alone,
     and an **empty fit page** (no bar sections at all) is that same search-row
     state — no reserved "empty-state" strip and no `WINDOW_PAD` below a page
     that has no content.
   - `menu.ts` — `buildMenuItems()`: right-click menu construction for
     app / folder / clipboard targets, over the narrow structural
-    `NavMenuActions` / `ClipMenuActions` interfaces each page supplies via
-    `ModeInstance.menuActions()`. The composition root measures the rendered
+    `NavMenuActions` / `ClipMenuActions` interfaces each page supplies through
+    its internal shell adapter. The composition root measures the rendered
     menu and flips/clamps it on both axes; while it is open the menu owns
     Arrow/Home/End/Tab/Enter/Escape, so page selection behind the overlay
     cannot move.

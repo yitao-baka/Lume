@@ -1,26 +1,17 @@
-//! Detached plugin window — the third window entry (plugin.html), the
-//! host page for one mode plugin's page living in its own window.
+//! Detached Page Runtime window — the third window entry (plugin.html), the
+//! host page for one api 2 mode's selected Presenter and optional titlebar
+//! Presenter.
 //!
-//! Mirrors the in-launcher disk mode exactly where it can: the same
-//! `createIframeView` renders the plugin's `view` HTML in a sandboxed bridge
-//! iframe, the same `execHostRpc` answers `window.lume` traffic, and the
-//! same permission layers (frontend ledger + Rust whitelist) apply. What
-//! differs is the `PluginServices` — this window answers window-locally
-//! (toast / hide / resize / drag) and forwards launcher-bound actions
-//! (placeholder / sub-input are meaningless here; redirect goes back through
-//! the launcher over a Rust event). `setQuery` is real here: the query lives
-//! in this window's iframes (the titlebar page drives the view through it).
+//! The launcher owns the Page Service and the authoritative Page Session. This
+//! window mounts a mirror session whose Presenter bridge only exposes
+//! `lume.page`, theme, and shell-safe actions; service calls cross the window
+//! boundary through the validated `plugin_page_bridge_call/reply` channel.
 //!
-//! Titlebar slot (optional manifest `titlebar` field): a SECOND bridge
-//! iframe rendered inside the chrome row (src/components/TitleBar.tsx),
-//! same sandbox, same RPC router. State pushes fan out to both iframes;
-//! keys forwarded out of the slot still reach the view via `lume.on.key`.
-//!
-//! State flow: the page announces itself with `plugin_window_ready` → the
-//! launcher's registry pushes `{show, query, enter, settings}` as the
-//! `plugin-state` event → this page posts each piece into the iframes. A
-//! hidden window never re-loads on re-show, so re-focus only needs a
-//! `plugin-window-shown` → `show` replay.
+//! State flow: the mirror session announces itself with `plugin_window_ready`
+//! → the launcher registry pushes the model, Presenter settings and theme as a
+//! `plugin-state` event → the mirror session fans each event into the main and
+//! titlebar Presenter bridges. A hidden window never reloads on re-show, so
+//! re-focus only needs a `plugin-window-shown` → `show` replay.
 
 import { createSignal, onCleanup, onMount, Show, type Component } from "solid-js";
 import { Dynamic, render } from "solid-js/web";
@@ -43,8 +34,6 @@ import { createPageRuntimeMode, type PageRuntimeMode } from "./plugins/pageRunti
 import type { PageModel } from "./page-runtime/contracts";
 import type { SettingsData } from "./settings/types";
 import { setPermissionSource } from "./plugins/permissions";
-import { createIframeView, escapeHtml, injectBridge, injectTitlebarBridge } from "./plugins/iframeBridge";
-import { execHostRpc } from "./plugins/rpc";
 import { fetchDiskFile } from "./plugins/disk";
 import { plog } from "./plugins/log";
 import { resolveLocale, setLocale, t } from "./i18n";
@@ -98,52 +87,15 @@ function App() {
 
   // Titlebar label — the manifest name once plugin_window_meta answers.
   const [pluginName, setPluginName] = createSignal(id);
-  /** The titlebar page's HTML — set only when the manifest declares a
-      `titlebar` file and it loaded (drives the slot in the chrome row). */
-  const [titlebarHtml, setTitlebarHtml] = createSignal("");
   const [runtimeView, setRuntimeView] = createSignal<Component | null>(null);
   const [runtimeTitlebar, setRuntimeTitlebar] = createSignal<Component | null>(null);
+  const [loadError, setLoadError] = createSignal("");
   let pageRuntime: PageRuntimeMode | undefined;
 
-  // Last state pushed from the launcher, cached: the titlebar page's ready
-  // handshake replays it locally (the registry answers only the view's).
-  const lastState: {
-    show?: boolean;
-    query?: string | null;
-    enter?: FeatureEnterInfo | null;
-    settings?: Record<string, unknown> | null;
-    theme?: string | null;
-    presenter?: string;
-    /** Titlebar frame of the last v2 snapshot push — replayed when the
-     * slot mounts after the push (it loads asynchronously). */
-    snapshotTitlebar?: unknown;
-  } = {};
-
-  let slotPost: ((type: string, payload?: unknown) => void) | undefined;
-  let slotSnapshot: ((timeoutMs?: number) => Promise<unknown | null>) | undefined;
-  /** Fan an event out to every mounted iframe (view + titlebar slot). */
-  const fan = (type: string, payload?: unknown) => {
-    post(type, payload);
-    slotPost?.(type, payload);
-  };
-  /** Frame-scoped restore routing (#40): a v2 envelope carries {view,
-   * titlebar}. `early` delivers the titlebar frame (silent restore, before
-   * the standard replay); `late` delivers the view frame (after it).
-   * Anything else is a legacy flat snapshot of the view page. */
-  const routeSnapshot = (snap: unknown, phase: "early" | "late") => {
-    const env = snap as { v?: number; frames?: Record<string, unknown> } | null;
-    if (env && typeof env === "object" && env.v === 2 && env.frames) {
-      if (phase === "early" && env.frames.titlebar !== undefined) {
-        lastState.snapshotTitlebar = env.frames.titlebar;
-        slotPost?.("restore", env.frames.titlebar);
-      }
-      if (phase === "late" && env.frames.view !== undefined) {
-        post("restore", env.frames.view);
-      }
-      return;
-    }
-    if (phase === "late" && snap) post("restore", snap);
-  };
+  // Only the final query is needed locally for the close report. All page
+  // state belongs to the launcher-owned Page Session; Presenter bridges cache
+  // their own pre-handler events.
+  let lastQuery: string | null = null;
 
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   const localToast = (text: string) => {
@@ -158,8 +110,8 @@ function App() {
   };
 
   // Window-local PluginServices (rpc.ts's router needs the full shape).
-  // dragWindow's gate: the host-injected slot drag default (iframeBridge's
-  // TITLEBAR_DRAG_SCRIPT) and a plugin's own §6G.5 handler (titlebar-demo's
+  // dragWindow's gate: the Presenter bridge's titlebar drag default and a
+  // plugin's own §6G.5 handler (titlebar-demo's
   // grip, file-search's body listener) both land here for ONE mousedown —
   // tao posts WM_NCLBUTTONDOWN (HTCAPTION) asynchronously, so a second
   // start_dragging would start a second modal move loop after release and
@@ -183,7 +135,7 @@ function App() {
       await invoke("set_plugin_color_mode", { id: pluginId, mode });
       setPluginColorPref(pluginId, mode, "window");
       applyWindowTheme();
-      fan("theme", effectiveMode());
+      pageRuntime?.postTheme(effectiveMode());
     },
     pluginColorState: (pluginId) => ({
       pref: pluginColorPref(pluginId),
@@ -208,18 +160,14 @@ function App() {
       plog.debug(id, "setPlaceholder ignored in the detached window (no search box here)");
     },
     setQuery: (q) => {
-      // Page Runtime windows still route the query to the launcher-owned Page
-      // Service; legacy views keep their historical local fan-out. The echo to
-      // both local frames matches the launcher's setQuery → on.query round-trip.
-      lastState.query = q;
-      if (pageRuntime) {
-        void callDetachedService("onQuery", q).catch((err) =>
-          plog.error(id, "detached query failed:", err)
-        );
-        pageRuntime.postEvent("query", q);
-        return;
-      }
-      fan("query", q);
+      // The launcher owns the Page Service. Forward the intent there, then
+      // replay the query to both local Presenter bridges for pages that use
+      // the event surface instead of subscribing to the model.
+      lastQuery = q;
+      void callDetachedService("onQuery", q).catch((err) =>
+        plog.error(id, "detached query failed:", err)
+      );
+      pageRuntime?.postEvent("query", q);
     },
     resizeWindow: (size) => {
       void (async () => {
@@ -289,6 +237,7 @@ function App() {
     let payload: Record<string, unknown> = {};
     if (name === "onIntent") payload = { intent: args[0] };
     else if (name === "onQuery") payload = { query: args[0] };
+    else if (name === "onSubInput") payload = { text: args[0] };
     else if (name === "onEnter") payload = { info: args[0] };
     else if (name === "onSettings") payload = { values: args[0] };
     else if (name === "onFilesDropped") payload = { paths: args[0] };
@@ -340,9 +289,7 @@ function App() {
         );
       },
       onPresenterState: (state) => {
-        if (state.presenterId) {
-          lastState.presenter = state.presenterId;
-        }
+        if (state.presenterId) plog.debug(id, "detached Presenter:", state.presenterId);
       },
     });
     pageRuntime = runtime;
@@ -359,38 +306,6 @@ function App() {
     setRuntimeTitlebar(() => runtime.titlebarView);
   }
 
-  const { View, post, snapshot: viewSnapshot } = createIframeView(
-    (method, args) => execHostRpc(id, method, args, services),
-    () => {
-      // The bridge is live — ask the launcher to push the current state
-      // (query / enter / settings / show). This is the cross-window version
-      // of the in-launcher ready handshake.
-      void invoke("plugin_window_ready", { id }).catch((err) => plog.error(id, "ready failed:", err));
-    },
-    { id }
-  );
-
-  // Titlebar slot viewer (optional manifest `titlebar`): the same bridge and
-  // RPC router, one row up. Its ready handshake replays the cached state
-  // locally — plugin_window_ready is NOT re-invoked, so the launcher's
-  // registry never double-pushes.
-  const slotView = createIframeView(
-    (method, args) => execHostRpc(id, method, args, services),
-    () => {
-      if (lastState.show) slotPost?.("show");
-      if (typeof lastState.query === "string") slotPost?.("query", lastState.query);
-      if (lastState.enter) slotPost?.("enter", lastState.enter);
-      if (lastState.settings) slotPost?.("settings", lastState.settings);
-      if (lastState.theme) slotPost?.("theme", lastState.theme);
-      // 会话快照（#40）：标题栏帧随插件状态推送一起到达；槽位晚挂载时在
-      // 这里补投（view 帧由 registry 的就绪握手消费，不重放）。
-      if (lastState.snapshotTitlebar !== undefined) slotPost?.("restore", lastState.snapshotTitlebar);
-    },
-    { class: "titlebar-frame", name: "titlebar", id }
-  );
-  slotPost = slotView.post;
-  slotSnapshot = slotView.snapshot;
-
   // ── 关闭与快照（会话快照 v2，docs/ROADMAP_HISTORY.md #40）──
   // 用户发起的关闭（× / Esc / Rust 的 close-requested 应答）先向每个活帧要
   // 状态快照再上报销毁：启动器侧按帧入库，重新进入本模式时恢复。快照失败/
@@ -398,8 +313,8 @@ function App() {
   const closeWithSnapshot = () => {
     void (async () => {
       const [view, slot] = await Promise.all([
-        pageRuntime ? pageRuntime.instance.snapshot?.() ?? Promise.resolve(null) : viewSnapshot(),
-        slotSnapshot ? slotSnapshot() : Promise.resolve(null),
+        pageRuntime?.instance.snapshot?.() ?? Promise.resolve(null),
+        pageRuntime?.snapshotTitlebar() ?? Promise.resolve(null),
       ]);
       const frames: Record<string, unknown> = {};
       if (view != null) frames.view = view;
@@ -409,7 +324,7 @@ function App() {
         await invoke("plugin_window_close_report", {
           id,
           snapshot,
-          query: typeof lastState.query === "string" ? lastState.query : null,
+          query: lastQuery,
         });
       } catch (err) {
         plog.error(id, "close report failed — closing without snapshot:", err);
@@ -417,25 +332,14 @@ function App() {
       }
     })();
   };
-  // The slot element is created EXACTLY ONCE, outside any reactive
-  // expression: a `<slotView.View />` written inline in the `slot={…}` prop
-  // getter is re-invoked whenever its dependencies change (titlebarHtml,
-  // pluginName), which strands the wired instance — the mounted iframe ends
-  // up with no message listener and the whole slot channel dies. One static
-  // element + a reactive classList (visibility only) keeps one component
-  // instance, one listener, one live iframe; plugins without a titlebar page
-  // just keep it empty and non-interactive (the drag region shows through).
+  // The slot element is created exactly once. The Presenter switch replaces
+  // only the dynamic component inside it, so the chrome row itself never
+  // remounts and the drag region stays stable.
   const slotHost = (
     <div
       class="titlebar-slot-host"
-      classList={{
-        "titlebar-slot-empty":
-          titlebarHtml() === "" && !(runtimeTitlebar() && pageRuntime?.titlebarAvailable()),
-      }}
+      classList={{ "titlebar-slot-empty": !runtimeTitlebar() }}
     >
-      <Show when={!runtimeTitlebar()}>
-        <slotView.View />
-      </Show>
       <Show when={runtimeTitlebar()}>{(view) => <Dynamic component={view()} />}</Show>
     </div>
   );
@@ -457,13 +361,9 @@ function App() {
       else pending.reject(new Error(reply.error || "Page Service call failed"));
     }, { target: WINDOW_LABEL }).then((unlisten) => unlisteners.push(unlisten));
 
-    // Fetch + bridge the view page (same as createDiskModeInstance).
-    let dir = "";
-    let view = "";
+    // Resolve the Presenter declarations, then mount the mirror session.
     void invoke<{
       dir: string;
-      view: string;
-      titlebar: string;
       name: string;
       pageRuntime: boolean;
       model: string;
@@ -473,10 +373,11 @@ function App() {
       presenterSettings: PluginPresenterSetting[];
     }>("plugin_window_meta", { id })
       .then(async (meta) => {
-        dir = meta.dir;
-        view = meta.view;
         document.title = meta.name || id;
         setPluginName(meta.name || id);
+        if (!meta.pageRuntime || meta.presenters.length === 0) {
+          throw new Error("detached window requires a page_runtime mode with a Presenter");
+        }
         // The permission ledger's manifest source lives in the registry, which
         // only runs in the launcher window — wire it here from the same
         // command the settings pane uses, BEFORE the view HTML lands (the
@@ -487,42 +388,12 @@ function App() {
             setPermissionSource((pid) => list.find((x) => x.id === pid));
           })
           .catch((err) => plog.error(id, "permission source wire failed:", err));
-        if (meta.pageRuntime) {
-          await wirePerms;
-          await setupPageRuntime(meta);
-          return;
-        }
-        // Titlebar page (optional manifest `titlebar`): same permission-wire
-        // order as the view; a failure just leaves the slot empty (the
-        // chrome row stays title + controls). setHtml runs BEFORE the signal
-        // mounts the iframe so it renders with its document in place.
-        if (meta.titlebar) {
-          void wirePerms
-            .then(() => fetchDiskFile(dir + "\\" + meta.titlebar))
-            .then((html) => {
-              // Titlebar pages get the bridge PLUS the host's default
-              // blank-area window drag (the slot iframe swallows pointer
-              // events; a page without drag handling of its own would leave
-              // the middle of the chrome row dead).
-              slotView.View.setHtml(injectTitlebarBridge(html, "window"));
-              setTitlebarHtml(html);
-            })
-            .catch((err) => plog.error(id, "titlebar load failed:", err));
-        }
         await wirePerms;
-        return fetchDiskFile(dir + "\\" + view);
-      })
-      .then((html) => {
-        if (html) View.setHtml(injectBridge(html, "window"));
+        await setupPageRuntime(meta);
       })
       .catch((err) => {
-        // Raw error to the log; the page shows the localized fallback.
-        plog.error(id, "detached view load failed:", err);
-        View.setHtml(
-          `<body style="font:13px sans-serif;color:#f66;padding:16px">${escapeHtml(
-            t("pluginViewLoadFailed")
-          )}</body>`
-        );
+        plog.error(id, "detached Page Runtime load failed:", err);
+        setLoadError(t("pluginViewLoadFailed"));
       });
 
     void listen<{
@@ -548,32 +419,30 @@ function App() {
       // append-only history, since pushes interleave (shown vs enter).
       const w = window as unknown as { __pluginStates?: unknown[] };
       (w.__pluginStates ??= []).push(s);
-      // 会话快照（docs/ROADMAP_HISTORY.md #40）：titlebar 帧在标准回放**之前**静默恢复
-      // （它的输入通常是宿主 query 的视图，恢复值若派发 input 会被页面
-      // 当成新输入经 app.setQuery 回灌、把当前 query 冲掉——实测坑）；
-      // 标准重放随后把宿主驱动值写回。view 帧在标准回放**之后**投递。
-      if (s.snapshot) routeSnapshot(s.snapshot, "early");
-      // Fan out to every mounted iframe (view + titlebar slot) and cache for
-      // the slot's ready replay.
+      // Session snapshot frames are still separate from the Page Model: the
+      // titlebar frame restores before host-driven events (its input mirrors
+      // the query and must not write it back), while the main frame restores
+      // after model/state replay.
+      const env = s.snapshot as { v?: number; frames?: Record<string, unknown> } | null | undefined;
+      const frames = env?.v === 2 ? env.frames : undefined;
+      if (frames?.titlebar !== undefined) pageRuntime?.postTitlebar("restore", frames.titlebar);
       if (s.show) {
-        lastState.show = true;
-        fan("show");
+        pageRuntime?.postEvent("show");
       }
       if (typeof s.query === "string") {
-        lastState.query = s.query;
-        fan("query", s.query);
+        lastQuery = s.query;
+        // A pushed query is an input to the authoritative Page Service, then
+        // an event to both local Presenters. This is the detached-window form
+        // of the launcher's setQuery round-trip.
+        void callDetachedService("onQuery", s.query).catch((err) =>
+          plog.error(id, "detached query push failed:", err)
+        );
+        pageRuntime?.postEvent("query", s.query);
       }
-      if (s.enter) {
-        lastState.enter = s.enter;
-        fan("enter", s.enter);
-      }
-      if (s.settings) {
-        lastState.settings = s.settings;
-        fan("settings", s.settings);
-      }
+      if (s.enter) pageRuntime?.postEvent("enter", s.enter);
+      if (s.settings) pageRuntime?.postEvent("settings", s.settings);
       if (s.theme) {
-        lastState.theme = s.theme;
-        fan("theme", s.theme);
+        pageRuntime?.postTheme(s.theme);
       }
       // The plugin's own preference rides every theme push (docs/ROADMAP_HISTORY.md #36): a
       // `theme.set` from the launcher's side (the plugin's logic iframe, or a
@@ -584,14 +453,9 @@ function App() {
         setPluginColorPref(id, pref, "launcher");
         applyWindowTheme();
       }
-      // 会话快照（docs/ROADMAP_HISTORY.md #40）：view 帧在标准回放**之后**投递 —— 页面自身
-      // 状态最后落地，覆盖与宿主回放重叠的部分（titlebar 帧见上方 early）。
-      if (s.snapshot) routeSnapshot(s.snapshot, "late");
-
-      if (s.pageRuntime && pageRuntime) {
+      if (pageRuntime) {
         if (s.presenterSettings) pageRuntime.applyPresenterSettings(s.presenterSettings);
         if (s.presenter) {
-          lastState.presenter = s.presenter;
           pageRuntime.instance.applySettings({
             pages: { presenters: { [id]: s.presenter } },
           });
@@ -600,19 +464,13 @@ function App() {
         if (s.pageEvent) pageRuntime.postEvent("event", s.pageEvent);
         if (s.pageError) pageRuntime.publishError(s.pageError);
         if (s.pageClearError) pageRuntime.clearError();
-        if (s.theme) pageRuntime.postTheme(s.theme);
-        if (s.show) pageRuntime.postEvent("show");
-        if (typeof s.query === "string") pageRuntime.postEvent("query", s.query);
-        if (s.enter) pageRuntime.postEvent("enter", s.enter);
-        if (s.settings) pageRuntime.postEvent("settings", s.settings);
       }
+      if (frames?.view !== undefined) pageRuntime?.postEvent("restore", frames.view);
     }, { target: WINDOW_LABEL }).then((u) => (unlisteners.push(u), undefined));
 
     // Re-focus: replay `show` into the page (the window never unloads, so
     // this is all a re-summon needs).
     void listen<string>("plugin-window-shown", () => {
-      lastState.show = true;
-      fan("show");
       pageRuntime?.postEvent("show");
     }, { target: WINDOW_LABEL }).then(
       (u) => (unlisteners.push(u), undefined)
@@ -637,7 +495,6 @@ function App() {
           // this window and the launcher cannot drift apart.
           seedPluginColorPrefs(s.plugins?.color_modes);
           applyWindowTheme();
-          fan("theme", effectiveMode());
           pageRuntime?.postTheme(effectiveMode());
           pageRuntime?.instance.applySettings(s);
         })
@@ -657,7 +514,12 @@ function App() {
         closeWithSnapshot();
         return;
       }
-      post("key", { key: e.key, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey });
+      pageRuntime?.postEvent("key", {
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+      });
     };
     window.addEventListener("keydown", onKey);
 
@@ -674,15 +536,24 @@ function App() {
     <div class="plugin-window-root">
       {/* Frameless chrome row — the pin toggle makes sense only here (a
           detached window a user keeps on top while working elsewhere). The
-          slot hosts the plugin's titlebar page (optional manifest
-          `titlebar` field) between the title and the window controls. */}
+          slot hosts the selected Presenter's optional titlebar page between
+          the title and the window controls. */}
       <TitleBar
         title={pluginName()}
         pin
         slot={slotHost}
         onClose={() => closeWithSnapshot()}
       />
-      <Dynamic component={runtimeView() ?? View} />
+      <Show
+        when={runtimeView()}
+        fallback={
+          <Show when={loadError()}>
+            <div style={{ color: "#f66", padding: "16px", "font-size": "13px" }}>{loadError()}</div>
+          </Show>
+        }
+      >
+        {(view) => <Dynamic component={view()} />}
+      </Show>
       <div id="plugin-window-toast" role="status" />
     </div>
   );

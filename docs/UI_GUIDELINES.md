@@ -11,7 +11,7 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   **no** `border-radius`, **no** translucent fill and no backdrop effect
   (Acrylic was removed in `lib.rs`). The same value paints DWM's visible frame
   border strip (`window::set_panel_frame_border` → `DWMWA_BORDER_COLOR` per
-  颜色模式) and is the default plugin-page canvas (`injectBridge`), so panel /
+  颜色模式) and is the default plugin-page canvas (`presenterBridge`), so panel /
   strip / page / four corners are exactly one surface: no ring, no hairline,
   no tint step. A CSS radius only exposes the window backdrop in the crescent
   outside its arc, and a translucent panel can never be reproduced by the

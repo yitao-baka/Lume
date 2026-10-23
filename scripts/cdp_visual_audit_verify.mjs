@@ -754,7 +754,10 @@ try {
   });
   preview = await findPreview();
   if (!preview) throw new Error("preview target missing");
-  await sleep(700);
+  // findPreview waits for the rendered header itself. Do not linger here: the
+  // direct request below intentionally overrides the active page's preview
+  // sync, and a later idle sync may legitimately close it again.
+  await sleep(50);
   const previewInfo = await preview.evalJs(`(() => {
     const title = document.querySelector(".preview-title");
     const close = document.querySelector(".preview-close");

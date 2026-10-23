@@ -12,9 +12,11 @@ kind = "mode"
 api = 2
 description = "宿主 HTTP 回归探针（CDP 专用夹具）"
 permissions = ["network"]
+entry = "service.js"
 # 回环目标默认被拒（#32.3），夹具按契约显式白名单放行自己的 echo 服务。
 network_allow = ["127.0.0.1"]
 model = "lume.collection/v1"
+page_runtime = true
 default_presenter = "default"
 
 [[presenters]]

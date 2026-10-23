@@ -1,7 +1,8 @@
 # 插件开发指南（api 2）
 
 > **完整 API 参考**见 `docs/PLUGIN_API.md`（清单字段表、Provider 契约、
-> ModeInstance/PluginServices 逐方法时序、启停语义、安全模型、调试）。
+> Page Service / Presenter 时序、启停语义、安全模型、调试）。页面运行时
+> 架构见 `docs/PAGE_MODEL_PRESENTER.md`。
 > 本文是最小上手指南。
 
 Lume 的插件 = 一份**清单**（`plugin.toml`）+ 一份**入口 JS**（provider 类）。
@@ -30,8 +31,10 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   文件而是回调 `onEnter(item)`），完整契约见 `docs/PLUGIN_API.md` §5.1；
   多文件入口（`entry` 指向目录）见 §5.6。示例 `examples/plugins/web-search/`
   与 `examples/plugins/actions/`）
-- `mode` — 整页模式：`view` HTML 自由 UI（沙箱 iframe）+ 可选 `entry`
-  逻辑钩子 + `keywords` 全局关键字进入 + 可选 `height` 窗口高度 +
+- `mode` — 整页模式：`page_runtime = true` 时由 `entry` Page Service 发布
+  Page Model，一个或多个 `[[presenters]]` 在沙箱 iframe 中渲染；Presenter
+  只通过 `lume.page` 读模型和发送 Intent。
+  `keywords` 负责全局关键字进入，`height` 决定窗口高度，
   可选 `icon` pill 图标、`icon_light`/`icon_dark` 深浅两套（也是搜索
   结果行/列表行的默认图标）+ `hidden = true` 不进
   模式切换栏（只能从导航页搜索结果进入，示例 `examples/plugins/hidden-mode/`）
@@ -41,8 +44,8 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   `examples/plugins/translation-demo/`（同一模型由左右对照与紧凑页渲染，网络、
   缓存、取消和 API Key 都留在 service）；基于宿主 `search.files` 能力的完整文件搜索模式见
   `examples/plugins/file-search/`；`template = "list"` 复用宿主 collection Presenter，见
-  `examples/plugins/list-demo/`；可分离模式还可声明 `titlebar` HTML ——
-  独立窗口标题栏内嵌第二个桥接 iframe（uTools 式搜索框等自由内容），
+  `examples/plugins/list-demo/`；Presenter 还可声明 `titlebar` HTML ——
+  独立窗口标题栏内嵌第二个受限 Presenter iframe（uTools 式搜索框等自由内容），
   见 `examples/plugins/titlebar-demo/`）
 - `service` — 无 UI 生命周期钩子（`onShow`/`onHide`/`onQuery`）
 
@@ -295,9 +298,10 @@ chrome，启动器不受影响；见 `docs/PLUGIN_API.md` §6C「插件自身颜
 | clipboard | mode | 剪贴板历史整页（`src/plugins/clipboard/`） |
 | preview | service | 卫星预览窗路由（`src/plugins/preview/`） |
 
-主窗口是 uTools 式拼接：`SearchBox` 部件在顶，任意 mode 页（内置或磁盘）
-经同一 `ModeInstance` 契约拼接在其下（`docs/PLUGIN_API.md` §6B）。导航首页
-不进 设置 → 插件 的启停列表（默认页不可关闭）。
+主窗口是 uTools 式拼接：`SearchBox` 部件在顶，活动 Page Session 的 Presenter
+拼接在其下。内置页面通过启动器内部的 `ModeInstance` shell adapter 接入同一
+外壳；磁盘 mode 只通过 Page Service / Presenter 契约接入。导航首页不进
+设置 → 插件 的启停列表（默认页不可关闭）。
 
 在 设置 → 插件 关闭一个 mode 插件后，模式 pill 隐藏、Tab 不再切入；
 若关闭时正停在该模式，启动器自动回到导航页。

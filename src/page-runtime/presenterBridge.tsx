@@ -37,8 +37,62 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       return true;
     }
   });
+  var HOST_FORM = window.__LUME_HOST_FORM__ === "window" ? "window" : "launcher";
+  var reportTimer = 0;
+  function fieldKey(el) {
+    if (el.id) return el.id;
+    if (el.name) return "name:" + el.name;
+    return "path:" + Array.from(document.querySelectorAll("input,textarea,select,[contenteditable]")).indexOf(el);
+  }
+  function fieldValue(el) {
+    if (el.multiple) return Array.from(el.options).filter(function (o) { return o.selected; }).map(function (o) { return o.value; }).join(",");
+    if (el.type === "checkbox" || el.type === "radio") return el.checked ? "on" : "";
+    if (el.isContentEditable) return el.innerText || "";
+    return el.value == null ? "" : String(el.value);
+  }
+  function captureState(reason) {
+    var values = Array.from(document.querySelectorAll("input,textarea,select,[contenteditable]")).slice(0, 200).map(function (el) {
+      return { id: fieldKey(el), value: String(fieldValue(el)).slice(0, 65536), checked: !!el.checked };
+    });
+    return { name: window.__LUME_TITLEBAR__ ? "titlebar" : "", form: HOST_FORM, reason: reason || "update", values: values };
+  }
+  function reportState(reason) {
+    try { parent.postMessage({ __lumeFrameState: captureState(reason) }, "*"); } catch (err) {}
+  }
+  function scheduleReport(reason) {
+    clearTimeout(reportTimer);
+    reportTimer = setTimeout(function () { reportState(reason); }, 40);
+  }
+  function captureSnapshot() {
+    var values = Array.from(document.querySelectorAll("input,textarea,select,[contenteditable]")).slice(0, 200).map(function (el) {
+      return { key: fieldKey(el), value: fieldValue(el), checked: !!el.checked };
+    });
+    var custom = typeof handlers.snapshot === "function" ? handlers.snapshot() : null;
+    return { v: 2, auto: { fields: values }, custom: custom == null ? null : custom };
+  }
+  function restoreSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return;
+    var fields = snapshot.auto && Array.isArray(snapshot.auto.fields) ? snapshot.auto.fields : [];
+    for (var i = 0; i < fields.length; i++) {
+      var saved = fields[i];
+      var el = document.getElementById(saved.key) || document.querySelector('[name="' + String(saved.key).replace(/"/g, '\\"') + '"]');
+      if (!el) continue;
+      if (el.multiple && Array.isArray(saved.value)) {
+        for (var j = 0; j < el.options.length; j++) el.options[j].selected = saved.value.indexOf(el.options[j].value) >= 0;
+      } else if (el.type === "checkbox" || el.type === "radio") {
+        el.checked = !!saved.checked;
+      } else if (el.isContentEditable) {
+        el.innerText = String(saved.value == null ? "" : saved.value);
+      } else {
+        el.value = saved.value == null ? "" : String(saved.value);
+      }
+    }
+    if (typeof handlers.restore === "function") handlers.restore(snapshot.custom);
+    scheduleReport("restore");
+  }
+
   window.lume = {
-    env: { form: window.__LUME_HOST_FORM__ === "window" ? "window" : "launcher" },
+    env: { form: HOST_FORM },
     page: {
       ready: function () { return rpc("page.ready"); },
       getModel: function () { return rpc("page.getModel"); },
@@ -73,14 +127,29 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       }
       return;
     }
+    if (d.__lumeCall) {
+      var call = d.__lumeCall;
+      Promise.resolve()
+        .then(function () { return call.type === "snapshot" ? captureSnapshot() : undefined; })
+        .then(function (result) {
+          parent.postMessage({ __lumeCallResult: { callId: call.callId, ok: true, result: result } }, "*");
+        })
+        .catch(function (err) {
+          parent.postMessage({ __lumeCallResult: { callId: call.callId, ok: false, error: String(err) } }, "*");
+        });
+    }
     if (d.__lumeEvent) {
       var ev = d.__lumeEvent;
+      if (ev.type === "restore") restoreSnapshot(ev.payload);
       if (ev.type === "theme") {
         document.documentElement.style.setProperty("--lume-page-bg", ev.payload === "light" ? "${PANEL_SURFACE_BG.light}" : "${PANEL_SURFACE_BG.dark}");
       }
       var h = handlers[ev.type];
       if (typeof h === "function") h(ev.payload);
       else (pendingEvents[ev.type] || (pendingEvents[ev.type] = [])).push(ev.payload);
+      if (ev.type === "model" || ev.type === "settings" || ev.type === "enter" || ev.type === "show" || ev.type === "query") {
+        scheduleReport(ev.type);
+      }
     }
   });
   document.addEventListener("keydown", function (e) {
@@ -97,7 +166,13 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       rpc("app.dragWindow").catch(function () {});
     });
   }
-  function announce() { parent.postMessage({ __lumeReady: { frame: window.name } }, "*"); }
+  document.addEventListener("input", function () { scheduleReport("input"); }, true);
+  document.addEventListener("change", function () { scheduleReport("change"); }, true);
+  document.addEventListener("scroll", function () { scheduleReport("scroll"); }, true);
+  function announce() {
+    parent.postMessage({ __lumeReady: { frame: window.name } }, "*");
+    scheduleReport("ready");
+  }
   if (document.readyState === "complete") announce(); else window.addEventListener("load", announce);
 })();`;
 
@@ -110,7 +185,7 @@ export function injectPresenterBridge(
     '<base target="_blank">' +
     '<style>html{background:var(--lume-page-bg,' + PANEL_SURFACE_BG[currentThemeMode()] + ')}</style>' +
     '<script>window.__LUME_HOST_FORM__=' + JSON.stringify(form) + ';</script>' +
-    (titlebar ? '<script>window.__LUME_TITLEBAR__=true;</script>' : '') +
+    (titlebar ? '<script>window.__LUME_TITLEBAR__=true;/* lume-titlebar-drag-default */</script>' : '') +
     '<script>' + PRESENTER_BRIDGE_SCRIPT + '</script>';
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + injection);
   if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + injection);
@@ -131,6 +206,10 @@ export interface PresenterBridgeOptions {
   themeGet(): unknown;
   themeSet(mode: unknown): Promise<void>;
   settings?(): Record<string, unknown>;
+  /** Consume a frame-specific session snapshot when the bridge becomes live.
+   * The callback is lazy so a mount that never reaches ready cannot consume
+   * state needed by the retry/fallback Presenter. */
+  takeSnapshot?(): unknown | null;
   titlebar?: boolean;
   iframeClass?: string;
 }
@@ -194,7 +273,11 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
     () => {
       post("model", opts.session.store.get());
       post("settings", opts.settings?.() ?? {});
-      post("theme", currentThemeMode());
+      const themeState = opts.themeGet() as { mode?: unknown } | null | undefined;
+      const mode = typeof themeState?.mode === "string" ? themeState.mode : currentThemeMode();
+      post("theme", mode);
+      const snapshot = opts.takeSnapshot?.();
+      if (snapshot != null) post("restore", snapshot);
     },
     {
       class: opts.iframeClass ?? "plugin-frame presenter-frame",

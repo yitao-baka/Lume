@@ -157,7 +157,7 @@ const setSettings = async (patch) => {
   await sleep(1200);
 };
 const themeTap = () => m.evalJs(`((window).__pluginThemes ?? []).filter((e) => e.id === "hello-mode")`);
-const themeLog = () => m.evalJs(`((window).__themeLog ?? []).filter((e) => e.id === "hello-mode" && e.mode === "dark")`);
+const themeLog = () => m.evalJs(`((window).__presenterThemes ?? []).filter((e) => e.pageId === "hello-mode" && e.mode === "dark")`);
 const colorModes = async () => (await invoke("get_settings")).plugins?.color_modes ?? {};
 /** Enter hello-mode from the launcher: keyword row + Enter. */
 async function enterHelloMode() {
@@ -221,7 +221,7 @@ check("③a page canvas turned dark (theme push honoured)", near(page1, SURFACE.
 check("③b launcher panel STAYED light (override is plugin-scoped)", near(panel1, SURFACE.light), hex(panel1));
 check("③c launcher data-theme untouched", (await launcherTheme()) === "light", await launcherTheme());
 check("③d preference persisted to settings", (await colorModes())["hello-mode"] === "dark", JSON.stringify(await colorModes()));
-check("③e mirror recorded the pin (source main)", (await themeTap()).some((e) => e.pref === "dark" && e.source === "main"), JSON.stringify(await themeTap()));
+check("③e mirror recorded the pin (service or host source)", (await themeTap()).some((e) => e.pref === "dark" && (e.source === "main" || e.source === "window")), JSON.stringify(await themeTap()));
 check("③f page was told theme=dark (event tap)", (await themeLog()).length > 0, JSON.stringify(await themeLog()));
 
 // ④ 反向：启动器切深色 + 插件 pin "light" → 画布浅、面板深

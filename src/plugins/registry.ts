@@ -14,14 +14,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginColorMode, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
 import { HOST_PLUGIN_API } from "./types";
-import { createIframeView, escapeHtml, injectBridge } from "./iframeBridge";
 import { dropSessionFrames, putSessionFrame, takeSessionFrames } from "../launcher/session";
 import { createListTemplateMode } from "./listTemplate";
 import { createPageRuntimeMode, type PageRuntimeMode } from "./pageRuntimeMode";
 import type { PageModel } from "../page-runtime/contracts";
 import { validatePageModel } from "../page-runtime/modelStore";
 import { fetchDiskFile } from "./disk";
-import { execHostRpc as execHostRpcShared } from "./rpc";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
 import { resolveIconInput, resolveThemedIcon } from "../launcher/iconSpec";
@@ -116,7 +114,6 @@ export async function refreshPlugins() {
         m.id,
         `manifest: kind=${m.kind} enabled=${m.enabled} builtin=${m.builtin}` +
           (m.entry ? ` entry=${m.entry}` : "") +
-          (m.view ? ` view=${m.view}` : "") +
           (m.keywords.length ? ` keywords=[${m.keywords.join(",")}]` : "")
       );
     }
@@ -379,6 +376,12 @@ function handleLogicAction(id: string, action: string, args: Record<string, unkn
     case "setQuery":
       services.setQuery(String(args.q ?? ""));
       break;
+    case "setSubInput":
+      services.setSubInput(id, (args.opts as { placeholder?: string; value?: string } | null) ?? null);
+      break;
+    case "removeSubInput":
+      services.setSubInput(id, null);
+      break;
     case "hide":
       services.resetAndHide();
       break;
@@ -472,7 +475,11 @@ function initLogicRelay(): void {
       validatePageModel(model);
       latestPageModels.set(id, model);
       runtime?.publishModel(model);
-      pushDetachedRuntimeState(id, { model });
+      const modelData = model.data && typeof model.data === "object" ? model.data as Record<string, unknown> : {};
+      pushDetachedRuntimeState(id, {
+        model,
+        ...(modelData.enter != null ? { enter: modelData.enter } : {}),
+      });
     } catch (err) {
       plog.error(id, "invalid Page Model dropped:", err);
       runtime?.publishError({ code: "model.invalid", message: String(err) });
@@ -649,253 +656,6 @@ function navBarsContribution(
 // this window and its mode page over the bridge — are covered.
 setPermissionSource((id) => manifests().find((x) => x.id === id));
 
-/** Route a bridge RPC ("app.hide" / "storage.get" / …) to the host API.
- * The router lives in `rpc.ts` so a detached plugin window can answer the
- * same bridge traffic for its own page. */
-async function execHostRpc(
-  id: string,
-  method: string,
-  args: Record<string, unknown>
-): Promise<unknown> {
-  return execHostRpcShared(id, method, args, pluginServices!);
-}
-
-/** Transitional manifest adapter: an api 2 mode names an HTML Presenter
- * entry, while the migration shell still needs one path to mount. */
-function manifestPresenter(m: PluginManifest): PluginManifest["presenters"][number] | undefined {
-  if (m.presenters.length === 0) return undefined;
-  const preferred = m.presenters.find((p) => p.id === m.defaultPresenter);
-  if (preferred) return preferred;
-  return m.presenters.find((p) => (p.models.length ? p.models.includes(m.model) : true)) ?? m.presenters[0];
-}
-
-function manifestViewEntry(m: PluginManifest): string {
-  return m.view || manifestPresenter(m)?.entry || "";
-}
-
-
-/** Build the ModeInstance for a disk mode plugin (bridged iframe UI). */
-function createDiskModeInstance(
-  m: PluginManifest,
-  logic: Record<string, unknown>,
-  services: PluginServices
-): ModeInstance {
-  const [query, setQuerySig] = createSignal("");
-  const [selected, setSelected] = createSignal(0);
-  const hook = (name: string, ...args: unknown[]) => callHook(m.id, logic, name, ...args);
-  // 纯视图 mode（无 `entry`）：宿主里没有它的逻辑帧，onQuery/onSubInput 的
-  // 中继调用注定无人应答（supervisor 对未加载 id 静默丢弃 → 8s 超时 → 误开
-  // 熔断）。视图页的全部状态走 iframe 桥，转发只会白烧 IPC。
-  const hasLogic = !!m.entry;
-  // How this page was entered (`[[features]]` payload / redirect). Kept until
-  // the mode resets and REPLAYED on every ready handshake: the View mounts
-  // (and the srcdoc document loads) only when the mode becomes active, so an
-  // enter delivered while the document is still loading would be lost — and
-  // a fresh document needs the payload again the way it needs query/show.
-  let enterPayload: FeatureEnterInfo | null = null;
-  // Declarative settings delivered to this page. Kept so the ready
-  // handshake can replay them: the pane may change a value while the mode is
-  // not active (the srcdoc document doesn't exist yet), and a fresh document
-  // needs the current values again.
-  let settingsValues: Record<string, unknown> | null = null;
-  // Detached-window state pusher : while the page lives in its own
-  // window, this window's iframe is unmounted — page state travels over the
-  // Rust `plugin-window` event channel instead of postMessage.
-  detachedSuppliers.set(m.id, {
-    push: (show, includeSnapshot = false) => {
-      // 会话快照（docs/ROADMAP_HISTORY.md #40）：detach 前在启动器侧抓的帧快照只在 ready
-      // 握手那次推送里带过去（view + titlebar 一起，取出即删）。shown 事件
-      // 的推送发生在建窗瞬间（页面尚未加载），绝不能消费快照。
-      const frames = includeSnapshot ? takeSessionFrames(m.id, ["view", "titlebar"]) : null;
-      void invoke("plugin_window_push_state", {
-        id: m.id,
-        state: {
-          show,
-          query: query(),
-          enter: enterPayload,
-          settings: settingsValues,
-          theme: pluginColorMode(m.id, currentThemeMode()),
-          // The plugin's own preference rides along: the detached window
-          // derives its OWN chrome from (pref, launcher setting) — the
-          // effective mode above cannot say whether an override is in play,
-          // and `"system"` must keep following the OS live.
-          themePref: pluginColorPref(m.id),
-          ...(frames ? { snapshot: { v: 2, frames } } : {}),
-        },
-      }).catch((err) => plog.error(m.id, "detached state push failed:", err));
-    },
-    pushTheme: (t, pref) => {
-      // Diagnostic tap (docs/PLUGIN_API.md §10): cross-window state pushes are
-      // otherwise invisible from the launcher side — the receiving window is a
-      // different target. Reads the value AND the mirror state that produced
-      // it (a stale mirror here is what a `themePref`-driven flip looks like).
-      const w = window as unknown as { __pwPush?: unknown[] };
-      (w.__pwPush ??= []).push({ id: m.id, theme: t, themePref: pref });
-      (w.__pwPush as unknown[]).splice(0, Math.max(0, (w.__pwPush as unknown[]).length - 60));
-      void invoke("plugin_window_push_state", {
-        id: m.id,
-        state: { theme: t, themePref: pref },
-      }).catch((err) => plog.error(m.id, "detached theme push failed:", err));
-    },
-    onShow: () => hook("onShow"),
-  });
-  // Theme replays ( sandbox follow-up): the opaque iframe cannot read the
-  // launcher document, so the host pushes the color mode — on the ready
-  // handshake below and on every `data-theme` flip (see the observer at the
-  // bottom of this module). The value is this plugin's **effective** mode: a
-  // `theme.set` override pins it, `"system"` follows the launcher (docs/ROADMAP_HISTORY.md
-  // #36). Only `--lume-page-bg` and `lume.on.theme` ride it — the launcher's
-  // own palette never moves.
-  themePosters.set(m.id, (t) => {
-    if (viewReady) postEv("theme", t);
-  });
-  const { View, post, snapshot: viewSnapshot, live: viewLive } = createIframeView(
-    (method, args) => execHostRpc(m.id, method, args),
-    () => {
-      // The page's bridge is live and its handlers are assigned: push the
-      // current state (this also covers the initial load, where the loader
-      // raced the srcdoc document).
-      postEv("query", query());
-      postEv("show");
-      postEv("theme", pluginColorMode(m.id, currentThemeMode()));
-      if (enterPayload) postEv("enter", enterPayload);
-      if (settingsValues) postEv("settings", settingsValues);
-      // 会话快照（docs/ROADMAP_HISTORY.md #40）：启动器侧只消费 view 帧（titlebar 帧留给
-      // 下一次 detach 带给独立窗口）；取出即删，重挂载的页面自己恢复。
-      const ses = takeSessionFrames(m.id, ["view"]);
-      if (ses?.view !== undefined) postEv("restore", ses.view);
-    },
-    { id: m.id }
-  );
-  // Events (query/show/hide) mirror into the plugin log so a silent page is
-  // distinguishable from one that never received anything.
-  const postEv = (type: string, payload?: unknown) => {
-    plog.debug(m.id, `event → ${type}`, payload ?? "");
-    // Diagnostic tap (docs/PLUGIN_API.md §10): the color mode a page was told
-    // to render in is invisible from outside (the sandboxed document is
-    // unreachable), so probes read every delivered value here instead.
-    if (type === "theme") {
-      const w = window as unknown as { __themeLog?: unknown[] };
-      (w.__themeLog ??= []).push({ id: m.id, mode: payload });
-      (w.__themeLog as unknown[]).splice(0, Math.max(0, (w.__themeLog as unknown[]).length - 60));
-    }
-    post(type, payload);
-  };
-  let viewReady = false;
-
-  // Fetch + bridge the view page, then mark ready and deliver the current
-  // query (the page may already have assigned lume.on.query).
-  const viewEntry = manifestViewEntry(m);
-  plog.info(m.id, "mode view fetching:", viewEntry);
-  void fetchDiskFile(m.dir + "\\" + viewEntry)
-    .then((html) => {
-      plog.info(m.id, "mode view ready (html", html.length, "bytes)");
-      viewReady = true;
-      View.setHtml(injectBridge(html, "launcher"));
-      // query/show are NOT posted here: setting the srcdoc only starts the
-      // document load, so the bridge has no listener yet. The ready handshake
-      // (see the onReady callback above) delivers the page state once live.
-    })
-    .catch((err) => {
-      // The raw error stays in the plugin log; the page itself renders the
-      // localized fallback (the sandboxed view cannot reach the host's t()).
-      plog.error(m.id, "view load failed:", err);
-      View.setHtml(
-        `<body style="font:13px sans-serif;color:#f66;padding:16px">${escapeHtml(
-          t("pluginViewLoadFailed")
-        )}</body>`
-      );
-    });
-
-  return {
-    query,
-    setQuery: (q) => {
-      setQuerySig(q);
-      if (viewReady) postEv("query", q);
-      if (hasLogic) throttledLogicCall(m.id, "onQuery", [q]);
-    },
-    search: async (q) => {
-      if (viewReady) postEv("query", q);
-      if (hasLogic) throttledLogicCall(m.id, "onQuery", [q]);
-      // ModeInstance contract: every search ends with a resize request —
-      // without it the window keeps the previous page's size after a mode
-      // switch (the fixed-height model differs per mode).
-      services.scheduleResize();
-    },
-    reset: () => {
-      setSelected(0);
-      // A fresh summon starts a new page state — the previous entry payload
-      // no longer describes how this round began.
-      enterPayload = null;
-      if (viewReady) postEv("show");
-      hook("onShow");
-      services.scheduleResize();
-    },
-    selected,
-    setSelected,
-    rows: () => [],
-    activate: () => {},
-    onKey: (e) => {
-      // Forward every key to the iframe (`lume.on.key`) — plugin pages
-      // implement their own arrow/Enter handling. Never consumed: rows() is
-      // empty, so the root's own grid bindings are no-ops anyway.
-      if (viewReady) {
-        post("key", {
-          key: e.key,
-          ctrlKey: e.ctrlKey,
-          shiftKey: e.shiftKey,
-          altKey: e.altKey,
-        });
-      }
-      return false;
-    },
-    onEscape: () => false,
-    previewTarget: () => null,
-    previewEnabled: () => false,
-    measureViewport: () => {},
-    // Loading gate: the page area stays hidden (window collapsed to the search
-    // row, pill spinner) until THIS document's bridge is live — a remount
-    // reloads the srcdoc and flips it back to false.
-    ready: viewLive,
-    // Manifest `height` — the mode's preferred fixed window height.
-    desiredHeight: () => (m.height != null && m.height > 0 ? m.height : null),
-    pageKind: () => "main",
-    restorePage: () => {},
-    applySettings: () => {},
-    // Detach/attach hand-off : ask the page for its state snapshot.
-    snapshot: () => viewSnapshot(),
-    onHide: () => {
-      if (viewReady) postEv("hide");
-      hook("onHide");
-    },
-    onEnter: (info) => {
-      enterPayload = info;
-      // 新 enter = 新用户意图：LRU 淘汰 / detach / 关闭回流遗留、还在等
-      // 重放的会话帧必须作废 —— ready 握手把 view 帧放在标准重放
-      // （query/show/enter）**之后**，旧快照会把刚投递的 payload 覆盖回
-      // 上一个会话（docs/ROADMAP_HISTORY.md #42）。已经消费掉的帧（页面活着）不受影响。
-      dropSessionFrames(m.id);
-      if (detachedIds.has(m.id)) {
-        // The page lives in its own window — the payload travels over the
-        // event channel (the in-launcher iframe is not mounted).
-        detachedSuppliers.get(m.id)?.push(false);
-      }
-      if (viewReady) postEv("enter", info);
-      hook("onEnter", info);
-    },
-    onSubInput: (text) => {
-      if (viewReady) postEv("subInput", text);
-      if (hasLogic) throttledLogicCall(m.id, "onSubInput", [text]);
-    },
-    onSettings: (values) => {
-      settingsValues = values;
-      if (detachedIds.has(m.id)) detachedSuppliers.get(m.id)?.push(false);
-      if (viewReady) postEv("settings", values);
-      hook("onSettings", values);
-    },
-    View,
-  };
-}
 
 /** Unload one disk plugin's contributions (hot reload): drop its
  * registrations, forget its load attempt and clear the module cache so a
@@ -1125,36 +885,6 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           `registered mode proxy (template=list, entry=${m.entry}` +
             `${m.height != null ? `, height=${m.height}` : ""}${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
         );
-      } else if (m.kind === "mode" && manifestViewEntry(m)) {
-        if (m.entry) pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
-        const logic = m.entry ? logicProxy(m.id) : {};
-        const instance = createDiskModeInstance(m, logic, services!);
-        const navBars = navBarsContribution(m.id, logic, m.dir);
-        definePlugin({
-          id: m.id,
-          icon: manifestIconSpec(m),
-          modeMeta: {
-            labelKey: "",
-            placeholderKey: "",
-            icon: manifestIconSpec(m),
-            label: m.name || m.id,
-          },
-          keywords: m.keywords,
-          keywordsPinyin: m.keywordsPinyin ?? [],
-          features: m.features ?? [],
-          dir: m.dir,
-          pluginName: m.name || m.id,
-          mode: instance,
-          ...(navBars ? { navBars } : {}),
-        });
-        registeredDiskIds.add(m.id);
-        void applyPluginSettings(m.id);
-        loadedAny = true;
-        plog.info(
-          m.id,
-          `registered mode (view=${manifestViewEntry(m)}${m.entry ? `, entry=${m.entry}` : ""}` +
-            `${m.height != null ? `, height=${m.height}` : ""}${navBars ? ", navBars" : ""})`
-        );
       } else if (m.kind === "service" && m.entry) {
         pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const navBars = navBarsContribution(m.id, logicProxy(m.id), m.dir);
@@ -1182,7 +912,7 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           m.id,
           `unusable manifest: kind=${m.kind}` +
             (m.kind === "provider" && !m.entry ? " — provider requires `entry`" : "") +
-            (m.kind === "mode" && m.template !== "list" && !manifestViewEntry(m) ? " — mode requires a Presenter entry" : "") +
+            (m.kind === "mode" && !m.pageRuntime && m.template !== "list" ? " — mode requires page_runtime or template=list" : "") +
             (m.kind === "mode" && m.template === "list" && !m.entry ? " — template=list requires `entry`" : "") +
             (m.kind === "service" && !m.entry ? " — service requires `entry`" : "")
         );
@@ -1388,6 +1118,9 @@ function registerPageRuntimeDetachedSupplier(id: string, runtime: PageRuntimeMod
           theme: pluginColorMode(id, currentThemeMode()),
           themePref: pluginColorPref(id),
           ...(model ? { model } : {}),
+          ...(model?.data && typeof model.data === "object" && (model.data as Record<string, unknown>).enter != null
+            ? { enter: (model.data as Record<string, unknown>).enter }
+            : {}),
           ...(frames ? { snapshot: { v: 2, frames } } : {}),
         },
       }).catch((err) => plog.error(id, "detached Page Runtime state push failed:", err));
@@ -1456,6 +1189,7 @@ export function applyPluginColorMode(
   setPluginColorPref(id, pref, source);
   const mode = pluginColorMode(id, currentThemeMode());
   themePosters.get(id)?.(mode);
+  pageRuntimeModes.get(id)?.postTheme(mode);
   detachedSuppliers.get(id)?.pushTheme(mode, pref);
 }
 

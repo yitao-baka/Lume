@@ -29,13 +29,41 @@ rmSync(FIX, { recursive: true, force: true });
 mkdirSync(FIX, { recursive: true });
 writeFileSync(`${FIX}/plugin.toml`, `id = "q48-mode"
 name = "Q48 Mode"
-version = "1.0.0"
+version = "2.0.0"
 kind = "mode"
+api = 2
 description = "CDP fixture: keyword row entry consumes the shared query"
-view = "view.html"
+entry = "service.js"
+model = "lume.collection/v1"
+page_runtime = true
+default_presenter = "default"
 height = 360
 keywords = ["q48kw"]
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]
 `);
+writeFileSync(
+  `${FIX}/service.js`,
+  `export default function create() {
+  let revision = 0;
+  return {
+    getModel() {
+      return {
+        runtime: "lume.page/v1",
+        schema: "lume.collection/v1",
+        revision: ++revision,
+        status: "ready",
+        data: { title: "Q48 Mode", items: [], total: 0, window: { offset: 0, limit: 0 } },
+      };
+    },
+  };
+}
+`
+);
 writeFileSync(
   `${FIX}/view.html`,
   `<!doctype html><html><body><div id="q48-view" style="font:14px sans-serif;color:#888">Q48 Mode</div></body></html>`

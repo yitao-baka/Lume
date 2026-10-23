@@ -105,18 +105,23 @@ export function validateIntent(intent: PageIntent, model: PageModel): IntentResu
       return null;
     }
     case "item.activate":
-    case "item.action":
-      if (!targetId) return failed("intent.target", `${intent.type} requires targetId`);
-      if (intent.type === "item.action") {
-        if (typeof intent.actionId !== "string" || !stableId(intent.actionId)) {
-          return failed("intent.action", "item.action requires actionId");
-        }
-        const target = ledger.targets.get(targetId);
-        if (!ledger.globalActions.has(intent.actionId) && !target?.actions.has(intent.actionId)) {
-          return failed("intent.action", `action "${intent.actionId}" is not declared for "${targetId}"`);
-        }
+      if (!targetId) return failed("intent.target", "item.activate requires targetId");
+      return null;
+    case "item.action": {
+      if (typeof intent.actionId !== "string" || !stableId(intent.actionId)) {
+        return failed("intent.action", "item.action requires actionId");
+      }
+      if (!targetId) {
+        return ledger.globalActions.has(intent.actionId)
+          ? null
+          : failed("intent.action", `action "${intent.actionId}" is not a declared global action`);
+      }
+      const target = ledger.targets.get(targetId);
+      if (!ledger.globalActions.has(intent.actionId) && !target?.actions.has(intent.actionId)) {
+        return failed("intent.action", `action "${intent.actionId}" is not declared for "${targetId}"`);
       }
       return null;
+    }
     case "viewport.request": {
       const payload = intent.payload as { offset?: unknown; limit?: unknown } | undefined;
       const offset = payload?.offset;

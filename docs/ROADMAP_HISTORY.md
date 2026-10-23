@@ -4855,3 +4855,75 @@ Presenter 名称，值没有持久化或下发路径。
   `cdp_translation_service_verify` **22/22 PASS**；
   `cdp_page_runtime_verify` **10/10 PASS**。
 - `pnpm exec tsc --noEmit`、`cargo check`、debug `--no-bundle` 构建通过。
+
+## 77. 页面运行时收口与旧磁盘页面契约移除（2026-10-24）
+
+来源：导航、剪贴板、翻译和 file-search 已经使用 Page Session / Presenter，
+但磁盘自绘 mode 仍保留顶层 `view`/`titlebar` 适配路径，示例与 CDP fixture
+也混用旧入口；独立窗口只验证了主 Presenter，旧 view bridge 仍留在构建中。
+
+### 77.1 实现
+
+- 删除 `src/page-runtime/migrationAdapter.ts`，磁盘自绘 mode 不再通过
+  `createDiskModeInstance` 加载；`page_runtime = true` 的 mode 走
+  `createPageRuntimeMode`，顶层 `view`/`titlebar` 字段从 Rust/TS 清单与
+  `plugin_window_meta` 中移除。
+- `file-search` 升级为 Page Service + default/compact 两个 Presenter；
+  `hello-mode`、`hidden-mode`、`state-probe`、`titlebar-demo`、HTTP/sandbox
+  fixture、LRU/主题/窗口测试夹具同步迁移到 api 2。
+- `pluginWindow` 只挂载 Page Runtime 的 Presenter；主 Presenter 和 titlebar
+  Presenter 都使用受限桥。Presenter bridge 在 ready 后消费会话快照；
+  新的声明式 `enter` 在宿主切换页面前丢弃旧帧，避免旧输入覆盖新载荷。
+- Page Service 增加 `onSubInput`，跨窗口桥白名单补充该操作；Presenter
+  桥把宿主路由后的按键回放为 `lume.on.key`，同时保留宿主自己的 Tab/Esc 路由。
+- `pluginWindow_meta` 只返回 Presenter 清单、model、默认 Presenter、布局和
+  Presenter 设置；独立窗口缺少 `page_runtime` 或 Presenter 时明确报错。
+- 删除旧 `injectBridge` / `injectTitlebarBridge` 及其完整能力脚本；
+  `iframeBridge.tsx` 只保留 Presenter 共用的沙箱宿主和文档加载看门狗。
+- 当前架构、api 2 清单、页面模型、Intent、秘密边界、独立窗口和测试矩阵
+  同步到 `PAGE_MODEL_PRESENTER.md`、`PLUGIN_API.md`、`PLUGINS.md`、
+  `ARCHITECTURE.md`、`TESTING.md` 与 README。
+
+### 77.2 踩坑
+
+- 快照消费和声明式进入不能只靠 Presenter ready 回调排序：新宿主可能在
+  `deliverFeature` 前完成 ready 并先取走旧帧。进入路径必须先在宿主侧
+  `dropSessionFrames`，Presenter ready 只负责消费仍然有效的帧。
+- Presenter 页面的 `load` 事件可能在 `await lume.page.ready()` 后已经结束；
+  fixture 不能只注册 `load` 监听，必须同时检查 `document.readyState`。
+- `jsn` 这类 Presenter 本地值不能塞进 Page Model；模型持久保留会让 LRU
+  重挂载看起来像「恢复了旧帧」。本地值由 Presenter 捕获，新进入丢弃帧后
+  自然回到默认值。
+- 多轮 CDP 之间的 WebView2 残留进程会让 `__frameStates`、面板宽度和存储
+  读取出现假结果；测试入口统一清理 `lume.exe` 与 `msedgewebview2.exe`。
+- 旧测试 fixture 若省略 `api = 2` 会在到达本身断言前被清单门拒绝；
+  `.lupx`、窗口权限、LRU 和图标夹具都已显式声明当前 API。
+
+### 77.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm exec tsc -p examples/tsconfig.json`、
+  `pnpm run build`、`pnpm run test:page-runtime` **10/10 PASS**；
+  `cargo check`、`cargo test` **247 passed / 9 ignored**；
+  `node scripts/check_i18n.mjs` **577 keys × 3 languages / 64 keyword arrays**。
+- `node scripts/cdp_page_runtime_verify.mjs` **10/10**；
+  `cdp_file_search_presenter_verify` **5/5**；
+  `cdp_translation_service_verify` **22/22**；
+  `cdp_presenter_control_verify` **10/10**；
+  `cdp_detached_page_runtime_verify` **12/12**；
+  `cdp_plugin_window_verify` **16/16**；
+  `cdp_plugin_state_verify` **54/54**；
+  `cdp_plugin_lru_verify` **22/22**；
+  `cdp_sandbox_verify` **14/14**；
+  `cdp_plugin_theme_verify` **28/28**；
+  `cdp_mode_query_verify` **47/47**；
+  `cdp_mode_bar_icons_verify` **22/22**；
+  `cdp_plugin_themed_icon_verify` **21/21**；
+  `cdp_visual_audit_verify` **28/28**；
+  `cdp_idle_reset_verify` **48/48**；
+  `cdp_settings_smoke`、`cdp_settings_skin_verify` **60/60**、
+  `cdp_settings_accent_verify` **47/47**、`cdp_plugins_pane_verify` ALL PASS；
+  `cdp_http_probe_verify` **11/11**、`cdp_plugin_mode_bar_verify` **15/15**、
+  `cdp_window_feature_verify` ALL PASS、`cdp_p3_verify` **43/43**、
+  `cdp_lupx_verify` ALL PASS；插件、p2、p2b、剪贴板 smoke/p2 与熔断回归 PASS。
+- debug / release `--no-bundle` 构建通过；`cdp_plugin_blank_verify`
+  **4/4 PASS**、`cdp_plugin_frame_load_verify` **1/1 PASS**。

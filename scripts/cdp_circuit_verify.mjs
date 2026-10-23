@@ -24,8 +24,7 @@ const MARK = "# __circuit_verify__";
 
 function enableHelloMode() {
   const edited = settingsOriginal.replace(/(\n\s*)"hello-mode",/, `$1${MARK} "hello-mode",`);
-  if (edited === settingsOriginal) throw new Error("hello-mode not found in disabled list");
-  writeFileSync(SETTINGS, edited);
+  if (edited !== settingsOriginal) writeFileSync(SETTINGS, edited);
 }
 function restoreSettings() {
   try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}

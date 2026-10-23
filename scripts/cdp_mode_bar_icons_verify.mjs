@@ -50,12 +50,40 @@ rmSync(FIX, { recursive: true, force: true });
 mkdirSync(FIX, { recursive: true });
 writeFileSync(`${FIX}/plugin.toml`, `id = "noicon-mode"
 name = "No Icon Mode"
-version = "1.0.0"
+version = "2.0.0"
 kind = "mode"
+api = 2
 description = "CDP fixture: mode without an icon - pill falls back to unknow_universal.svg"
-view = "view.html"
+entry = "service.js"
+model = "lume.collection/v1"
+page_runtime = true
+default_presenter = "default"
 height = 360
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]
 `);
+writeFileSync(
+  `${FIX}/service.js`,
+  `export default function create() {
+  let revision = 0;
+  return {
+    getModel() {
+      return {
+        runtime: "lume.page/v1",
+        schema: "lume.collection/v1",
+        revision: ++revision,
+        status: "ready",
+        data: { title: "No Icon Mode", items: [], total: 0, window: { offset: 0, limit: 0 } },
+      };
+    },
+  };
+}
+`
+);
 writeFileSync(
   `${FIX}/view.html`,
   `<!doctype html><html><body><div id="noicon-view" style="font:14px sans-serif;color:#888">No Icon Mode</div></body></html>`
@@ -142,7 +170,15 @@ const shot = async (file) => {
 const invoke = (cmd, args = {}) => m.evalJs(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
 
 // Snapshot the original switch; force the deterministic baseline (off).
-const originalFlag = !!(await invoke("get_settings")).appearance.mode_switch_icons_only;
+const initialSettings = await invoke("get_settings");
+const originalFlag = !!initialSettings.appearance.mode_switch_icons_only;
+const originalWidth = initialSettings.appearance.window_width;
+const setWidth = async (v) => {
+  const s = await invoke("get_settings");
+  s.appearance.window_width = v;
+  await invoke("save_settings", { new: s });
+  await sleep(700);
+};
 const setFlag = async (v) => {
   const s = await invoke("get_settings");
   s.appearance.mode_switch_icons_only = v;
@@ -154,6 +190,7 @@ async function restore() {
   if (!restoreNeeded) return;
   restoreNeeded = false;
   try { await setFlag(originalFlag); } catch (e) { console.log("restore settings failed:", String(e)); }
+  try { await setWidth(originalWidth); } catch (e) { console.log("restore width failed:", String(e)); }
   try { rmSync(`${BASE}/plugins/noicon-mode`, { recursive: true, force: true }); } catch {}
 }
 
@@ -205,6 +242,10 @@ const activeTitle = async () => (await pillInfo())?.items.find((i) => i.active)?
 
 try {
   await invoke("set_plugin_enabled", { id: "noicon-mode", enabled: true });
+  // The label assertions exercise the wide-row presentation; a previous
+  // visual audit may have left the persisted launcher width below the
+  // responsive 640px breakpoint, where labels intentionally collapse.
+  await setWidth(Math.max(720, originalWidth));
   await setFlag(false);
   await invoke("toggle_launcher");
   await sleep(1500);
@@ -263,10 +304,9 @@ try {
   const s = await findSettings();
   check("F1 设置窗口打开", !!s);
   if (s) {
-    // 设置窗默认落在别的面板 —— 先切到「导航页」（三语名）。
+    // 设置窗默认落在别的面板 —— 按稳定的 section id 切到 Launcher。
     await s.evalJs(`(() => {
-      const names = ["导航页", "導航頁", "Navigation"];
-      const b = [...document.querySelectorAll(".settings-nav")].find((x) => names.some((n) => x.textContent.includes(n)));
+      const b = document.querySelector('.settings-nav[data-section="launcher"]');
       b?.click();
       return !!b;
     })()`);
@@ -281,11 +321,9 @@ try {
   check("F2 导航页有该开关且当前为关", !!rowBefore && rowBefore.checked === "false", JSON.stringify(rowBefore));
   if (s && rowBefore) {
     await s.evalJs(`(() => { const r = ${rowSel}; r?.querySelector(".settings-toggle")?.click(); return "ok"; })()`);
-    await sleep(300);
-    const saveDisabled = await s.evalJs(`Array.from(document.querySelectorAll(".settings-footer .settings-action"))[1]?.disabled`);
-    check("F3 改动后保存按钮可用", saveDisabled === false);
-    await s.evalJs(`Array.from(document.querySelectorAll(".settings-footer .settings-action"))[1]?.click(); "ok"`);
-    await sleep(1200);
+    await sleep(900);
+    const saveState = await s.evalJs(`document.querySelector(".settings")?.dataset.saveState ?? ""`);
+    check("F3 改动后自动保存完成", saveState === "saved", saveState);
   }
   const f = await waitIconsOnly(true, 30);
   check("F4 保存并应用后启动器实时切成仅图标", !!f && f.iconsOnly);

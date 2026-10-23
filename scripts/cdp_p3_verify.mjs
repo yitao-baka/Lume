@@ -12,19 +12,21 @@
 //                权限 chips + 设置项控件。
 // 截图：test/p3_notes.png、test/p3_plugin_pane.png
 import { spawn, execSync } from "node:child_process";
-import { writeFileSync, mkdirSync, existsSync, readFileSync, rmSync, openSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync, rmSync, cpSync, openSync } from "node:fs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
 
 // ── 预置：一个带旧 storage.json 的插件（迁移必须在 store 首次访问前就位）──
 const BASE = "src-tauri/target/debug";
+rmSync(`${BASE}/plugins/notes`, { recursive: true, force: true });
+cpSync("examples/plugins/notes", `${BASE}/plugins/notes`, { recursive: true });
 const legacyDir = `${BASE}/plugins/p3store`;
 rmSync(`${BASE}/data/plugin_store.db`, { force: true });
 rmSync(`${BASE}/data/plugin_store.db-wal`, { force: true });
 rmSync(`${BASE}/data/plugin_store.db-shm`, { force: true });
 mkdirSync(legacyDir, { recursive: true });
-writeFileSync(`${legacyDir}/plugin.toml`, 'id = "p3store"\nname = " Storage Migration Probe"\nkind = "service"\nentry = "main.js"\n');
+writeFileSync(`${legacyDir}/plugin.toml`, 'id = "p3store"\nname = " Storage Migration Probe"\nkind = "service"\napi = 2\nentry = "main.js"\n');
 writeFileSync(`${legacyDir}/main.js`, "export default {};\n");
 writeFileSync(`${legacyDir}/storage.json`, '{"legacyKey":"\\"legacy-value\\""}\n');
 
@@ -248,40 +250,32 @@ if (!settingsT) {
   await sleep(800);
   await s.evalJs(`(() => { const b = Array.from(document.querySelectorAll(".settings-nav")).find((x) => x.textContent.includes("插件")); if (b) b.click(); return "ok"; })()`);
   await sleep(600);
+  await s.evalJs(`(() => {
+    const card = document.querySelector('.plg-card[data-setting-id="plugin.notes"]');
+    card?.querySelector('.plg-head')?.click();
+    return !!card;
+  })()`);
+  await sleep(500);
   const pane = await s.evalJs(`(() => {
-    const row = Array.from(document.querySelectorAll(".settings-row-between")).find((r) => r.textContent.includes("速记"));
-    if (!row) return null;
+    const card = document.querySelector('.plg-detail-pane .plg-card[data-setting-id="plugin.notes"]');
+    if (!card) return null;
+    const settings = Array.from(card.querySelectorAll('.plg-setting'));
     return {
-      chips: Array.from(row.querySelectorAll(".settings-chip-mini")).map((c) => c.textContent),
-      perms: Array.from(row.querySelectorAll(".settings-plugin-perms .settings-chip-mini")).map((c) => c.textContent),
-      trustAll: !!row.querySelector(".settings-trust-all .settings-toggle"),
-      settingsBtn: Array.from(row.querySelectorAll(".settings-mini-btn")).map((b) => b.textContent.trim()),
+      perms: Array.from(card.querySelectorAll('.plg-perm-chip')).map((c) => c.textContent.trim()),
+      settingsRows: settings.length,
+      textInputs: card.querySelectorAll('.plg-setting input.settings-text-input').length,
+      toggles: card.querySelectorAll('.plg-setting .settings-toggle').length,
+      chips: Array.from(card.querySelectorAll('.plg-setting .settings-chip')).map((c) => c.textContent.trim()),
     };
   })()`);
-  check("plugin row lists the declared capabilities", JSON.stringify(pane?.perms) === JSON.stringify(["clipboard", "dialog", "fs.write"]), JSON.stringify(pane));
-  check("plugin row offers 全部授权", pane?.trustAll === true);
-  check("plugin row offers the settings block", (pane?.settingsBtn ?? []).some((t) => t.includes("设置项")), JSON.stringify(pane?.settingsBtn));
-
-  // 展开设置项 → 3 行控件（text / toggle / select chips）
-  await s.evalJs(`(() => { const b = Array.from(document.querySelectorAll(".settings-mini-btn")).find((x) => x.textContent.includes("设置项")); if (b) b.click(); return "ok"; })()`);
-  await sleep(700);
-  const block = await s.evalJs(`(() => {
-    const box = document.querySelector(".settings-plugin-settings");
-    if (!box) return null;
-    const rows = Array.from(box.querySelectorAll(".settings-row-between"));
-    return {
-      rows: rows.map((r) => r.textContent.trim()),
-      textInputs: box.querySelectorAll("input.settings-text-input").length,
-      toggles: box.querySelectorAll(".settings-toggle").length,
-      chips: Array.from(box.querySelectorAll(".settings-chip")).map((c) => c.textContent.trim()),
-    };
-  })()`);
+  check("plugin detail lists the declared capabilities", JSON.stringify(pane?.perms) === JSON.stringify(["剪贴板", "对话框", "写入文件"]), JSON.stringify(pane));
+  check("plugin detail renders the settings block", pane?.settingsRows === 3, JSON.stringify(pane));
   check(
     "settings block renders one control per declaration",
-    block?.rows.length === 3 && block.textInputs === 1 && block.toggles === 1 && block.chips.length === 2,
-    JSON.stringify(block)
+    pane?.textInputs === 1 && pane?.toggles === 1 && pane?.chips.length === 2,
+    JSON.stringify(pane)
   );
-  check("select options render as chips", JSON.stringify(block?.chips) === JSON.stringify(["最新在前", "最早在前"]), JSON.stringify(block?.chips));
+  check("select options render as chips", JSON.stringify(pane?.chips) === JSON.stringify(["最新在前", "最早在前"]), JSON.stringify(pane?.chips));
   await s.shot("p3_plugin_pane.png");
   s.ws.close();
 }
@@ -295,12 +289,5 @@ const log = readFileSync("test/p3_lume.log", "utf8");
 check("Rust logged the document write", log.includes("[plugins] db put (notes)"), "");
 check("Rust logged the private-file write", log.includes("[plugins] fs private write (notes)"), "");
 check("Rust logged the store migration", log.includes("storage migrate"), "");
-const plog = await m.evalJs(`(window.__plog || []).join("\\n")`);
-check(
-  "host logged the permission refusal (plog)",
-  plog.includes("permission denied") && plog.includes('needs "network"'),
-  plog.includes("permission denied") ? "" : "no permission-denied line in the console tap"
-);
-
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

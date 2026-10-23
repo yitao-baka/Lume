@@ -18,6 +18,7 @@ import { mkdirSync, rmSync, cpSync, openSync } from "node:fs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /T /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
+try { execSync("taskkill /F /IM msedgewebview2.exe 2>NUL", { stdio: "ignore" }); } catch {}
 
 const BASE = "src-tauri/target/debug";
 const PORT = 9233;

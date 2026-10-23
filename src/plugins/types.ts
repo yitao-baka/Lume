@@ -101,10 +101,6 @@ export interface PluginManifest {
   pageRuntime: boolean;
   /** Service-only secret slots exposed by the settings pane. */
   secrets: PluginSecretSpec[];
-  /** Transitional adapter view. api 2 declares `[[presenters]]`. */
-  view: string;
-  /** Transitional adapter titlebar. api 2 Presenters own this slot. */
-  titlebar: string;
   /** Mode plugins: `"list"` = the built-in list template renders the plugin's
    * rows (no `view` needed; the plugin ships only `entry` logic). */
   template: string;

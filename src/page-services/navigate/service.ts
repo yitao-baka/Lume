@@ -40,7 +40,7 @@ type NavigateTarget = BarTarget | ResultTarget;
 function iconRef(icon: string | PluginIconSpec | undefined): ResourceRef | undefined {
   if (!icon) return undefined;
   if (typeof icon === "string") return { kind: "url", src: icon };
-  const src = icon.light || icon.dark;
+  const src = icon.light || icon.dark || icon.legacy;
   if (!src) return undefined;
   return {
     kind: "url",

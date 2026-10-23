@@ -114,13 +114,22 @@ check("② host cannot reach into the iframe", reach.doc === "null" && reach.lum
 
 // ③ 探针自检结果（opaque origin + 受限 + 桥接/按键/焦点照常）
 // storage 值是双重 JSON（桥接层 stringify 一次、探针 stringify 一次）。
-let probeRaw = null;
-for (let i = 0; i < 10 && !probeRaw; i++) {
-  await sleep(400);
-  probeRaw = await invoke("plugin_storage_get", { id: "sandbox-probe", key: "probe" });
-}
 let probe = {};
-try { probe = JSON.parse(JSON.parse(probeRaw ?? '"{}"')); } catch (e) { probe = { parseError: String(probeRaw) }; }
+let probeRaw = null;
+for (let i = 0; i < 20; i++) {
+  probeRaw = await invoke("plugin_storage_get", { id: "sandbox-probe", key: "probe" });
+  try {
+    const parsed = JSON.parse(JSON.parse(probeRaw ?? '"{}"'));
+    if (parsed && parsed.origin) {
+      probe = parsed;
+      break;
+    }
+  } catch {}
+  await sleep(400);
+}
+if (!probe.origin) {
+  try { probe = JSON.parse(JSON.parse(probeRaw ?? '"{}"')); } catch (e) { probe = { parseError: String(probeRaw) }; }
+}
 check("③a iframe is opaque origin (null)", probe.origin === "null" && probe.srcdoc === true, JSON.stringify(probe));
 check("③b localStorage blocked in the sandbox", probe.localStorage === "blocked", String(probe.localStorage));
 check("③c parent document unreachable", probe.parentDoc === "blocked", String(probe.parentDoc));

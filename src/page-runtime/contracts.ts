@@ -127,6 +127,7 @@ export interface PageService {
   getModel(): PageModel | Promise<PageModel>;
   onIntent?(intent: PageIntent): IntentResult | Promise<IntentResult>;
   onQuery?(query: string): void | Promise<void>;
+  onSubInput?(text: string): void | Promise<void>;
   onShow?(): void | Promise<void>;
   onHide?(): void | Promise<void>;
   onEnter?(info: unknown): void | Promise<void>;

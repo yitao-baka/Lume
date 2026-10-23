@@ -104,7 +104,7 @@ function makeServices(id: string, token: string): PluginServices {
     setQuery: (q) => action("setQuery", { q }),
     resizeWindow: () => {},
     dragWindow: () => {},
-    setSubInput: () => {},
+    setSubInput: (pluginId, opts) => action("setSubInput", { pluginId, opts }),
     subInputOwner: () => null,
     enterPlugin: (pluginId, info) => {
       // redirect：载荷交启动器路由（与分离窗口的 redirect 同形）

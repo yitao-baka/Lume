@@ -1,0 +1,6 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+:root{color-scheme:light dark}body{font:13px "Segoe UI",sans-serif;margin:0;padding:8px 12px;background:transparent;color:inherit}.item{display:flex;gap:10px;align-items:center;padding:7px 9px;border-radius:7px}.item.sel{background:rgba(128,150,200,.22)}.name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{opacity:.55;font-size:11px}.empty{opacity:.55;padding:12px 4px}
+</style></head><body><div id="list"></div><script>
+(async function(){var model=await lume.page.ready();var list=document.getElementById("list");function render(next){if(!next)return;model=next;var items=next.data.items||[];list.innerHTML=items.length?items.map(function(i){return '<div class="item'+(i.id===next.data.selectedId?' sel':'')+'" data-id="'+i.id+'"><span class="name">'+i.label+'</span><span class="badge">'+((i.badges&&i.badges[0])||'')+'</span></div>';}).join(''):'<div class="empty">'+(next.data.empty||'无结果')+'</div>';}list.addEventListener('click',function(e){var row=e.target.closest('[data-id]');if(row)lume.page.dispatch({type:'item.activate',targetId:row.dataset.id});});lume.page.subscribe(render);render(model);})();
+</script></body></html>

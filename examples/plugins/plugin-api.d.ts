@@ -124,7 +124,7 @@ interface LumeFsApi {
   thumb(path: string): Promise<string>;
 }
 
-/** 页面（view/titlebar/逻辑）可挂的事件钩子。 */
+/** Presenter 或逻辑帧可挂的事件钩子。 */
 interface LumeEvents {
   query?(q: string): void;
   show?(): void;
@@ -334,6 +334,7 @@ interface LumeModeServiceLogic {
   getModel(): LumePageModel | Promise<LumePageModel>;
   onIntent?(intent: LumePageIntent): LumeIntentResult | Promise<LumeIntentResult>;
   onQuery?(query: string): void | Promise<void>;
+  onSubInput?(text: string): void | Promise<void>;
   onShow?(): void | Promise<void>;
   onHide?(): void | Promise<void>;
   onEnter?(info: unknown): void | Promise<void>;

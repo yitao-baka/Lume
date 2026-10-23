@@ -11,6 +11,34 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **页面模型 / Presenter 运行时收口** — 磁盘自绘 mode 统一为 api 2 的
+  Page Service + `[[presenters]]`，删除顶层 `view`/`titlebar` 清单字段、
+  `migrationAdapter`、旧磁盘 view bridge 和 `createDiskModeInstance` 路径；
+  `file-search` 与全部仓库 mode 示例/CDP fixture 升级到当前契约。
+  独立窗口只挂载 Presenter，主 Presenter 与 titlebar 共用受限桥、模型和
+  Page Session；会话快照在 Presenter ready 后恢复，新的声明式进入先在
+  宿主侧丢弃旧帧。Presenter 的宿主路由按键继续以 `lume.on.key` 回放，
+  `onSubInput` 纳入 Page Service 与跨窗口桥白名单。验证：
+  `cdp_page_runtime_verify` **10/10**、
+  `cdp_file_search_presenter_verify` **5/5**、
+  `cdp_translation_service_verify` **22/22**、
+  `cdp_presenter_control_verify` **10/10**、
+  `cdp_detached_page_runtime_verify` **12/12**、
+  `cdp_plugin_window_verify` **16/16**、`cdp_plugin_state_verify` **54/54**、
+  `cdp_plugin_lru_verify` **22/22**、`cdp_sandbox_verify` **14/14**、
+  `cdp_plugin_theme_verify` **28/28**、`cdp_mode_query_verify` **47/47**、
+  `cdp_mode_bar_icons_verify` **22/22**、
+  `cdp_plugin_themed_icon_verify` **21/21**、
+  `cdp_visual_audit_verify` **28/28**、`cdp_idle_reset_verify` **48/48**、
+  `cdp_settings_skin_verify` **60/60**、
+  `cdp_settings_accent_verify` **47/47**、`cdp_p3_verify` **43/43**，
+  `.lupx`、http、窗口规则、插件、p2/p2b、剪贴板与设置 smoke PASS；
+  Page Runtime 单测 **10/10**、`cargo test` **247 passed / 9 ignored**、
+  i18n **577 键 × 3 语言**、TypeScript、示例类型检查、Vite 与 debug / release
+  `--no-bundle` 构建通过；独立窗口空白与帧装载回归
+  `cdp_plugin_blank_verify` **4/4**、`cdp_plugin_frame_load_verify` **1/1**。
+  文档同步见 `PAGE_MODEL_PRESENTER.md`、`PLUGIN_API.md`、`PLUGINS.md`、
+  `ARCHITECTURE.md` 与 `TESTING.md`。
 - **独立窗口 Presenter titlebar 槽位** — Presenter 清单的 `titlebar` 在独立窗口
   中挂载为第二个沙箱 Presenter iframe，并复用 `lume.page`、主题、外壳安全
   动作和同一 Page Session。titlebar 接收共享模型与 Presenter 设置，页面按钮

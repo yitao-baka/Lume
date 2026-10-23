@@ -17,8 +17,10 @@ kind = "mode"
 api = 2
 description = "示例：hidden = true —— 不进模式切换栏，只能从导航页搜索结果进入"
 keywords = ["hush", "潜水"]
+entry = "service.js"
 icon = "icon.svg"      # pill / 搜索结果行等缺省图标的默认来源
 model = "lume.collection/v1"
+page_runtime = true
 default_presenter = "default"
 height = 420
 hidden = true          # 不在模式切换栏/切换键循环里出现；入口 = 导航搜索行

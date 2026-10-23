@@ -135,7 +135,9 @@ check("cards render with name + sub line", cards.length >= 5 && cards.every((c) 
 
 // Expand the first disk plugin card → detail panel
 await s.evalJs(`(() => {
-  const card = Array.from(document.querySelectorAll('.plg-card')).find((c) => c.querySelector('.plg-badge')?.textContent === "磁盘");
+  const card = Array.from(document.querySelectorAll('.plg-card')).find((c) =>
+    Array.from(c.querySelectorAll('.plg-badge')).some((badge) => badge.textContent === "磁盘")
+  );
   card?.querySelector('.plg-head')?.click();
   return card?.querySelector('.plg-name')?.textContent ?? "";
 })()`);
@@ -155,7 +157,11 @@ await s.shot("test/plg_dark_list.png");
 // Icon inversion (docs/SETTINGS_AUDIT_2026-10-20.md §2): legacy art follows the
 // surface `--icon-filter`, explicit icon_light / icon_dark stays as-is.
 const tileIcons = await s.evalJs(`(() => {
-  const strip = (f) => f.replace(/^grayscale\([^)]*\)\s*/, "").trim();
+  const strip = (f) => {
+    if (!f.startsWith("grayscale(")) return f;
+    const rest = f.slice(f.indexOf(")") + 1).trim();
+    return rest || "none";
+  };
   const imgs = Array.from(document.querySelectorAll('.plg-list .plg-tile img'));
   const legacy = imgs.filter((i) => !i.classList.contains('icon-explicit'));
   const explicit = imgs.filter((i) => i.classList.contains('icon-explicit'));

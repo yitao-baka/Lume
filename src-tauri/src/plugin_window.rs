@@ -149,6 +149,11 @@ pub async fn plugin_window_open(
     if m.kind != "mode" || !m.detachable {
         return Err(format!("plugin \"{id}\" is not a detachable mode"));
     }
+    if !m.page_runtime || m.presenters.is_empty() {
+        return Err(format!(
+            "plugin \"{id}\" is not a detachable Page Runtime mode"
+        ));
+    }
     let remembered = snapshot.plugins.window_bounds.get(&id).copied();
     let fallback_height = m.height.map(|h| h as f64).unwrap_or(480.0).clamp(240.0, 2000.0);
     let (width, height) = remembered
@@ -340,9 +345,8 @@ pub fn plugin_window_ready(
         .map_err(|e| e.to_string())
 }
 
-/// The manifest fields the plugin window page needs to load the view HTML
-/// (dir + view relative path) and title itself. Served to the matching
-/// window only.
+/// The manifest fields the plugin window page needs to mount its selected
+/// Presenter. Served to the matching window only.
 #[tauri::command]
 pub fn plugin_window_meta(
     id: String,
@@ -356,15 +360,8 @@ pub fn plugin_window_meta(
         .iter()
         .find(|m| m.id == id)
         .ok_or_else(|| format!("unknown plugin \"{id}\""))?;
-    let presenter = m
-        .presenters
-        .iter()
-        .find(|p| p.id == m.default_presenter)
-        .or_else(|| m.presenters.first());
     Ok(serde_json::json!({
         "dir": m.dir,
-        "view": if m.view.is_empty() { presenter.map(|p| p.entry.clone()).unwrap_or_default() } else { m.view.clone() },
-        "titlebar": if m.titlebar.is_empty() { presenter.map(|p| p.titlebar.clone()).unwrap_or_default() } else { m.titlebar.clone() },
         "name": m.name,
         "pageRuntime": m.page_runtime,
         "model": m.model,
@@ -420,6 +417,7 @@ pub fn plugin_page_bridge_call(
         "getModel"
             | "onIntent"
             | "onQuery"
+            | "onSubInput"
             | "onShow"
             | "onHide"
             | "onEnter"

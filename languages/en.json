@@ -40,6 +40,7 @@
   "autoTestNotRunning": "No {process} window found — start the program first, then test",
   "autoTestFocusFailed": "Could not bring {process} to the foreground — test cancelled",
   "autoTestInvalid": "This shortcut cannot be sent, so it cannot be tested",
+  "autoDelayLabel": "Delay",
   "autoDelayTitle": "Trigger delay (ms) — how long to wait after the window takes focus before pressing",
   "autoDelayUnit": "ms",
   "autoEmpty": "No auto actions yet",

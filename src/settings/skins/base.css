@@ -957,6 +957,12 @@ html[data-settings-skin] body.settings-window #root {
   color: var(--settings-signal-text);
 }
 
+/* 进行中的命令（正在安装 / 注册…）既不是成功也不是失败：用次要色；最终结果
+   走底部提示条，失败留在行内。 */
+.settings-status.pending {
+  color: var(--settings-secondary);
+}
+
 .settings-load-state,
 .settings-load-error {
   min-height: 160px;
@@ -965,6 +971,38 @@ html[data-settings-skin] body.settings-window #root {
   justify-content: center;
   flex-direction: column;
   gap: 12px;
+}
+
+/* 命令结果提示条（自动化 测试、系统 服务 / 代理注册）：底部居中、4s 自动消失，
+   成功与失败共用一个面板，失败换成告警色。位置抬离 32px 状态栏，不遮挡保存
+   状态；两种皮肤各自的圆角与投影由 token 决定。 */
+.settings-toast {
+  position: fixed;
+  bottom: 48px;
+  left: 50%;
+  /* 基准位移：入场动画结束后 transform 回到这里，提示条才能保持居中 */
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 8px 16px;
+  border: var(--settings-overlay-border-width) solid var(--settings-line-strong);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-panel);
+  color: var(--settings-text);
+  font-size: 12px;
+  box-shadow: var(--settings-overlay-shadow);
+  pointer-events: none;
+  animation: settings-toast-in 180ms ease-out;
+}
+
+.settings-toast.error {
+  border-color: var(--settings-signal);
+  color: var(--settings-signal-text);
+}
+
+@keyframes settings-toast-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
 }
 
 /* ── Primitives ─────────────────────────────────────────────────────── */
@@ -988,6 +1026,39 @@ html[data-settings-skin] body.settings-window #root {
 .settings-test-btn:hover {
   border-color: var(--settings-structure);
   background: var(--settings-hover);
+}
+
+/* 自动化 → 快捷键录制按钮（ComboRecorder）：与同一行的文本 / 数字输入同高，
+   占满所属字段（规则详情里是整列、添加行里是自然宽），值居中；录制中沿用
+   选中色。固定高度是必须的——规则详情的网格行被相邻两行标签撑高，没有高度的
+   按钮会被拉伸成一块空框。 */
+.settings-hotkey-btn {
+  height: var(--settings-control-height);
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 9px;
+  border: var(--settings-line-width) solid var(--settings-line-strong);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-control);
+  color: var(--settings-text);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-hotkey-btn:hover:not(:disabled) {
+  border-color: var(--settings-structure);
+  background: var(--settings-hover);
+}
+
+.settings-hotkey-btn.active {
+  border-color: var(--settings-structure);
+  background: var(--settings-selected);
+  color: var(--settings-selected-text);
 }
 
 .settings-action-primary {

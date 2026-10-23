@@ -1630,27 +1630,6 @@ body.settings-window #root {
   margin-bottom: 12px;
 }
 
-/* Transient toast shown after a manual index refresh. */
-.settings-toast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 8px;
-  background: var(--surface-raised);
-  color: var(--text);
-  font-size: 13px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-  animation: lume-toast-in 0.18s ease-out;
-}
-
-.settings-toast.error {
-  border: 1px solid var(--danger-border, var(--border-strong));
-  color: var(--danger-text);
-}
-
 .settings-immediate {
   display: inline-flex;
   align-items: center;
@@ -1700,10 +1679,6 @@ body.settings-window #root {
   border-color: var(--danger-border, var(--border-strong));
   background: color-mix(in srgb, var(--danger-text) 8%, transparent);
   color: var(--danger-text);
-}
-@keyframes lume-toast-in {
-  from { opacity: 0; transform: translate(-50%, 6px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
 }
 
 .settings-row {
@@ -1890,15 +1865,6 @@ body.settings-window #root {
   max-width: none;
 }
 
-.settings-automation-row .settings-hotkey-btn {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .settings-automation-head {
   display: grid;
   grid-template-columns: minmax(110px, 1.5fr) minmax(110px, 1fr) 52px 92px 70px 30px;
@@ -2006,29 +1972,6 @@ body.settings-window #root {
 .settings-input-name {
   flex: none;
   width: 130px;
-}
-
-/* Hotkey slot recorder button — shows the current combo, or the recording
-   hint while capturing. */
-.settings-hotkey-btn {
-  padding: 5px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-
-.settings-hotkey-btn:hover {
-  background: var(--hover);
-}
-
-.settings-hotkey-btn.active {
-  border-color: var(--accent-border);
-  background: var(--accent-tint);
-  color: var(--accent-text);
 }
 
 .settings-link {

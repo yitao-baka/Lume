@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#59 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#72 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -4589,3 +4589,93 @@ debug / release 同样失败，任务从未注册成功。
   **只读**句柄（共享 `ReadWrite`、不共享删除）——写入仍成功、schtasks 仍能读取，但
   agent 的删除会失败，文件留在磁盘上可供比对；句柄带写权限会让 schtasks 报
   「另一个程序正在使用此文件」。
+
+
+## 71. 设置窗四处交互与视觉修正：录制按钮 / 代理主操作 / 结果提示条 /「更多…」回退
+
+来源：用户截图反馈 —— 自动化页两个「快捷键」录制框（规则详情 + 添加行）样式与皮肤
+不符；系统页「注册代理」没有像「安装服务」那样用颜色强调；服务 / 代理的绿色结果
+文字应该改成弹窗提示；数字预设的「更多…」展开输入框后点空白应该收回成纸片。
+
+### 71.1 根因
+
+- 录制按钮 `.settings-hotkey-btn` 只由启动器样式表 `App.css` 供样式（无高度、
+  `background: transparent`、13px），设置窗皮肤 `skins/base.css` 里没有同名规则。
+  规则详情的字段是 `display: grid`，行高被相邻「延迟触发」的两行标签撑到 87px，
+  按钮没有固定高度又被默认 `align-self: stretch` 拉伸 —— 实测
+  `getBoundingClientRect().height` 54px 的空框；添加行里则与同排 `.settings-text-input`
+  / `.settings-pick-btn` 的高度、字号、底色都不一致。
+- 「注册代理」写死 `class="settings-action"`，「安装服务」是
+  `settings-action-primary`，两张票券的强调级别不对称。
+- 服务 / 代理的最终结果沿用 `.settings-status`（成功色）常驻票券：同一段绿色行内
+  文字既像状态又不会消失，和「票券显示状态、提示条显示结果」的分工冲突。
+- `.settings-preset-row` 的「更多…」输入框只在值变化时收回：`onBlur` 仅在
+  `input.value !== String(props.value)` 时走 `commitCustom`，值没变就直接返回，
+  `editing` 停在 true，输入框留在原位。
+
+### 71.2 踩坑
+
+- **`position: fixed` 会被祖先的 `transform` 抓住**：`.settings-page-content` 的入场
+  动画 `settings-page-in … both` 结束后仍保留 `transform: translateY(0)`，因此它是
+  `fixed` 后代的包含块 —— 提示条被钉在内容盒（数百 px 高）底部，页面滚动一变就
+  落在窗口外。自动化页此前的「测试」结果提示条一直存在于 DOM、`getComputedStyle`
+  也正常，却从来没被画出来。修复：`ToastNotice` 用 `<Portal>`（与帮助弹窗同法）
+  挂到 `document.body`。
+- **DOM 存在 ≠ 可见**：只查 `querySelector` / `getComputedStyle` 的断言对这种
+  「定位到视口外」的元素同样 PASS。断言要带 `getBoundingClientRect()`（本机实测
+  提示条 `rect.y = 638`、视口高 720）或截图核实。
+- **`<details>` 关闭时子元素不可聚焦**：`.settings-rule-add` 默认收起；对它内部的
+  录制按钮 `element.click()` 仍会触发处理器进入录制态，但 `focus()` 在未渲染元素上
+  无效，随后的 `Input.dispatchKeyEvent` 送不到按钮。验证脚本要先
+  `details.open = true`，再用真实鼠标点击 + CDP 键盘事件。
+- 悬停会污染样式断言：真实点击后指针停在按钮上，读到的是 hover 底色；测量前先用
+  `Input.dispatchMouseEvent`（`mouseMoved`）把指针移开。
+
+### 71.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  （**238 passed / 9 ignored**）、`pnpm run tauri build --debug --no-bundle` 通过。
+- `node test/verify_settings_ui.mjs` **19/19 PASS**（临时规则用完即删，脚本运行前后
+  备份 / 还原 `settings.toml`）：添加行录制按钮与同排文本输入同高（32px）同底同圆角、
+  占位文案不截断；真实鼠标点击进入录制态并聚焦，`Ctrl+Alt+S` 经
+  `validate_auto_combo` 提交到添加行；规则详情录制按钮 32px（对照旧样式的 54px
+  拉伸）；自动化「测试」的真实结果渲染为 `position: fixed` / `bottom: 48px` /
+  面板底色 / 失败告警色的提示条，`rect` 水平居中、底边距视口 48px 且不在
+  `.settings-page-content` 内，4s 后自动消失；「注册代理」主色（本机代理已注册，
+  用合成态核对同一 class 组合）；系统页默认没有行内状态文字；「更多…」展开 → 点
+  旁边空白 → 收回纸片且当前预设 chip 仍在；`560×420` 下添加行无横向溢出。
+- 截图：`test/settings-ui-fix/automation-add-row.png`、
+  `automation-rule-detail.png`、`automation-toast.png`、`system-agent.png`、
+  `more-opened.png`、`more-reverted.png`、`automation-narrow.png`。
+- 服务 / 代理的注册与注销本身需要 UAC，未在本机执行，仍按 `docs/TESTING.md` 的
+  手工清单核对。
+
+
+## 72. 自动化规则详情「延迟触发」标签折行（2026-10-23）
+
+来源：用户截图反馈 —— 规则展开后第三个字段名太长、折成两行，把下面的输入框顶下去，
+和同排的程序 / 快捷键控件不在一条线上。
+
+### 72.1 根因与修复
+
+- 字段名直接用 `autoDelayTitle`（「延迟触发（毫秒）— 窗口获得焦点后等待多久再按键」）
+  这一整句，它同时还是输入框的 `title` 与可访问名称。`.settings-rule-field` 的第三列是
+  `minmax(110px, 0.7fr)`，长句必然折行；网格行高由最长的标签撑开，于是三个字段里只有
+  延迟输入框被推低（实测控件顶边相差约 15px）。
+- 新增短标签键 `autoDelayLabel`（en `Delay` / zh-CN「延迟触发」/ zh-TW「延遲觸發」）
+  只用于可见字段名；长句保留为标签 `title` 与输入框 `aria-label`，无障碍信息不减。
+  单位「毫秒」本来就显示在输入框右侧，字段名不必重复。
+
+### 72.2 验证
+
+- `node scripts/check_i18n.mjs` PASS（**559 键 × 3 语言**、62 组搜索关键词配对）；
+  `pnpm exec tsc --noEmit`、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 通过。
+- `node test/verify_settings_ui.mjs` **18/18 PASS**：三个字段标签高度各 15px（单行）、
+  程序输入框 / 录制按钮 / 延迟输入框顶边完全一致（Chromatic 皮肤实测同为 497）；其余
+  断言（录制按钮几何、测试结果提示条、注册代理主色、更多…回退、560×420 无横向溢出）
+  一并保持通过。截图 `test/settings-ui-fix/automation-rule-detail.png`。
+- 顺手把验证脚本改成「按规则标题定位自己新增的那条规则」并按皮肤读取控件高度：
+  验证机的 `settings.toml` 里可能已有用户自己的规则（本机即有一条 `notepad.exe`），
+  此前「删第一张卡片」的写法会误伤用户数据 —— 本次靠脚本运行前后的 `settings.toml`
+  备份 / 还原兜住，实测还原后与运行前逐字节一致。

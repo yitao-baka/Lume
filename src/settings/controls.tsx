@@ -65,6 +65,15 @@ export function NumberPreset(props: {
     setEditing(false);
   }
 
+  /** Leave the free-form box. An unchanged value means 「更多」 was opened and
+   * abandoned — drop back to the preset chips instead of leaving the box
+   * behind. An off-preset value keeps its box: that input is the only place
+   * showing the current value. */
+  function leaveCustom(raw: string) {
+    if (raw !== String(props.value)) commitCustom(raw);
+    else setEditing(false);
+  }
+
   return (
     <div class="settings-preset-row">
       <For each={props.presets}>
@@ -103,15 +112,11 @@ export function NumberPreset(props: {
           aria-label={props.custom!.label}
           disabled={props.disabled}
           onChange={(e) => commitCustom(e.currentTarget.value)}
-          onBlur={(e) => {
-            if (e.currentTarget.value !== String(props.value)) {
-              commitCustom(e.currentTarget.value);
-            }
-          }}
+          onBlur={(e) => leaveCustom(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
-              commitCustom(e.currentTarget.value);
+              // 提交与回退都在 onBlur 里发生，避免两条路径二次提交
               e.currentTarget.blur();
             }
           }}
@@ -465,6 +470,51 @@ export function StatusTicket(props: {
       </div>
       {props.children}
     </div>
+  );
+}
+
+/** Transient result state rendered by `<ToastNotice>`. */
+export interface ToastState {
+  ok: boolean;
+  text: string;
+}
+
+/** State + auto-dismiss timer for `<ToastNotice>`. Used by the panes whose
+ * commands sit outside the settings working copy (自动化 测试 / 代理预检、
+ * 系统 服务与提权代理注册)：成功与失败共用同一条底部提示，计时器随组件清理。 */
+export function createToastNotice(timeoutMs = 4000) {
+  const [state, setState] = createSignal<ToastState | null>(null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const showToast = (text: string, ok = true) => {
+    setState({ ok, text });
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => setState(null), timeoutMs);
+  };
+  onCleanup(() => {
+    if (timer) clearTimeout(timer);
+  });
+  return { state, showToast };
+}
+
+/** Fixed bottom-center result notice; failures keep the signal tone. Portaled
+ * to `document.body`: `.settings-page-content` keeps its page-in `transform`
+ * (animation fill `both`), so a `position: fixed` box rendered inside it would
+ * anchor to that page box instead of the window. */
+export function ToastNotice(props: { state: ToastState | null }) {
+  return (
+    <Show when={props.state}>
+      {(state) => (
+        <Portal>
+          <div
+            class="settings-toast"
+            classList={{ error: !state().ok }}
+            role={state().ok ? "status" : "alert"}
+          >
+            {state().text}
+          </div>
+        </Portal>
+      )}
+    </Show>
   );
 }
 

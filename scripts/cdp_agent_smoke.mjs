@@ -168,8 +168,9 @@ check("系统: 系统服务 group carries the service and agent tickets",
   system.tickets.some((t) => t.id === "system.agent"),
   JSON.stringify({ groups: system.groupTitles, tickets: system.tickets.map((t) => t.id) }));
 const agentTicket = system.tickets.find((t) => t.id === "system.agent");
-check("系统: agent ticket has a status line + register button",
-  agentTicket?.title === "提权代理" && agentTicket?.button === "注册代理" && !!agentTicket?.status,
+check("系统: agent ticket has a status line + an action button",
+  agentTicket?.title === "提权代理" && !!agentTicket?.status &&
+  (agentTicket?.button === "注册代理" || agentTicket?.button === "注销代理"),
   JSON.stringify(agentTicket));
 check("系统: agent status line reflects registration",
   ["代理未注册", "代理已注册，未运行", "代理运行中（已提权）", "代理运行中，但未取得管理员权限"].includes(agentTicket?.status),

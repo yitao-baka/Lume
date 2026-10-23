@@ -185,6 +185,44 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **自动化规则详情「延迟触发」标签折行把输入框顶下去** — 展开的规则里第三个字段名
+  直接用了 `autoDelayTitle` 全句（「延迟触发（毫秒）— 窗口获得焦点后等待多久再按键」），
+  窄列里折成两行，同一行的程序 / 快捷键控件被推低半行。新增短标签 `autoDelayLabel`
+  （Delay / 延迟触发 / 延遲觸發）只用于可见字段名，长句继续作为标签 `title` 与输入框的
+  可访问名称（单位「毫秒」本就显示在输入框右侧）。验证：`node scripts/check_i18n.mjs`
+  PASS（**559 键 × 3 语言**、62 组搜索关键词配对）、`pnpm exec tsc --noEmit`、
+  `pnpm run build`、`pnpm run tauri build --debug --no-bundle` 通过；
+  `node test/verify_settings_ui.mjs` **18/18 PASS**（新增断言：三个字段标签各占一行、
+  三个控件顶边齐平；脚本改为按规则标题定位自己新增的规则、按当前皮肤读取控件高度，
+  并去掉重复的合成态断言，因此断言数由 19 变为 18）；截图
+  `test/settings-ui-fix/automation-rule-detail.png`。
+
+- **设置窗四处交互与视觉修正（自动化录制按钮 / 代理主操作 / 结果提示条 / 「更多…」回退）**
+  —（1）自动化页的快捷键录制按钮此前只由启动器 `App.css` 的旧规则供样式（无高度、
+  透明底、13px），在规则详情里被网格行拉成 55px 高的空框，与同排输入框不同形；
+  改由 `skins/base.css` 的 `.settings-hotkey-btn` 承担：控件高度 / 圆角 / 线宽、
+  `--settings-control` 底色、录制态用选中色，并删掉 `App.css` 的重复规则（含只对
+  已删标记生效的 `.settings-automation-row` 选择器）。（2）系统页「注册代理」与
+  「安装服务」同为主操作着色（未注册时 `settings-action-primary`，已注册的
+  「注销代理」保持普通样式）。（3）服务 / 代理命令的最终结果不再用行内绿色文字
+  常驻：进行中的文字改用次要色留在票券内、失败留在行内可细读，成功走共享的
+  `ToastNotice` 底部提示条（4s 自动消失）；提示条迁进设置皮肤
+  （`settings-toast` + `settings-toast-in`，面板底色 / 皮肤圆角 / 遮罩投影），并
+  **Portal 到 `document.body`** —— 页面容器 `.settings-page-content` 的入场动画带
+  `both` 填充、永久保留 `transform: translateY(0)`，会成为 `position: fixed`
+  后代的包含块，此前自动化页的测试结果提示条因此被钉在内容盒里、根本看不到。
+  （4）数字预设的「更多…」：展开自由输入框后值未改变就离开（点空白、回车或失焦）
+  收回成「更多…」纸片，不再留下输入框。验证：`pnpm exec tsc --noEmit`、
+  `pnpm run build`、`cargo check`、`cargo test`（**238 passed / 9 ignored**）、
+  `pnpm run tauri build --debug --no-bundle` 通过；`node test/verify_settings_ui.mjs`
+  **19/19 PASS**（录制按钮与同排输入框同高同底同圆角、规则详情 32px 不再拉伸、
+  真实点按 + `Ctrl+Alt+S` 录制提交、真实点按 测试 后提示条落在窗口内且水平居中、
+  4s 后消失、注册代理主色、更多… 点空白回退、560×420 无横向溢出）；截图
+  `test/settings-ui-fix/*.png`；`node scripts/cdp_settings_smoke.mjs` **ALL PASS**、
+  `node scripts/cdp_settings_skin_verify.mjs` **60/60 PASS**、
+  `node scripts/cdp_agent_smoke.mjs`（release 构建）**ALL PASS** —— 该脚本里写死的
+  「注册代理」断言同时放宽成「注册 / 注销代理」二选一，代理已注册的机器上不再误报。
+
 - **提权代理注册失败：schtasks 按控制台代码页解码任务 XML** — 设置页「注册代理」
   在自带代理路径下必失败，报 `错误: 任务 XML 包含意外节点。(4,7):Description:`。
   根因：`schtasks /Create /XML <file>` 不用 XML 声明或 BOM 识别编码，而是用**调用方

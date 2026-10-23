@@ -40,6 +40,7 @@
   "autoTestNotRunning": "沒有找到 {process} 的視窗 —— 請先啟動該程式再測試",
   "autoTestFocusFailed": "無法把 {process} 切到前景 —— 測試已取消",
   "autoTestInvalid": "該快捷鍵無法傳送，不能測試",
+  "autoDelayLabel": "延遲觸發",
   "autoDelayTitle": "延遲觸發（毫秒）— 視窗取得焦點後等待多久再按鍵",
   "autoDelayUnit": "毫秒",
   "autoEmpty": "還沒有自動動作",

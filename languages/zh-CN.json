@@ -40,6 +40,7 @@
   "autoTestNotRunning": "没有找到 {process} 的窗口 —— 请先启动该程序再测试",
   "autoTestFocusFailed": "无法把 {process} 切到前台 —— 测试已取消",
   "autoTestInvalid": "该快捷键无法发送，不能测试",
+  "autoDelayLabel": "延迟触发",
   "autoDelayTitle": "延迟触发（毫秒）— 窗口获得焦点后等待多久再按键",
   "autoDelayUnit": "毫秒",
   "autoEmpty": "还没有自动动作",

@@ -14,7 +14,13 @@ import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import type { ConfirmState, SettingsData } from "./types";
-import { SettingGroup, SettingRow, Toggle } from "./controls";
+import {
+  createToastNotice,
+  SettingGroup,
+  SettingRow,
+  ToastNotice,
+  Toggle,
+} from "./controls";
 import { ComboRecorder } from "./ComboRecorder";
 import { ProgramPicker } from "./ProgramPicker";
 import { settingsError } from "./errors";
@@ -133,8 +139,8 @@ export default function AutomationPane(props: {
   const [picking, setPicking] = createSignal(false);
   /** The button that opened the picker; focus returns here on close. */
   let pickTrigger: HTMLButtonElement | undefined;
-  /** 测试 — result message for the last test press. */
-  const [toast, setToast] = createSignal<{ ok: boolean; text: string } | null>(null);
+  /** 测试 / 代理预检 — 底部提示条状态（4s 自动消失）。 */
+  const { state: toast, showToast } = createToastNotice();
   const [addError, setAddError] = createSignal<string | null>(null);
   const [duplicateIndex, setDuplicateIndex] = createSignal<number | null>(null);
   const [highlightIndex, setHighlightIndex] = createSignal<number | null>(null);
@@ -145,13 +151,6 @@ export default function AutomationPane(props: {
    * Drives the row's summary when the stored value is on without it. */
   const [agentInstalled, setAgentInstalled] = createSignal<boolean | null>(null);
   let rowRefs: Record<string, HTMLElement | undefined> = {};
-  let toastTimer: ReturnType<typeof setTimeout> | undefined;
-
-  function showToast(text: string, ok = true) {
-    setToast({ ok, text });
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => setToast(null), 4000);
-  }
 
   /** Refresh the helper's registration state (the row summary reads it). */
   async function refreshAgentInstalled() {
@@ -446,7 +445,8 @@ export default function AutomationPane(props: {
                             />
                           </label>
                           <label class="settings-rule-field settings-rule-delay">
-                            <span>{t("autoDelayTitle")}</span>
+                            {/* 标签只留短名：长句会在窄列里折成两行，把输入框顶下去 */}
+                            <span title={t("autoDelayTitle")}>{t("autoDelayLabel")}</span>
                             <DelayInput
                               value={action.delay_ms ?? DEFAULT_DELAY_MS}
                               label={`${t("autoDelayTitle")}: ${action.process}`}
@@ -547,15 +547,7 @@ export default function AutomationPane(props: {
         </SettingRow>
       </SettingGroup>
 
-      <Show when={toast()}>
-        <div
-          class="settings-toast"
-          classList={{ error: !toast()!.ok }}
-          role={toast()!.ok ? "status" : "alert"}
-        >
-          {toast()!.text}
-        </div>
-      </Show>
+      <ToastNotice state={toast()} />
       <Show when={picking()}>
         <ProgramPicker
           onPick={setProcess}

@@ -7,7 +7,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { t } from "../i18n";
 import type { SettingsData } from "./types";
-import { SettingGroup, SettingRow, StatusTicket, Toggle } from "./controls";
+import {
+  createToastNotice,
+  SettingGroup,
+  SettingRow,
+  StatusTicket,
+  ToastNotice,
+  Toggle,
+} from "./controls";
 import { settingsError } from "./errors";
 
 /** Status of the LumeSVC service as reported by the Rust `svc_status` command. */
@@ -111,6 +118,10 @@ export default function SystemPane(props: {
   const [agentBusy, setAgentBusy] = createSignal(false);
   const [agentMsg, setAgentMsg] = createSignal<{ ok: boolean; text: string } | null>(null);
 
+  /** 服务 / 代理命令的最终结果：底部提示条（成功与失败共用一条，失败换告警色）。
+   * 进行中的行内状态与失败详情仍留在票券里（见 svcMsg / agentMsg）。 */
+  const { state: toast, showToast } = createToastNotice();
+
   onMount(() => {
     void (async () => {
       try {
@@ -160,6 +171,9 @@ export default function SystemPane(props: {
     throw new Error("service state did not settle");
   }
 
+  /** Service commands report through the bottom notice: the in-flight line
+   * stays inline (it has to survive a slow UAC / SCM wait), the final success
+   * is a toast, and failures stay inline so the reason can be read at leisure. */
   async function runServiceAction(action: ServiceAction) {
     if (svcBusy()) return;
     setSvcBusy(true);
@@ -184,9 +198,9 @@ export default function SystemPane(props: {
             ? (s: SvcStatus) => s.installed && s.running
             : (s: SvcStatus) => s.installed && s.running;
       await waitForService(expected);
-      setSvcMsg({
-        ok: true,
-        text: t(
+      setSvcMsg(null);
+      showToast(
+        t(
           action === "install"
             ? "settingsServiceInstalled"
             : action === "uninstall"
@@ -195,7 +209,7 @@ export default function SystemPane(props: {
                 ? "settingsServiceStarted"
                 : "settingsServiceRestarted",
         ),
-      });
+      );
     } catch (err) {
       setSvcMsg({
         ok: false,
@@ -230,15 +244,15 @@ export default function SystemPane(props: {
   async function performAgentToggle() {
     if (agentBusy()) return;
     setAgentBusy(true);
-    setAgentMsg(null);
     const installing = !agent().installed;
+    // In-flight line before the blocking UAC prompt, so the wait is explained.
+    setAgentMsg({
+      ok: true,
+      text: t(installing ? "settingsAgentInstalling" : "settingsAgentUninstalling"),
+    });
     try {
       // Blocks through the UAC prompt; returns "canceled" when dismissed.
       await invoke(installing ? "agent_install" : "agent_uninstall");
-      setAgentMsg({
-        ok: true,
-        text: t(installing ? "settingsAgentInstalling" : "settingsAgentUninstalling"),
-      });
     } catch (err) {
       setAgentMsg({
         ok: false,
@@ -256,18 +270,15 @@ export default function SystemPane(props: {
       const a = await invoke<AgentStatus>("agent_status");
       setAgent(a);
       const ok = installing ? a.installed : !a.installed;
-      setAgentMsg({
-        ok,
-        text: t(
-          installing
-            ? ok
-              ? "settingsAgentInstalled"
-              : "settingsAgentInstallFailed"
-            : ok
-              ? "settingsAgentUninstalled"
-              : "settingsAgentUninstallFailed",
-        ),
-      });
+      if (ok) {
+        setAgentMsg(null);
+        showToast(t(installing ? "settingsAgentInstalled" : "settingsAgentUninstalled"));
+      } else {
+        setAgentMsg({
+          ok: false,
+          text: t(installing ? "settingsAgentInstallFailed" : "settingsAgentUninstallFailed"),
+        });
+      }
     } catch (err) {
       setAgentMsg({ ok: false, text: settingsError(err) });
     } finally {
@@ -423,7 +434,11 @@ export default function SystemPane(props: {
             </div>
             <Show when={svcMsg()}>
               <span
-                classList={{ "settings-status": true, error: !svcMsg()!.ok }}
+                classList={{
+                  "settings-status": true,
+                  error: !svcMsg()!.ok,
+                  pending: svcMsg()!.ok,
+                }}
                 role={svcMsg()!.ok ? "status" : "alert"}
               >
                 {svcMsg()!.text}
@@ -439,8 +454,10 @@ export default function SystemPane(props: {
           >
             <p class="settings-row-summary">{t("settingsAgentHint")}</p>
             <div class="settings-ticket-actions">
+              {/* 未注册时按主操作着色，与上方「安装服务」的强调级别一致 */}
               <button
                 class="settings-action"
+                classList={{ "settings-action-primary": !agent().installed }}
                 type="button"
                 disabled={agentBusy()}
                 onClick={() => void toggleAgent()}
@@ -450,7 +467,11 @@ export default function SystemPane(props: {
             </div>
             <Show when={agentMsg()}>
               <span
-                classList={{ "settings-status": true, error: !agentMsg()!.ok }}
+                classList={{
+                  "settings-status": true,
+                  error: !agentMsg()!.ok,
+                  pending: agentMsg()!.ok,
+                }}
                 role={agentMsg()!.ok ? "status" : "alert"}
               >
                 {agentMsg()!.text}
@@ -482,6 +503,8 @@ export default function SystemPane(props: {
           </Show>
         </div>
       </SettingGroup>
+
+      <ToastNotice state={toast()} />
     </>
   );
 }

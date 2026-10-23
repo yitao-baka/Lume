@@ -193,6 +193,13 @@ contrast-safe tiers.
   `translate(-50%, -50%)` centering while easing in from 8px below center. The
   bottom toast's `toast-in` keyframes only carry the X centering — reusing them
   makes a dialog appear half a height too low and snap up on the last frame.
+- Settings command results (automation 测试 / 代理预检, service and agent
+  registration) report through one shared bottom notice: panel colour, skin
+  radius and shadow, centred above the 32px footer, auto-dismissing after 4s,
+  with failures keeping the signal tone. It is portaled to `document.body` —
+  `.settings-page-content` keeps `transform: translateY(0)` from its page-in
+  animation (`fill: both`), so a `position: fixed` box inside it would anchor
+  to that page box instead of the window.
 - Position preset marks and every help/tooltip surface must remain legible in
   both Quiet/Chromatic and light/dark combinations.
 
@@ -235,7 +242,9 @@ contrast-safe tiers.
   hit box with a 16×16px knob centered inside the track (`left: 6px` off,
   `left: 22px` on), icon buttons at least 30px, and text links at least 24px.
   Numeric presets may reveal a free-form input without shrinking the preset hit
-  targets.
+  targets; leaving that box with an unchanged value (blank click, blur, or
+  Enter) folds it back into the `更多…` chip instead of leaving an input
+  behind.
 
 ## Components
 

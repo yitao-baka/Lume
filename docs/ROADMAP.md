@@ -39,9 +39,13 @@ Lume 的开放事项清单：**只记录尚未开始或尚未收尾的工作**�
 
 ### 工程治理
 
+- **页面模型与可替换展示器运行时** — 把 mode 页面拆成 Page Service、
+  可序列化 Page Model、Intent 路由与可替换 Presenter；导航和剪贴板先用同一
+  契约迁移，公开插件契约直接切到 api 2；现有 `file-search` 与 `translator`
+  同步升级，不保留 api 1 兼容。契约、所有权、实施顺序和验收门槛见
+  [PAGE_MODEL_PRESENTER.md](PAGE_MODEL_PRESENTER.md)
 - **搜索源 provider 化** — 把原生索引 / 文件搜索抽成 first-party
   `SearchSource`，与插件 provider 走同一合并管线
-- **剪贴板页结构重构** — 只动 `src/plugins/clipboard/` 即可落地
 - **逐击键路径的异步化** — `search_apps` 等仍在主线程的命令，若输入卡顿
   按同法 `async`/`spawn_blocking` 处理
 

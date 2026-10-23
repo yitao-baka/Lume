@@ -6,5 +6,6 @@ id = "nav-bar"
 name = "Nav Bar Example"
 version = "1.0.0"
 kind = "service"      # 无 UI — 只贡献 navBars 钩子（kind 不限，mode/provider 也能带）
+api = 2
 description = "示例插件：向导航页贡献一个可启动的栏目"
 entry = "main.js"

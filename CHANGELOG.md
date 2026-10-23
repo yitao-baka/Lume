@@ -11,6 +11,30 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **Page Model / Presenter 公共契约与 api 2 门禁** — 新增
+  `src/page-runtime/contracts.ts`、内置 `lume.navigate/v1` /
+  `lume.clipboard/v1` / `lume.collection/v1` 类型和 JSON fixture；插件清单
+  支持 `model`、`[[presenters]]`、`default_presenter` 与
+  `[[presenter_settings]]`，并校验重复 Presenter id、默认 Presenter、模型兼容、
+  Presenter 设置归属和字段组合。未显式声明 `api = 2` 或仍使用顶层
+  `view`/`titlebar` 的包在发现、权限边界和 `.lupx` inspect 三层都会被拒绝；
+  设置页显示拒绝原因，安装确认分别列出 API、Presenter 与服务权限。仓库示例和
+  静态 fixture 的清单同步升级，迁移期 registry 只读取默认 Presenter 的 HTML
+  入口。验证：`pnpm exec tsc --noEmit`、
+  `pnpm exec tsc -p examples/tsconfig.json`、`pnpm run build`、
+  `cargo check`、`cargo test`（**242 passed / 9 ignored**）、
+  `node scripts/check_i18n.mjs` PASS（561 键 × 3 语言）。
+- **页面模型与可替换展示器重构方案** — 新增
+  `docs/PAGE_MODEL_PRESENTER.md`，把页面拆成 Native Core、Page Service、
+  Host Runtime 和 Presenter 四层，定义 api 2 清单、序列化 Page Model、
+  Page Intent、Presenter 受限桥接、服务/Presenter 权限分级、`secrets`
+  能力、导航/剪贴板迁移、设置归属、升级回退、测试矩阵和依赖顺序；路线图
+  的工程治理项同步指向该方案，旧剪贴板结构重构条目并入页面运行时范围。
+  公开插件契约直接切换到 api 2，不保留 api 1 兼容；现有 `file-search` 与
+  `translator` 在切换前完成升级，仓库示例和 CDP fixture 同步迁移。
+  验证：`pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check` 通过；
+  `cargo test` **238 passed / 9 ignored**；`node scripts/check_i18n.mjs`
+  PASS（559 键 × 3 语言，62 组关键词配对）。
 - **插件文件搜索就绪探测 `search.status`** — 新增宿主命令 `file_search_status`
   （async + `spawn_blocking`，权限词同 `search.files`）：不发起查询就能知道
   Everything 是否在运行、LumeSVC 引擎状态（`ready`/`building`/`off`/`failed`）与

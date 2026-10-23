@@ -1,4 +1,4 @@
-# Lume 插件 API 参考（关于「为什么不做」的决策依据与已落地能力的实现细节见 docs/ROADMAP_HISTORY.md。v1）
+# Lume 插件 API 参考（api 2）
 
 > 快速上手指南见 `docs/PLUGINS.md`；本文是完整的 API 参考：清单字段、三类贡献、
 > 桥接契约、宿主能力、数据与设置、打包安装、安全模型与调试手段。
@@ -24,7 +24,7 @@ Lume 插件 = **一份清单**（`plugin.toml`）+ **零或多份贡献**（cont
 | 贡献 | 契约 | 动态加载 | 内置示例 | 磁盘示例 |
 |---|---|---|---|---|
 | `provider` | `ProviderInstance` — 向 Navigate 搜索追加结果 | 支持 | `web-search`（examples/） | — |
-| `mode` | `ModeInstance`（内置）/ **桥接 iframe 页**（磁盘） | 支持 | `clipboard` | `hello-mode`、`file-search`（examples/） |
+| `mode` | **Page Service + 一个或多个 Presenter**；内置页在迁移期通过内部 adapter 接入 | 支持 | `clipboard` | `hello-mode`、`file-search`（examples/） |
 | `service` | `PreviewService`（内置）/ **生命周期钩子**（磁盘） | 支持 | `preview` | — |
 | `navBars` | `NavBarContribution[]` — 导航页栏目（§5.7，任意 kind 可选钩子） | 支持 | — | `nav-bar`（examples/） |
 
@@ -61,6 +61,7 @@ Lume 插件 = **一份清单**（`plugin.toml`）+ **零或多份贡献**（cont
 id = "my-plugin"        # 可省略 — 默认取目录名
 name = "My Plugin"      # 设置页显示名（可省）
 kind = "provider"       # 必填 — provider/mode/service
+api = 2                 # 必填 — 唯一受支持的公开契约
 entry = "main.js"       # 必填（provider）— 入口 JS，相对插件目录
 ```
 
@@ -84,7 +85,7 @@ export default {
 要拿到宿主能力（toast/剪贴板/文档库/设置…），把默认导出写成**工厂函数**
 （§5.1）；用了权限台账里的能力要在清单写 `permissions = [...]`（§8.2）。
 要贡献**整页模式**（自由 HTML UI + 全局关键字进入），见 §6（示例
-`examples/plugins/hello-mode/`）。
+`examples/plugins/hello-mode/`）。mode 必须声明 `api = 2`、`model` 与至少一个 `[[presenters]]`；Presenter 只接收 Page Model 和语义意图。
 
 ---
 
@@ -95,12 +96,12 @@ export default {
 | `id` | string | **目录名** | 插件唯一 id。省略时回退为所在目录名；与目录名不一致时以清单为准（不强制相等）。启停、去重、日志都以它为键。两个目录声明同一个 id 时只保留一个：目录名与 id 相同（不区分大小写）者优先；没有这种目录时按目录名字典序取首项。权限校验与贡献加载使用同一份 canonical 清单。磁盘插件不能占用内置 id（内置插件优先）。 |
 | `name` | string | `""` | 设置页显示名；为空时前端回退显示 id。 |
 | `version` | string | `""` | 显示用；设置页以 chip 呈现。内置插件固定为 lume 的包版本。 |
-| `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。三类均支持磁盘加载（mode 需 `view`，provider/service 需 `entry`）。 |
-| `description` | string | `""` | 预留展示位。 |
+| `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。`mode` 声明 Page Service 与 Presenter；provider/service 需要 `entry`。 |
+| `description` | string | `""` | 设置页与安装确认展示的说明。 |
 | `permissions` | string[] | `[]` | **能力声明**：台账（§8.2）里的能力没声明就调用 → 明确拒绝（fail-closed），设置页每行显示这些 chip。「全部授权」可整插件放行（§11.4）。 |
-| `entry` | string | `""` | 入口 JS（相对插件目录）。provider 必填；mode 可选（逻辑钩子）；service 必填（钩子）。**可以是目录**（多文件打包产物）— 此时实际加载其中的 `index.js`，目录内文件的相对 `import` 由宿主改写为 blob URL（§5.5）。 |
-| `view` | string | `""` | **mode 专属** — 视图 HTML 页（相对插件目录），渲染进桥接 iframe（§6）。 |
-| `titlebar` | string | `""` | **mode 专属，仅独立窗口**（§6.8）— 标题栏 HTML 页（相对插件目录）：渲染为标题与窗口控制按钮之间的第二个桥接 iframe，与 `view` 同一沙箱与 `window.lume` 能力（uTools 式搜索框等自由内容）。launcher 内嵌时忽略。示例 `examples/plugins/titlebar-demo/`。 |
+| `api` | integer | `1`（缺失即 v1） | **必须显式为 `2`**。api 1 / 缺失版本的插件在发现、安装确认和权限边界均被拒绝。 |\n| `entry` | string | `""` | 入口 JS（相对插件目录）。provider/service 必填；api 2 mode 是 Page Service 入口。**可以是目录**（多文件打包产物）— 此时实际加载其中的 `index.js`，目录内文件的相对 `import` 由宿主改写为 blob URL（§5.5）。 |\n| `model` | string | `""` | **api 2 mode 必填** — Page Service 发布的 Page Model schema，例如 `lume.collection/v1`。 |\n| `default_presenter` | string | `""` | 默认 Presenter id。空值选择第一个兼容 Presenter；`template = "list"` 可使用宿主内置 `collection-list`。 |\n| `[[presenters]]` | table[] | `[]` | **api 2 mode** 的展示器清单：`id`、`name`、`entry`、可选 `titlebar`/`models`。id 唯一，至少一个 Presenter 支持顶层 `model`。 |\n| `[[presenter_settings]]` | table[] | `[]` | Presenter 自己的声明式设置：`presenter`、`key`、`label`、`type`、`default`、`options`。键按 Presenter 隔离。 |
+| `view` | string | `""` | 迁移期内部字段；api 2 清单用 `[[presenters]]` 的 `entry` 声明页面。 |
+| `titlebar` | string | `""` | 迁移期内部字段；api 2 由 Presenter 的 `titlebar` 声明独立窗口标题栏槽位。 |
 | `template` | string | `""` | mode 插件：`"list"` = 用内置列表模板渲染 `entry` 逻辑的行，**免 `view` HTML**（§10.4） |
 | `keywords` | string[] | `[]` | **mode 专属** — 全局关键字：Navigate 输入匹配关键字时，结果里出现「进入 <name>」行，激活即切进该模式（uTools 式进入）。行图标 = 插件自己的图标集（两套按所在表面主题选）。匹配分级：**精确 → 前缀 → 拼音首字母前缀 → 拼音全拼前缀**（拼音由后端预计算，输入 `miao`/`ms` 可匹配「秒搜」；见 §5.6）。 |
 | `development` | bool | `false` | **开发模式** — 每次插件刷新（settings-applied，含任一设置保存）都从磁盘重新加载本插件，改代码无需重启。设置 → 插件 每行的「↻ 重载」按钮可对任意磁盘插件手动触发同等效果（§4.4）。 |

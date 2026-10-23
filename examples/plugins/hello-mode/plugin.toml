@@ -8,13 +8,21 @@ id = "hello-mode"
 name = "Hello Mode"
 version = "1.3.0"
 kind = "mode"
+api = 2
 description = "示例模式插件：iframe 自由 UI + 插件存储 + toast + 剪贴板 + 自定窗口高度 + 自定搜索框占位文字 + 独立窗口分离 + 本插件颜色模式（theme.set）"
 keywords = ["hello", "你好"]
 entry = "main.js"     # 可选 — 逻辑钩子（onQuery/onShow/onHide）
 permissions = ["clipboard"] # 起强制：示例页要用剪贴板读写
-view = "view.html"    # 必填 — 桥接 iframe 渲染的自由 UI
+model = "lume.collection/v1"
+default_presenter = "default"
 height = 560          # 可选 — 本模式页面的窗口高度（逻辑 px）；省略 = 全局设置高度
 detachable = true # — 允许分离为独立窗口（模式页右上角悬停显现按钮）
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]
 
 # 声明式进入：输入 "hello:xxx" 出「处理这段文本」行，激活把该查询
 # 作为 payload 投递给 onEnter（页面收 lume.on.enter，钩子写 storage）。

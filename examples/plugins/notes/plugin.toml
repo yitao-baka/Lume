@@ -17,6 +17,7 @@ id = "notes"
 name = "速记 (Notes)"
 version = "1.0.0"
 kind = "provider"
+api = 2
 description = "示例：文档库（_rev 乐观锁）+ 声明式设置 + 私有文件 + 权限强制层"
 entry = "main.js"
 

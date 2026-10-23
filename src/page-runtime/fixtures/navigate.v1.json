@@ -1,0 +1,30 @@
+{
+  "runtime": "lume.page/v1",
+  "schema": "lume.navigate/v1",
+  "revision": 1,
+  "status": "ready",
+  "data": {
+    "query": "",
+    "sections": [
+      {
+        "id": "recent",
+        "title": "Recent",
+        "expandable": true,
+        "expanded": false,
+        "items": [
+          {
+            "id": "app:notepad",
+            "label": "Notepad",
+            "path": "C:\\Windows\\notepad.exe",
+            "source": "app",
+            "actions": ["open", "open-as-admin", "reveal", "pin"]
+          }
+        ]
+      }
+    ],
+    "results": { "items": [], "pluginStart": 0, "total": 0 },
+    "navHidden": false
+  },
+  "selection": { "primaryId": "app:notepad" },
+  "actions": [{ "id": "open", "label": "Open", "kind": "default" }]
+}

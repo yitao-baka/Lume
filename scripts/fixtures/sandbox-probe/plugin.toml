@@ -4,5 +4,13 @@
 id = "sandbox-probe"
 name = "Sandbox Probe"
 kind = "mode"
+api = 2
 keywords = ["sbprobe"]
-view = "view.html"
+model = "lume.collection/v1"
+default_presenter = "default"
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]

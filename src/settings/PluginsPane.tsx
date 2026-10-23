@@ -17,7 +17,7 @@ import { t, type Messages } from "../i18n";
 import { pickIcon, resolveThemedIcon } from "../launcher/iconSpec";
 import { pluginDisplayName } from "../plugins/pluginName";
 import type { PickedIcon } from "../launcher/types";
-import type { PluginManifest, PluginSetting } from "../plugins/types";
+import type { PluginManifest, PluginPresenter, PluginSetting } from "../plugins/types";
 import { Chip, Toggle } from "./controls";
 import { settingsError } from "./errors";
 import type { ConfirmState } from "./types";
@@ -33,6 +33,10 @@ interface LupxInfo {
   kind: string;
   description: string;
   permissions: string[];
+  api: number;
+  model: string;
+  defaultPresenter: string;
+  presenters: PluginPresenter[];
   fileCount: number;
   totalBytes: number;
   existingVersion: string | null;
@@ -555,9 +559,24 @@ function InstallFacts(props: { info: LupxInfo }) {
         <span class="plg-name">{props.info.name || props.info.id}</span>
         <span class="plg-ver">{props.info.version || "-"}</span>
         <span class="plg-badge">{kindLabel(props.info.kind)}</span>
+        <span class="plg-badge">API {props.info.api}</span>
       </div>
       <Show when={props.info.description}>
         <div class="plg-desc">{props.info.description}</div>
+      </Show>
+      <Show when={props.info.presenters.length > 0}>
+        <div class="plg-dsec">
+          <span class="plg-dlabel">{t("pluginPresenters")}</span>
+          <div class="plg-chiprow">
+            <For each={props.info.presenters}>
+              {(presenter) => (
+                <span class="plg-kw-chip" title={presenter.entry}>
+                  {presenter.name || presenter.id} · {presenter.models.join(", ") || props.info.model}
+                </span>
+              )}
+            </For>
+          </div>
+        </div>
       </Show>
       <div class="plg-dsec">
         <span class="plg-dlabel">{t("pluginPermissions")}</span>
@@ -654,7 +673,7 @@ function PluginCard(props: {
   return (
     <div
       class="plg-card"
-      classList={{ open: props.open, off: !p().enabled, compact: !!props.compact }}
+      classList={{ open: props.open, off: !p().enabled || !!p().apiError, compact: !!props.compact }}
       data-setting-id={`plugin.${p().id}`}
       tabIndex={props.compact ? -1 : undefined}
     >
@@ -690,6 +709,7 @@ function PluginCard(props: {
           <div class="plg-name-row">
             <span class="plg-name">{pluginDisplayName(p().id, p().name)}</span>
             <span class="plg-ver">{p().version}</span>
+            <span class="plg-badge">API {p().api}</span>
             <span class="plg-badge" classList={{ builtin: p().builtin }}>
               {p().builtin ? t("pluginBuiltin") : t("pluginDisk")}
             </span>
@@ -706,6 +726,7 @@ function PluginCard(props: {
           <Show when={desc()}>
             <div class="plg-desc">{desc()}</div>
           </Show>
+          <Show when={p().apiError}><div class="plg-capture-note">{t("pluginApiRejectedHint", { reason: p().apiError! })}</div></Show>
           <Show when={p().id === "clipboard" && !p().enabled}>
             <div class="plg-capture-note">{t("settingsClipboardPluginHint")}</div>
           </Show>

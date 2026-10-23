@@ -1,0 +1,34 @@
+{
+  "runtime": "lume.page/v1",
+  "schema": "lume.clipboard/v1",
+  "revision": 1,
+  "status": "ready",
+  "data": {
+    "query": "",
+    "categories": [
+      { "id": "all", "label": "All", "count": 2 },
+      { "id": "text", "label": "Text", "count": 2 }
+    ],
+    "activeCategory": "all",
+    "items": [
+      {
+        "id": "clip:1",
+        "numericId": 1,
+        "kind": "text",
+        "title": "hello",
+        "pinned": false,
+        "sourceApp": "notepad",
+        "timeLabel": "now",
+        "actions": ["copy", "paste", "pin", "delete", "preview"]
+      }
+    ],
+    "total": 2,
+    "window": { "offset": 0, "limit": 40 },
+    "selectedIds": ["clip:1"],
+    "primaryId": "clip:1",
+    "paused": false,
+    "status": { "total": 2, "selected": 1, "text": "1 selected" },
+    "clearState": { "open": false, "keepPinned": true }
+  },
+  "selection": { "primaryId": "clip:1", "selectedIds": ["clip:1"] }
+}

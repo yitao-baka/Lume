@@ -43,6 +43,8 @@ struct CapsEntry {
     /// `network_allow` hosts (SSRF override, #32.3): network targets matching
     /// one of these skip the private-address check.
     network_allow: Vec<String>,
+    /// Manifest-gate rejection; no capability is granted while set.
+    rejection: Option<String>,
 }
 
 /// Managed permission cache: plugin id → declared capabilities, plus the
@@ -129,20 +131,24 @@ fn entry_for(state: &PluginPermState, base: &Path, id: &str) -> Option<CapsEntry
         return Some(CapsEntry {
             permissions: e.permissions.clone(),
             network_allow: e.network_allow.clone(),
+            rejection: e.rejection.clone(),
         });
     }
     let manifest = find_manifest(base, id)?;
-    let permissions: HashSet<String> = manifest.permissions.into_iter().collect();
+    let permissions: HashSet<String> = manifest.permissions.clone().into_iter().collect();
+    let rejection = crate::plugins::validate_manifest(&manifest).err();
     state.caps.lock().unwrap().insert(
         id.to_string(),
         CapsEntry {
             permissions: permissions.clone(),
             network_allow: manifest.network_allow.clone(),
+            rejection: rejection.clone(),
         },
     );
     Some(CapsEntry {
         permissions,
         network_allow: manifest.network_allow.clone(),
+        rejection,
     })
 }
 
@@ -156,6 +162,7 @@ pub fn network_allow_for(state: &PluginPermState, id: &str) -> Vec<String> {
         .lock()
         .unwrap()
         .get(id)
+        .filter(|e| e.rejection.is_none())
         .map(|e| e.network_allow.clone())
         .unwrap_or_default()
 }
@@ -237,6 +244,9 @@ pub fn assert_capability(
     let Some(entry) = entry_for(perms, base, id) else {
         return Err(format!("permission denied: unknown plugin \"{}\"", id));
     };
+    if let Some(reason) = &entry.rejection {
+        return Err(format!("permission denied: plugin \"{}\" was rejected by the manifest gate: {}", id, reason));
+    }
     let trusted = plugins.dev_mode
         && (plugins.trust_all || plugins.trusted.iter().any(|t| t == id));
     if trusted || entry.permissions.contains(cap) {
@@ -283,7 +293,8 @@ mod tests {
     fn write_plugin(root: &Path, dir: &str, manifest: &str) {
         let p = root.join("plugins").join(dir);
         std::fs::create_dir_all(&p).unwrap();
-        std::fs::write(p.join("plugin.toml"), manifest).unwrap();
+        let normalized = format!("api = 2\nkind = \"provider\"\nentry = \"main.js\"\n{manifest}");
+        std::fs::write(p.join("plugin.toml"), normalized).unwrap();
     }
 
     #[test]
@@ -294,6 +305,28 @@ mod tests {
         assert!(assert_capability(&perms, &plugins(), &root, "demo", "network").is_ok());
         let err = assert_capability(&perms, &plugins(), &root, "demo", "clipboard").unwrap_err();
         assert!(err.contains("clipboard") && err.contains("network"), "{err}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn unsupported_api_manifest_grants_no_capability() {
+        let root = std::env::temp_dir().join(format!("lume-perm-api-{}", std::process::id()));
+        let p = root.join("plugins").join("old");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(
+            p.join("plugin.toml"),
+            "id = \"old\"\napi = 1\nkind = \"provider\"\nentry = \"main.js\"\npermissions = [\"network\"]\n",
+        )
+        .unwrap();
+        let err = assert_capability(
+            &PluginPermState::default(),
+            &plugins_with(false, true, &[]),
+            &root,
+            "old",
+            "network",
+        )
+        .unwrap_err();
+        assert!(err.contains("manifest gate"), "{err}");
         std::fs::remove_dir_all(&root).ok();
     }
 

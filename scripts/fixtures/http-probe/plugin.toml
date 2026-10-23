@@ -9,11 +9,19 @@
 id = "http-probe"
 name = "HTTP Probe"
 kind = "mode"
+api = 2
 description = "宿主 HTTP 回归探针（CDP 专用夹具）"
 permissions = ["network"]
 # 回环目标默认被拒（#32.3），夹具按契约显式白名单放行自己的 echo 服务。
 network_allow = ["127.0.0.1"]
-view = "view.html"
+model = "lume.collection/v1"
+default_presenter = "default"
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]
 keywords = ["httpprobe"]
 
 # 端口由脚本经查询文本投递（"HTTP 探针 <port>"）：关键字行只在「查询是关键字

@@ -1,4 +1,4 @@
-# 插件开发指南（ROADMAP Pre-26.10）
+# 插件开发指南（api 2）
 
 > **完整 API 参考**见 `docs/PLUGIN_API.md`（清单字段表、Provider 契约、
 > ModeInstance/PluginServices 逐方法时序、启停语义、安全模型、调试）。
@@ -16,6 +16,7 @@ id = "web-search"          # 可省略 — 默认取目录名；须全目录唯�
 name = "Web Search"        # 设置页显示名（可省）
 version = "1.0.0"          # 可省
 kind = "provider"          # provider（搜索提供）| mode | service
+api = 2                    # 必填；api 1 与缺失版本会被拒绝
 description = "…"          # 可省
 permissions = ["network"]  # 用到的能力必须声明（见下）
 entry = "main.js"          # provider 的入口 JS（相对插件目录）
@@ -37,7 +38,7 @@ entry = "main.js"          # provider 的入口 JS（相对插件目录）
   + `detachable = true` 允许分离为独立窗口（
   见 `docs/PLUGIN_API.md` §6G；示例 `examples/plugins/hello-mode/`；
   基于宿主 `search.files` 能力的完整文件搜索模式见
-  `examples/plugins/file-search/`；`template = "list"` 免 HTML 列表模式见
+  `examples/plugins/file-search/`；`template = "list"` 复用宿主 collection Presenter，见
   `examples/plugins/list-demo/`；可分离模式还可声明 `titlebar` HTML ——
   独立窗口标题栏内嵌第二个桥接 iframe（uTools 式搜索框等自由内容），
   见 `examples/plugins/titlebar-demo/`）

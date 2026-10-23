@@ -1,16 +1,16 @@
-//! Plugin system (docs/ROADMAP_HISTORY.md #7, v1) — discovery + registry.
+//! Plugin system (api 2) — discovery + registry.
 //!
 //! A plugin is a manifest (`plugin.toml`) plus one or more *contributions*.
-//! v1 contributions live in the frontend registry (`src/plugins/`): a `mode`
-//! contribution owns a full launcher page (query + view + key handling — the
-//! clipboard is the first one), a `preview` service owns the satellite
+//! Contributions live in the frontend registry (`src/plugins/`): a `mode`
+//! contribution owns a Page Service and one or more Presenters; the
+//! clipboard is the first migrated page. A `preview` service owns the satellite
 //! preview window routing.
 //!
 //! Built-in plugins (clipboard, preview) are compiled into lume.exe but go
 //! through the same registry/enabled-set path as on-disk plugins: every
 //! subdirectory of `<base>/plugins/` holding a `plugin.toml` is discovered
 //! and merged here. The manifest's `permissions` field is reserved (v1 does
-//! not enforce it) so a future third-party loader has the surface ready.
+//! Rust-side permission boundary and the frontend capability ledger.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -191,6 +191,74 @@ impl PluginSetting {
     }
 }
 
+/// One self-drawn page Presenter in an api 2 mode manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PresenterManifest {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// HTML entry relative to the plugin directory.
+    #[serde(default)]
+    pub entry: String,
+    /// Optional detached-window titlebar HTML for this Presenter.
+    #[serde(default)]
+    pub titlebar: String,
+    /// Page-model schemas this Presenter renders. Empty inherits `model`.
+    #[serde(default)]
+    pub models: Vec<String>,
+}
+
+/// One Presenter-scoped declarative setting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PresenterSetting {
+    #[serde(default)]
+    pub presenter: String,
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default = "default_setting_type", rename = "type")]
+    pub input: String,
+    #[serde(default)]
+    pub default: Option<toml::Value>,
+    #[serde(default)]
+    pub options: Vec<SettingsOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PresenterSettingInfo {
+    pub presenter: String,
+    pub key: String,
+    pub label: String,
+    #[serde(rename = "type")]
+    pub input: String,
+    #[serde(rename = "default")]
+    pub default_value: serde_json::Value,
+    pub options: Vec<SettingsOption>,
+}
+
+impl PresenterSetting {
+    pub fn info(&self) -> PresenterSettingInfo {
+        PresenterSettingInfo {
+            presenter: self.presenter.clone(),
+            key: self.key.clone(),
+            label: if self.label.is_empty() {
+                self.key.clone()
+            } else {
+                self.label.clone()
+            },
+            input: self.input.clone(),
+            default_value: self
+                .default
+                .as_ref()
+                .and_then(|v| serde_json::to_value(v).ok())
+                .unwrap_or(serde_json::Value::Null),
+            options: self.options.clone(),
+        }
+    }
+}
+
 /// A plugin manifest, parsed from `<base>/plugins/<id>/plugin.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginManifest {
@@ -210,11 +278,22 @@ pub struct PluginManifest {
     /// Reserved for the future permission model.
     #[serde(default)]
     pub permissions: Vec<String>,
-    /// Entry JS file for disk provider plugins (relative to the plugin dir).
+    /// Page Service entry (api 2 mode) or logic entry for other kinds.
     #[serde(default)]
     pub entry: String,
-    /// View HTML file for disk mode plugins (relative to the plugin dir;
-    /// rendered in a sandboxed iframe inside the launcher page).
+    /// Page-model schema produced by an api 2 mode's Page Service.
+    #[serde(default)]
+    pub model: String,
+    /// Default self-drawn Presenter id. Empty selects the first compatible one.
+    #[serde(default)]
+    pub default_presenter: String,
+    /// Self-drawn Presenters declared by an api 2 mode.
+    #[serde(default)]
+    pub presenters: Vec<PresenterManifest>,
+    /// Presenter-scoped declarative settings.
+    #[serde(default)]
+    pub presenter_settings: Vec<PresenterSetting>,
+    /// Transitional adapter HTML. api 2 manifests declare `[[presenters]]`.
     #[serde(default)]
     pub view: String,
     /// Mode plugins: titlebar HTML file (relative to the plugin dir) for the
@@ -305,10 +384,10 @@ pub struct PluginManifest {
 /// The plugin-API version this build implements (docs/PLUGIN_API.md §11).
 /// Bump on breaking contract changes; plugins declaring a higher version are
 /// refused at load (frontend gate + logic-host defense in depth).
-pub const HOST_PLUGIN_API: u32 = 1;
+pub const HOST_PLUGIN_API: u32 = 2;
 
 fn default_api() -> u32 {
-    HOST_PLUGIN_API
+    1
 }
 
 fn default_kind() -> String {
@@ -338,9 +417,19 @@ pub struct PluginInfo {
     pub trusted: bool,
     /// True unless the id is in `settings.plugins.disabled`.
     pub enabled: bool,
-    /// Entry JS file (disk provider plugins).
+    /// Page Service entry (api 2 modes) or logic entry for other kinds.
     pub entry: String,
-    /// View HTML file (disk mode plugins).
+    /// Page-model schema produced by an api 2 mode's Page Service.
+    pub model: String,
+    /// Default self-drawn Presenter id (empty = first compatible).
+    #[serde(rename = "defaultPresenter")]
+    pub default_presenter: String,
+    /// Self-drawn Presenters declared by this mode.
+    pub presenters: Vec<PresenterManifest>,
+    /// Presenter-scoped declarative settings.
+    #[serde(rename = "presenterSettings")]
+    pub presenter_settings: Vec<PresenterSettingInfo>,
+    /// Transitional adapter view. api 2 manifests use `presenters`.
     pub view: String,
     /// Titlebar HTML file (disk mode plugins, detached window only).
     pub titlebar: String,
@@ -376,8 +465,11 @@ pub struct PluginInfo {
     /// Development flag (manifest `development`): the frontend reloads this
     /// plugin on every refresh so code edits take effect without a restart.
     pub development: bool,
-    /// Host plugin-API version the manifest declares (missing → the host's).
+    /// Host plugin-API version the manifest declares.
     pub api: u32,
+    /// Rejection reason from the api 2 manifest gate; `None` means loadable.
+    #[serde(rename = "apiError")]
+    pub api_error: Option<String>,
     /// Pinyin search aids for `keywords` (same order); empty when the plugin
     /// has no keywords. Backend-computed (the frontend has no pinyin table).
     #[serde(rename = "keywordsPinyin")]
@@ -452,6 +544,100 @@ pub(crate) fn manifest_for_id(base: &Path, id: &str) -> Option<PluginManifest> {
 /// (`plugin_perm.rs`), which reads manifests on its own.
 pub(crate) fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
     toml::from_str(text).map_err(|e| format!("invalid plugin.toml: {e}"))
+}
+
+/// Validate the api 2 version gate and the manifest field combinations that
+/// cannot be repaired at runtime. The plugin stays visible to the settings pane
+/// when this fails, but the registry never loads any executable contribution.
+pub(crate) fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
+    if m.api != HOST_PLUGIN_API {
+        return Err(format!(
+            "unsupported plugin api {}: this host accepts api {}; upgrade the plugin",
+            m.api, HOST_PLUGIN_API
+        ));
+    }
+    if !matches!(m.kind.as_str(), "mode" | "provider" | "service") {
+        return Err(format!("unknown plugin kind \"{}\"", m.kind));
+    }
+    if m.kind != "mode" {
+        if m.entry.is_empty() {
+            return Err(format!("{} plugins require an entry", m.kind));
+        }
+        if !m.presenters.is_empty() || !m.model.is_empty() {
+            return Err("only mode plugins may declare Page Model Presenters".into());
+        }
+        return Ok(());
+    }
+
+    if !m.view.is_empty() || !m.titlebar.is_empty() {
+        return Err("api 2 modes declare [[presenters]], not top-level view/titlebar".into());
+    }
+    if m.presenters.len() > 16 {
+        return Err("a mode may declare at most 16 Presenters".into());
+    }
+    if m.presenter_settings.len() > 64 {
+        return Err("a mode may declare at most 64 Presenter settings".into());
+    }
+    if m.model.trim().is_empty() {
+        return Err("api 2 modes require a Page Model schema".into());
+    }
+    if m.template.is_empty() && m.presenters.is_empty() {
+        return Err("api 2 self-drawn modes require at least one Presenter".into());
+    }
+
+    let mut presenter_ids = HashSet::new();
+    for p in &m.presenters {
+        if !valid_plugin_id(&p.id) {
+            return Err(format!("invalid Presenter id \"{}\"", p.id));
+        }
+        if !presenter_ids.insert(p.id.as_str()) {
+            return Err(format!("duplicate Presenter id \"{}\"", p.id));
+        }
+        if p.entry.trim().is_empty() {
+            return Err(format!("Presenter \"{}\" requires an entry", p.id));
+        }
+        let models = if p.models.is_empty() {
+            vec![m.model.as_str()]
+        } else {
+            p.models.iter().map(String::as_str).collect::<Vec<_>>()
+        };
+        if !models.iter().any(|s| *s == m.model) {
+            return Err(format!(
+                "Presenter \"{}\" does not support model \"{}\"",
+                p.id, m.model
+            ));
+        }
+    }
+
+    if !m.default_presenter.is_empty()
+        && !m.presenters.iter().any(|p| p.id == m.default_presenter)
+        && !(m.template == "list" && m.default_presenter == "collection-list")
+    {
+        return Err(format!(
+            "default_presenter \"{}\" is not declared",
+            m.default_presenter
+        ));
+    }
+
+    let mut setting_keys = HashSet::new();
+    for setting in &m.presenter_settings {
+        if !presenter_ids.contains(setting.presenter.as_str()) {
+            return Err(format!(
+                "Presenter setting \"{}\" targets unknown Presenter \"{}\"",
+                setting.key, setting.presenter
+            ));
+        }
+        if !valid_plugin_id(&setting.key) {
+            return Err(format!("invalid Presenter setting key \"{}\"", setting.key));
+        }
+        if !setting_keys.insert((setting.presenter.as_str(), setting.key.as_str())) {
+            return Err(format!(
+                "duplicate Presenter setting \"{}\" for \"{}\"",
+                setting.key, setting.presenter
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// One scanned on-disk plugin: the parsed manifest plus the directory it was
@@ -587,35 +773,62 @@ pub fn list_plugins(
     let is_trusted = |id: &str| trust_all || trusted.iter().any(|t| t == id);
     let mut out: Vec<PluginInfo> = BUILTIN_PLUGINS
         .iter()
-        .map(|(id, name, kind)| PluginInfo {
-            id: id.to_string(),
-            name: name.to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            kind: kind.to_string(),
-            description: String::new(),
-            permissions: Vec::new(),
-            builtin: true,
-            trusted: false, // built-ins are compiled in, not granted anything
-            enabled: enabled(id),
-            entry: String::new(),
-            view: String::new(),
-            titlebar: String::new(),
-            template: String::new(),
-            keywords: Vec::new(),
-            height: None,
-            detachable: false,
-            detach_button: true,
-            hidden: false,
-            keep_session: false,
-            icon: String::new(),
-            icon_light: String::new(),
-            icon_dark: String::new(),
-            development: false,
-            api: HOST_PLUGIN_API,
-            keywords_pinyin: Vec::new(),
-            features: Vec::new(),
-            settings: Vec::new(),
-            dir: String::new(),
+        .map(|(id, name, kind)| {
+            let clipboard = *id == "clipboard";
+            PluginInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                kind: kind.to_string(),
+                description: String::new(),
+                permissions: Vec::new(),
+                builtin: true,
+                trusted: false, // built-ins are compiled in, not granted anything
+                enabled: enabled(id),
+                entry: String::new(),
+                model: if clipboard { "lume.clipboard/v1".into() } else { String::new() },
+                default_presenter: if clipboard { "clipboard-list".into() } else { String::new() },
+                presenters: if clipboard {
+                    vec![
+                        PresenterManifest {
+                            id: "clipboard-list".into(),
+                            name: "Default list".into(),
+                            entry: String::new(),
+                            titlebar: String::new(),
+                            models: vec!["lume.clipboard/v1".into()],
+                        },
+                        PresenterManifest {
+                            id: "clipboard-compact".into(),
+                            name: "Compact list".into(),
+                            entry: String::new(),
+                            titlebar: String::new(),
+                            models: vec!["lume.clipboard/v1".into()],
+                        },
+                    ]
+                } else {
+                    Vec::new()
+                },
+                presenter_settings: Vec::new(),
+                view: String::new(),
+                titlebar: String::new(),
+                template: String::new(),
+                keywords: Vec::new(),
+                height: None,
+                detachable: false,
+                detach_button: true,
+                hidden: false,
+                keep_session: false,
+                icon: String::new(),
+                icon_light: String::new(),
+                icon_dark: String::new(),
+                development: false,
+                api: HOST_PLUGIN_API,
+                api_error: None,
+                keywords_pinyin: Vec::new(),
+                features: Vec::new(),
+                settings: Vec::new(),
+                dir: String::new(),
+            }
         })
         .collect();
     let disk = scan_disk_plugins(base);
@@ -643,6 +856,8 @@ pub fn list_plugins(
             enabled(&m.id),
             disabled
         );
+        let api_error = validate_manifest(&m).err();
+        let presenter_settings = m.presenter_settings.iter().map(|s| s.info()).collect();
         out.push(PluginInfo {
             id: m.id.clone(),
             name: m.name,
@@ -654,6 +869,10 @@ pub fn list_plugins(
             trusted: is_trusted(&m.id),
             enabled: enabled(&m.id),
             entry: resolve_entry(&dir, &m.entry),
+            model: m.model,
+            default_presenter: m.default_presenter,
+            presenters: m.presenters,
+            presenter_settings,
             view: m.view,
             titlebar: m.titlebar,
             template: m.template,
@@ -668,6 +887,7 @@ pub fn list_plugins(
             icon_dark: m.icon_dark,
             development: m.development,
             api: m.api,
+            api_error,
             keywords_pinyin,
             features: m.features,
             settings: m.settings.iter().map(|s| s.info()).collect(),
@@ -753,10 +973,10 @@ mod tests {
     }
 
     #[test]
-    fn manifest_api_defaults_to_host_and_network_allow_parses() {
-        // Missing fields → host version / empty allow list (legacy manifests).
+    fn manifest_api_defaults_to_v1_and_network_allow_parses() {
+        // A pre-api manifest is v1 and therefore must be rejected by the gate.
         let m = parse_manifest("id = \"legacy\"\n").unwrap();
-        assert_eq!(m.api, HOST_PLUGIN_API);
+        assert_eq!(m.api, 1);
         assert!(m.network_allow.is_empty());
         let m = parse_manifest(
             "id = \"selfhost\"\napi = 1\nnetwork_allow = [\"192.168.1.10\", \"*.internal.dev\"]\n",
@@ -1243,5 +1463,92 @@ height = 560
         let json = serde_json::to_string(&m.features[0]).unwrap();
         assert!(json.contains("\"type\":\"files\""), "{json}");
         assert!(json.contains("\"extensions\":[\"md\",\"txt\"]"), "{json}");
+    }
+
+    #[test]
+    fn api_two_is_the_only_accepted_version() {
+        let missing = parse_manifest("id = \"old\"\nkind = \"provider\"\nentry = \"main.js\"\n").unwrap();
+        assert!(validate_manifest(&missing).unwrap_err().contains("api 1"));
+        let old = parse_manifest(
+            "id = \"old\"\nkind = \"provider\"\napi = 1\nentry = \"main.js\"\n",
+        )
+        .unwrap();
+        assert!(validate_manifest(&old).unwrap_err().contains("api 1"));
+        let current = parse_manifest(
+            "id = \"current\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n",
+        )
+        .unwrap();
+        validate_manifest(&current).unwrap();
+    }
+
+    #[test]
+    fn api_two_presenter_contract_rejects_ambiguous_combinations() {
+        let missing_presenter = parse_manifest(
+            "id = \"p\"\nkind = \"mode\"\napi = 2\nmodel = \"demo/v1\"\nentry = \"service.js\"\n",
+        )
+        .unwrap();
+        assert!(validate_manifest(&missing_presenter)
+            .unwrap_err()
+            .contains("at least one Presenter"));
+
+        let duplicate = parse_manifest(
+            "id = \"p\"\nkind = \"mode\"\napi = 2\nmodel = \"demo/v1\"\nentry = \"service.js\"\n\
+             [[presenters]]\nid = \"same\"\nentry = \"a.html\"\n\
+             [[presenters]]\nid = \"same\"\nentry = \"b.html\"\n",
+        )
+        .unwrap();
+        assert!(validate_manifest(&duplicate)
+            .unwrap_err()
+            .contains("duplicate Presenter id"));
+
+        let bad_default = parse_manifest(
+            "id = \"p\"\nkind = \"mode\"\napi = 2\nmodel = \"demo/v1\"\nentry = \"service.js\"\n\
+             default_presenter = \"missing\"\n\
+             [[presenters]]\nid = \"default\"\nentry = \"view.html\"\n",
+        )
+        .unwrap();
+        assert!(validate_manifest(&bad_default)
+            .unwrap_err()
+            .contains("default_presenter"));
+
+        let bad_model = parse_manifest(
+            "id = \"p\"\nkind = \"mode\"\napi = 2\nmodel = \"demo/v1\"\nentry = \"service.js\"\n\
+             [[presenters]]\nid = \"default\"\nentry = \"view.html\"\nmodels = [\"other/v1\"]\n",
+        )
+        .unwrap();
+        assert!(validate_manifest(&bad_model)
+            .unwrap_err()
+            .contains("does not support model"));
+
+        let bad_setting = parse_manifest(
+            "id = \"p\"\nkind = \"mode\"\napi = 2\nmodel = \"demo/v1\"\nentry = \"service.js\"\n\
+             [[presenters]]\nid = \"default\"\nentry = \"view.html\"\n\
+             [[presenter_settings]]\npresenter = \"ghost\"\nkey = \"density\"\n",
+        )
+        .unwrap();
+        assert!(validate_manifest(&bad_setting)
+            .unwrap_err()
+            .contains("unknown Presenter"));
+    }
+
+    #[test]
+    fn every_repository_example_passes_the_api_two_gate() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        for root in [repo.join("examples/plugins"), repo.join("scripts/fixtures")] {
+            let Ok(entries) = fs::read_dir(root) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path().join("plugin.toml");
+                if !path.is_file() {
+                    continue;
+                }
+                let text = fs::read_to_string(&path).unwrap();
+                let mut m = parse_manifest(&text)
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                if m.id.is_empty() {
+                    m.id = entry.file_name().to_string_lossy().into_owned();
+                }
+                validate_manifest(&m).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            }
+        }
     }
 }

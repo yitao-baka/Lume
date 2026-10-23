@@ -14,12 +14,20 @@ id = "hidden-mode"
 name = "Hidden Mode"
 version = "1.0.0"
 kind = "mode"
+api = 2
 description = "示例：hidden = true —— 不进模式切换栏，只能从导航页搜索结果进入"
 keywords = ["hush", "潜水"]
 icon = "icon.svg"      # pill / 搜索结果行等缺省图标的默认来源
-view = "view.html"     # 桥接 iframe 页 — 本插件不需要 entry 逻辑钩子
+model = "lume.collection/v1"
+default_presenter = "default"
 height = 420
 hidden = true          # 不在模式切换栏/切换键循环里出现；入口 = 导航搜索行
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]
 
 # 声明式进入：输入 "hush:xxx" 出「hush:…」行；该行同样默认用本插件 icon。
 # 注意这里没有 entry 逻辑，宿主会直接投递给页面的 lume.on.enter。

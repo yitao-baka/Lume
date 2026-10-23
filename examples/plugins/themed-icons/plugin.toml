@@ -13,9 +13,12 @@ id = "themed-icons"
 name = "Themed Icons"
 version = "1.0.0"
 kind = "mode"
+api = 2
 description = "示例：icon_light / icon_dark 两套图标 + 运行时光/暗行图标对"
 entry = "main.js"
 template = "list"          # 零 HTML 的列表模式：宿主渲染 main.js 的行
+model = "lume.collection/v1"
+default_presenter = "collection-list"
 keywords = ["themed", "双色"]
 
 # 插件级两套图：pill、没有显式 icon 的行、设置页卡片都用它。

@@ -669,3 +669,5 @@ surface are verified with the `scripts/cdp_*.mjs` probes.
 Planned work is tracked in `docs/ROADMAP.md`: plugin ecosystem follow-ups
 (market, drag-package install, browser/selection capture), file-search
 hardening, workflow/OCR/AI commands and cross-platform exploration.
+The page-model / replaceable-presenter refactor is specified in
+`docs/PAGE_MODEL_PRESENTER.md`.

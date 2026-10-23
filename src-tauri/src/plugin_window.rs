@@ -337,10 +337,15 @@ pub fn plugin_window_meta(
         .iter()
         .find(|m| m.id == id)
         .ok_or_else(|| format!("unknown plugin \"{id}\""))?;
+    let presenter = m
+        .presenters
+        .iter()
+        .find(|p| p.id == m.default_presenter)
+        .or_else(|| m.presenters.first());
     Ok(serde_json::json!({
         "dir": m.dir,
-        "view": m.view,
-        "titlebar": m.titlebar,
+        "view": if m.view.is_empty() { presenter.map(|p| p.entry.clone()).unwrap_or_default() } else { m.view.clone() },
+        "titlebar": if m.titlebar.is_empty() { presenter.map(|p| p.titlebar.clone()).unwrap_or_default() } else { m.titlebar.clone() },
         "name": m.name,
     }))
 }

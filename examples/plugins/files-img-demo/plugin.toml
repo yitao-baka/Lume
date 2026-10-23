@@ -20,6 +20,7 @@
 id = "files-img-demo"
 name = "文件处理器 (Files & Image Demo)"
 kind = "provider"
+api = 2
 version = "1.0.0"
 description = "示例：type=files 文件拖入 + type=img 剪贴板图片进入 + fileType"
 entry = "main.js"

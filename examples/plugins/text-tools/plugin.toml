@@ -1,6 +1,7 @@
 id = "text-tools"
 name = "文本工具 (Text Tools)"
 kind = "provider"
+api = 2
 description = "示例：声明式进入（over/regex）+ 二级下钻（select/filter）+ 插件互跳（redirect）"
 permissions = ["clipboard"] # 起强制：转换结果写剪贴板
 entry = "main.js"

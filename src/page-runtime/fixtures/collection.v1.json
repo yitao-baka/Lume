@@ -1,0 +1,28 @@
+{
+  "runtime": "lume.page/v1",
+  "schema": "lume.collection/v1",
+  "revision": 1,
+  "status": "ready",
+  "data": {
+    "title": "Results",
+    "groups": [
+      {
+        "id": "main",
+        "title": "Main",
+        "expandable": false,
+        "expanded": true,
+        "items": [
+          {
+            "id": "row:1",
+            "label": "Example",
+            "description": "A collection fixture row",
+            "actions": ["open"]
+          }
+        ]
+      }
+    ],
+    "total": 1,
+    "window": { "offset": 0, "limit": 40 },
+    "emptyText": "Nothing here"
+  }
+}

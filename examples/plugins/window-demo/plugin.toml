@@ -19,6 +19,7 @@
 id = "window-demo"
 name = "窗口工具 (Window Demo)"
 kind = "provider"
+api = 2
 version = "1.0.0"
 description = "示例：type=window 活动窗口匹配（process/class/title 维度）"
 entry = "main.js"

@@ -9,8 +9,16 @@ id = "file-search"
 name = "文件秒搜"
 version = "1.0.0"
 kind = "mode"
+api = 2
 description = "全盘文件秒搜模式：宿主 search.files 能力（Everything / LumeSVC 引擎）+ 键盘导航"
 keywords = ["秒搜", "file"]
 permissions = ["search.files", "clipboard"] # 起强制：宿主 search.files 能力 + 复制路径
-view = "view.html"    # 桥接 iframe 页 — 本插件不需要 entry 逻辑钩子
+model = "lume.collection/v1"
+default_presenter = "default"
 height = 560          # 本模式页面的窗口高度（逻辑 px）
+
+[[presenters]]
+id = "default"
+name = "Default"
+entry = "view.html"
+models = ["lume.collection/v1"]

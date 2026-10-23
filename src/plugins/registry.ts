@@ -551,6 +551,20 @@ async function execHostRpc(
   return execHostRpcShared(id, method, args, pluginServices!);
 }
 
+/** Transitional manifest adapter: an api 2 mode names an HTML Presenter
+ * entry, while the migration shell still needs one path to mount. */
+function manifestPresenter(m: PluginManifest): PluginManifest["presenters"][number] | undefined {
+  if (m.presenters.length === 0) return undefined;
+  const preferred = m.presenters.find((p) => p.id === m.defaultPresenter);
+  if (preferred) return preferred;
+  return m.presenters.find((p) => (p.models.length ? p.models.includes(m.model) : true)) ?? m.presenters[0];
+}
+
+function manifestViewEntry(m: PluginManifest): string {
+  return m.view || manifestPresenter(m)?.entry || "";
+}
+
+
 /** Build the ModeInstance for a disk mode plugin (bridged iframe UI). */
 function createDiskModeInstance(
   m: PluginManifest,
@@ -662,8 +676,9 @@ function createDiskModeInstance(
 
   // Fetch + bridge the view page, then mark ready and deliver the current
   // query (the page may already have assigned lume.on.query).
-  plog.info(m.id, "mode view fetching:", m.view);
-  void fetchDiskFile(m.dir + "\\" + m.view)
+  const viewEntry = manifestViewEntry(m);
+  plog.info(m.id, "mode view fetching:", viewEntry);
+  void fetchDiskFile(m.dir + "\\" + viewEntry)
     .then((html) => {
       plog.info(m.id, "mode view ready (html", html.length, "bytes)");
       viewReady = true;
@@ -845,7 +860,7 @@ export async function loadDiskPlugins(seq = refreshSeq) {
     if (m.api > HOST_PLUGIN_API) {
       plog.error(m.id, `manifest api=${m.api} > host ${HOST_PLUGIN_API} — refusing to load`);
       services?.showToast(
-        t("pluginApiMismatch", {
+        t("pluginApiRejected", {
           name: m.name || m.id,
           api: String(m.api),
           host: String(HOST_PLUGIN_API),
@@ -943,7 +958,7 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           `registered mode proxy (template=list, entry=${m.entry}` +
             `${m.height != null ? `, height=${m.height}` : ""}${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
         );
-      } else if (m.kind === "mode" && m.view) {
+      } else if (m.kind === "mode" && manifestViewEntry(m)) {
         if (m.entry) pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const logic = m.entry ? logicProxy(m.id) : {};
         const instance = createDiskModeInstance(m, logic, services!);
@@ -970,7 +985,7 @@ export async function loadDiskPlugins(seq = refreshSeq) {
         loadedAny = true;
         plog.info(
           m.id,
-          `registered mode (view=${m.view}${m.entry ? `, entry=${m.entry}` : ""}` +
+          `registered mode (view=${manifestViewEntry(m)}${m.entry ? `, entry=${m.entry}` : ""}` +
             `${m.height != null ? `, height=${m.height}` : ""}${navBars ? ", navBars" : ""})`
         );
       } else if (m.kind === "service" && m.entry) {
@@ -1000,7 +1015,7 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           m.id,
           `unusable manifest: kind=${m.kind}` +
             (m.kind === "provider" && !m.entry ? " — provider requires `entry`" : "") +
-            (m.kind === "mode" && m.template !== "list" && !m.view ? " — mode requires `view`" : "") +
+            (m.kind === "mode" && m.template !== "list" && !manifestViewEntry(m) ? " — mode requires a Presenter entry" : "") +
             (m.kind === "mode" && m.template === "list" && !m.entry ? " — template=list requires `entry`" : "") +
             (m.kind === "service" && !m.entry ? " — service requires `entry`" : "")
         );

@@ -1,4 +1,4 @@
-//! Plugin contracts (docs/ROADMAP_HISTORY.md #7, v1).
+//! Plugin contracts (api 2).
 //!
 //! A plugin pairs a manifest (Rust `plugins.rs`) with one or more
 //! *contributions* in the frontend registry. v1 ships two first-party
@@ -46,7 +46,24 @@ export type PageRow = AppEntry | ClipboardItem;
  * must mirror `HOST_PLUGIN_API` in src-tauri/src/plugins.rs. Manifests
  * declaring a higher version are refused at load (registry gate + logic-host
  * defense in depth); lower/missing versions load as-is. */
-export const HOST_PLUGIN_API = 1;
+export const HOST_PLUGIN_API = 2;
+
+/** One self-drawn page Presenter declared by an api 2 mode manifest. */
+export interface PluginPresenter {
+  id: string;
+  name: string;
+  /** HTML entry, relative to the plugin directory. */
+  entry: string;
+  /** Optional detached-window titlebar HTML for this Presenter. */
+  titlebar: string;
+  /** Page-model schemas this Presenter can render. */
+  models: string[];
+}
+
+/** A Presenter-scoped declarative setting. */
+export interface PluginPresenterSetting extends PluginSetting {
+  presenter: string;
+}
 
 /** Manifest as reported by the Rust `get_plugins` command. */
 export interface PluginManifest {
@@ -64,14 +81,19 @@ export interface PluginManifest {
    * declared or not. Built-ins are never in this list (they are compiled in). */
   trusted: boolean;
   enabled: boolean;
-  /** Entry JS file (disk plugins, relative to the plugin dir). */
+  /** Page Service entry (api 2 mode) or logic entry for other kinds. */
   entry: string;
-  /** View HTML file (disk mode plugins, relative to the plugin dir). */
+  /** Page-model schema produced by this mode's Page Service. */
+  model: string;
+  /** Default Presenter id; empty selects the first compatible Presenter. */
+  defaultPresenter: string;
+  /** Self-drawn Presenters declared by an api 2 mode. */
+  presenters: PluginPresenter[];
+  /** Presenter-scoped declarative settings. */
+  presenterSettings: PluginPresenterSetting[];
+  /** Transitional adapter view. api 2 declares `[[presenters]]`. */
   view: string;
-  /** Titlebar HTML file (disk mode plugins, relative to the plugin dir): a
-   * second sandboxed iframe rendered in the detached window's titlebar,
-   * between the title and the window controls. Unused while the mode lives
-   * inside the launcher. See docs/PLUGIN_API.md §6G. */
+  /** Transitional adapter titlebar. api 2 Presenters own this slot. */
   titlebar: string;
   /** Mode plugins: `"list"` = the built-in list template renders the plugin's
    * rows (no `view` needed; the plugin ships only `entry` logic). */
@@ -114,10 +136,10 @@ export interface PluginManifest {
    * plugin from disk on every refresh (settings-applied) — code edits take
    * effect without a restart. */
   development: boolean;
-  /** Host plugin-API version the manifest targets (`api = 1` in plugin.toml).
-   * Missing manifests default to the host's version; a version ABOVE
-   * `HOST_PLUGIN_API` is refused at load with a clear error (§11 版本化). */
+  /** Plugin-API version declared by the manifest. */
   api: number;
+  /** Non-null when the api 2 gate rejected this manifest. */
+  apiError: string | null;
   /** Backend-computed pinyin of `keywords` (same order) — lets the frontend
    * match "miao"/"ms" against the Chinese keyword 「秒搜」 without a pinyin
    * library. Empty entries when the plugin has no keywords. */

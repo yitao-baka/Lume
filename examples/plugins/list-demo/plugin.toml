@@ -12,6 +12,7 @@ id = "list-demo"
 name = "清单 (List Demo)"
 version = "1.0.0"
 kind = "mode"
+api = 2
 description = "示例：template = \"list\" —— 零 HTML 的列表模式插件"
 entry = "main.js"
 keywords = ["清单", "list"]
@@ -19,6 +20,8 @@ permissions = ["clipboard"]
 
 # template = "list"：宿主内置列表渲染 main.js 的 search(q) 行。
 template = "list"
+model = "lume.collection/v1"
+default_presenter = "collection-list"
 
 # 声明式进入也能用：输入「买 …」直接带着 payload 进入本模式。
 [[features]]

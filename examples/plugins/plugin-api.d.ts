@@ -222,3 +222,121 @@ interface LumeProviderLogic {
   onQuery?(q: string): void;
   onSubInput?(text: string): void;
 }
+
+// ── Page Model / Presenter (api 2) ────────────────────────────────────────
+type LumeJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | LumeJsonValue[]
+  | { [key: string]: LumeJsonValue };
+
+interface LumePageAction {
+  id: string;
+  label: string;
+  kind?: "default" | "primary" | "danger";
+  shortcut?: string;
+  enabled?: boolean;
+}
+
+interface LumeResourceRef {
+  kind: "url" | "asset" | "file-icon" | "thumbnail";
+  src: string;
+  light?: string;
+  dark?: string;
+  width?: number;
+  height?: number;
+  alt?: string;
+}
+
+interface LumePageModel<Data extends LumeJsonValue = LumeJsonValue> {
+  runtime: "lume.page/v1";
+  schema: string;
+  revision: number;
+  status: "loading" | "ready" | "empty" | "error";
+  data: Data;
+  selection?: { primaryId?: string; selectedIds?: string[] };
+  actions?: LumePageAction[];
+  preview?: {
+    kind: "text" | "image" | "file" | "audio" | "video" | "pdf";
+    targetId: string;
+    payload: LumeJsonValue;
+  } | null;
+  error?: { code: string; message: string; retryable?: boolean };
+}
+
+interface LumePageIntent {
+  requestId?: string;
+  type:
+    | "selection.set"
+    | "selection.move"
+    | "selection.clear"
+    | "item.activate"
+    | "item.action"
+    | "query.submit"
+    | "page.refresh"
+    | "page.cancel"
+    | "page.escape"
+    | "page.retry"
+    | "viewport.request"
+    | string;
+  targetId?: string;
+  actionId?: string;
+  payload?: LumeJsonValue;
+}
+
+interface LumeIntentResult {
+  requestId?: string;
+  status: "accepted" | "completed" | "failed";
+  code?: string;
+  message?: string;
+  value?: LumeJsonValue;
+}
+
+/** Presenter-only surface; sensitive host capabilities are absent. */
+interface LumePagePresenterApi {
+  ready(): Promise<void>;
+  getModel(): Promise<LumePageModel>;
+  subscribe(handler: (model: LumePageModel) => void): () => void;
+  dispatch(intent: LumePageIntent): Promise<LumeIntentResult>;
+  reportLayout(report: {
+    sizing: "fit" | "fixed";
+    contentHeight?: number;
+    height?: number;
+    expanded?: boolean;
+  }): Promise<void>;
+  setModal(open: boolean): Promise<void>;
+  requestSearchFocus(): Promise<void>;
+}
+
+/** Page-service publish surface. */
+interface LumePageServiceApi {
+  publish(model: LumePageModel): void;
+  patch(update: Partial<LumePageModel>): void;
+  emit(event: { type: string; requestId?: string; payload?: LumeJsonValue }): void;
+  setError(error: { code: string; message: string; retryable?: boolean }): void;
+  clearError(): void;
+}
+
+interface LumeSecretsApi {
+  has(key: string): Promise<boolean>;
+  get(key: string): Promise<string | null>;
+}
+
+interface LumePluginCtx {
+  page: LumePageServiceApi;
+  secrets: LumeSecretsApi;
+}
+
+/** api 2 mode service entry. */
+interface LumeModeServiceLogic {
+  getModel(): LumePageModel | Promise<LumePageModel>;
+  onIntent?(intent: LumePageIntent): LumeIntentResult | Promise<LumeIntentResult>;
+  onQuery?(query: string): void | Promise<void>;
+  onShow?(): void | Promise<void>;
+  onHide?(): void | Promise<void>;
+  onEnter?(info: unknown): void | Promise<void>;
+  onFilesDropped?(paths: string[]): void | Promise<void>;
+  onSettings?(values: Record<string, unknown>): void;
+}

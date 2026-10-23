@@ -32,7 +32,7 @@ use zip::ZipArchive;
 
 use crate::paths::base_dir;
 use crate::plugin_sign::{verify_sign_blob, SIGN_ENTRY};
-use crate::plugins::{parse_manifest, valid_plugin_id, PluginManifest};
+use crate::plugins::{parse_manifest, valid_plugin_id, validate_manifest, PluginManifest, PresenterManifest};
 
 /// Cap on one extracted file, applied to the **measured** decompressed bytes
 /// (never the header's declaration). A plugin is view HTML + a JS bundle +
@@ -53,6 +53,13 @@ pub struct LupxInfo {
     pub kind: String,
     pub description: String,
     pub permissions: Vec<String>,
+    /// Plugin-API version and Page Model metadata, shown separately from the
+    /// service capability list in the install confirmation.
+    pub api: u32,
+    pub model: String,
+    #[serde(rename = "defaultPresenter")]
+    pub default_presenter: String,
+    pub presenters: Vec<PresenterManifest>,
     /// File entries in the archive (directory entries excluded).
     #[serde(rename = "fileCount")]
     pub file_count: usize,
@@ -346,6 +353,8 @@ fn read_lupx_verified(
             manifest.id
         ));
     }
+    validate_manifest(&manifest)
+        .map_err(|e| format!("plugin \"{}\" rejected: {e}", manifest.id))?;
     // #32.2: a `LUME.SIGN` block must verify against the manifest bytes and
     // the exact file set just hashed — any mismatch hard-fails the inspect/
     // install. Unsigned archives keep the plain confirmation-card flow.
@@ -705,6 +714,10 @@ fn inspect_lupx(source_path: &str) -> Result<LupxInfo, String> {
         kind: arch.manifest.kind.clone(),
         description: arch.manifest.description.clone(),
         permissions: arch.manifest.permissions.clone(),
+        api: arch.manifest.api,
+        model: arch.manifest.model.clone(),
+        default_presenter: arch.manifest.default_presenter.clone(),
+        presenters: arch.manifest.presenters.clone(),
         file_count: arch.file_count,
         total_bytes: arch.total_bytes,
         existing_version: existing,
@@ -791,6 +804,10 @@ pub async fn plugin_lupx_install(
                 kind: arch.manifest.kind,
                 description: arch.manifest.description,
                 permissions: arch.manifest.permissions,
+                api: arch.manifest.api,
+                model: arch.manifest.model,
+                default_presenter: arch.manifest.default_presenter,
+                presenters: arch.manifest.presenters,
                 file_count,
                 total_bytes,
                 existing_version: None, // installed by now; the card is gone
@@ -871,7 +888,7 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
-    const MANIFEST: &[u8] = b"id = \"demo\"\nname = \"Demo\"\nversion = \"1.0.0\"\nkind = \"provider\"\npermissions = [\"network\"]\n";
+    const MANIFEST: &[u8] = b"id = \"demo\"\nname = \"Demo\"\nversion = \"1.0.0\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\npermissions = [\"network\"]\n";
 
     fn temp_base(tag: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("lume-lupx-{tag}-{}", std::process::id()));
@@ -1071,7 +1088,7 @@ mod tests {
         let v2 = make_zip(
             "v2",
             &[
-                ("plugin.toml", b"id = \"demo\"\nversion = \"2.0.0\"\n".as_slice()),
+                ("plugin.toml", b"id = \"demo\"\nversion = \"2.0.0\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n".as_slice()),
                 ("main.js", b"export default {}; version=2;".as_slice()),
             ],
         );
@@ -1139,7 +1156,7 @@ mod tests {
         let v2 = make_zip(
             "rel2",
             &[
-                ("plugin.toml", b"id = \"demo\"\nversion = \"2.0.0\"\n".as_slice()),
+                ("plugin.toml", b"id = \"demo\"\nversion = \"2.0.0\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n".as_slice()),
                 ("main.js", b"v2".as_slice()),
             ],
         );
@@ -1158,7 +1175,7 @@ mod tests {
         let v0 = make_zip(
             "rel0",
             &[
-                ("plugin.toml", b"id = \"demo\"\nversion = \"0.9.0\"\n".as_slice()),
+                ("plugin.toml", b"id = \"demo\"\nversion = \"0.9.0\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n".as_slice()),
                 ("main.js", b"v0".as_slice()),
             ],
         );
@@ -1192,7 +1209,7 @@ mod tests {
         let v2 = make_zip(
             "pf2",
             &[
-                ("plugin.toml", b"id = \"demo\"\nversion = \"2.0.0\"\n".as_slice()),
+                ("plugin.toml", b"id = \"demo\"\nversion = \"2.0.0\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n".as_slice()),
                 ("main.js", b"v2".as_slice()),
                 ("files/note.txt", b"package seed".as_slice()),
                 ("files/seed.txt", b"seed".as_slice()),

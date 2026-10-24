@@ -1,0 +1,11 @@
+id = "legacy-api-provider"
+name = "Legacy API Provider"
+version = "1.0.0"
+kind = "provider"
+api = 1
+entry = "main.js"
+
+[[features]]
+code = "legacy"
+label = "API1-FEATURE-LOADED"
+regex = "^legacy-api:"

@@ -69,6 +69,9 @@ use crate::settings::{self, SettingsState};
 /// Cap for one detached Page Service request/response. The Page Model has its
 /// own 1 MiB gate; this keeps every other bridge call bounded too.
 const MAX_PAGE_BRIDGE_BYTES: usize = 1024 * 1024;
+const MAX_WINDOW_STATE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CLOSE_SNAPSHOT_BYTES: usize = 1_200_000;
+const MAX_CLOSE_QUERY_CHARS: usize = 8 * 1024;
 
 fn valid_bridge_request_id(id: &str) -> bool {
     !id.is_empty()
@@ -120,12 +123,31 @@ pub async fn plugin_window_open(
     icon_png: Option<String>,
     icon_png_dark: Option<String>,
     icon_themed: Option<bool>,
+    window: tauri::WebviewWindow,
     app: AppHandle,
     state: State<'_, SettingsState>,
     closing: State<'_, ClosingSet>,
     icons: State<'_, PluginIcons>,
 ) -> Result<String, String> {
+    if window.label() != "main" {
+        return Err("plugin_window_open: launcher window only".into());
+    }
+    if !valid_plugin_id(&id) {
+        return Err("plugin_window_open: invalid plugin id".into());
+    }
     let label = window_label(&id);
+    let snapshot = settings::snapshot(&state);
+    if snapshot.plugins.disabled.iter().any(|d| d == &id) {
+        return Err(format!("plugin \"{id}\" is disabled"));
+    }
+    let manifests = crate::plugins::list_plugins(&base_dir(), &[], &[], false);
+    let m = manifests
+        .iter()
+        .find(|m| m.id == id)
+        .ok_or_else(|| format!("unknown plugin \"{id}\""))?;
+    if let Some(reason) = &m.api_error {
+        return Err(format!("plugin \"{id}\" was rejected: {reason}"));
+    }
     if let Some(win) = app.get_webview_window(&label) {
         // 重新聚焦取消一次在途的关闭簿记（防御：closing 已置位但窗口仍在的
         // 窗口期内用户再次打开 —— 此时destroy尚未完成，重开视为取消）。
@@ -137,15 +159,6 @@ pub async fn plugin_window_open(
         let _ = app.emit_to("main", "plugin-window-shown", id.clone());
         return Ok("focused".into());
     }
-    let snapshot = settings::snapshot(&state);
-    if snapshot.plugins.disabled.iter().any(|d| d == &id) {
-        return Err(format!("plugin \"{id}\" is disabled"));
-    }
-    let manifests = crate::plugins::list_plugins(&base_dir(), &[], &[], false);
-    let m = manifests
-        .iter()
-        .find(|m| m.id == id)
-        .ok_or_else(|| format!("unknown plugin \"{id}\""))?;
     if m.kind != "mode" || !m.detachable {
         return Err(format!("plugin \"{id}\" is not a detachable mode"));
     }
@@ -360,6 +373,9 @@ pub fn plugin_window_meta(
         .iter()
         .find(|m| m.id == id)
         .ok_or_else(|| format!("unknown plugin \"{id}\""))?;
+    if let Some(reason) = &m.api_error {
+        return Err(format!("plugin \"{id}\" was rejected: {reason}"));
+    }
     Ok(serde_json::json!({
         "dir": m.dir,
         "name": m.name,
@@ -385,6 +401,12 @@ pub fn plugin_window_redirect(
 ) -> Result<(), String> {
     if window.label() != window_label(&from) {
         return Err("plugin_window_redirect: wrong window".into());
+    }
+    if !valid_plugin_id(&plugin_id) {
+        return Err("plugin_window_redirect: invalid target plugin id".into());
+    }
+    if page_bridge_payload_size(&info)? > MAX_PAGE_BRIDGE_BYTES {
+        return Err("plugin_window_redirect: payload is too large".into());
     }
     app.emit_to(
         "main",
@@ -463,6 +485,9 @@ pub fn plugin_page_bridge_reply(
     if !valid_plugin_id(&to) || !valid_bridge_request_id(&request_id) {
         return Err("plugin_page_bridge_reply: invalid target or request id".into());
     }
+    if app.get_webview_window(&window_label(&to)).is_none() {
+        return Err(format!("plugin_page_bridge_reply: window for \"{to}\" is not open"));
+    }
     if let Some(value) = &result {
         let size = page_bridge_payload_size(value)?;
         if size > MAX_PAGE_BRIDGE_BYTES {
@@ -494,8 +519,24 @@ pub fn plugin_page_bridge_reply(
 pub fn plugin_window_push_state(
     id: String,
     state: serde_json::Value,
+    window: tauri::WebviewWindow,
     app: AppHandle,
 ) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("plugin_window_push_state: launcher window only".into());
+    }
+    if !valid_plugin_id(&id) {
+        return Err("plugin_window_push_state: invalid plugin id".into());
+    }
+    if app.get_webview_window(&window_label(&id)).is_none() {
+        return Err(format!("plugin_window_push_state: window for \"{id}\" is not open"));
+    }
+    let size = page_bridge_payload_size(&state)?;
+    if size > MAX_WINDOW_STATE_BYTES {
+        return Err(format!(
+            "plugin_window_push_state: state is {size} bytes (cap {MAX_WINDOW_STATE_BYTES})"
+        ));
+    }
     app.emit_to(window_label(&id), "plugin-state", state)
         .map_err(|e| e.to_string())
 }
@@ -508,13 +549,21 @@ pub fn plugin_window_push_state(
 #[tauri::command]
 pub fn plugin_window_close(
     id: String,
+    window: tauri::WebviewWindow,
     app: AppHandle,
     closing: State<'_, ClosingSet>,
 ) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window(&window_label(&id)) {
-        closing.insert(&id);
-        let _ = win.close();
+    if window.label() != "main" {
+        return Err("plugin_window_close: launcher window only".into());
     }
+    if !valid_plugin_id(&id) {
+        return Err("plugin_window_close: invalid plugin id".into());
+    }
+    let win = app
+        .get_webview_window(&window_label(&id))
+        .ok_or_else(|| format!("plugin_window_close: window for \"{id}\" is not open"))?;
+    closing.insert(&id);
+    let _ = win.close();
     Ok(())
 }
 
@@ -526,8 +575,8 @@ pub fn plugin_window_close(
 #[tauri::command]
 pub fn plugin_window_close_report(
     id: String,
-    snapshot: Option<serde_json::Value>,
-    query: Option<String>,
+    mut snapshot: Option<serde_json::Value>,
+    mut query: Option<String>,
     window: tauri::WebviewWindow,
     app: AppHandle,
     closing: State<'_, ClosingSet>,
@@ -535,18 +584,27 @@ pub fn plugin_window_close_report(
     if window.label() != window_label(&id) {
         return Err("plugin_window_close_report: wrong window".into());
     }
-    closing.insert(&id);
-    if let Some(win) = app.get_webview_window(&window_label(&id)) {
-        remember_bounds(&app, &id, &win);
-        let _ = app.emit_to(
-            "main",
-            "plugin-window-closed",
-            // `user: true`（docs/ROADMAP_HISTORY.md #40）：前端据此把状态收进会话并回流到
-            // 该插件页；程序化关闭（禁用/重载）不带它，状态直接丢弃。
-            serde_json::json!({ "id": id, "snapshot": snapshot, "query": query, "user": true }),
-        );
-        let _ = win.destroy();
+    if snapshot.as_ref().is_some_and(|value| {
+        page_bridge_payload_size(value)
+            .map(|size| size > MAX_CLOSE_SNAPSHOT_BYTES)
+            .unwrap_or(true)
+    }) {
+        snapshot = None;
     }
+    query = query.map(|value| value.chars().take(MAX_CLOSE_QUERY_CHARS).collect());
+    closing.insert(&id);
+    let win = app
+        .get_webview_window(&window_label(&id))
+        .ok_or_else(|| format!("plugin_window_close_report: window for \"{id}\" is not open"))?;
+    remember_bounds(&app, &id, &win);
+    let _ = app.emit_to(
+        "main",
+        "plugin-window-closed",
+        // `user: true`（docs/ROADMAP_HISTORY.md #40）：前端据此把状态收进会话并回流到
+        // 该插件页；程序化关闭（禁用/重载）不带它，状态直接丢弃。
+        serde_json::json!({ "id": id, "snapshot": snapshot, "query": query, "user": true }),
+    );
+    let _ = win.destroy();
     Ok(())
 }
 

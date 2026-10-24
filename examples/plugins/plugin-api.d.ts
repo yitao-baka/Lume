@@ -129,7 +129,8 @@ interface LumeEvents {
   query?(q: string): void;
   show?(): void;
   hide?(): void;
-  key?(e: KeyboardEvent): void;
+  /** Return true to consume Esc (or another forwarded key) for this page. */
+  key?(e: KeyboardEvent): boolean | void | Promise<boolean | void>;
   /** 本插件**生效**的明暗（受 `lume.theme.set` 影响）：sandbox 后页面读不到
    * 宿主文档，宿主在就绪握手重放并在变化时推送（§6C）。 */
   theme?(mode: "dark" | "light"): void;

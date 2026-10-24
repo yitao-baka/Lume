@@ -22,8 +22,10 @@
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use crate::paths::base_dir;
-use crate::plugin_perm::{resolve_plugin_caller, LOGIC_HOST_LABEL};
+use crate::plugin_perm::{resolve_plugin_caller, resolve_plugin_caller_role, LOGIC_HOST_LABEL};
 use crate::settings::{self, SettingsState};
+
+const MAX_PLUGIN_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Create (or report the existing) shared logic host window. Hidden 1×1,
 /// skip-taskbar — never shown. **Async command**: window creation must leave
@@ -32,7 +34,11 @@ use crate::settings::{self, SettingsState};
 pub async fn plugin_logic_host_ensure(
     app: AppHandle,
     state: State<'_, SettingsState>,
+    window: tauri::WebviewWindow,
 ) -> Result<String, String> {
+    if window.label() != "main" {
+        return Err("plugin_logic_host_ensure: launcher window only".into());
+    }
     if let Some(_win) = app.get_webview_window(LOGIC_HOST_LABEL) {
         return Ok("exists".into());
     }
@@ -65,7 +71,13 @@ pub async fn plugin_logic_host_ensure(
 /// Destroy the shared logic host window (teardown / tests; normal unload
 /// removes per-plugin iframes inside the window instead).
 #[tauri::command]
-pub fn plugin_logic_host_close(app: AppHandle) -> Result<(), String> {
+pub fn plugin_logic_host_close(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("plugin_logic_host_close: launcher window only".into());
+    }
     if let Some(win) = app.get_webview_window(LOGIC_HOST_LABEL) {
         let _ = win.close();
     }
@@ -87,12 +99,71 @@ pub fn plugin_logic_meta(
         .iter()
         .find(|m| m.id == id)
         .ok_or_else(|| format!("unknown plugin \"{id}\""))?;
+    if let Some(reason) = &m.api_error {
+        return Err(format!("plugin \"{id}\" was rejected: {reason}"));
+    }
     Ok(serde_json::json!({
         "dir": m.dir,
         "entry": m.entry,
         "name": m.name,
         "api": m.api,
     }))
+}
+
+/// Read one plugin source/module file for the shared logic supervisor. The
+/// caller's host token fixes the plugin identity; both the plugin root and the
+/// requested file are canonicalized so `..` segments and symlink/junction
+/// escapes cannot read another plugin or arbitrary disk content.
+#[tauri::command]
+pub async fn plugin_logic_read_file(
+    id: String,
+    token: String,
+    path: String,
+    window: tauri::WebviewWindow,
+    perms: State<'_, crate::plugin_perm::PluginPermState>,
+) -> Result<String, String> {
+    if window.label() != LOGIC_HOST_LABEL {
+        return Err("plugin_logic_read_file: logic host window only".into());
+    }
+    let (resolved, role) = resolve_plugin_caller_role(&perms, &window, Some(&id), Some(&token))?;
+    if resolved.as_deref() != Some(id.as_str()) || role != "service" {
+        return Err("plugin_logic_read_file: token does not belong to this service".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || read_plugin_source(&id, &path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn read_plugin_source(id: &str, path: &str) -> Result<String, String> {
+    let base = base_dir();
+    let manifests = crate::plugins::list_plugins(&base, &[], &[], false);
+    let manifest = manifests
+        .iter()
+        .find(|manifest| manifest.id == id)
+        .ok_or_else(|| format!("unknown plugin \"{id}\""))?;
+    if let Some(reason) = &manifest.api_error {
+        return Err(format!("plugin \"{id}\" was rejected: {reason}"));
+    }
+    let root = std::fs::canonicalize(&manifest.dir)
+        .map_err(|error| format!("plugin directory unavailable: {error}"))?;
+    let target = std::fs::canonicalize(path)
+        .map_err(|error| format!("plugin file unavailable: {error}"))?;
+    let root_text = root.to_string_lossy().replace('/', "\\").to_lowercase();
+    let target_text = target.to_string_lossy().replace('/', "\\").to_lowercase();
+    if target_text != root_text && !target_text.starts_with(&(root_text + "\\")) {
+        return Err("plugin file read escaped the plugin directory".into());
+    }
+    let metadata = std::fs::metadata(&target).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err("plugin source path is not a file".into());
+    }
+    if metadata.len() > MAX_PLUGIN_SOURCE_BYTES {
+        return Err(format!(
+            "plugin source file exceeds {} bytes",
+            MAX_PLUGIN_SOURCE_BYTES
+        ));
+    }
+    std::fs::read_to_string(&target).map_err(|error| format!("plugin source read failed: {error}"))
 }
 
 fn default_host_role() -> String {

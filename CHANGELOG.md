@@ -11,6 +11,28 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **页面运行时安全与故障恢复收口** — Presenter/逻辑帧加入严格 CSP，关闭原生
+  `fetch`/XHR/WebSocket/EventSource/表单/信标等绕过宿主网络权限的出口；Presenter
+  sandbox 移除 forms/popups。清单文件字段只接受插件目录内相对路径，Rust 同时做
+  canonicalize 归属校验，逻辑模块改由令牌归属的 Rust 命令读取；asset protocol
+  静态范围收窄到 Lume 数据/资源目录，预览文件按需授权。
+  API 版本门覆盖 registry、逻辑宿主、独立窗口与元数据入口；Page Service 首次
+  启动失败可重试，全部 Presenter 失败显示错误态，`sizing = "fit"` 接入
+  `contentHeight`，Esc/页面按键改用可等待消费回执。快照字段键、多选/name/
+  duplicate-name 恢复、iframe/宿主/Rust 三层大小限制、跨窗口调用方/目标/数值
+  校验与 Credential Manager 错误上报一并收口；内联图片缩略图不再被 8 KiB
+  URL 上限误伤（仍受 512 KiB 单资源与 Page Model 总量约束）。
+  验证：`pnpm exec tsc --noEmit`、`pnpm run build`、`pnpm run test:page-runtime`
+  **13/13**、`cargo test` **248 passed / 9 ignored**、`check_i18n` **576 键 ×
+  3 语言**、debug / release `--no-bundle` 构建通过；`cdp_presenter_network_verify` **5/5**、
+  `cdp_api_gate_verify` **6/6**、`cdp_runtime_recovery_verify` **5/5**、
+  `cdp_plugin_v2_verify` **5/5**、`cdp_page_runtime_verify` **26/26**、
+  `cdp_clipboard_p2` PASS、`cdp_plugin_state_verify` **61/61**、
+  `cdp_sandbox_verify` **15/15**、`cdp_plugin_lru_verify` **22/22**、
+  `cdp_detached_page_runtime_verify` **12/12**、
+  `cdp_plugin_window_verify` **16/16**、`cdp_translation_service_verify` **22/22**、
+  `cdp_file_search_presenter_verify` **5/5**、`cdp_presenter_control_verify`
+  **10/10**。
 - **页面模型 / Presenter 运行时收口** — 磁盘自绘 mode 统一为 api 2 的
   Page Service + `[[presenters]]`，删除顶层 `view`/`titlebar` 清单字段、
   `migrationAdapter`、旧磁盘 view bridge 和 `createDiskModeInstance` 路径；

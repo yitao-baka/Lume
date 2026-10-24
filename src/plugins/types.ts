@@ -43,9 +43,8 @@ export interface PluginColorState {
 export type PageRow = AppEntry | ClipboardItem;
 
 /** The plugin-API version this build implements (docs/PLUGIN_API.md §11) —
- * must mirror `HOST_PLUGIN_API` in src-tauri/src/plugins.rs. Manifests
- * declaring a higher version are refused at load (registry gate + logic-host
- * defense in depth); lower/missing versions load as-is. */
+ * must mirror `HOST_PLUGIN_API` in src-tauri/src/plugins.rs. Any other
+ * declared version is refused before executable code is loaded. */
 export const HOST_PLUGIN_API = 2;
 
 /** One self-drawn page Presenter declared by an api 2 mode manifest. */
@@ -738,8 +737,10 @@ export interface ModeInstance {
   /** The user changed this plugin's settings; disk mode pages get the
    * same values as a `lume.on.settings` event. */
   onSettings?(values: Record<string, unknown>): void;
-  /** Consume Esc (e.g. leave multi-select); true = handled, root won't hide. */
-  onEscape(): boolean;
+  /** Consume Esc (e.g. leave multi-select); true = handled, root won't hide.
+   * Presenter-backed pages may answer asynchronously while their sandboxed
+   * `lume.on.key` handler decides. */
+  onEscape(): boolean | Promise<boolean>;
   /** A modal page scope owns the keyboard (e.g. a confirm dialog). While true
    * the root suppresses mode-switch/shared bindings and delegates every key to
    * `onKey`, so background rows can never be activated. */
@@ -758,6 +759,10 @@ export interface ModeInstance {
    * clipboard until its first load lands. Omitted = always ready (the home
    * page) — such pages own their empty states. */
   ready?: () => boolean;
+  /** Terminal load failure (reactive). Unlike `ready() === false`, a failed
+   * page is visible so it can explain the error and offer a retry. Omitted =
+   * never failed. */
+  failed?: () => boolean;
   /** Height model for the "拼接" sizer: `"fit"` = the window auto-sizes to the
    * page content (the navigate home page); `"fixed"` (default) = the
    * fixed-height model below the search box. */
@@ -769,6 +774,9 @@ export interface ModeInstance {
    * to use the global 设置 → 窗口大小 → 高度. Read by the sizer's
    * fixed-height branch (plugin modes). */
   desiredHeight?: () => number | null;
+  /** Presenter-reported page-area height for `heightPolicy() === "fit"`.
+   * The shell adds the search row and clamps to the work area. */
+  fitContentHeight?: () => number | null;
   /** Home-page marker (the navigate page). #40: every kept-alive page survives
    * mode switches; this flag's remaining job is LRU exemption — the home page
    * is never evicted. */

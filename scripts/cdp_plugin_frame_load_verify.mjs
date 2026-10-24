@@ -22,10 +22,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
 rmSync("test/frame_load", { recursive: true, force: true });
 mkdirSync("test/frame_load", { recursive: true });
-rmSync(`src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true, force: true });
-cpSync(`examples/plugins/${PLUGIN}`, `src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true });
+rmSync(`src-tauri/target/debug/plugins/${PLUGIN}`, { recursive: true, force: true });
+cpSync(`examples/plugins/${PLUGIN}`, `src-tauri/target/debug/plugins/${PLUGIN}`, { recursive: true });
 const fd = openSync("test/frame_load/lume.log", "w");
-spawn("src-tauri/target/release/lume.exe", [], {
+spawn("src-tauri/target/debug/lume.exe", [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
   stdio: ["ignore", fd, fd],
 });

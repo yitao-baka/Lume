@@ -131,6 +131,7 @@ export class PresenterHost {
     for (const presenter of ordered) {
       for (let attempt = 0; attempt < 2; attempt++) {
         attempts++;
+        let handle: PresenterHandle | undefined;
         this.setState({
           presenterId: presenter.id,
           status: "mounting",
@@ -154,7 +155,7 @@ export class PresenterHost {
             setModal: (open) => this.setModal(open),
             requestSearchFocus: () => request.onSearchFocus?.(),
           };
-          const handle = await request.factory(presenter)(context);
+          handle = await request.factory(presenter)(context);
           await (typeof handle.ready === "function" ? handle.ready() : handle.ready);
           if (this.disposed) {
             handle.dispose();
@@ -165,6 +166,13 @@ export class PresenterHost {
           this.setState({ status: "ready", error: undefined });
           return this.getState();
         } catch (err) {
+          try {
+            handle?.dispose();
+          } catch (disposeErr) {
+            if (this.logErrors) {
+              console.error(`[page-runtime] Presenter ${presenter.id} cleanup failed:`, disposeErr);
+            }
+          }
           const message = String(err);
           if (this.logErrors) console.error(`[page-runtime] Presenter ${presenter.id} failed:`, err);
           this.setState({ status: "error", error: message });

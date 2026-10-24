@@ -6,7 +6,7 @@
 import { spawn, execSync } from "node:child_process";
 
 const CDP_PORT = 9222;
-const APP = "src-tauri/target/release/lume.exe";
+const APP = "src-tauri/target/debug/lume.exe";
 const TEST = "E:\\SoftwareDevelopment\\Projects\\LumeLauncher\\test";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

@@ -22,8 +22,8 @@ try {
   const invoke=(cmd,args={})=>main.ev('window.__TAURI_INTERNALS__.invoke('+JSON.stringify(cmd)+','+JSON.stringify(args)+')');
   if(!(await invoke("plugin:window|is_visible",{label:"main"}))){await invoke("toggle_launcher");await sleep(900)}
   await main.ev('(() => { const i=document.getElementById("search-input"); i.focus(); i.value="秒搜"; i.dispatchEvent(new Event("input",{bubbles:true})); return "ok"; })()');
-  await waitFor(main,'[...document.querySelectorAll(".result-box")].some((el)=>el.textContent.includes("文件秒搜"))');
-  await main.ev('(() => { const row=[...document.querySelectorAll(".result-box")].find((el)=>el.textContent.includes("文件秒搜")); row?.click(); return !!row; })()');
+  await waitFor(main,'[...document.querySelectorAll("[data-target-id]")].some((el)=>el.textContent.includes("文件秒搜"))');
+  await main.ev('(() => { const row=[...document.querySelectorAll("[data-target-id]")].find((el)=>el.textContent.includes("文件秒搜")); row?.click(); return !!row; })()');
   await waitFor(main,'!!document.querySelector("iframe.presenter-frame") && window.__pageRuntimeLatestModel("file-search")?.schema === "lume.collection/v1"');
   let model=await main.ev('window.__pageRuntimeLatestModel("file-search")');
   const srcdoc=await main.ev('document.querySelector("iframe.presenter-frame")?.getAttribute("srcdoc") || ""');

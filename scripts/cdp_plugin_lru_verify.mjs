@@ -140,7 +140,7 @@ const clickPill = async (label) => {
 const clickRow = async (label) => {
   for (let i = 0; i < 15; i++) {
     const hit = await m.evalJs(`(() => {
-      const el = [...document.querySelectorAll(".result-box")].find((b) => b.textContent.includes(${JSON.stringify(label)}));
+      const el = [...document.querySelectorAll("[data-target-id]")].find((b) => b.textContent.includes(${JSON.stringify(label)}));
       if (!el) return false; el.click(); return true;
     })()`);
     if (hit) return true;
@@ -152,7 +152,7 @@ const clickRow = async (label) => {
 const readField = (id) => m.evalJs(`(() => {
   const st = (window.__frameStates || []).filter((s) => s.name === "");
   for (let i = st.length - 1; i >= 0; i--) {
-    const v = (st[i].values || []).find((x) => x.id === ${JSON.stringify(id)});
+    const v = (st[i].values || []).find((x) => x.id === ${JSON.stringify(id)} || x.id === "id:" + ${JSON.stringify(id)});
     if (v) return v.value;
   }
   return null;

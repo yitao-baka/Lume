@@ -1,0 +1,15 @@
+id = "service-retry"
+name = "Service Retry"
+version = "1.0.0"
+kind = "mode"
+api = 2
+model = "lume.collection/v1"
+entry = "service.js"
+page_runtime = true
+default_presenter = "default"
+keywords = ["serviceretry"]
+
+[[presenters]]
+id = "default"
+entry = "view.html"
+models = ["lume.collection/v1"]

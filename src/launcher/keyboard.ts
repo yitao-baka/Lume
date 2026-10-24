@@ -69,6 +69,26 @@ function comboHasModifier(combo: string): boolean {
 }
 
 export function createKeyRouter(deps: KeyDeps) {
+  let escapePending = false;
+
+  async function handleEscape(): Promise<void> {
+    if (escapePending) return;
+    escapePending = true;
+    const modeAtStart = deps.mode();
+    try {
+      const consumed = await (deps.activeMode()?.onEscape() ?? false);
+      if (consumed || deps.mode() !== modeAtStart) return;
+      if (deps.currentPreview()) {
+        deps.setCurrentPreview(null);
+        void invoke("close_preview");
+      } else {
+        deps.resetAndHide();
+      }
+    } finally {
+      escapePending = false;
+    }
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     // An IME candidate list owns Enter/Space/arrows until the composition is
     // committed. Never preventDefault here, or CJK input methods break.
@@ -90,18 +110,10 @@ export function createKeyRouter(deps: KeyDeps) {
 
     if (e.key === "Escape") {
       e.preventDefault();
-      if (deps.activeMode()?.onEscape()) {
-        // The active page consumed Esc (a drill level popped, multi-select
-        // left) — stay open.
-      } else if (deps.currentPreview()) {
-        // Close the satellite preview without hiding the launcher. The preview
-        // window is WS_EX_NOACTIVATE and can never receive the key itself, so
-        // Esc is routed here in the main window.
-        deps.setCurrentPreview(null);
-        void invoke("close_preview");
-      } else {
-        deps.resetAndHide();
-      }
+      // Presenter-backed pages answer through a waitable bridge receipt. The
+      // native event is already prevented; the close/hide decision waits for
+      // the page so its async `lume.on.key` handler wins the Esc layer.
+      void handleEscape();
       return;
     }
 

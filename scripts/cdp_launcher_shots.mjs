@@ -9,7 +9,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 const CDP_PORT = 9222;
-const APP = "src-tauri/target/release/lume.exe";
+const APP = "src-tauri/target/debug/lume.exe";
 const OUT = process.argv[2] ?? "test/shots";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

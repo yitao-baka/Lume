@@ -562,10 +562,126 @@ pub(crate) fn parse_manifest(text: &str) -> Result<PluginManifest, String> {
     toml::from_str(text).map_err(|e| format!("invalid plugin.toml: {e}"))
 }
 
+/// Manifest file fields are plugin-relative paths, never URLs or absolute
+/// filesystem paths. Reject drive prefixes, UNC/rooted paths, parent escapes,
+/// alternate data streams and oversized values before any host code resolves
+/// them through the asset protocol.
+fn valid_manifest_relative_path(value: &str) -> bool {
+    if value.is_empty() || value.len() > 1024 || value.contains('\0') || value.contains(':') {
+        return false;
+    }
+    if value.starts_with('/') || value.starts_with('\\') {
+        return false;
+    }
+    let normalized = value.replace('\\', "/");
+    let normalized = normalized.trim_end_matches('/');
+    !normalized.is_empty()
+        && normalized
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+fn validate_manifest_paths(m: &PluginManifest) -> Result<(), String> {
+    let mut paths = vec![("entry", m.entry.as_str())];
+    for (field, value) in [
+        ("icon", m.icon.as_str()),
+        ("icon_light", m.icon_light.as_str()),
+        ("icon_dark", m.icon_dark.as_str()),
+    ] {
+        if !value.is_empty() {
+            paths.push((field, value));
+        }
+    }
+    for feature in &m.features {
+        for (field, value) in [
+            ("features.icon", feature.icon.as_str()),
+            ("features.icon_light", feature.icon_light.as_str()),
+            ("features.icon_dark", feature.icon_dark.as_str()),
+        ] {
+            if !value.is_empty() {
+                paths.push((field, value));
+            }
+        }
+    }
+    for presenter in &m.presenters {
+        paths.push(("presenters.entry", presenter.entry.as_str()));
+        if !presenter.titlebar.is_empty() {
+            paths.push(("presenters.titlebar", presenter.titlebar.as_str()));
+        }
+    }
+    for (field, value) in paths {
+        if !value.is_empty() && !valid_manifest_relative_path(value) {
+            return Err(format!(
+                "manifest {field} must be a relative path inside the plugin directory"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Follow existing symlinks/junctions and reject any manifest file that
+/// resolves outside its plugin directory. Missing files stay a runtime load
+/// error so a Presenter typo gets the visible retry UI instead of silently
+/// turning into an unrelated manifest rejection.
+fn manifest_path_escape(dir: &Path, m: &PluginManifest) -> Result<(), String> {
+    let Ok(root) = fs::canonicalize(dir) else {
+        return Ok(());
+    };
+    let mut paths = vec![m.entry.as_str()];
+    for value in [m.icon.as_str(), m.icon_light.as_str(), m.icon_dark.as_str()] {
+        if !value.is_empty() {
+            paths.push(value);
+        }
+    }
+    for feature in &m.features {
+        for value in [
+            feature.icon.as_str(),
+            feature.icon_light.as_str(),
+            feature.icon_dark.as_str(),
+        ] {
+            if !value.is_empty() {
+                paths.push(value);
+            }
+        }
+    }
+    for presenter in &m.presenters {
+        paths.push(presenter.entry.as_str());
+        if !presenter.titlebar.is_empty() {
+            paths.push(presenter.titlebar.as_str());
+        }
+    }
+    for value in paths.into_iter().filter(|value| !value.is_empty()) {
+        let candidate = dir.join(value);
+        let Ok(metadata) = fs::metadata(&candidate) else {
+            continue;
+        };
+        if metadata.is_file() || metadata.is_dir() {
+            let Ok(target) = fs::canonicalize(&candidate) else {
+                continue;
+            };
+            #[cfg(windows)]
+            let inside = {
+                let root = root.to_string_lossy().replace('/', "\\").to_lowercase();
+                let target = target.to_string_lossy().replace('/', "\\").to_lowercase();
+                target == root || target.starts_with(&(root.clone() + "\\"))
+            };
+            #[cfg(not(windows))]
+            let inside = target.starts_with(&root);
+            if !inside {
+                return Err(format!(
+                    "manifest path \"{value}\" escapes the plugin directory"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validate the api 2 version gate and the manifest field combinations that
 /// cannot be repaired at runtime. The plugin stays visible to the settings pane
 /// when this fails, but the registry never loads any executable contribution.
 pub(crate) fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
+    validate_manifest_paths(m)?;
     if m.api != HOST_PLUGIN_API {
         return Err(format!(
             "unsupported plugin api {}: this host accepts api {}; upgrade the plugin",
@@ -890,7 +1006,9 @@ pub fn list_plugins(
             enabled(&m.id),
             disabled
         );
-        let api_error = validate_manifest(&m).err();
+        let api_error = validate_manifest(&m)
+            .and_then(|_| manifest_path_escape(&dir, &m))
+            .err();
         let presenter_settings = m.presenter_settings.iter().map(|s| s.info()).collect();
         out.push(PluginInfo {
             id: m.id.clone(),
@@ -1522,6 +1640,37 @@ entry = \"view.html\"
     }
 
     #[test]
+    fn manifest_file_paths_stay_inside_the_plugin_directory() {
+        for entry in [
+            "../escape.js",
+            "..\\escape.js",
+            "/absolute.js",
+            "\\\\server\\share\\file.js",
+            "C:\\Windows\\file.js",
+            "https://example.com/plugin.js",
+            "dir/../escape.js",
+        ] {
+            let m = parse_manifest(&format!(
+                "id = \"p\"\nkind = \"provider\"\napi = 2\nentry = \"{}\"\n",
+                entry.replace('\\', "\\\\")
+            ))
+            .unwrap();
+            assert!(
+                validate_manifest(&m)
+                    .unwrap_err()
+                    .contains("relative path inside the plugin directory"),
+                "entry {entry:?} must be rejected"
+            );
+        }
+
+        let valid = parse_manifest(
+            "id = \"p\"\nkind = \"mode\"\napi = 2\nmodel = \"demo/v1\"\nentry = \"dist/service.js\"\npage_runtime = true\nicon = \"assets/icon.svg\"\n[[presenters]]\nid = \"default\"\nentry = \"views/default.html\"\ntitlebar = \"views/titlebar.html\"\n",
+        )
+        .unwrap();
+        validate_manifest(&valid).unwrap();
+    }
+
+    #[test]
     fn api_two_presenter_contract_rejects_ambiguous_combinations() {
         let missing_presenter = parse_manifest(
             "id = \"p\"\nkind = \"mode\"\napi = 2\nmodel = \"demo/v1\"\nentry = \"service.js\"\n",
@@ -1606,6 +1755,10 @@ entry = \"view.html\"
         for root in [repo.join("examples/plugins"), repo.join("scripts/fixtures")] {
             let Ok(entries) = fs::read_dir(root) else { continue };
             for entry in entries.flatten() {
+                // The API-gate regression intentionally ships api-1 manifests.
+                if entry.file_name().to_string_lossy().starts_with("legacy-api-") {
+                    continue;
+                }
                 let path = entry.path().join("plugin.toml");
                 if !path.is_file() {
                     continue;

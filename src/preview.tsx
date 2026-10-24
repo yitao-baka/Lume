@@ -71,6 +71,7 @@ function PreviewApp() {
   const [req, setReq] = createSignal<PreviewRequest | null>(null);
   const [text, setText] = createSignal<string | null>(null);
   const [imgSrc, setImgSrc] = createSignal<string | null>(null);
+  const [mediaSrc, setMediaSrc] = createSignal("");
   const [poster, setPoster] = createSignal<string | null>(null);
   const [error, setError] = createSignal(false);
   /** "contain" fits the image; clicking toggles to "one-one" (natural size). */
@@ -155,6 +156,13 @@ function PreviewApp() {
     page.cleanup();
   }
 
+  /** The static asset scope only covers Lume's own trees. User-selected
+   * preview files are granted one at a time by the trusted preview window. */
+  async function allowedAssetUrl(path: string): Promise<string> {
+    await invoke("allow_asset_path", { path });
+    return convertFileSrc(path);
+  }
+
   /** Lazily load pdfjs-dist and open the document from the asset protocol. */
   async function loadPdf(path: string) {
     setPdfError(false);
@@ -167,7 +175,7 @@ function PreviewApp() {
           import.meta.url,
         ).toString();
       }
-      const doc = await pdfjs.getDocument({ url: convertFileSrc(path) }).promise;
+      const doc = await pdfjs.getDocument({ url: await allowedAssetUrl(path) }).promise;
       setPdfDoc(doc);
       setPdfPage(1);
       setPdfScale(1);
@@ -182,6 +190,7 @@ function PreviewApp() {
     setReq(r);
     setText(null);
     setImgSrc(null);
+    setMediaSrc("");
     setPoster(null);
     setError(false);
     setFit("contain");
@@ -204,17 +213,26 @@ function PreviewApp() {
       try {
         // Image-file rows carry `path`; image-kind rows resolve via the id.
         const path = r.path ?? (await invoke<string>("get_clipboard_image", { id: r.id }));
-        setImgSrc(convertFileSrc(path));
+        setImgSrc(await allowedAssetUrl(path));
       } catch (e) {
         console.error("[preview] image load failed", e);
         setError(true);
       }
-    } else if (r.kind === "video" && r.path) {
+    } else if ((r.kind === "audio" || r.kind === "video") && r.path) {
+      try {
+        setMediaSrc(await allowedAssetUrl(r.path));
+      } catch (e) {
+        console.error("[preview] media load failed", e);
+        setError(true);
+        return;
+      }
       // Shell thumbnail (a frame) as the player's poster — shown until play
       // (the player is preload="none", so without it the area is just black).
-      void invoke<string>("get_video_thumb", { path: r.path })
-        .then(setPoster)
-        .catch(() => setPoster(null));
+      if (r.kind === "video") {
+        void invoke<string>("get_video_thumb", { path: r.path })
+          .then(setPoster)
+          .catch(() => setPoster(null));
+      }
     } else if (r.kind === "pdf" && r.path) {
       void loadPdf(r.path);
     } else if (r.kind === "filelist" && r.paths) {
@@ -257,8 +275,6 @@ function PreviewApp() {
     void pdfScale();
     void drawPdfPage();
   });
-
-  const mediaSrc = () => (req() && req()!.path ? convertFileSrc(req()!.path!) : "");
 
   return (
     <div class="preview-body">

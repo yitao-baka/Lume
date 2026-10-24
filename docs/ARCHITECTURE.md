@@ -517,6 +517,13 @@ before adding a field:
   over the existing plugin-window state channel. A Presenter's declared
   `titlebar` mounts as a second restricted Presenter iframe in the window
   chrome and dispatches through the same session.
+- Presenter and logic iframes receive a strict CSP (`connect-src`,
+  `form-action`, `frame-src`, `object-src`, `worker-src` closed) and run in an
+  opaque sandbox without `allow-same-origin`, forms or popups. Manifest file
+  fields are plugin-relative; Rust validates both the lexical path and the
+  canonical target, and logic modules are read through a token-scoped Rust
+  command. Snapshot caps run in-frame, at the bridge and again on Rust's
+  cross-window close report.
 - `src/plugins/` — **every page below the search box is a plugin**.
   Built-in navigation and clipboard expose a thin internal `ModeInstance`
   shell adapter over `PageSession`; disk page modes enter the shared registry

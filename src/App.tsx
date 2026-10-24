@@ -20,7 +20,7 @@ import { pluginColorMode, pluginColorPref } from "./plugins/themePrefs";
 import type { SettingsData } from "./settings/types";
 import "./App.css";
 import type { ClipKind, MenuState } from "./launcher/types";
-import { MIN_WINDOW_H, TOAST_MS, TOAST_UNDO_MS } from "./launcher/types";
+import { MIN_WINDOW_H, SCREEN_MARGIN, TOAST_MS, TOAST_UNDO_MS } from "./launcher/types";
 import type { MenuStateLike, ModeId, PageRow, PluginServices } from "./plugins/types";
 import { createIconStore } from "./launcher/icons";
 import { pickIcon } from "./launcher/iconSpec";
@@ -248,7 +248,10 @@ function App() {
    * window to the search row and the mode's pill shows the loading state —
    * a half-loaded page is never shown. Pages without a `ready` accessor (the
    * home page) are always ready. */
-  const pageLoading = (): boolean => !(activeMode()?.ready?.() ?? true);
+  const pageLoading = (): boolean => {
+    const inst = activeMode();
+    return !(inst?.ready?.() ?? true) && !(inst?.failed?.() ?? false);
+  };
 
   // ── 会话续存（docs/ROADMAP_HISTORY.md #40）──
   // hide/show、模式切换与分离回流都不再重置页面：已访问页面保活（隐藏而非
@@ -389,6 +392,7 @@ function App() {
     windowWidth,
     // A page's manifest `height` (desiredHeight) overrides the global setting.
     modeHeight: () => activeMode()?.desiredHeight?.() ?? null,
+    fitContentHeight: () => activeMode()?.fitContentHeight?.() ?? null,
     setRuntimeSize: (w, h) => setRuntimeSize({ w, h }),
     // The expand flags live in the home page's bar store — read through the
     // page contract; the sizer only calls it at resize time.
@@ -492,12 +496,19 @@ function App() {
       });
     },
     resizeWindow: (size) => {
-      // Logical px; omitted axes keep the current size. Height is clamped to
-      // the launcher minimum; the size holds until the next content-driven
-      // resize (mode switch / Navigate auto-fit re-applies the configured one).
+      // Logical px; omitted axes keep the current size. The sandbox already
+      // rejects non-finite values; clamp the remaining axes to the monitor's
+      // work area so a Presenter cannot move the launcher off-screen.
       const cur = runtimeSize();
-      const w = Math.max(240, Math.round(size.width ?? cur.w));
-      const h = Math.max(MIN_WINDOW_H, Math.round(size.height ?? cur.h));
+      const maxW = Math.max(240, Math.floor(window.screen.availWidth || 4096));
+      const maxH = Math.max(
+        MIN_WINDOW_H,
+        Math.floor((window.screen.availHeight || 4096) - SCREEN_MARGIN)
+      );
+      const requestedW = typeof size.width === "number" && Number.isFinite(size.width) ? size.width : cur.w;
+      const requestedH = typeof size.height === "number" && Number.isFinite(size.height) ? size.height : cur.h;
+      const w = Math.min(maxW, Math.max(240, Math.round(requestedW)));
+      const h = Math.min(maxH, Math.max(MIN_WINDOW_H, Math.round(requestedH)));
       setRuntimeSize({ w, h });
       void getCurrentWindow()
         .setSize(new LogicalSize(w, h))
@@ -743,6 +754,11 @@ function App() {
     await runSearch(text);
   }
 
+  // CDP smoke tap: exercises the exact input pipeline even when the launcher
+  // is hidden behind another Tauri window during a long verification run.
+  (window as unknown as { __lumeHandleInput?: (text: string) => Promise<void> }).__lumeHandleInput =
+    handleInput;
+
   /** Open the settings window (gear button). */
   async function openSettings() {
     try {
@@ -894,6 +910,9 @@ function App() {
     }
     ensureHost(m); // keep-alive: mount lazily, then leave it mounted
     setMode(m);
+    // Mode activation is also the recovery trigger for a page whose first
+    // service/Presenter boot failed while it was in the background.
+    void modeById(m)?.onShow?.();
     // 搜索框所有权属于上一个页面：切模式即交还宿主。
     setSubInput(null);
     // #48: in shared mode the incoming page adopts the one query — mirror it
@@ -1226,7 +1245,7 @@ function App() {
         {/* 分离为独立窗口— detachable 磁盘 mode 的悬停显现按钮。
             自绘按钮形态的插件（清单 `detach_button = false`，如 translator）
             不渲染它：右上角让给插件页面，分离走 `app.detach` 桥接接口。 */}
-        <Show when={showsBuiltinDetachButton(mode())}>
+        <Show when={showsBuiltinDetachButton(mode()) && (activeMode()?.ready?.() ?? true)}>
           <button
             class="detach-btn"
             title={t("pluginDetach")}

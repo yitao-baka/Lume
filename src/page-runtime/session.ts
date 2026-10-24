@@ -13,6 +13,7 @@ import type {
 } from "./contracts";
 import { pushDiagnostic } from "./diagnostics";
 import { IntentRouter } from "./intents";
+import { normalizeLayoutReport } from "./layout";
 import { PageModelStore, type ModelStoreOptions } from "./modelStore";
 import { PresenterHost, type PresenterFactory, type PresenterHostState } from "./presenterHost";
 
@@ -146,7 +147,9 @@ export class PageSession {
   async enter(info: unknown): Promise<void> { await this.service?.onEnter?.(info); }
   async filesDropped(paths: string[]): Promise<void> { await this.service?.onFilesDropped?.(paths); }
   async settings(values: Record<string, unknown>): Promise<void> { await this.service?.onSettings?.(values); }
-  layout(report: PageLayoutReport): void { this.presenterHost.reportLayout(report); }
+  layout(report: PageLayoutReport): void {
+    this.presenterHost.reportLayout(normalizeLayoutReport(report));
+  }
   setModal(open: boolean): void { this.presenterHost.setModal(open); }
 
   snapshot(): PageSessionSnapshot {

@@ -4,9 +4,13 @@
   var model = await lume.page.ready();
   var results = {};
   window.__keys = [];
-  lume.on.key = function (key) { window.__keys.push(key.key); };
+  lume.on.key = function (key) {
+    window.__keys.push(key.key);
+    return key.key === "Escape";
+  };
   lume.on.query = function (query) {
     if (query === "tab") document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    if (query === "esc") document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   };
   function done() {
     document.getElementById("out").textContent = JSON.stringify(results);

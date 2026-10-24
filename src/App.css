@@ -1516,6 +1516,49 @@ body.reorder-dragging {
   background: transparent;
 }
 
+.presenter-error {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+}
+
+.presenter-error-title {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.presenter-error-detail {
+  max-width: 560px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.presenter-error-retry {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.presenter-error-retry:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 /* The launcher leaves the body transparent (Acrylic); the settings window
    needs a solid fill and no 1px transparent gutter. */
 body.settings-window {

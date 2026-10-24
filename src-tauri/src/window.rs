@@ -775,6 +775,32 @@ pub fn get_preview_request(
     Ok(state.0.lock().unwrap().clone())
 }
 
+/// Grant the asset protocol access to one user-selected preview file. The
+/// static scope covers Lume's own data/resource trees; arbitrary pictures,
+/// videos and PDFs are allowed only after the trusted main/preview renderer
+/// asks for that exact canonical path.
+#[tauri::command]
+pub async fn allow_asset_path(
+    path: String,
+    window: WebviewWindow,
+    app: AppHandle,
+) -> Result<(), String> {
+    if window.label() != MAIN_WINDOW && window.label() != PREVIEW_WINDOW {
+        return Err("allow_asset_path: trusted preview caller required".into());
+    }
+    let requested = path.clone();
+    let canonical = tauri::async_runtime::spawn_blocking(move || std::fs::canonicalize(requested))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("asset path is unavailable: {error}"))?;
+    if !canonical.is_file() {
+        return Err("asset path is not a file".into());
+    }
+    app.asset_protocol_scope()
+        .allow_file(&canonical)
+        .map_err(|error| error.to_string())
+}
+
 /// Hide the preview and navigate it to `about:blank`. Used by `close_preview`
 /// AND by every launcher-hide path (blur-to-hide, hotkey toggle, Esc) — a
 /// merely hidden window could keep playing media and would never reclaim

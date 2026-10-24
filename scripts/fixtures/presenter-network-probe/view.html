@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>body { font: 14px sans-serif; padding: 16px; }</style>
+  </head>
+  <body>
+    <h1>Network isolation probe</h1>
+    <form id="probe-form" method="post" action="__PROBE_BASE__/form">
+      <input name="payload" value="form-bypass" />
+    </form>
+    <script>
+      (async function () {
+        const base = "__PROBE_BASE__";
+        try { await fetch(base + "/fetch", { method: "POST", body: "fetch-bypass" }); } catch {}
+        try { await fetch(base + "/no-cors", { method: "POST", mode: "no-cors", body: "no-cors-bypass" }); } catch {}
+        try { new Image().src = base + "/image?beacon=1"; } catch {}
+        try { new WebSocket(base.replace(/^http/, "ws") + "/socket"); } catch {}
+        try { new EventSource(base + "/events"); } catch {}
+        try { document.getElementById("probe-form").submit(); } catch {}
+        await lume.page.ready();
+      })();
+    </script>
+  </body>
+</html>

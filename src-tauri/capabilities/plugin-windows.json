@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "plugin-windows",
-  "description": "Detached plugin windows (labels plugin-*): resize (app.resize RPC), hide (app.hide RPC) and event listening. Frameless (custom titlebar): dragging + maximize-state read for src/components/TitleBar.tsx; window control buttons go through custom commands (ungated, self-window only). Custom plugin_window_* commands are ungated by design — they validate the plugin id server-side.",
+  "description": "Detached plugin windows (labels plugin-*): resize (app.resize RPC), hide (app.hide RPC) and event listening. Frameless (custom titlebar): dragging + maximize-state read for src/components/TitleBar.tsx. Cross-window plugin_window_* commands validate both the calling window label and the target window server-side.",
   "windows": [
     "plugin-*"
   ],

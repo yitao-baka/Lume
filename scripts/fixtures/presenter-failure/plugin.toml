@@ -1,0 +1,15 @@
+id = "presenter-failure"
+name = "Presenter Failure"
+version = "1.0.0"
+kind = "mode"
+api = 2
+model = "lume.collection/v1"
+entry = "service.js"
+page_runtime = true
+default_presenter = "default"
+keywords = ["presenterfailure"]
+
+[[presenters]]
+id = "default"
+entry = "missing-view.html"
+models = ["lume.collection/v1"]

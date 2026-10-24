@@ -37,7 +37,7 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
 
   const instance: ModeInstance = {
     query: page.store.clipQuery,
-    setQuery: (query) => { void session.setQuery(query); },
+    setQuery: (query) => { page.store.setClipQuery(query); },
     search: async (query) => { await session.setQuery(query); },
     reset: page.store.reset,
     selected: page.store.selected,

@@ -17,6 +17,8 @@
   <div class="row"><input id="src" type="text" placeholder="src"></div>
   <div class="row"><label><input id="flag" type="checkbox"> flag</label></div>
   <div class="row"><select id="multi" multiple size="3"><option value="a">a</option><option value="b">b</option><option value="c">c</option></select></div>
+  <div class="row"><input name="nameOnly" type="text" placeholder="name-only"></div>
+  <div class="row"><input name="duplicate" type="text" placeholder="duplicate 1"> <input name="duplicate" type="text" placeholder="duplicate 2"></div>
   <div class="row"><div id="note" contenteditable="true">note</div></div>
   <div class="row"><input id="jsn" type="text" readonly placeholder="js counter"> <input id="scrollmirror" type="text" readonly placeholder="scrollTop"></div>
   <div class="row"><input id="evt" type="text" readonly placeholder="last event" style="width:320px"></div>
@@ -75,6 +77,19 @@
     lume.on.query = function (query) {
       var match = /^js:(\d+)$/.exec(String(query || ""));
       if (match) jsn.value = match[1];
+      match = /^named:(.*)$/.exec(String(query || ""));
+      if (match) {
+        var named = document.querySelector('[name="nameOnly"]');
+        var duplicates = Array.from(document.querySelectorAll('[name="duplicate"]'));
+        if (named) {
+          named.value = match[1] + "-name";
+          named.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        duplicates.forEach(function (field, index) {
+          field.value = match[1] + "-dup-" + (index + 1);
+          field.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
     };
     lume.on.snapshot = function () { return { n: Number(jsn.value || 0) }; };
     lume.on.restore = function (snapshot) { if (snapshot && snapshot.n != null) jsn.value = String(snapshot.n); };

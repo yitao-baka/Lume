@@ -19,6 +19,9 @@ page_runtime = true
 default_presenter = "default"
 height = 560          # 本模式页面的窗口高度（逻辑 px）
 
+detachable = true     # allow the search page to stay open in its own window
+icon = "icon.svg"
+
 [[presenters]]
 id = "default"
 name = "Default"

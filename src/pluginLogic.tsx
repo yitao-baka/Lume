@@ -16,7 +16,7 @@
 //! `plugin_logic_supervisor_ready` → 启动器（重）发各插件 load（覆盖建窗
 //! 竞态与崩溃恢复）。崩溃时 Rust `Destroyed` → `plugin-logic-host-closed`。
 
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { PluginManifest, PluginServices } from "./plugins/types";
 import { HOST_PLUGIN_API } from "./plugins/types";
@@ -131,15 +131,17 @@ function makeServices(id: string, token: string): PluginServices {
 
 /** supervisor 代理的文件读取：路径必须仍在本插件目录内（防跨插件读码），
  * 经 asset 协议 fetch（supervisor 页面具备 main 的取数能力）。 */
-async function readPluginFile(entry: LogicEntry, rawPath: string): Promise<string> {
+async function readPluginFile(id: string, entry: LogicEntry, rawPath: string): Promise<string> {
   const norm = rawPath.replace(/\//g, "\\").toLowerCase();
   const dir = entry.dir.replace(/\//g, "\\").toLowerCase();
   if (!(norm === dir || norm.startsWith(dir + "\\"))) {
     throw new Error("logic frame file read escaped the plugin directory");
   }
-  const res = await fetch(convertFileSrc(rawPath));
-  if (!res.ok) throw new Error(`plugin file fetch failed: ${res.status}`);
-  return res.text();
+  return invoke<string>("plugin_logic_read_file", {
+    id,
+    token: entry.token,
+    path: rawPath,
+  });
 }
 
 async function loadPlugin(id: string) {
@@ -157,10 +159,10 @@ async function loadPlugin(id: string) {
   if (!meta.entry) return; // 纯视图模式无逻辑
   // API 版本二次校验（#32.1 防御纵深）：registry 门在前，这里兜底（如
   // 旧 main 窗口残留在发 load）。拒绝建帧，而非加载后行为怪异。
-  if (meta.api > HOST_PLUGIN_API) {
+  if (meta.api !== HOST_PLUGIN_API) {
     plog.error(
       id,
-      `logic host: manifest api=${meta.api} > host ${HOST_PLUGIN_API} — refusing`
+      `logic host: manifest api=${meta.api} != host ${HOST_PLUGIN_API} — refusing`
     );
     return;
   }
@@ -310,7 +312,7 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
       return;
     }
     if (rpc.method === "__readPluginFile") {
-      readPluginFile(entry, String(rpc.args?.path ?? ""))
+      readPluginFile(id, entry, String(rpc.args?.path ?? ""))
         .then((text) => reply(true, text))
         .catch((err) => reply(false, null, String(err)));
       return;

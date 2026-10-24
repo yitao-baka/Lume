@@ -13,13 +13,12 @@ import { createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { FeatureEnterInfo, ForegroundInfo, LauncherPlugin, ModeId, ModeInstance, NavBarContribution, PluginColorMode, PluginFeature, PluginManifest, PluginServices, ProviderInstance, ProviderResult } from "./types";
-import { HOST_PLUGIN_API } from "./types";
 import { dropSessionFrames, putSessionFrame, takeSessionFrames } from "../launcher/session";
 import { createListTemplateMode } from "./listTemplate";
 import { createPageRuntimeMode, type PageRuntimeMode } from "./pageRuntimeMode";
 import type { PageModel } from "../page-runtime/contracts";
 import { validatePageModel } from "../page-runtime/modelStore";
-import { fetchDiskFile } from "./disk";
+import { fetchDiskFile, pluginFilePath } from "./disk";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
 import { resolveIconInput, resolveThemedIcon } from "../launcher/iconSpec";
@@ -323,6 +322,19 @@ function pushLogicLoad(id: string): void {
   void invoke("plugin_logic_host_ensure")
     .then(() => invoke("plugin_logic_push", { id, kind: "load", payload: {} }))
     .catch((err) => plog.error(id, "logic load push failed:", err));
+}
+
+/** Explicit recovery for a Page Service whose first logic-host load failed.
+ * The supervisor removes the dead iframe on unload, then the fresh load
+ * recreates it and resolves the readiness waiter. */
+async function restartLogicService(id: string): Promise<void> {
+  resetCircuit(id);
+  logicPendingReady.add(id);
+  logicLoadedIds.add(id);
+  await invoke("plugin_logic_host_ensure");
+  await invoke("plugin_logic_push", { id, kind: "unload", payload: {} });
+  await invoke("plugin_logic_push", { id, kind: "load", payload: {} });
+  await waitForLogicReady(id);
 }
 
 // ── 高频 hook 的跨进程节流（#32.5）──
@@ -728,17 +740,11 @@ export async function loadDiskPlugins(seq = refreshSeq) {
       );
       continue;
     }
-    // API 版本门（#32.1）：清单声明的版本超过宿主支持 → 明确停用 + 提示，
-    // 而不是加载后行为怪异（§11 兼容性：低版本/缺省照常加载）。
-    if (m.api > HOST_PLUGIN_API) {
-      plog.error(m.id, `manifest api=${m.api} > host ${HOST_PLUGIN_API} — refusing to load`);
-      services?.showToast(
-        t("pluginApiRejected", {
-          name: m.name || m.id,
-          api: String(m.api),
-          host: String(HOST_PLUGIN_API),
-        })
-      );
+    // Rust's manifest gate is authoritative: any apiError means no
+    // executable contribution may be registered. Keep the manifest visible
+    // to the settings pane so its rejection reason remains inspectable.
+    if (m.apiError) {
+      plog.error(m.id, `manifest rejected: ${m.apiError}`);
       continue;
     }
     if (m.development) {
@@ -807,8 +813,9 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           services: services!,
           form: "launcher",
           waitForService: () => waitForLogicReady(m.id),
+          restartService: () => restartLogicService(m.id),
           callService: (name, ...args) => logicCall(m.id, name, args),
-          fetchPresenter: (presenter) => fetchDiskFile(m.dir + "\\" + presenter.entry),
+          fetchPresenter: (presenter) => fetchDiskFile(pluginFilePath(m.dir, presenter.entry)),
           applyTheme: async (mode) => {
             if (!mode) throw new Error("theme mode is required");
             await services!.setPluginColorMode(m.id, mode);

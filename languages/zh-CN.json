@@ -336,7 +336,6 @@
   "pluginToastDisabled": "「{name}」已停用",
   "pluginToastReloaded": "「{name}」已重载",
   "pluginApiRejectedHint": "此插件无法加载：{reason}",
-  "pluginApiRejected": "「{name}」使用插件 API {api}；当前构建只接受 API {host}。请升级到 api 2。",
   "pluginCircuitOpen": "「{name}」连续调用失败，已暂停（其余插件不受影响；重载或保存设置后重试）",
   "pluginPermEnforcedHint": "插件只能调用已声明的能力，未声明的调用会被拒绝。",
   "pluginsDevMode": "开发者模式",

@@ -110,7 +110,7 @@ const clickPillAny = async (labels) => {
 const clickRow = async (label) => {
   for (let i = 0; i < 15; i++) {
     const hit = await m.evalJs(`(() => {
-      const el = [...document.querySelectorAll(".result-box")].find((b) => b.textContent.includes(${JSON.stringify(label)}));
+      const el = [...document.querySelectorAll("[data-target-id]")].find((b) => b.textContent.includes(${JSON.stringify(label)}));
       if (!el) return false;
       el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       return true;
@@ -126,7 +126,7 @@ const escMain = () => m.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown"
 const readField = (conn, frame, id) => conn.evalJs(`(() => {
   const st = (window.__frameStates || []).filter((s) => s.name === ${JSON.stringify(frame)});
   for (let i = st.length - 1; i >= 0; i--) {
-    const v = (st[i].values || []).find((x) => x.id === ${JSON.stringify(id)});
+    const v = (st[i].values || []).find((x) => x.id === ${JSON.stringify(id)} || x.id === "id:" + ${JSON.stringify(id)});
     if (v) return { value: v.value, checked: v.checked, reason: st[i].reason };
   }
   return null;
@@ -135,7 +135,7 @@ const readField = (conn, frame, id) => conn.evalJs(`(() => {
 // hosting form — `lume.env.form`docs/ROADMAP_HISTORY.md #42. Read it off the latest state
 // that reported a known field id (identifies the frame without CDP).
 const readFrameForm = (conn, id) => conn.evalJs(`(() => {
-  const st = (window.__frameStates || []).filter((s) => (s.values || []).some((x) => x.id === ${JSON.stringify(id)}));
+  const st = (window.__frameStates || []).filter((s) => (s.values || []).some((x) => x.id === ${JSON.stringify(id)} || x.id === "id:" + ${JSON.stringify(id)}));
   return st.length ? (st[st.length - 1].form ?? null) : null;
 })()`);
 const expectField = async (conn, frame, id, want, tries = 24) => {
@@ -149,6 +149,22 @@ const expectField = async (conn, frame, id, want, tries = 24) => {
 const fieldEquals = async (conn, frame, id, want, tries = 6) => {
   const v = await expectField(conn, frame, id, want, tries);
   return { ok: !!v, got: v ? v.value : null };
+};
+const expectNamedField = async (conn, frame, name, index, want, tries = 24) => {
+  for (let i = 0; i < tries; i++) {
+    const value = await conn.evalJs(`(() => {
+      const prefix = 'name:' + ${JSON.stringify(name)} + '\u001f' + ${index};
+      const states = (window.__frameStates || []).filter((state) => state.name === ${JSON.stringify(frame)});
+      for (let i = states.length - 1; i >= 0; i--) {
+        const field = (states[i].values || []).find((entry) => entry.id === prefix);
+        if (field) return field.value;
+      }
+      return null;
+    })()`);
+    if (value != null && String(value) === String(want)) return true;
+    await sleep(350);
+  }
+  return false;
 };
 
 // ── boot ──
@@ -177,12 +193,16 @@ await type("multi:a,c"); await sleep(400);
 await type("note:NOTE-A"); await sleep(400);
 await type("scroll:200"); await sleep(400);
 await type("late:late-A"); await sleep(600);
+await type("named:probe-A"); await sleep(600);
 for (const [id, want] of [["src", "hello-A"], ["jsn", "7"], ["multi", "a,c"], ["note", "NOTE-A"], ["scrollmirror", "200"], ["late", "late-A"]]) {
   const r = await fieldEquals(m, "", id, want, 8);
   check(`A: drove #${id} = ${want}`, r.ok, String(r.got));
 }
 const flagState = await readField(m, "", "flag");
 check("A: drove #flag checked", !!flagState && flagState.checked === true, JSON.stringify(flagState));
+check("A: drove name-only field", await expectNamedField(m, "", "nameOnly", 0, "probe-A-name", 8));
+check("A: drove first duplicate-name field", await expectNamedField(m, "", "duplicate", 0, "probe-A-dup-1", 8));
+check("A: drove second duplicate-name field", await expectNamedField(m, "", "duplicate", 1, "probe-A-dup-2", 8));
 
 // keep-alive identity probe: a JS property on the iframe element must survive
 // hide/show and a mode-switch roundtrip (a remount would recreate the element).
@@ -202,7 +222,7 @@ check("A: re-summon focused the launcher", await m.evalJs(`document.hasFocus() =
 const activePill = await m.evalJs(`document.querySelector(".mode-switch-item.active")?.textContent?.trim() ?? ""`);
 check("A: still on State Probe after re-summon", activePill.includes("State Probe"), activePill);
 const boxVal = await m.evalJs(`document.getElementById("search-input").value`);
-check("A: search box kept the query", boxVal === "late:late-A", boxVal);
+  check("A: search box kept the query", boxVal === "named:probe-A", boxVal);
 check("A: view iframe was NOT remounted", (await m.evalJs(`document.querySelector('.mode-host[data-mode="state-probe"] iframe')?.__keepProbe`)) === 777);
 for (const [id, want] of [["src", "hello-A"], ["jsn", "7"], ["late", "late-A"], ["note", "NOTE-A"], ["scrollmirror", "200"]]) {
   const r = await fieldEquals(m, "", id, want, 6);
@@ -236,6 +256,8 @@ for (const [id, want] of [["src", "hello-A"], ["jsn", "7"], ["multi", "a,c"], ["
 }
 const flagB = await expectField(wB, "", "flag", "on", 8);
 check("B: window inherited #flag checked", !!flagB && flagB.checked === true, JSON.stringify(flagB));
+check("B: window inherited name-only field", await expectNamedField(wB, "", "nameOnly", 0, "probe-A-name", 20));
+check("B: window inherited duplicate-name fields", await expectNamedField(wB, "", "duplicate", 0, "probe-A-dup-1", 20) && await expectNamedField(wB, "", "duplicate", 1, "probe-A-dup-2", 20));
 const formBView = await readFrameForm(wB, "src");
 check("B: window view frame reports form = window", formBView === "window", String(formBView));
 const formBTb = await readFrameForm(wB, "tb");
@@ -262,13 +284,15 @@ check("D: close report marked user + snapshot", closedD.includes('"user":true') 
 const activePillD = await m.evalJs(`document.querySelector(".mode-switch-item.active")?.textContent?.trim() ?? ""`);
 check("D: launcher re-docked to State Probe", activePillD.includes("State Probe"), activePillD);
 const boxD = await m.evalJs(`document.getElementById("search-input").value`);
-check("D: query came back to the launcher", boxD === "late:late-A", boxD);
+  check("D: query came back to the launcher", boxD === "named:probe-A", boxD);
 for (const [id, want] of [["src", "sp:window-B"], ["jsn", "7"], ["late", "late-A"], ["note", "NOTE-A"], ["multi", "a,c"], ["scrollmirror", "200"]]) {
   const r = await fieldEquals(m, "", id, want, 20);
   check(`D: launcher restored #${id}`, r.ok, String(r.got));
 }
 const flagD = await expectField(m, "", "flag", "on", 8);
 check("D: launcher restored #flag checked", !!flagD && flagD.checked === true, JSON.stringify(flagD));
+check("D: launcher restored name-only field", await expectNamedField(m, "", "nameOnly", 0, "probe-A-name", 20));
+check("D: launcher restored duplicate-name fields", await expectNamedField(m, "", "duplicate", 0, "probe-A-dup-1", 20) && await expectNamedField(m, "", "duplicate", 1, "probe-A-dup-2", 20));
 const formD = await readFrameForm(m, "src");
 check("D: re-docked frame reports form = launcher", formD === "launcher", String(formD));
 

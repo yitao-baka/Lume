@@ -4995,3 +4995,64 @@ Presenter 名称，值没有持久化或下发路径。
   `test/page-runtime-clipboard-compact-top.png`、
   `test/page-runtime-clipboard-compact.png`、
   `test/page-runtime-clipboard-compact-scrolled.png`。
+
+## 79. 页面运行时审计修复与安全收口（2026-10-24）
+
+依据 `docs/REFACTOR_AUDIT_2026-10-24.md` 修复 12 项审计问题、3 项附加风险和
+6 项测试可信度问题。
+
+### 79.1 安全边界
+
+- Presenter `srcdoc` 与逻辑帧注入严格 CSP：关闭 `connect-src`、`form-action`、
+  `frame-src`、`object-src`、`worker-src`；脚本只放行内联与 blob，资源只放行
+  data/blob/asset 与受控 asset host。Presenter sandbox 不再授予 forms/popups。
+- 清单 `entry`、Presenter/titlebar、图标与 feature 图标只接受插件目录内相对
+  路径；Rust 拒绝绝对路径、盘符、UNC、`..`、ADS，并对已存在目标做
+  canonicalize 归属检查。逻辑模块改走 `plugin_logic_read_file`，由宿主令牌
+  固定插件身份后再 canonicalize 读取。
+- `assetProtocol.scope` 从 `**` 收窄到 `$EXE/**`、`$LOCALDATA/**`、
+  `$RESOURCE/**`；用户选择的预览文件通过异步 `allow_asset_path` 单文件授权。
+- API 版本门覆盖 registry、逻辑宿主、独立窗口 open/meta；任何 `apiError`
+  都不注册 provider/mode/service，设置页仍保留拒绝原因。
+
+### 79.2 运行时与协议
+
+- Page Service 启动 Promise 失败后清零，支持重试；逻辑宿主等待失败会重载
+  对应 service iframe。Presenter 全部失败进入可见错误态，`ready` 保持 false，
+  页面不再空白；retry 可恢复。
+- `sizing = "fit"` 使用 Presenter 的 `contentHeight`，宿主加搜索行并限制到
+  工作区；`app.resize` 拒绝非有限值并限制到屏幕。
+- Esc 使用可等待的 Presenter 回执；普通转发键由页面拥有，根路由不再抢跑
+  Enter/箭头 fallback。独立窗口 Esc 同样等待 Presenter 消费。
+- 快照字段键改为 `id:` / `name:`（含重复序号）/ `path:`；多选保存数组，
+  view 恢复派发 input/change，titlebar 保持静默。快照在 iframe 内、bridge
+  和 Rust 关闭上报三处限长；超限降级而非阻塞关闭。
+- 内联图片缩略图使用独立的 512 KiB 单资源上限，不再被普通 URL 的 8 KiB
+  限制误拒；Page Model 总大小仍是最终边界。
+- 剪贴板 `setQuery` 只镜像，单次键入只发一次 `search_clipboard`。跨窗口状态、
+  关闭、redirect、bridge reply 增加调用方、目标存在性与大小校验。
+- Credential Manager 仅把 `ERROR_NOT_FOUND` 视为未设置；其它读取/删除错误
+  显式返回。Presenter ready 失败时已创建句柄会 dispose。
+
+### 79.3 测试与验证
+
+- CDP 脚本统一默认 debug 构建；页面运行时脚本固定并恢复 Presenter 默认值；
+  独立窗口等待 scoped layout；剪贴板暂停/恢复不再依赖历史未满，合并用数据库
+  内容断言且失败计入退出码；`cdp_plugin_v2_verify` 改为 opaque-origin 可验证
+  的 Page Runtime 检查。
+- 新增 `cdp_presenter_network_verify`、`cdp_api_gate_verify`、
+  `cdp_runtime_recovery_verify` 与对应负向 fixtures；扩展 sandbox Esc、snapshot
+  name/duplicate/multiple 和单次剪贴板搜索断言。
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`pnpm run test:page-runtime`
+  **13/13**、`cargo test` **248 passed / 9 ignored**、`check_i18n` **576 键 ×
+  3 语言**、debug / release `--no-bundle` 构建通过。
+- `cdp_presenter_network_verify` **5/5**、`cdp_api_gate_verify` **6/6**、
+  `cdp_runtime_recovery_verify` **5/5**、`cdp_plugin_v2_verify` **5/5**、
+  `cdp_page_runtime_verify` **26/26**、`cdp_clipboard_p2` PASS、
+  `cdp_plugin_state_verify` **61/61**、`cdp_sandbox_verify` **15/15**、
+  `cdp_plugin_lru_verify` **22/22**、`cdp_detached_page_runtime_verify`
+  **12/12**、`cdp_plugin_window_verify` **16/16**、
+  `cdp_translation_service_verify` **22/22**、
+  `cdp_file_search_presenter_verify` **5/5**、
+  `cdp_presenter_control_verify` **10/10**、`cdp_plugin_frame_load_verify`
+  **5/5**、`cdp_plugin_blank_verify` **20/20（0 blank）**。

@@ -119,9 +119,9 @@ try {
   await sleep(1200);
   await main.evalJs('(() => { const i = document.getElementById("search-input"); i.focus(); i.value = "translate-demo"; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()');
   await sleep(1800);
-  const row = await main.evalJs('[...document.querySelectorAll(".result-box")].findIndex((el) => el.textContent.includes("进入 Translation Demo"))');
+  const row = await main.evalJs('[...document.querySelectorAll("[data-target-id]")].findIndex((el) => el.textContent.includes("进入 Translation Demo"))');
   check("keyword row reaches translation mode", row >= 0, String(row));
-  await main.evalJs('[...document.querySelectorAll(".result-box")][' + row + ']?.click(); "ok"');
+  await main.evalJs('[...document.querySelectorAll("[data-target-id]")][' + row + ']?.click(); "ok"');
   await sleep(2500);
   check("api 2 Presenter iframe mounted", await main.evalJs('!!document.querySelector("iframe.presenter-frame")'));
   check("Presenter sandbox is opaque", await main.evalJs('(() => { const f=document.querySelector("iframe.presenter-frame"); return !!f && (f.getAttribute("sandbox")||"").includes("allow-scripts") && !(f.getAttribute("sandbox")||"").includes("allow-same-origin") && f.contentDocument === null; })()'));

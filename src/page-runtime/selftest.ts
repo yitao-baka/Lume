@@ -4,6 +4,7 @@
 
 import type { PageModel } from "./contracts";
 import { validateIntent } from "./intents";
+import { normalizeLayoutReport, normalizeResizeRequest } from "./layout";
 import { PageModelStore, validatePageModel } from "./modelStore";
 import { selectCompatiblePresenter } from "./presenterHost";
 import { resolveResource } from "./resources";
@@ -13,6 +14,7 @@ import { PresenterHost } from "./presenterHost";
 import { createFixturePresenter, fixturePresenters } from "./fixturePresenter";
 import { isTranslationData } from "./translatorDemo";
 import translationFixture from "./fixtures/translator-translation.v1.json";
+import { capSnapshot } from "../plugins/iframeBridge";
 
 function expect(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -81,6 +83,15 @@ export function runPageRuntimeSelfTests(): string[] {
     "dark"
   );
   expect(resource.src === "asset://icons/a-dark.svg", "dark resource variant");
+  expect(
+    (() => {
+      validatePageModel(model(1, {
+        icon: { kind: "thumbnail", src: "data:image/png;base64," + "A".repeat(12_000) },
+      }));
+      return true;
+    })(),
+    "large inline image thumbnails must pass the resource length guard"
+  );
   passed.push("resource scheme whitelist and selection");
 
   const intentModel = model(1, {
@@ -120,6 +131,41 @@ export function runPageRuntimeSelfTests(): string[] {
 
   expect(isTranslationData(translationFixture.data), "translation fixture must pass the custom schema guard");
   passed.push("custom translation schema guard");
+
+  const legacy = { pageRuntime: { revision: 7 } };
+  expect(
+    JSON.stringify(capSnapshot(legacy)) === JSON.stringify(legacy),
+    "legacy snapshots must survive the cap unchanged"
+  );
+  const capped = capSnapshot({
+    v: 2,
+    auto: { fields: [{ key: "id:q", value: "ok", checked: false }] },
+    custom: { blob: "x".repeat(600_000) },
+  }) as { auto?: { fields?: unknown[] }; custom?: unknown } | null;
+  expect(capped?.auto?.fields?.length === 1 && capped.custom === null, "oversized custom snapshot layer must drop");
+  const huge = capSnapshot({
+    v: 2,
+    auto: {
+      fields: Array.from({ length: 200 }, (_, i) => ({
+        key: `path:field-${i}`,
+        value: "x".repeat(10_000),
+        checked: false,
+      })),
+    },
+    custom: null,
+  });
+  expect(huge === null || JSON.stringify(huge).length <= 1_000_000, "snapshot total must stay capped");
+  passed.push("snapshot layer and total-size caps");
+
+  expect(
+    normalizeLayoutReport({ sizing: "fit", contentHeight: 320, expanded: false }).contentHeight === 320,
+    "Presenter fit height must survive validation"
+  );
+  expectThrows(() => normalizeLayoutReport({ sizing: "fit", contentHeight: Number.NaN }), "finite");
+  expectThrows(() => normalizeLayoutReport({ sizing: "fixed", height: 20_000 }), "between");
+  expectThrows(() => normalizeResizeRequest(Number.NaN, 320), "finite");
+  expect(normalizeResizeRequest(900, 320).width === 900, "valid resize axes survive validation");
+  passed.push("Presenter layout validation and fit height");
 
   return passed;
 }
@@ -178,6 +224,26 @@ export async function runPageRuntimeAsyncSelfTests(): Promise<string[]> {
   const recovered = await session.switchPresenter("fixture-list", () => createFixturePresenter("recovery").factory);
   expect(recovered.status === "ready", "session can remount a Presenter after failure");
   passed.push("Presenter crash isolation and remount");
+
+  let disposedFailures = 0;
+  const leakingHost = new PresenterHost("selftest-leak", { logErrors: false });
+  const failedReady = await leakingHost.mount({
+    pageId: "selftest-leak",
+    presenters: [fixturePresenters[0]],
+    schema: COLLECTION_SCHEMA,
+    store: session.store,
+    dispatch: (intent) => session.dispatch(intent),
+    factory: () => () => ({
+      ready: () => {
+        throw new Error("ready rejected");
+      },
+      dispose: () => {
+        disposedFailures += 1;
+      },
+    }),
+  });
+  expect(failedReady.status === "error" && disposedFailures === 2, "failed ready handles must be disposed");
+  passed.push("Presenter ready-failure cleanup");
 
   await session.dispose();
   return passed;

@@ -34,7 +34,7 @@ import { createPageRuntimeMode, type PageRuntimeMode } from "./plugins/pageRunti
 import type { PageModel } from "./page-runtime/contracts";
 import type { SettingsData } from "./settings/types";
 import { setPermissionSource } from "./plugins/permissions";
-import { fetchDiskFile } from "./plugins/disk";
+import { fetchDiskFile, pluginFilePath } from "./plugins/disk";
 import { plog } from "./plugins/log";
 import { resolveLocale, setLocale, t } from "./i18n";
 import "./pluginWindow.css";
@@ -272,9 +272,9 @@ function App() {
       form: "window",
       waitForService: async () => {},
       callService: callDetachedService,
-      fetchPresenter: (presenter) => fetchDiskFile(meta.dir + "\\" + presenter.entry),
+      fetchPresenter: (presenter) => fetchDiskFile(pluginFilePath(meta.dir, presenter.entry)),
       fetchTitlebar: (presenter) =>
-        fetchDiskFile(meta.dir + "\\" + presenter.titlebar),
+        fetchDiskFile(pluginFilePath(meta.dir, presenter.titlebar)),
       applyTheme: async (mode) => {
         if (!mode) throw new Error("Page Runtime theme mode is required");
         await invoke("set_plugin_color_mode", { id, mode });
@@ -328,7 +328,13 @@ function App() {
         });
       } catch (err) {
         plog.error(id, "close report failed — closing without snapshot:", err);
-        void invoke("plugin_window_close", { id }).catch(() => {});
+        void invoke("plugin_window_close_report", {
+          id,
+          snapshot: null,
+          query: lastQuery,
+        }).catch((fallbackErr) =>
+          plog.error(id, "snapshot-free close report failed:", fallbackErr)
+        );
       }
     })();
   };
@@ -511,7 +517,10 @@ function App() {
     // preventDefault-ing, the same contract as the launcher).
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        closeWithSnapshot();
+        void (async () => {
+          const consumed = await (pageRuntime?.instance.onEscape?.() ?? false);
+          if (!consumed) closeWithSnapshot();
+        })();
         return;
       }
       pageRuntime?.postEvent("key", {

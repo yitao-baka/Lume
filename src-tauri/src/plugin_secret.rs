@@ -144,13 +144,20 @@ fn wide(value: &str) -> Vec<u16> {
 #[cfg(windows)]
 fn read_secret(target: &str) -> Result<Option<String>, String> {
     use windows::core::PCWSTR;
+    use windows::Win32::Foundation::ERROR_NOT_FOUND;
     use windows::Win32::Security::Credentials::{CredFree, CredReadW, CRED_TYPE_GENERIC};
 
     let target = wide(target);
     let mut ptr = std::ptr::null_mut();
     let ok = unsafe { CredReadW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, Some(0), &mut ptr) };
-    if ok.is_err() || ptr.is_null() {
-        return Ok(None);
+    if let Err(error) = ok {
+        if error.code() == ERROR_NOT_FOUND.to_hresult() {
+            return Ok(None);
+        }
+        return Err(format!("credential read failed: {error}"));
+    }
+    if ptr.is_null() {
+        return Err("credential read returned no data".into());
     }
     let blob = unsafe {
         let credential = &*ptr;
@@ -197,12 +204,15 @@ fn write_secret(target: &str, account: &str, value: &str) -> Result<(), String> 
 #[cfg(windows)]
 fn delete_secret(target: &str) -> Result<(), String> {
     use windows::core::PCWSTR;
+    use windows::Win32::Foundation::ERROR_NOT_FOUND;
     use windows::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
 
     let target = wide(target);
     let result = unsafe { CredDeleteW(PCWSTR(target.as_ptr()), CRED_TYPE_GENERIC, Some(0)) };
-    if result.is_err() {
-        return Ok(());
+    if let Err(error) = result {
+        if error.code() != ERROR_NOT_FOUND.to_hresult() {
+            return Err(format!("credential delete failed: {error}"));
+        }
     }
     Ok(())
 }

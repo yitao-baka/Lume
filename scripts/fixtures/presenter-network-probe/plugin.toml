@@ -1,0 +1,15 @@
+id = "presenter-network-probe"
+name = "Presenter Network Probe"
+version = "1.0.0"
+kind = "mode"
+api = 2
+model = "lume.collection/v1"
+entry = "service.js"
+page_runtime = true
+default_presenter = "default"
+keywords = ["presenternetworkprobe"]
+
+[[presenters]]
+id = "default"
+entry = "view.html"
+models = ["lume.collection/v1"]

@@ -117,6 +117,8 @@ export function createClipboardStore(services: PluginServices) {
   async function search(q: string) {
     const token = services.searchToken();
     try {
+      const probe = window as unknown as { __searchClipboardCalls?: number };
+      probe.__searchClipboardCalls = (probe.__searchClipboardCalls ?? 0) + 1;
       const res = (await invoke("search_clipboard", {
         query: q,
         kind: clipKind(),

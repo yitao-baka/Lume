@@ -478,10 +478,20 @@ dev URL instead.
 > `pnpm run tauri build --debug --no-bundle`. The scripts kill stale Lume
 > processes, copy fixtures into `src-tauri/target/debug/plugins/`, launch the
 > exe with a CDP port and print `PASS` / `FAIL`; any failure exits non-zero.
+> All repository CDP scripts target the debug build by default; release-only
+> manual checks must explicitly rebuild the release exe before launch.
 
 1. **Core plugin contract** — `node scripts/cdp_plugin_verify.mjs` (provider
    rows + sandboxed mode page + plugin pane), then
-   `node scripts/cdp_plugin_v2_verify.mjs` for the expanded host API. The
+   `node scripts/cdp_plugin_v2_verify.mjs` for the current api-2 Page Runtime
+   smoke (keyword entry, ready state, opaque sandbox and CSP). The
+   `node scripts/cdp_api_gate_verify.mjs` negative fixture proves api-1
+   provider/feature/mode code never executes and cannot open a detached
+   window; `node scripts/cdp_presenter_network_verify.mjs` proves fetch,
+   no-cors, forms, WebSocket, EventSource, image beacons and logic-frame fetches
+   never reach a loopback HTTP probe. `node
+   scripts/cdp_runtime_recovery_verify.mjs` covers Page Service retry,
+   all-Presenter failure visibility and fit/fixed sizer handoff. The
    feature series (file drop / clipboard image / list template / tile reorder)
    plus the static ctx-surface parity checks (logic-frame ctx ≡ Presenter bridge ≡
    rpc.ts cases) run as `node scripts/cdp_p2b_verify.mjs`; it enables its two

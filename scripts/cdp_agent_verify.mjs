@@ -14,8 +14,8 @@
 import { spawn, execSync } from "node:child_process";
 
 const CDP_PORT = 9222;
-const APP = "src-tauri/target/release/lume.exe";
-const AGENT = "src-tauri/target/release/lume-agent.exe";
+const APP = "src-tauri/target/debug/lume.exe";
+const AGENT = "src-tauri/target/debug/lume-agent.exe";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 const check = (name, cond, extra = "") => {

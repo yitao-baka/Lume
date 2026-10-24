@@ -1,0 +1,15 @@
+id = "legacy-api-mode"
+name = "Legacy API Mode"
+version = "1.0.0"
+kind = "mode"
+api = 1
+model = "lume.collection/v1"
+entry = "service.js"
+page_runtime = true
+default_presenter = "default"
+keywords = ["legacyapimode"]
+
+[[presenters]]
+id = "default"
+entry = "view.html"
+models = ["lume.collection/v1"]

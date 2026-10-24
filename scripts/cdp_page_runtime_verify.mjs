@@ -7,7 +7,7 @@ let failures = 0;
 const check = (name, ok, extra = "") => { console.log("[" + (ok ? "PASS" : "FAIL") + "] " + name + (extra ? " — " + extra : "")); if (!ok) failures++; };
 function kill() { try { execSync("taskkill /F /T /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {} try { execSync("taskkill /F /IM msedgewebview2.exe 2>NUL", { stdio: "ignore" }); } catch {} }
 async function targets() { for (let i=0;i<50;i++){ try { return await (await fetch("http://127.0.0.1:"+PORT+"/json/list")).json(); } catch { await sleep(200); } } throw new Error("CDP unavailable"); }
-async function connect(url) { const ws=new WebSocket(url); let id=0; const p=new Map(); ws.onmessage=e=>{const m=JSON.parse(e.data); if(m.id&&p.has(m.id)){p.get(m.id)(m);p.delete(m.id)}}; await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j}); const send=(method,params)=>new Promise(r=>{const k=++id;p.set(k,r);ws.send(JSON.stringify({id:k,method,params}))}); const ev=async expr=>{const r=await send("Runtime.evaluate",{expression:expr,returnByValue:true,awaitPromise:true}); if(r.result?.exceptionDetails) throw new Error(String(r.result.exceptionDetails.exception?.description||r.result.exceptionDetails.text)); return r.result?.result?.value}; const shot=async name=>{const r=await send("Page.captureScreenshot",{format:"png"}); writeFileSync("test/"+name,Buffer.from(r.result.data,"base64"))}; return {ws,ev,shot}; }
+async function connect(url) { const ws=new WebSocket(url); let id=0; const p=new Map(); ws.onmessage=e=>{const m=JSON.parse(e.data); if(m.id&&p.has(m.id)){p.get(m.id)(m);p.delete(m.id)}}; await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j}); const send=(method,params)=>new Promise(r=>{const k=++id;p.set(k,r);ws.send(JSON.stringify({id:k,method,params}))}); const ev=async expr=>{const r=await send("Runtime.evaluate",{expression:expr,returnByValue:true,awaitPromise:true}); if(r.result?.exceptionDetails) throw new Error(String(r.result.exceptionDetails.exception?.description||r.result.exceptionDetails.text)); return r.result?.result?.value}; const shot=async name=>{const r=await send("Page.captureScreenshot",{format:"png"}); writeFileSync("test/"+name,Buffer.from(r.result.data,"base64"))}; return {ws,ev,shot,send}; }
 async function waitFor(c, expression, timeout = 6000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -34,15 +34,30 @@ async function launch() { kill(); await sleep(400); spawn("src-tauri/target/debu
 mkdirSync("test",{recursive:true});
 let main;
 let originalPresenters = null;
+let presentersRestored = false;
+const restorePresenters = async () => {
+  if (presentersRestored || !main || originalPresenters == null) return;
+  await main.ev(`window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { pages: { presenters: ${JSON.stringify(originalPresenters)} } } })`);
+  presentersRestored = true;
+};
 try { main = await launch(); } catch (e) { console.log("LAUNCH FAIL", String(e)); process.exit(1); }
 try {
   await main.ev('window.__TAURI_INTERNALS__.invoke("toggle_launcher")');
   await sleep(900);
-  originalPresenters = await main.ev('(async () => (await window.__TAURI_INTERNALS__.invoke("get_settings"))?.pages?.presenters ?? null)()');
+  const initialSettings = await main.ev('window.__TAURI_INTERNALS__.invoke("get_settings")');
+  originalPresenters = initialSettings?.pages?.presenters ?? {};
+  const defaultMap = { ...originalPresenters, apps: "navigate-grid", clipboard: "clipboard-list" };
+  await main.ev(`window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { pages: { presenters: ${JSON.stringify(defaultMap)} } } })`);
+  await sleep(500);
   await main.ev('document.querySelectorAll(".mode-switch-item")[0]?.click(); "ok"');
   await sleep(400);
   await main.ev('(() => { const i=document.getElementById("search-input"); i.focus(); i.value="e"; i.dispatchEvent(new Event("input",{bubbles:true})); return "ok"; })()');
-  await sleep(1500);
+  const navResultsReady = await waitFor(
+    main,
+    '(window.__pageRuntimeLatestModel("apps")?.data?.results?.items?.length || 0) > 0',
+    12000
+  );
+  check("navigate search has indexed results", navResultsReady);
   let navModel = await main.ev('window.__pageRuntimeLatestModel("apps")');
   check("navigate grid uses lume.navigate/v1", navModel?.schema === "lume.navigate/v1" && (await main.ev('!!document.querySelector(".bar-list, .result-grid")')));
   const gridBeforeArrow = navModel?.selection?.primaryId;
@@ -61,9 +76,14 @@ try {
   await sleep(350);
   await settingsUi.ev(`(() => { const s=document.querySelector('[data-setting-id="pages.presenters.apps"] select'); if(!s) return false; s.value="navigate-list"; s.dispatchEvent(new Event("change",{bubbles:true})); return true; })()`);
   check("navigation switches to alternate Presenter", await waitFor(main, '!!document.querySelector(".nav-list-presenter")'));
-  settingsUi.ws.close();
   navModel = await main.ev('window.__pageRuntimeLatestModel("apps")');
   check("navigation keeps selection across Presenter", navModel?.selection?.primaryId === navSelection && navModel?.revision >= navRevision, JSON.stringify({ before: navSelection, after: navModel?.selection?.primaryId, revision: [navRevision, navModel?.revision] }));
+  settingsUi.ws.close();
+  await main.ev('window.__TAURI_INTERNALS__.invoke("close_settings")');
+  await sleep(500);
+  const launcherVisible = await main.ev('window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" })');
+  if (!launcherVisible) await main.ev('window.__TAURI_INTERNALS__.invoke("toggle_launcher")');
+  await sleep(900);
   await sleep(500);
   const navListChrome = await main.ev(`(() => {
     const scroll = document.querySelector(".nav-list-scroll");
@@ -116,6 +136,14 @@ try {
   await main.ev('document.querySelectorAll(".mode-switch-item")[1]?.click(); "ok"');
   await waitFor(main, '!!document.querySelector(".clip-page")');
   await waitFor(main, 'window.__pageRuntimeLatestModel("clipboard")?.status !== "loading" && (window.__pageRuntimeLatestModel("clipboard")?.data?.total || 0) > 0');
+  await main.ev('window.__searchClipboardCalls = 0; true');
+  await main.ev('window.__lumeHandleInput("audit-one-search")');
+  await sleep(900);
+  const searchCalls = await main.ev('window.__searchClipboardCalls');
+  check("one clipboard keystroke performs exactly one database search", searchCalls === 1, String(searchCalls));
+  await main.ev('(() => { const i=document.getElementById("search-input"); i.value=""; i.dispatchEvent(new Event("input",{bubbles:true})); return true; })()');
+  await waitFor(main, 'window.__pageRuntimeLatestModel("clipboard")?.status !== "loading" && (window.__pageRuntimeLatestModel("clipboard")?.data?.total || 0) > 0', 8000);
+  await sleep(300);
   let clipModel = await main.ev('window.__pageRuntimeLatestModel("clipboard")');
   check("clipboard uses lume.clipboard/v1", clipModel?.schema === "lume.clipboard/v1" && (await main.ev('!!document.querySelector(".clip-page")')));
   let clipSelection = clipModel?.selection?.primaryId;
@@ -231,7 +259,9 @@ try {
   await sleep(1200);
   check("Presenter selection restores after restart", await main.ev('!!document.querySelector(".clip-compact-presenter")'));
   await main.ev(`window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { pages: { presenters: ${JSON.stringify(originalPresenters ?? { apps: "navigate-grid", clipboard: "clipboard-list" })} } } })`);
+  presentersRestored = true;
 } finally {
+  try { await restorePresenters(); } catch {}
   try { main?.ws.close(); } catch {}
   kill();
 }

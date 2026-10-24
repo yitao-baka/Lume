@@ -22,6 +22,9 @@ export interface SizerDeps {
   /** The active mode's preferred fixed height (manifest `height`) — wins over
    * windowHeight when set; the sizer clamps it to the work area. */
   modeHeight: () => number | null;
+  /** Presenter-reported page-area height for `heightPolicy() === "fit"`.
+   * `null` falls back to DOM measurement for built-in fit pages. */
+  fitContentHeight: () => number | null;
   /** Every size we apply is reported back (logical px) — the composition root
    * uses it as the "current size" baseline for plugin `app.resize` calls. */
   setRuntimeSize: (w: number, h: number) => void;
@@ -108,17 +111,43 @@ export function createWindowSizer(deps: SizerDeps) {
     // Previews live in the satellite window now, so the launcher never widens.
     if (deps.fixedHeight()) {
       const declared = deps.modeHeight();
-      let h = declared ?? deps.windowHeight();
+      const configured = Number.isFinite(deps.windowHeight()) ? deps.windowHeight() : 520;
+      let h = declared != null && Number.isFinite(declared) ? declared : configured;
       if (declared != null) {
         await ensureWorkArea();
         const screen = deps.workAreaH();
         if (screen) h = Math.min(h, screen - SCREEN_MARGIN);
       }
-      h = Math.max(MIN_WINDOW_H, h);
+      h = Math.max(MIN_WINDOW_H, Math.round(h));
       if (h !== lastWindowH) {
         lastWindowH = h;
         deps.setRuntimeSize(deps.windowWidth(), h);
         await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), h));
+        await invoke("apply_position");
+      }
+      requestAnimationFrame(deps.measureModeViewport);
+      return;
+    }
+    const reportedContentH = deps.fitContentHeight();
+    if (reportedContentH != null && Number.isFinite(reportedContentH) && reportedContentH > 0) {
+      const search = document.querySelector(".search") as HTMLElement | null;
+      const searchH = search?.offsetHeight ?? 0;
+      await ensureWorkArea();
+      const screen = deps.workAreaH();
+      let cap = deps.windowHeight();
+      if (screen) {
+        cap = deps.anyExpanded()
+          ? Math.max(cap, screen - SCREEN_MARGIN)
+          : Math.min(cap, screen - SCREEN_MARGIN);
+      }
+      const targetH = Math.max(
+        MIN_WINDOW_H,
+        Math.min(searchH + reportedContentH + WINDOW_PAD, cap)
+      );
+      if (targetH !== lastWindowH) {
+        lastWindowH = targetH;
+        deps.setRuntimeSize(deps.windowWidth(), targetH);
+        await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), targetH));
         await invoke("apply_position");
       }
       requestAnimationFrame(deps.measureModeViewport);

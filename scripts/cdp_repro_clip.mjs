@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CDP_PORT = 9224;
-const RELEASE = "src-tauri/target/release";
+const RELEASE = "src-tauri/target/debug";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}

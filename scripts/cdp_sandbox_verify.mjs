@@ -76,9 +76,9 @@ const m = await connect(mainT.webSocketDebuggerUrl);
 const invoke = (cmd, args = {}) => m.evalJs(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
 const type = (q) => m.evalJs(`(() => { const i = document.getElementById("search-input"); i.focus(); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
 const clickKwRow = async (label) => {
-  const idx = await m.evalJs(`[...document.querySelectorAll(".result-box")].findIndex((el) => el.textContent.includes(${JSON.stringify(label)}))`);
+  const idx = await m.evalJs(`[...document.querySelectorAll("[data-target-id]")].findIndex((el) => el.textContent.includes(${JSON.stringify(label)}))`);
   if (idx < 0) return false;
-  await m.evalJs(`[...document.querySelectorAll(".result-box")][${idx}].dispatchEvent(new MouseEvent("click", { bubbles: true })); "ok"`);
+  await m.evalJs(`[...document.querySelectorAll("[data-target-id]")][${idx}].dispatchEvent(new MouseEvent("click", { bubbles: true })); "ok"`);
   await sleep(250);
   await m.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }))`);
   return true;
@@ -139,6 +139,13 @@ check("③e bridge alive: window.lume is an object", probe.hasLume === "object" 
 check("③f keydown forwarded → lume.on.key", Array.isArray(probe.keysAfterA) && probe.keysAfterA.includes("a"), JSON.stringify(probe.keysAfterA));
 const focusBack = await m.evalJs(`document.activeElement === document.getElementById("search-input")`);
 check("③g focus hand-off after iframe mousedown", focusBack === true);
+const activeBeforeEsc = await m.evalJs(`[...document.querySelectorAll(".mode-switch-item")].findIndex((b) => b.className.includes("active"))`);
+await type("esc");
+await sleep(700);
+const activeAfterEsc = await m.evalJs(`[...document.querySelectorAll(".mode-switch-item")].findIndex((b) => b.className.includes("active"))`);
+check("③h Presenter-consumed Esc keeps the launcher open",
+  activeBeforeEsc >= 0 && activeAfterEsc === activeBeforeEsc && !!(await m.evalJs('!!document.querySelector("iframe.presenter-frame")')),
+  `${activeBeforeEsc} → ${activeAfterEsc}`);
 // Tab 由脚本经 query 事件遥控探针派发（iframe 不可从宿主触达）。
 // 断言「激活的模式变了」而不是「回到导航页」：Tab 是**循环**切页，下一站是
 // 谁取决于当前启用的插件集合（曾长期红着 —— 见 docs/ROADMAP_HISTORY.md #32.11 的记录，

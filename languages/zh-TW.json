@@ -336,7 +336,6 @@
   "pluginToastDisabled": "「{name}」已停用",
   "pluginToastReloaded": "「{name}」已重載",
   "pluginApiRejectedHint": "此外掛無法載入：{reason}",
-  "pluginApiRejected": "「{name}」使用外掛 API {api}；目前建置只接受 API {host}。請升級到 api 2。",
   "pluginCircuitOpen": "「{name}」連續呼叫失敗，已暫停（其餘外掛不受影響；重載或儲存設定後重試）",
   "pluginPermEnforcedHint": "外掛只能呼叫已宣告的能力，未宣告的呼叫會被拒絕。",
   "pluginsDevMode": "開發者模式",

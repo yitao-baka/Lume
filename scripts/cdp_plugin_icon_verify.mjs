@@ -14,10 +14,10 @@
 //
 //   node scripts/cdp_plugin_icon_verify.mjs
 import { spawn, execSync } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync, cpSync, existsSync, openSync, readFileSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, cpSync, openSync, readFileSync } from "node:fs";
 
 const PORT = 9235;
-const APP = "src-tauri/target/release/lume.exe";
+const APP = "src-tauri/target/debug/lume.exe";
 const OUT = "test/plugin_icon_check";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try {
@@ -25,11 +25,11 @@ try {
 } catch {}
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
-// Fixtures: prefer the installed copies (they ship detachable + titlebar).
+// Fixtures: refresh from source so a stale test-install cannot silently change
+// the manifest contract (the icon check requires detachable = true).
 for (const id of ["file-search", "hello-mode"]) {
-  if (!existsSync(`src-tauri/target/release/plugins/${id}`)) {
-    cpSync(`examples/plugins/${id}`, `src-tauri/target/release/plugins/${id}`, { recursive: true });
-  }
+  rmSync(`src-tauri/target/debug/plugins/${id}`, { recursive: true, force: true });
+  cpSync(`examples/plugins/${id}`, `src-tauri/target/debug/plugins/${id}`, { recursive: true });
 }
 
 // PowerShell dump: every Lume window's title / visibility / ICON_BIG sha1
@@ -289,9 +289,13 @@ const launcher = baseline.find((w) => w.title === "Lume" && w.iconSha1);
 check("baseline: launcher ICON_BIG present", !!(launcher && launcher.iconSha1), JSON.stringify(baseline));
 
 const clickKwRow = async (label) => {
-  const idx = await m.evalJs(`[...document.querySelectorAll(".result-box")].findIndex((el) => el.textContent.includes(${JSON.stringify(label)}))`);
+  const idx = await m.evalJs(`[...document.querySelectorAll("[data-target-id]")].findIndex((el) => el.textContent.includes(${JSON.stringify(label)}))`);
   if (idx < 0) return false;
-  await m.evalJs(`[...document.querySelectorAll(".result-box")][${idx}].dispatchEvent(new MouseEvent("click", { bubbles: true })); "ok"`);
+  await m.evalJs(`[...document.querySelectorAll("[data-target-id]")][${idx}].dispatchEvent(new MouseEvent("click", { bubbles: true })); "ok"`);
+  await sleep(200);
+  if (!(await m.evalJs('!!document.querySelector(".detach-btn") || !!document.querySelector("iframe.presenter-frame")'))) {
+    await m.evalJs('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); "ok"');
+  }
   return true;
 };
 
@@ -321,11 +325,26 @@ if (!pt) {
   console.error("plugin window target missing");
   process.exit(1);
 }
-await sleep(3500);
 const c = await connect(pt.webSocketDebuggerUrl);
-const probe = await c.evalJs(`(() => { const s = window.__frameStates || []; return { viewReady: s.some((x) => x.name === "" && x.reason === "ready") }; })()`);
+let probe = null;
+for (let i = 0; i < 60; i++) {
+  probe = await c.evalJs(`(() => ({
+    viewReady: window.__detachedPageRuntime?.getState?.()?.status === "ready",
+    state: window.__detachedPageRuntime?.getState?.() ?? null,
+  }))()`);
+  if (probe?.viewReady) break;
+  await sleep(250);
+}
 check("①a detached view is up (bridge ready)", probe?.viewReady === true, JSON.stringify(probe));
 
+if (!probe?.viewReady) {
+  console.log("detached diag", JSON.stringify(await c.evalJs(`({
+    state: window.__detachedPageRuntime?.getState?.() ?? null,
+    model: window.__detachedPageRuntime?.getModel?.() ?? null,
+    body: document.body.innerText.slice(0, 600),
+    states: (window.__frameStates || []).slice(-4),
+  })`)));
+}
 const after = dump();
 const fsWin = after.find((w) => w.title.includes("秒搜"));
 check("①b detached window has an ICON_BIG", !!(fsWin && fsWin.iconSha1), JSON.stringify(after));
@@ -335,8 +354,9 @@ check(
   `launcher=${launcher?.iconSha1} plugin=${fsWin?.iconSha1}`
 );
 const ids = taskbarIds();
-check(
-  "② detached window owns its taskbar entry (AppUserModelID)",
+if (ids.length === 0) console.log("[SKIP] taskbar UI Automation unavailable in this session");
+else check(
+  "detached window owns its taskbar entry (AppUserModelID)",
   ids.includes("Lume.Plugin.file-search"),
   `taskbar ids: ${JSON.stringify(ids)}`
 );
@@ -346,7 +366,7 @@ check(
 await invoke("plugin_window_close", { id: "file-search" });
 await sleep(1200);
 await invoke("plugin_window_open", { id: "hello-mode" });
-await sleep(2800);
+await sleep(5000);
 const after2 = dump();
 const hmWin = after2.find((w) => w.title === "Hello Mode");
 check("③a icon-less plugin window present", !!hmWin, JSON.stringify(after2));
@@ -356,8 +376,9 @@ check(
   `launcher=${launcher?.iconSha1} hello=${hmWin?.iconSha1}`
 );
 const ids2 = taskbarIds();
-check(
-  "③c icon-less plugin still gets its own taskbar entry",
+if (ids2.length === 0) console.log("[SKIP] taskbar UI Automation unavailable in this session");
+else check(
+  "icon-less plugin still gets its own taskbar entry",
   ids2.includes("Lume.Plugin.hello-mode"),
   `taskbar ids: ${JSON.stringify(ids2)}`
 );

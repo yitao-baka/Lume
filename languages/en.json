@@ -336,7 +336,6 @@
   "pluginToastDisabled": "{name} disabled",
   "pluginToastReloaded": "{name} reloaded",
   "pluginApiRejectedHint": "This plugin cannot load: {reason}",
-  "pluginApiRejected": "\"{name}\" uses plugin API {api}; this build only accepts API {host}. Update the plugin to api 2.",
   "pluginCircuitOpen": "\"{name}\" keeps failing and was paused (other plugins are unaffected — reload it or save settings to retry)",
   "pluginPermEnforcedHint": "The plugin can only call the capabilities it declares; anything else is refused.",
   "pluginsDevMode": "Developer mode",

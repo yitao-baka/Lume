@@ -9,7 +9,7 @@ import { plog } from "./log";
 /** The sandbox attribute for plugin view iframes: scripts/forms/popups/modals
  * run, but the page gets an opaque origin — no access to the host document,
  * `parent.__TAURI_INTERNALS__` or launcher DOM, no top-frame navigation. */
-export const PLUGIN_FRAME_SANDBOX = "allow-scripts allow-forms allow-popups allow-modals";
+export const PLUGIN_FRAME_SANDBOX = "allow-scripts allow-modals";
 
 /** Build the mode View for a disk mode plugin: renders the prepared HTML in
  * an iframe and answers the bridge RPCs. Events (query/show/hide/enter) flow
@@ -55,23 +55,63 @@ const BOOT_FINAL_CHECK_MS = 1600;
  * custom layer first, then give up entirely. */
 const SNAPSHOT_MAX_CHARS = 1_000_000;
 
+/** Clamp every snapshot layer before it can cross the host boundary. The
+ * in-frame bridge applies the same limits first; this guard covers older or
+ * hostile pages and older frame snapshots. */
+const SNAPSHOT_MAX_FIELDS = 200;
+const SNAPSHOT_MAX_FIELD_CHARS = 64 * 1024;
+const SNAPSHOT_MAX_CUSTOM_CHARS = 512_000;
+
+function snapshotJsonLength(value: unknown): number {
+  return JSON.stringify(value).length;
+}
+
 export function capSnapshot(snap: unknown, owner?: string): unknown {
-  // 降级必须可感知（否则表现为"状态继承时灵时不灵"）——devtools 里能查到原因。
   const warn = (msg: string) => plog.warn(owner ?? null, msg);
   try {
     if (snap == null) return null;
-    if (JSON.stringify(snap).length <= SNAPSHOT_MAX_CHARS) return snap;
-    if (typeof snap !== "object") {
-      warn("snapshot >1MB — dropped entirely");
+    if (typeof snap !== "object" || Array.isArray(snap)) return null;
+
+    const source = snap as { auto?: { fields?: unknown }; custom?: unknown };
+    if (!source.auto || !("custom" in source)) {
+      return snapshotJsonLength(snap) <= SNAPSHOT_MAX_CHARS ? snap : null;
+    }
+    const rawFields = Array.isArray(source.auto?.fields) ? source.auto.fields : [];
+    const fields = rawFields.slice(0, SNAPSHOT_MAX_FIELDS).flatMap((raw) => {
+      if (!raw || typeof raw !== "object") return [];
+      const field = raw as { key?: unknown; value?: unknown; checked?: unknown };
+      if (typeof field.key !== "string" || field.key.length > 512) return [];
+      let value: string | string[];
+      if (Array.isArray(field.value)) {
+        let chars = 0;
+        value = field.value
+          .slice(0, 64)
+          .filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => entry.slice(0, SNAPSHOT_MAX_FIELD_CHARS))
+          .filter((entry) => {
+            chars += entry.length;
+            return chars <= SNAPSHOT_MAX_FIELD_CHARS;
+          });
+      } else {
+        value = String(field.value ?? "").slice(0, SNAPSHOT_MAX_FIELD_CHARS);
+      }
+      return [{ key: field.key, value, checked: Boolean(field.checked) }];
+    });
+
+    let custom = source.custom ?? null;
+    if (custom != null && snapshotJsonLength(custom) > SNAPSHOT_MAX_CUSTOM_CHARS) {
+      warn("snapshot custom layer exceeded 512KB — dropped");
+      custom = null;
+    }
+    const result = { v: 2, auto: { fields }, custom };
+    while (fields.length > 0 && snapshotJsonLength(result) > SNAPSHOT_MAX_CHARS) {
+      fields.pop();
+    }
+    if (snapshotJsonLength(result) > SNAPSHOT_MAX_CHARS) {
+      warn("snapshot exceeded 1MB after field/custom caps — dropped entirely");
       return null;
     }
-    const { custom: _drop, ...rest } = snap as { custom?: unknown };
-    if (JSON.stringify(rest).length <= SNAPSHOT_MAX_CHARS) {
-      warn("snapshot >1MB — custom layer dropped, auto fields kept");
-      return rest;
-    }
-    warn("snapshot >1MB — dropped entirely");
-    return null;
+    return result;
   } catch (err) {
     warn(`snapshot serialization failed: ${err}`);
     return null;
@@ -90,6 +130,9 @@ export function createIframeView(
    * within `timeoutMs`, or errors — a dead or hostile page must never block
    * a detach/close. */
   snapshot: (timeoutMs?: number) => Promise<unknown | null>;
+  /** Host-to-page call with an optional payload. Used by the Presenter bridge
+   * for waitable key decisions; resolves null on timeout/error. */
+  call: (type: string, payload?: unknown, timeoutMs?: number) => Promise<unknown | null>;
   /** Whether the *current* document's bridge is live (it announced
    * `__lumeReady`). False while a fresh document is still loading — reset on
    * mount, on unmount (a remount is a new document) and when `setHtml` swaps
@@ -208,7 +251,7 @@ export function createIframeView(
   // Host→page calls (`__lumeCall`) awaiting their `__lumeCallResult` receipt.
   const pendingCalls = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
   let callSeq = 0;
-  const snapshot = (timeoutMs = 1500): Promise<unknown | null> => {
+  const call = (type: string, payload?: unknown, timeoutMs = 1500): Promise<unknown | null> => {
     if (!live() || !frame?.contentWindow) return Promise.resolve(null);
     const callId = ++callSeq;
     return new Promise((resolve) => {
@@ -219,16 +262,18 @@ export function createIframeView(
       pendingCalls.set(callId, {
         resolve: (v) => {
           window.clearTimeout(timer);
-          resolve(v);
+          resolve(capSnapshot(v, opts?.id));
         },
         reject: () => {
           window.clearTimeout(timer);
           resolve(null);
         },
       });
-      frame?.contentWindow?.postMessage({ __lumeCall: { callId, type: "snapshot" } }, "*");
+      frame?.contentWindow?.postMessage({ __lumeCall: { callId, type, payload } }, "*");
     });
   };
+  const snapshot = (timeoutMs = 1500): Promise<unknown | null> =>
+    call("snapshot", undefined, timeoutMs).then((value) => capSnapshot(value, opts?.id));
   const View: Component & { setHtml(html: string): void } = () => {
     onMount(() => {
       setLive(false); // a fresh document starts loading
@@ -295,8 +340,9 @@ export function createIframeView(
         if (d.__lumeKey) {
           // Re-dispatch through the host's window so the existing key router
           // applies unchanged (Esc layering, mode switch, grid arrows; the
-          // active mode's onKey delivers lume.on.key from there). Every key
-          // gets a receipt — consumed ones preventDefault late in the iframe.
+          // active mode's onKey delivers lume.on.key from there). Esc uses a
+          // separate waitable page call; ordinary consumed keys simply stop at
+          // the host router.
           const k = d.__lumeKey;
           const syn = new KeyboardEvent("keydown", {
             key: k.key,
@@ -308,10 +354,6 @@ export function createIframeView(
             bubbles: true,
           });
           window.dispatchEvent(syn);
-          frame?.contentWindow?.postMessage(
-            { __lumeKeyConsumed: { seq: k.seq, consumed: syn.defaultPrevented } },
-            "*"
-          );
         }
         if (d.__lumeFocusRequest) {
           // Typing hand-off (launcher only — a detached window has no search
@@ -354,5 +396,5 @@ export function createIframeView(
     armBootWatchdog();
     setSrcdoc(html);
   };
-  return { View, post, snapshot, live };
+  return { View, post, snapshot, call, live };
 }

@@ -435,7 +435,7 @@ export default function create(ctx) {
 ### 6.1 RPC 面
 
 mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
-`sandbox="allow-scripts allow-forms allow-popups allow-modals"`，**无**
+`sandbox="allow-scripts allow-modals"`，**无**
 `allow-same-origin`——页面够不到宿主文档、`parent.__TAURI_INTERNALS__` 与
 启动器 DOM，也不能导航顶层窗口；代价见 §6.1.1「沙箱边界」）。注入的桥接
 客户端暴露一个 Promise RPC 对象 `window.lume`（方法拒绝时 reject；桥接层
@@ -457,21 +457,23 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 | `search` | `status()` | **后端就绪探测**（不发起查询；权限同 `search.files`）——插件页在用户输入前就能标注自身状态（“索引构建中”）。返回 `{backend, status, everything: {running}, svc: {running, state?, files?, error?}}`：`backend`/`status` 是“现在查询会用哪个后端 + 它的索引是否可用”（`"ready" \| "building" \| "unavailable"`，与 `search.files` 同一套词，Everything 在跑时优先 Everything）；`svc.state` 是服务自报的引擎状态 `"ready" \| "building" \| "off" \| "failed"`（`"off"` = Everything 在跑、引擎刻意不持有索引），`svc.files` 是当前索引文件数，服务没应答时只有 `svc.running: false`，应答但状态无法识别（比 `status` 谓词更老的服务）时 `state`/`files` 缺省。**内部失败冷却不反映在这里**（它只让下一次查询跳过一个刚超时的后端）；探测本身失败时 reject。 |
 | `search` | `files(q, opts?)` | **全盘文件搜索** — 统一门面 `file_search`（Everything 在运行则走它的 IPC，否则 LumeSVC 自研 USN 索引）。返回 `{backend: "everything"\|"svc"\|"none", status: "ready"\|"building"\|"unavailable", total?, sort?, entries: [{id,name,path,isFolder,mtime?,size?}]}`。`opts` 兼容旧调用：**数字 = max**；对象 = `{offset, max, sort, exts, folder}`——`max` 默认 12、钳制 1..=100；`offset` 从第 offset 条开始（0 起；Everything 全量有效，LumeSVC 由引擎 `skip` 分页）；`exts`（小写、不带点的扩展名数组）/`folder` 是**名称级过滤**：Everything 收到的是它自己的 `ext:`/`folder:` 语法，USN 引擎在扫描时判定（它的名字排序会把这类命中埋到几千条之后，客户端对一页结果过滤是找不到的）。回复里 `filter` 字段回显**真正生效**的过滤（规范 Everything 语法，如 `"ext:png;jpg"`）；**没有回显＝没过滤**（老服务/老宿主），调用方要自己兜底。`sort` 取 `"name" \| "path" \| "size" \| "mtime" \| "name_desc" \| "path_desc" \| "size_desc" \| "mtime_desc"`（非法值 = 引擎默认序；svc 无全局排序，对返回页做页内排序并如实回显）。`total` 为引擎报告的总命中数（svc / 老版 Everything 拿不到时缺省）；条目的 `mtime`/`size`（ms epoch / 字节）拿不到时缺省，UI 按字段存在与否自适应隐藏列。完整示例 `examples/plugins/file-search/` |
 
-#### 6.1.1 沙箱边界
+#### 6.1.1 沙箱与网络边界
 
-- iframe 是 opaque origin——`window.localStorage`/`document.cookie` 访问会
-  **抛错**（插件数据请用 `storage`/`db`）。
-- 页面内直接 `fetch` 远程受 CORS 约束（opaque origin 发不出带凭据的请求），
-  跨域取数请用 `lume.http.request`（宿主代理，无 CORS）；`<img>`/`<video>`
-  等非 CORS 资源、asset: 协议图标不受影响。
-- iframe 内非可编辑区域的点击会把焦点交还宿主搜索框（桥内 mousedown 交接，
-  宿主统一兜底）。
-- Esc 默认不经过 `key` 事件（根统一处理：菜单 → 模式 onEscape → 卫星预览 →
-  隐藏）。**插件要消费 Esc**：在自己的 document 上挂冒泡 keydown 监听并
-  `preventDefault`——被消费的按键不再转发给宿主（桥接的转发监听检查
-  `defaultPrevented`）。iframe 内非可编辑目标的按键在转发后同样经过根
-  `blockBrowserKeys`（Ctrl/Alt 组合被拦，与宿主非输入区行为一致）；可编辑
-  目标（input/textarea/contenteditable）的按键完全归插件。
+- iframe 使用 `sandbox="allow-scripts allow-modals"`，不授予
+  `allow-same-origin`、`allow-forms` 或 `allow-popups`。页面因此是 opaque
+  origin，无法读取宿主 DOM、`parent.__TAURI_INTERNALS__`、localStorage 或 cookie。
+- 宿主为 Presenter `srcdoc` 与逻辑帧注入 CSP：`connect-src`、`form-action`、
+  `frame-src`、`object-src` 与 `worker-src` 均为 `none`；脚本只允许内联与
+  blob，图片/媒体只允许 data、blob、asset 与 Tauri asset host。原生
+  `fetch`、XHR、WebSocket、EventSource、表单提交、`<img>` 信标和嵌套帧不能
+  绕过 `lume.http` 的权限、私网拒绝和重定向复检。
+- 页面文件（Presenter、titlebar、图标、逻辑模块）必须使用插件目录内的相对
+  路径。宿主同时做词法检查与 canonicalize 检查，拒绝绝对路径、盘符、UNC、
+  `..`、ADS、符号链接/junction 逃逸；逻辑模块读取由 Rust 命令在令牌归属
+  校验后完成。
+- 页面内非编辑目标的 keydown 延迟一个任务再转发，让页面自己的冒泡监听先
+  执行 `preventDefault`。`lume.on.key` 可返回 `true`（或 Promise<true>）表示
+  消费；Esc 使用可等待回执，只有未消费时才关闭预览、独立窗口或启动器。
 
 ### 6.2 事件面（on.*）
 
@@ -486,7 +488,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 | `subInput` | `string` | 本模式调 `app.setSubInput` 接管搜索框后，每一次按键（§10.1） |
 | `settings` | `Record<string, unknown>` | 用户在设置页改动了本插件的声明式设置（§11.3）；页面 `load` 后的握手会重放当前值 |
 | `theme` | `"light" \| "dark"` | 颜色模式推送。沙箱后页面读不到宿主文档，宿主在就绪握手重放当前值，并在变化时推给本模式页与分离窗口。**载荷是本插件「生效」的明暗**：`theme.set` 定过 light/dark 就是它（此时启动器翻转不再影响本插件），否则＝启动器的有效模式——页面按它切换自己的明暗即可 |
-| `key` | `{key, ctrlKey, shiftKey, altKey}` | 模式激活时的 keydown 转发——**↑↓/Enter/翻页等导航键由模式页自行实现**（磁盘 mode 的 `rows()` 为空，根网格键位不生效；搜索框中的文本编辑键照常）。转发链路：页面内非可编辑目标、未被页面 `preventDefault` 的 keydown 由**桥接脚本**转发给宿主 → 宿主在其窗口重放该键（Esc 分层/Tab 切模式/箭头导航照旧）→ 根路由消费的键异步回执 `preventDefault`（迟滞消费——Tab 这类移动焦点的键，iframe 内默认动作可能已先发生；Esc 契约不受影响，页面在**自己 document** 上的冒泡监听里 `preventDefault` 即同步消费，被消费的按键不再转发）。焦点在插件 iframe 内时同样送达。示例 file-search 用 ↑↓ 移动选中、Enter 打开、Ctrl+Enter 复制路径 |
+| `key` | `{key, code, ctrlKey, shiftKey, altKey, metaKey}` | 模式激活时转发非编辑目标的 keydown。桥接在事件分发后一个任务才转发，因此页面自己的冒泡监听可先用 `preventDefault` 消费。`lume.on.key` 返回 `true`（或 Promise<true>）表示页面已消费；未消费的 Esc 才会关闭预览、独立窗口或启动器。 |
 | `snapshot` | — | 宿主索取快照时调用 `lume.on.snapshot = () => state`（§6.4） |
 | `restore` | `state` | 跨窗口/重挂载恢复时调用 `lume.on.restore = (state) => {}`（§6.4） |
 
@@ -520,42 +522,24 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 
 ### 6.4 状态快照与恢复
 
-宿主在 detach / 关闭独立窗口 / keep-alive LRU 淘汰前，经
-`__lumeCall{type:"snapshot"}`（宿主→页面的带响应调用，1.5s 超时兜底）向
-页面要一份状态，跨窗口/重挂载后以 `restore` 事件回放。快照分两层：
+Presenter 在 detach、窗口关闭回流或 keep-alive LRU 淘汰前接收
+`__lumeCall{type:"snapshot"}`，默认 1.5s 超时。快照结构为
+`{v:2, auto:{fields}, custom}`，多帧包装为
+`{v:2, frames:{view, titlebar?}}`。
 
-- **auto 层（桥自动捕获，无需插件参与）**：`input`/`textarea`/`select`
-  （含 `multiple`/checkbox/radio）按**稳定键**寻址（`id` → `name` →
-  nth-of-type 路径，含 open shadow root），加纯文本 `contenteditable`、
-  document 与可滚动容器位置、焦点与选区。恢复时 auto 层由桥自动应用，并
-  对每个被赋值的控件补发 `input`/`change` 事件（titlebar 槽位帧除外，见下）。
-- **custom 层（页面可选）**：赋值 `lume.on.snapshot = () => state`（可返回
-  Promise）提供任意可 JSON 化对象；恢复时桥把 `custom` 交给
-  `lume.on.restore = (state) => {}`。**页面自有 JS 状态（选中行、内部
-  模型、异步初始化后才渲染的视图）只有 custom 层能跨窗口/淘汰恢复**——
-  auto 层是尽力而为。
-
-**恢复语义**：每个字段正常只应用一次；补写只有三种受限情形——「DOM 还不
-存在」（load 后异步插入的控件，≤4s 重试窗口）、「应用过的节点被替换」，
-以及**结束前的最终校正**（页面在此期间没有收到任何宿主事件、用户也没动过
-该字段时，把异步初始化覆盖掉的首屏值再拉回一次）。恢复循环不会反复回滚
-页面自己的状态变化（实测坑：无节制的重试会把 3.2s 后到达的正常 `enter`
-状态回滚）。用户输入过的字段永不覆盖。`restore` 事件在标准状态重放
-（query/show/enter/settings/theme）**之后**投递。
-
-**例外：新的进入优先**——模式收到新的 `enter`（进入载荷）时，宿主先丢弃该
-插件尚在等待重放的会话帧（淘汰 / 分离 / 关闭回流的遗留），因此「被 LRU
-淘汰后立刻用新文本重进」不会被旧快照覆盖；已经消费掉的帧（页面活着）不受
-影响。**titlebar 槽位帧**在标准重放**之前**、**静默**恢复（不派发
-input/change）：它的输入通常是宿主 query 的视图，派发事件会被页面当成新
-输入经 `app.setQuery` 回灌、把当前 query 冲掉。
-
-快照结构 `{v:2, auto:{fields, editables?, scroll[], focus?}, custom?}`（宿主
-组装为 `{v:2, frames:{view, titlebar?}}` 跨窗口传递），上限 1MB（超限先丢
-`custom` 再整体放弃）；**仅内存流转，不落盘**；`password` 输入框的值会进
-快照（同一插件的页面间传递，宿主不持久化）——不希望密码被快照的页面请在
-`lume.on.snapshot` 里自行剔除。旧版按 DOM 顺序的 v1 快照仍可被应用
-（兼容，新代码不再产生）。
+- auto 层覆盖 `input`/`textarea`/`select`（含 `multiple`）、checkbox/radio、
+  contenteditable 与 open shadow root 中的控件。字段键按 `id:`、`name:`
+  （重复 name 带出现序号）或 `path:`（nth-of-type 路径）编码；多选值保存为
+  字符串数组。恢复后，主 view 会派发 `input`/`change`，titlebar 保持静默以
+  避免把旧 query 写回 Page Service。
+- custom 层由 `lume.on.snapshot = () => state` 提供，恢复时调用
+  `lume.on.restore(state)`。custom 必须是可 JSON 序列化的值。
+- 限制在 iframe 内先执行，宿主再复检：最多 200 个字段、单字段 64 KiB、
+  custom 512 KiB、总快照 1,000,000 字符；超限先丢 custom，再丢字段，最后
+  放弃快照。Rust 的 `plugin_window_close_report` 另有字节上限，超限时以无
+  快照关闭，不拒绝关闭窗口。
+- 新 `enter` 清除旧会话帧，新的页面载荷优先于任何迟到快照。`password`
+  字段只保存 checked 等状态，不读取值。
 
 ### 6.5 搜索框共享语义
 
@@ -1759,8 +1743,9 @@ settings 类无权限命令对 main 窗口内的帧仍按声称 id 计——彻�
 
 **加固层**：
 
-- **API 版本契约**（§16）：清单 `api` 超过宿主 `HOST_PLUGIN_API` → 加载期
-  拒绝（前端加载门 + 逻辑宿主二次校验）。
+- **API 版本契约**：清单必须显式声明 `api = 2`。任何其他值或缺失值都会让
+  Rust 清单门返回 `apiError`，registry 不注册 provider/mode/service，独立窗口、
+  元数据与逻辑帧入口同样拒绝；设置页仍保留拒绝原因。
 - **`.lupx` 签名**（§12）：ed25519 验签，无效签名 inspect/install 硬拒；
   未签名包维持确认流 + 展示 SHA-256。
 - **网络内网防护**（§8.1 http）：插件请求默认拒绝回环/私网/链路本地目标，

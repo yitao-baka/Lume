@@ -25,10 +25,16 @@ export function validateResourceRef(ref: ResourceRef, path = "$"): void {
   if (typeof ref.src !== "string" || ref.src.length === 0) {
     throw new Error(`${path}: resource src is required`);
   }
-  if (ref.src.length > 8192) throw new Error(`${path}: resource src exceeds 8192 chars`);
+  assertResourceLength(ref.src, `${path}.src`);
   assertAllowedResourceUrl(ref.src, `${path}.src`);
-  if (ref.light !== undefined) assertAllowedResourceUrl(ref.light, `${path}.light`);
-  if (ref.dark !== undefined) assertAllowedResourceUrl(ref.dark, `${path}.dark`);
+  if (ref.light !== undefined) {
+    assertResourceLength(ref.light, `${path}.light`);
+    assertAllowedResourceUrl(ref.light, `${path}.light`);
+  }
+  if (ref.dark !== undefined) {
+    assertResourceLength(ref.dark, `${path}.dark`);
+    assertAllowedResourceUrl(ref.dark, `${path}.dark`);
+  }
   for (const [key, value] of Object.entries({ width: ref.width, height: ref.height })) {
     if (value !== undefined && (!Number.isFinite(value) || value <= 0 || value > 8192)) {
       throw new Error(`${path}.${key}: expected 0 < value <= 8192`);
@@ -40,6 +46,16 @@ function assertAllowedResourceUrl(src: string, path: string): void {
   if (DATA_IMAGE.test(src) || SAFE_URL.test(src)) return;
   pushDiagnostic("__pageResources", { path, error: "scheme refused" });
   throw new Error(`${path}: resource scheme refused`);
+}
+
+function assertResourceLength(src: string, path: string): void {
+  // Inline image thumbnails legitimately exceed the URL-length cap; the Page
+  // Model's total byte limit still bounds them. External URLs stay tightly
+  // capped so a malformed manifest/model cannot smuggle arbitrary payloads.
+  const limit = DATA_IMAGE.test(src) ? 512 * 1024 : 8192;
+  if (src.length > limit) {
+    throw new Error(`${path}: resource src exceeds ${limit} chars`);
+  }
 }
 
 /** Resolve a resource for a presenter surface. Theme selection is explicit:

@@ -137,8 +137,14 @@ try {
   originalSettings = await invoke("get_settings");
   originalChoice = originalSettings?.pages?.presenters?.[PLUGIN_ID];
   originalPresenterSettings = await invoke("plugin_presenter_settings_get", { id: PLUGIN_ID });
-  const startMap = { ...(originalSettings?.pages?.presenters ?? {}), [PLUGIN_ID]: "default" };
+  const startMap = {
+    ...(originalSettings?.pages?.presenters ?? {}),
+    apps: "navigate-grid",
+    clipboard: "clipboard-list",
+    [PLUGIN_ID]: "default",
+  };
   await invoke("save_settings_patch", { patch: { pages: { presenters: startMap } } });
+  await sleep(500);
   await invoke("plugin_presenter_settings_put", {
     id: PLUGIN_ID, presenter: "default", key: "density", value: "comfortable",
   });
@@ -157,7 +163,14 @@ try {
   check("detach affordance is available", clicked);
   detached = await findDetached();
   await waitFor(detached, '!!document.querySelector("iframe.presenter-frame") && !!window.__detachedPageRuntime');
-  await waitFor(detached, 'window.__detachedPageRuntime.getState()?.status === "ready"');
+  // The window reports ready before the scoped Presenter setting has made a
+  // full launcher -> window round-trip. Wait for the applied layout instead of
+  // sampling the transient `ready` state.
+  await waitFor(
+    detached,
+    'window.__detachedPageRuntime.getState()?.status === "ready" && window.__detachedPageRuntime.getState()?.layout?.height === 320',
+    6000
+  );
   const initial = await detached.evalJs('({ model: window.__detachedPageRuntime.getModel(), state: window.__detachedPageRuntime.getState() })');
   check("detached Presenter receives the shared model", initial.model?.schema === "translator.translation/v1" && initial.model?.revision >= launcherModel.revision, JSON.stringify({ model: initial.model?.revision, state: initial.state }));
   check("detached Presenter receives its scoped setting", initial.state?.presenterId === "default" && initial.state?.layout?.height === 320, JSON.stringify(initial.state));

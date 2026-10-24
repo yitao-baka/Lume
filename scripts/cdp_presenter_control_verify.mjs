@@ -91,8 +91,8 @@ async function ensureVisible(main) {
 }
 async function enterMode(main) {
   await main.evalJs('(() => { const i=document.getElementById("search-input"); i.focus(); i.value="translate-demo"; i.dispatchEvent(new Event("input",{bubbles:true})); return "ok"; })()');
-  await waitFor(main, '[...document.querySelectorAll(".result-box")].some((el) => el.textContent.includes("Translation Demo"))');
-  await main.evalJs('(() => { const row=[...document.querySelectorAll(".result-box")].find((el) => el.textContent.includes("Translation Demo")); row?.click(); return !!row; })()');
+  await waitFor(main, '[...document.querySelectorAll("[data-target-id]")].some((el) => el.textContent.includes("Translation Demo"))');
+  await main.evalJs('(() => { const row=[...document.querySelectorAll("[data-target-id]")].find((el) => el.textContent.includes("Translation Demo")); row?.click(); return !!row; })()');
   await waitFor(main, 'window.__presenterStates.some((state) => state.pageId === "translation-demo" && state.presenterId === "default" && state.status === "ready")');
   await waitFor(main, 'window.__presenterStates.filter((state) => state.pageId === "translation-demo").some((state) => state.layout?.height === 560)');
 }

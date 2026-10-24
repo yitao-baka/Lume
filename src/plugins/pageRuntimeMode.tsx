@@ -8,8 +8,10 @@ import type { PageIntent, PageModel, PageService, PresenterDescriptor } from "..
 import { COLLECTION_SCHEMA, type CollectionModel } from "../page-runtime/schemas";
 import { PageSession } from "../page-runtime/session";
 import { createPresenterBridge, type PresenterBridge } from "../page-runtime/presenterBridge";
+import type { PageLayoutReport } from "../page-runtime/contracts";
 import { dropSessionFrames, takeSessionFrames } from "../launcher/session";
 import { normalizePluginColorMode } from "../theme";
+import { t } from "../i18n";
 import type {
   ModeInstance,
   ModeKeyContext,
@@ -23,6 +25,7 @@ export interface PageRuntimeModeDeps {
   services: PluginServices;
   form: "launcher" | "window";
   waitForService(): Promise<void>;
+  restartService?(): Promise<void>;
   callService(name: string, ...args: unknown[]): Promise<unknown>;
   fetchPresenter(presenter: PluginPresenter): Promise<string>;
   fetchTitlebar?(presenter: PluginPresenter): Promise<string>;
@@ -85,17 +88,21 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
   const [query, setQuery] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   const [ready, setReady] = createSignal(false);
+  const [failed, setFailed] = createSignal(false);
+  const [mountError, setMountError] = createSignal("");
   const [modal, setModal] = createSignal(false);
   const [bridgeView, setBridgeView] = createSignal<ReturnType<typeof createPresenterBridge>["View"]>();
   const [titlebarView, setTitlebarView] = createSignal<Component>();
-  const [layout, setLayout] = createSignal<{ sizing: "fit" | "fixed"; height?: number; expanded?: boolean }>({
-    sizing: "fixed",
-  });
+  const [layout, setLayout] = createSignal<PageLayoutReport>({ sizing: "fixed" });
   let session: PageSession | undefined;
   let bridge: PresenterBridge | undefined;
   let titlebarBridge: PresenterBridge | undefined;
   let boot: Promise<void> | undefined;
-  let started = false;
+  let startPromise: Promise<void> | undefined;
+  let serviceStarted = false;
+  let needsServiceRestart = false;
+  let lastMountAttempt = 0;
+  let pendingQuery = "";
   let presenterSettings: Record<string, Record<string, unknown>> = {};
   const htmlCache = new Map<string, string>();
 
@@ -130,6 +137,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       if (report) {
         setLayout({
           sizing: report.sizing,
+          ...(report.contentHeight != null ? { contentHeight: report.contentHeight } : {}),
           ...(report.height != null ? { height: report.height } : {}),
           ...(report.expanded != null ? { expanded: report.expanded } : {}),
         });
@@ -140,7 +148,6 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       deps.onModel?.(model);
       bridge?.postModel(model);
       titlebarBridge?.postModel(model);
-      if (model.status !== "loading") setReady(true);
     },
   });
 
@@ -163,10 +170,51 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
   }
 
   async function ensureStarted(): Promise<void> {
-    if (started) return;
-    started = true;
-    await deps.waitForService();
-    await session!.start(remoteService);
+    if (serviceStarted) return;
+    if (startPromise) return startPromise;
+    const attempt = (async () => {
+      if (needsServiceRestart && deps.restartService) {
+        await deps.restartService();
+        needsServiceRestart = false;
+      }
+      try {
+        await deps.waitForService();
+      } catch (error) {
+        needsServiceRestart = Boolean(deps.restartService);
+        throw error;
+      }
+      await session!.start(remoteService);
+      serviceStarted = true;
+      if (pendingQuery) await session!.setQuery(pendingQuery);
+    })();
+    startPromise = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (startPromise === attempt) startPromise = undefined;
+    }
+  }
+
+  function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function markMountFailed(error: unknown): void {
+    setReady(false);
+    setFailed(true);
+    setMountError(errorMessage(error).slice(0, 2000));
+  }
+
+  function retryMount(): void {
+    void mount(true).catch(() => {});
+  }
+
+  /** Retry failed pages on re-activation/search, but never spin on every
+   * keystroke. Explicit retry bypasses this backoff. */
+  function retryIfDue(): void {
+    if (!failed() || boot) return;
+    if (Date.now() - lastMountAttempt < 1000) return;
+    void mount().catch(() => {});
   }
 
   function bridgeOptions(
@@ -255,27 +303,57 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     };
   }
 
-  async function mount(): Promise<void> {
+  function mount(force = false): Promise<void> {
+    if (ready()) return Promise.resolve();
     if (boot) return boot;
-    boot = (async () => {
+    if (!force && failed() && Date.now() - lastMountAttempt < 1000) return Promise.resolve();
+    lastMountAttempt = Date.now();
+    setReady(false);
+    setFailed(false);
+    setMountError("");
+    const attempt = (async () => {
       await ensureStarted();
-      await session!.mount((presenter) => factoryFor(presenter));
+      const state = await session!.mount((presenter) => factoryFor(presenter));
+      if (state.status !== "ready") {
+        throw new Error(state.error || "Presenter failed to mount");
+      }
+      setFailed(false);
+      setMountError("");
       setReady(true);
       deps.onReady?.();
-    })().catch((err) => {
-      boot = undefined;
-      console.error("[page-runtime] mode mount failed:", err);
-      setReady(false);
-      throw err;
-    });
-    return boot;
+    })()
+      .catch((err) => {
+        console.error("[page-runtime] mode mount failed:", err);
+        markMountFailed(err);
+        throw err;
+      })
+      .finally(() => {
+        if (boot === attempt) boot = undefined;
+      });
+    boot = attempt;
+    return attempt;
   }
 
   const View = () => {
-    onMount(() => { void mount(); });
+    onMount(() => { void mount().catch(() => {}); });
     return (
-      <Show when={bridgeView()}>
-        {(view) => <Dynamic component={view()} />}
+      <Show
+        when={!failed()}
+        fallback={
+          <div class="presenter-error" role="alert">
+            <div class="presenter-error-title">{t("pluginViewLoadFailed")}</div>
+            <Show when={mountError()}>
+              <div class="presenter-error-detail">{mountError()}</div>
+            </Show>
+            <button class="presenter-error-retry" type="button" onClick={retryMount}>
+              {t("settingsRetry")}
+            </button>
+          </div>
+        }
+      >
+        <Show when={bridgeView()}>
+          {(view) => <Dynamic component={view()} />}
+        </Show>
       </Show>
     );
   };
@@ -300,7 +378,12 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     },
     search: async (q) => {
       setQuery(q);
-      await session?.setQuery(q);
+      pendingQuery = q;
+      if (!ready()) {
+        if (failed()) retryIfDue();
+        else void mount().catch(() => {});
+      }
+      if (serviceStarted) await session?.setQuery(q);
       postBoth("query", q);
       deps.services.scheduleResize();
     },
@@ -325,27 +408,43 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       void session?.subInput(text);
     },
     onKey: (e: KeyboardEvent, _ctx: ModeKeyContext) => {
-      // The Presenter already saw the original DOM key. The host-routed copy
-      // is replayed through lume.on.key for pages that use the semantic
-      // surface; returning false lets the shell keep its own Tab/Esc routing.
-      bridge?.post("key", {
+      // The Presenter already saw the original DOM key (the in-frame bridge
+      // waits one task so page bubble handlers can preventDefault first).
+      // Once forwarded, the page owns the key: returning true prevents the
+      // shell's late arrow/Enter fallback from racing lume.on.key.
+      if (!bridge?.live()) return false;
+      bridge.post("key", {
         key: e.key,
+        code: e.code,
         ctrlKey: e.ctrlKey,
         shiftKey: e.shiftKey,
         altKey: e.altKey,
+        metaKey: e.metaKey,
       });
-      return false;
+      return true;
     },
     openContextMenu: () => false,
-    onEscape: () => false,
+    onEscape: async () => {
+      if (!bridge?.live()) return false;
+      return bridge.requestKey({
+        key: "Escape",
+        code: "Escape",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+      });
+    },
     modal,
     previewTarget: () => null,
     previewEnabled: () => false,
     measureViewport: () => deps.services.scheduleResize(),
     ready,
+    failed,
     heightPolicy: () => layout().sizing,
     anyExpanded: () => layout().expanded ?? false,
     desiredHeight: () => layout().height ?? m.height,
+    fitContentHeight: () => layout().contentHeight ?? null,
     pageKind: () => "main",
     restorePage: () => {},
     applySettings: (settings) => {
@@ -359,10 +458,19 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       } else {
         void session
           ?.switchPresenter(chosen, (presenter) => factoryFor(presenter))
-          .then(() => setReady(true));
+          .then((state) => {
+            if (state.status !== "ready") throw new Error(state.error || "Presenter failed to mount");
+            setFailed(false);
+            setMountError("");
+            setReady(true);
+          })
+          .catch(markMountFailed);
       }
     },
-    onShow: async () => { await session?.show(); },
+    onShow: async () => {
+      retryIfDue();
+      if (serviceStarted) await session?.show();
+    },
     onHide: async () => { await session?.hide(); },
     onEnter: (info) => {
       // A new declarative entry is a new page session payload: stale
@@ -459,11 +567,14 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       if (!m.presenters.some((presenter) => presenter.id === presenterId)) {
         throw new Error(`unknown Presenter "${presenterId}"`);
       }
-      if (!started) {
+      if (!serviceStarted) {
         session!.setRequestedPresenter(presenterId);
         return;
       }
-      await session!.switchPresenter(presenterId, (presenter) => factoryFor(presenter));
+      const state = await session!.switchPresenter(presenterId, (presenter) => factoryFor(presenter));
+      if (state.status !== "ready") throw new Error(state.error || "Presenter failed to mount");
+      setFailed(false);
+      setMountError("");
       setReady(true);
     },
     applyPresenterSettings: (values) => {

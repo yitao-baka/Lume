@@ -15,7 +15,7 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": ["$EXE/**", "$LOCALDATA/**", "$RESOURCE/**"]
       }
     }
   },

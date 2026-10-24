@@ -4,7 +4,8 @@
 
 import { currentThemeMode, PANEL_SURFACE_BG } from "../theme";
 import { createIframeView } from "../plugins/iframeBridge";
-import type { PageLayoutReport, PageModel, PresenterDescriptor } from "./contracts";
+import type { PageModel, PresenterDescriptor } from "./contracts";
+import { normalizeLayoutReport, normalizeResizeRequest } from "./layout";
 import type { PageSession } from "./session";
 
 const PRESENTER_BRIDGE_SCRIPT = `(function () {
@@ -39,13 +40,38 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
   });
   var HOST_FORM = window.__LUME_HOST_FORM__ === "window" ? "window" : "launcher";
   var reportTimer = 0;
+  var SNAPSHOT_MAX_CHARS = 1000000;
+  var SNAPSHOT_MAX_FIELDS = 200;
+  var SNAPSHOT_MAX_FIELD_CHARS = 65536;
+  var SNAPSHOT_MAX_CUSTOM_CHARS = 512000;
+  function domPath(el) {
+    var parts = [];
+    var node = el;
+    while (node && node.nodeType === 1 && node !== document.documentElement) {
+      var parent = node.parentElement;
+      if (!parent) break;
+      var tag = node.tagName.toLowerCase();
+      var index = 1;
+      for (var sibling = node.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+        if (sibling.tagName === node.tagName) index++;
+      }
+      parts.unshift(tag + ":nth-of-type(" + index + ")");
+      node = parent;
+    }
+    return parts.join(">");
+  }
   function fieldKey(el) {
-    if (el.id) return el.id;
-    if (el.name) return "name:" + el.name;
-    return "path:" + Array.from(document.querySelectorAll("input,textarea,select,[contenteditable]")).indexOf(el);
+    if (el.id) return "id:" + el.id;
+    if (el.name) {
+      var named = Array.from(document.querySelectorAll("[name]")).filter(function (node) {
+        return node.getAttribute("name") === el.name;
+      });
+      return "name:" + el.name + "\\u001f" + named.indexOf(el);
+    }
+    return "path:" + domPath(el);
   }
   function fieldValue(el) {
-    if (el.multiple) return Array.from(el.options).filter(function (o) { return o.selected; }).map(function (o) { return o.value; }).join(",");
+    if (el.multiple) return Array.from(el.options).filter(function (o) { return o.selected; }).map(function (o) { return o.value; });
     if (el.type === "checkbox" || el.type === "radio") return el.checked ? "on" : "";
     if (el.isContentEditable) return el.innerText || "";
     return el.value == null ? "" : String(el.value);
@@ -65,20 +91,60 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
   }
   function captureSnapshot() {
     var values = Array.from(document.querySelectorAll("input,textarea,select,[contenteditable]")).slice(0, 200).map(function (el) {
-      return { key: fieldKey(el), value: fieldValue(el), checked: !!el.checked };
+      var value = fieldValue(el);
+      if (Array.isArray(value)) {
+        value = value.slice(0, 64).map(function (entry) { return String(entry).slice(0, SNAPSHOT_MAX_FIELD_CHARS); });
+      } else {
+        value = String(value == null ? "" : value).slice(0, SNAPSHOT_MAX_FIELD_CHARS);
+      }
+      return { key: fieldKey(el), value: value, checked: !!el.checked };
     });
     var custom = typeof handlers.snapshot === "function" ? handlers.snapshot() : null;
-    return { v: 2, auto: { fields: values }, custom: custom == null ? null : custom };
+    if (custom != null) {
+      try {
+        if (JSON.stringify(custom).length > SNAPSHOT_MAX_CUSTOM_CHARS) custom = null;
+      } catch (err) {
+        custom = null;
+      }
+    }
+    var snap = { v: 2, auto: { fields: values }, custom: custom == null ? null : custom };
+    while (values.length > 0 && JSON.stringify(snap).length > SNAPSHOT_MAX_CHARS) values.pop();
+    if (JSON.stringify(snap).length > SNAPSHOT_MAX_CHARS) return null;
+    return snap;
+  }
+  function resolveSnapshotField(key) {
+    var raw = String(key == null ? "" : key);
+    if (raw.indexOf("id:") === 0) return document.getElementById(raw.slice(3));
+    if (raw.indexOf("name:") === 0) {
+      var nameKey = raw.slice(5);
+      var split = nameKey.lastIndexOf("\\u001f");
+      var name = split >= 0 ? nameKey.slice(0, split) : nameKey;
+      var wanted = split >= 0 ? Number(nameKey.slice(split + 1)) : 0;
+      var named = Array.from(document.querySelectorAll("[name]")).filter(function (node) {
+        return node.getAttribute("name") === name;
+      });
+      return named[Number.isFinite(wanted) ? wanted : 0] || null;
+    }
+    if (raw.indexOf("path:") === 0) return document.querySelector(raw.slice(5));
+    // Backward compatibility with v2 snapshots written before key prefixes.
+    var legacyId = document.getElementById(raw);
+    if (legacyId) return legacyId;
+    if (/^[0-9]+$/.test(raw)) {
+      return Array.from(document.querySelectorAll("input,textarea,select,[contenteditable]"))[Number(raw)] || null;
+    }
+    return null;
   }
   function restoreSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return;
     var fields = snapshot.auto && Array.isArray(snapshot.auto.fields) ? snapshot.auto.fields : [];
+    var changed = [];
     for (var i = 0; i < fields.length; i++) {
       var saved = fields[i];
-      var el = document.getElementById(saved.key) || document.querySelector('[name="' + String(saved.key).replace(/"/g, '\\"') + '"]');
+      var el = resolveSnapshotField(saved.key);
       if (!el) continue;
-      if (el.multiple && Array.isArray(saved.value)) {
-        for (var j = 0; j < el.options.length; j++) el.options[j].selected = saved.value.indexOf(el.options[j].value) >= 0;
+      if (el.multiple) {
+        var selected = Array.isArray(saved.value) ? saved.value : String(saved.value == null ? "" : saved.value).split(",");
+        for (var j = 0; j < el.options.length; j++) el.options[j].selected = selected.indexOf(el.options[j].value) >= 0;
       } else if (el.type === "checkbox" || el.type === "radio") {
         el.checked = !!saved.checked;
       } else if (el.isContentEditable) {
@@ -86,8 +152,18 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       } else {
         el.value = saved.value == null ? "" : String(saved.value);
       }
+      changed.push(el);
     }
     if (typeof handlers.restore === "function") handlers.restore(snapshot.custom);
+    // Titlebar frames mirror the query; replaying input there would write the
+    // old query back into the authoritative Page Service. Main view frames
+    // need the events so framework-controlled inputs and validation update.
+    if (!window.__LUME_TITLEBAR__) {
+      for (var k = 0; k < changed.length; k++) {
+        changed[k].dispatchEvent(new Event("input", { bubbles: true }));
+        changed[k].dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
     scheduleReport("restore");
   }
 
@@ -130,7 +206,11 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
     if (d.__lumeCall) {
       var call = d.__lumeCall;
       Promise.resolve()
-        .then(function () { return call.type === "snapshot" ? captureSnapshot() : undefined; })
+        .then(function () {
+          if (call.type === "snapshot") return captureSnapshot();
+          if (call.type === "key") return typeof handlers.key === "function" ? handlers.key(call.payload) : false;
+          return undefined;
+        })
         .then(function (result) {
           parent.postMessage({ __lumeCallResult: { callId: call.callId, ok: true, result: result } }, "*");
         })
@@ -156,7 +236,12 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
     var t = e.target;
     if (t && t.closest && t.closest("input, textarea, select, [contenteditable]")) return;
     if (e.defaultPrevented) return;
-    parent.postMessage({ __lumeKey: { seq: ++seq, key: e.key, code: e.code, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey } }, "*");
+    setTimeout(function () {
+      // Bubble listeners (including handlers installed after this bridge) have
+      // completed by now, so preventDefault reliably suppresses forwarding.
+      if (e.defaultPrevented) return;
+      parent.postMessage({ __lumeKey: { seq: ++seq, key: e.key, code: e.code, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey } }, "*");
+    }, 0);
   });
   if (window.__LUME_TITLEBAR__) {
     document.addEventListener("mousedown", function (e) {
@@ -176,12 +261,35 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
   if (document.readyState === "complete") announce(); else window.addEventListener("load", announce);
 })();`;
 
+/** Presenter documents are opaque-origin sandboxes. CSP closes the browser's
+ * native network paths (fetch/XHR/WebSocket/EventSource/forms/subresources)
+ * so a page cannot bypass the host's permission-checked HTTP proxy. Asset
+ * URLs remain available only for host-resolved icons and media. */
+const PRESENTER_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "navigate-to 'none'",
+  "script-src 'unsafe-inline' blob:",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob: asset: lume-resource: http://asset.localhost https://asset.localhost",
+  "media-src data: blob: asset: lume-resource: http://asset.localhost https://asset.localhost",
+  "font-src data:",
+  "worker-src 'none'",
+  "manifest-src 'none'",
+].join("; ");
+
 export function injectPresenterBridge(
   html: string,
   form: "launcher" | "window",
   titlebar = false
 ): string {
   const injection =
+    '<meta http-equiv="Content-Security-Policy" content="' + PRESENTER_CSP + '">' +
     '<base target="_blank">' +
     '<style>html{background:var(--lume-page-bg,' + PANEL_SURFACE_BG[currentThemeMode()] + ')}</style>' +
     '<script>window.__LUME_HOST_FORM__=' + JSON.stringify(form) + ';</script>' +
@@ -220,10 +328,11 @@ export interface PresenterBridge {
   postModel(model: PageModel): void;
   live: () => boolean;
   snapshot: () => Promise<unknown | null>;
+  requestKey(key: Record<string, unknown>): Promise<boolean>;
 }
 
 export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBridge {
-  const { View, post, live, snapshot } = createIframeView(
+  const { View, post, live, snapshot, call } = createIframeView(
     async (method, args) => {
       switch (method) {
         case "page.ready":
@@ -235,7 +344,7 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
         case "page.dispatch":
           return opts.session.dispatch(args.intent as never);
         case "page.reportLayout":
-          opts.session.layout(args.report as PageLayoutReport);
+          opts.session.layout(normalizeLayoutReport(args.report));
           return null;
         case "page.setModal":
           opts.session.setModal(Boolean(args.open));
@@ -252,7 +361,10 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
           opts.showToast(String(args.text ?? ""), args.opts as never);
           return null;
         case "app.resize":
-          opts.resizeWindow(args.width as number | undefined, args.height as number | undefined);
+          {
+            const size = normalizeResizeRequest(args.width, args.height);
+            opts.resizeWindow(size.width, size.height);
+          }
           return null;
         case "app.dragWindow":
           if (!opts.dragWindow) throw new Error("app.dragWindow is unavailable in this host");
@@ -292,5 +404,6 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
     postModel: (model) => post("model", model),
     live,
     snapshot,
+    requestKey: async (key) => (await call("key", key, 1500)) === true,
   };
 }

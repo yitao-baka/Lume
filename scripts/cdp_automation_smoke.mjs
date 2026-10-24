@@ -13,7 +13,7 @@ import { spawn, execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 const CDP_PORT = 9222;
-const APP = "src-tauri/target/release/lume.exe";
+const APP = "src-tauri/target/debug/lume.exe";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 const check = (name, cond, extra = "") => {

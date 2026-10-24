@@ -329,10 +329,19 @@ Page Service + `[[presenters]]`。
 
 - Presenter 运行在 opaque-origin 沙箱，不授予 `allow-same-origin`。
 - Presenter 的敏感 RPC 在 `permissions.ts`、宿主 API 和 Rust 命令侧同时拒绝。
+- Presenter 与逻辑帧注入严格 CSP，关闭原生 connect/form/frame/object/worker
+  网络出口；页面文件只允许插件目录内的相对路径，逻辑模块由 Rust 读取并
+  做 canonicalize 归属校验。
+- Presenter 与逻辑帧注入严格 CSP，关闭原生 connect/form/frame/object/worker
+  网络出口；页面文件只允许插件目录内的相对路径，逻辑模块由 Rust 读取并
+  做 canonicalize 归属校验。
 - Page Service 的 `entry` 仍受插件权限与 Rust 台账约束。
 - 模型 JSON 校验深度、节点数、字符串长度和总大小。
 - ResourceRef 校验 scheme、插件目录和 URL。
-- Presenter 模型、资源和 intent 都有传输上限。
+- 内联 `data:image/*;base64` 资源单条上限 512 KiB，普通 URL 上限 8 KiB；
+  两者仍受 Page Model 总大小约束。
+- Presenter 模型、资源、intent 和快照都有传输上限；快照在 iframe 内与宿主
+  两侧分别限长，跨窗口关闭上报超限时降级为无快照关闭。
 - Presenter 崩溃不终止 Page Service；Page Service 崩溃走逻辑宿主熔断和重载。
 
 ## 诊断
@@ -377,6 +386,12 @@ cd src-tauri && cargo check && cargo test
 - Presenter 无法直接访问网络、数据库、文件、剪贴板或秘密。
 - 切换 Presenter 不重置服务、查询结果或选择。
 - 独立窗口、titlebar、回流、主题、懒加载和键盘契约保持。
+- `lume.on.key` 返回 true 表示消费；Esc 的关闭决定等待 Presenter 回执。
+- `sizing = "fit"` 使用 Presenter 上报的 `contentHeight`（页面区域高度），
+  由宿主加上搜索行并限制到工作区。
+- `lume.on.key` 返回 true 表示消费；Esc 的关闭决定等待 Presenter 回执。
+- `sizing = "fit"` 使用 Presenter 上报的 `contentHeight`（页面区域高度），
+  由宿主加上搜索行并限制到工作区。
 - `file-search` 与 `translator` 声明 api 2，并以 Page Service / Presenter 运行。
 - api 1 插件被明确拒绝，不存在隐式兼容路径。
 - provider、navBars、list template 和后台 service 没有回归。

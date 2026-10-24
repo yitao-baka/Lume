@@ -8,7 +8,7 @@
 import { spawn, execSync } from "node:child_process";
 
 const CDP_PORT = 9222;
-const APP = "src-tauri/target/release/lume.exe";
+const APP = "src-tauri/target/debug/lume.exe";
 const IMG = "E:\\SoftwareDevelopment\\Projects\\LumeLauncher\\test\\PixPin_2026-08-06_22-03-20.png";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

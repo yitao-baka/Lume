@@ -3,7 +3,7 @@ import { spawn, execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
-spawn("src-tauri/target/release/lume.exe", [], {
+spawn("src-tauri/target/debug/lume.exe", [], {
   env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9222" },
   stdio: "ignore",
 });

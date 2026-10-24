@@ -15,7 +15,7 @@ const CYCLES = Number(process.argv[2]) || 20;
 const KEEP = process.argv.includes("--keep");
 const PLUGIN = (process.argv.find((a) => a.startsWith("--plugin=")) ?? "--plugin=titlebar-demo").split("=")[1];
 const PORT = 9233;
-const APP = "src-tauri/target/release/lume.exe";
+const APP = "src-tauri/target/debug/lume.exe";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
@@ -24,8 +24,8 @@ rmSync("test/blank_repro", { recursive: true, force: true });
 mkdirSync("test/blank_repro", { recursive: true });
 // Fixture: prefer the installed copy (the default titlebar-demo fixture has
 // both a Presenter and a titlebar Presenter); fall back to the example.
-rmSync(`src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true, force: true });
-cpSync(`examples/plugins/${PLUGIN}`, `src-tauri/target/release/plugins/${PLUGIN}`, { recursive: true });
+rmSync(`src-tauri/target/debug/plugins/${PLUGIN}`, { recursive: true, force: true });
+cpSync(`examples/plugins/${PLUGIN}`, `src-tauri/target/debug/plugins/${PLUGIN}`, { recursive: true });
 
 const logFd = openSync("test/blank_repro/lume.log", "w");
 spawn(APP, [], {

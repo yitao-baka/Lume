@@ -80,9 +80,9 @@ const m = await connect(mainT.target.webSocketDebuggerUrl);
 const invoke = (cmd, args = {}) => m.evalJs(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
 const type = (q) => m.evalJs(`(() => { const i = document.getElementById("search-input"); i.focus(); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
 const clickKwRow = async (label) => {
-  const idx = await m.evalJs(`[...document.querySelectorAll(".result-box")].findIndex((el) => el.textContent.includes(${JSON.stringify(label)}))`);
+  const idx = await m.evalJs(`[...document.querySelectorAll("[data-target-id]")].findIndex((el) => el.textContent.includes(${JSON.stringify(label)}))`);
   if (idx < 0) return false;
-  await m.evalJs(`[...document.querySelectorAll(".result-box")][${idx}].dispatchEvent(new MouseEvent("click", { bubbles: true })); "ok"`);
+  await m.evalJs(`[...document.querySelectorAll("[data-target-id]")][${idx}].dispatchEvent(new MouseEvent("click", { bubbles: true })); "ok"`);
   await sleep(250);
   await m.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }))`);
   return true;
@@ -139,8 +139,8 @@ await invoke("toggle_launcher");
 await sleep(1200);
 await type("hello:payload-test");
 await sleep(1500);
-const featVisible = await m.evalJs(`[...document.querySelectorAll(".result-box")].some((el) => el.textContent.includes("Hello Mode：处理这段文本"))`);
-await m.evalJs(`(() => { const b = [...document.querySelectorAll(".result-box")].find((el) => el.textContent.includes("Hello Mode：处理这段文本")); if (b) b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return "ok"; })()`);
+const featVisible = await m.evalJs(`[...document.querySelectorAll("[data-target-id]")].some((el) => el.textContent.includes("Hello Mode：处理这段文本"))`);
+await m.evalJs(`(() => { const b = [...document.querySelectorAll("[data-target-id]")].find((el) => el.textContent.includes("Hello Mode：处理这段文本")); if (b) b.dispatchEvent(new MouseEvent("click", { bubbles: true })); return "ok"; })()`);
 await sleep(2000);
 // 启动器应已隐藏（detach 语义），插件窗口仍是同一 target（聚焦而非重建）
 const pwAfter = await pluginWindowTarget();

@@ -33,14 +33,26 @@ async function mainTarget() { for (let i=0;i<50;i++){ for(const t of (await targ
 async function launch() { kill(); await sleep(400); spawn("src-tauri/target/debug/lume.exe",[],{env:{...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:"--remote-debugging-port="+PORT},stdio:"ignore"}); const c=await mainTarget(); await sleep(1400); return c; }
 mkdirSync("test",{recursive:true});
 let main;
+let originalPresenters = null;
 try { main = await launch(); } catch (e) { console.log("LAUNCH FAIL", String(e)); process.exit(1); }
 try {
   await main.ev('window.__TAURI_INTERNALS__.invoke("toggle_launcher")');
   await sleep(900);
+  originalPresenters = await main.ev('(async () => (await window.__TAURI_INTERNALS__.invoke("get_settings"))?.pages?.presenters ?? null)()');
+  await main.ev('document.querySelectorAll(".mode-switch-item")[0]?.click(); "ok"');
+  await sleep(400);
   await main.ev('(() => { const i=document.getElementById("search-input"); i.focus(); i.value="e"; i.dispatchEvent(new Event("input",{bubbles:true})); return "ok"; })()');
   await sleep(1500);
   let navModel = await main.ev('window.__pageRuntimeLatestModel("apps")');
   check("navigate grid uses lume.navigate/v1", navModel?.schema === "lume.navigate/v1" && (await main.ev('!!document.querySelector(".bar-list, .result-grid")')));
+  const gridBeforeArrow = navModel?.selection?.primaryId;
+  const gridItems = navModel?.data?.results?.items ?? [];
+  const gridIndex = gridItems.findIndex((item) => item.id === gridBeforeArrow);
+  const gridArrow = gridIndex >= 0 && gridIndex >= gridItems.length - 1 ? "ArrowUp" : "ArrowDown";
+  await main.ev(`window.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(gridArrow)}, bubbles: true }))`);
+  await sleep(300);
+  navModel = await main.ev('window.__pageRuntimeLatestModel("apps")');
+  check("navigate grid restores two-dimensional arrow selection", navModel?.selection?.primaryId !== gridBeforeArrow && (await main.ev('!!document.querySelector(".result-grid .result-selected")')), JSON.stringify({ before: gridBeforeArrow, after: navModel?.selection?.primaryId }));
   const navSelection = navModel?.selection?.primaryId;
   const navRevision = navModel?.revision;
   await main.ev('window.__TAURI_INTERNALS__.invoke("open_settings")');
@@ -52,7 +64,51 @@ try {
   settingsUi.ws.close();
   navModel = await main.ev('window.__pageRuntimeLatestModel("apps")');
   check("navigation keeps selection across Presenter", navModel?.selection?.primaryId === navSelection && navModel?.revision >= navRevision, JSON.stringify({ before: navSelection, after: navModel?.selection?.primaryId, revision: [navRevision, navModel?.revision] }));
+  await sleep(500);
+  const navListChrome = await main.ev(`(() => {
+    const scroll = document.querySelector(".nav-list-scroll");
+    const rows = [...document.querySelectorAll(".nav-list-row")];
+    return {
+      rows: rows.length,
+      icons: document.querySelectorAll(".nav-list-row .nav-list-icon-img").length,
+      scrollbar: scroll ? getComputedStyle(scroll).scrollbarWidth : null,
+      overflow: scroll ? scroll.scrollHeight > scroll.clientHeight : false,
+    };
+  })()`);
+  check("compact navigation renders icons without a native scrollbar", navListChrome.rows > 0 && navListChrome.icons > 0 && navListChrome.scrollbar === "none", JSON.stringify(navListChrome));
+  const beforeNavArrow = navModel?.selection?.primaryId;
+  const navItems = navModel?.data?.results?.items ?? [];
+  const navIndex = navItems.findIndex((item) => item.id === beforeNavArrow);
+  const navArrow = navIndex >= 0 && navIndex >= navItems.length - 1 ? "ArrowUp" : "ArrowDown";
+  await main.ev(`window.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(navArrow)}, bubbles: true }))`);
+  await sleep(350);
+  navModel = await main.ev('window.__pageRuntimeLatestModel("apps")');
+  check("compact navigation keeps keyboard selection and the active row visible", navModel?.selection?.primaryId !== beforeNavArrow && (await main.ev('!!document.querySelector(".nav-list-row.active")')), JSON.stringify({ before: beforeNavArrow, after: navModel?.selection?.primaryId }));
   await main.shot("page-runtime-navigate-list.png");
+
+  await main.ev('(() => { const i=document.getElementById("search-input"); i.value=""; i.dispatchEvent(new Event("input",{bubbles:true})); return "ok"; })()');
+  await sleep(900);
+  let navHome = await main.ev('window.__pageRuntimeLatestModel("apps")');
+  check("clearing the query restores a visible compact-home selection", navHome?.data?.query === "" && (await main.ev('!!document.querySelector(".nav-list-row.active")')), JSON.stringify({ query: navHome?.data?.query, selected: navHome?.selection?.primaryId }));
+  const sectionCandidate = navHome?.data?.sections?.find((section) => section.expandable && section.items.length > 1);
+  if (sectionCandidate) {
+    const toggleSection = async () => main.ev(`(() => { const button=[...document.querySelectorAll(".nav-list-heading")].find((el)=>el.dataset.navSectionId===${JSON.stringify(sectionCandidate.id)}); button?.click(); return !!button; })()`);
+    let sectionNow = navHome?.data?.sections?.find((section) => section.id === sectionCandidate.id);
+    if (!sectionNow?.expanded) { await toggleSection(); await sleep(350); }
+    await main.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))');
+    await sleep(180);
+    await main.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))');
+    await sleep(250);
+    await toggleSection();
+    await sleep(400);
+    navHome = await main.ev('window.__pageRuntimeLatestModel("apps")');
+    sectionNow = navHome?.data?.sections?.find((section) => section.id === sectionCandidate.id);
+    const firstId = sectionCandidate.items[0]?.id;
+    check("collapsing a compact section clamps selection to its visible row", sectionNow && !sectionNow.expanded && sectionNow.selectedIndex === 0 && (await main.ev(`!!document.querySelector('.nav-list-row.active[data-target-id=${JSON.stringify(sectionCandidate.items[0]?.id)}]')`)), JSON.stringify({ firstId, selectedIndex: sectionNow?.selectedIndex, selected: navHome?.selection?.primaryId }));
+  } else {
+    check("collapsing a compact section clamps selection to its visible row", false, "no expandable section fixture");
+  }
+  await main.shot("page-runtime-navigate-list-home.png");
   await main.ev('window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { pages: { presenters: { apps: "navigate-grid", clipboard: "clipboard-list" } } } })');
   await sleep(700);
   check("navigation returns to grid Presenter", await main.ev('!!document.querySelector(".bar-list, .result-grid")'));
@@ -62,15 +118,107 @@ try {
   await waitFor(main, 'window.__pageRuntimeLatestModel("clipboard")?.status !== "loading" && (window.__pageRuntimeLatestModel("clipboard")?.data?.total || 0) > 0');
   let clipModel = await main.ev('window.__pageRuntimeLatestModel("clipboard")');
   check("clipboard uses lume.clipboard/v1", clipModel?.schema === "lume.clipboard/v1" && (await main.ev('!!document.querySelector(".clip-page")')));
-  const clipSelection = clipModel?.selection?.primaryId;
-  const clipRevision = clipModel?.revision;
+  let clipSelection = clipModel?.selection?.primaryId;
+  let clipRevision = clipModel?.revision;
   const clipTotal = clipModel?.data?.total;
   const clipItems = clipModel?.data?.items?.length;
   check("clipboard model is windowed", typeof clipTotal === "number" && typeof clipItems === "number" && (clipTotal <= 40 || clipItems < clipTotal), JSON.stringify({ total: clipTotal, items: clipItems, window: clipModel?.data?.window }));
+  for (let index = 0; index < 15; index++) {
+    await main.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))');
+    await sleep(18);
+  }
+  await sleep(500);
+  clipModel = await main.ev('window.__pageRuntimeLatestModel("clipboard")');
+  const fullClipScroll = await main.ev(`(() => {
+    const scroller = document.querySelector(".clip-list");
+    const active = scroller?.querySelector('.clip-row[aria-selected="true"]');
+    const sr = scroller?.getBoundingClientRect();
+    const ar = active?.getBoundingClientRect();
+    return {
+      scrollTop: scroller?.scrollTop ?? 0,
+      offset: window.__pageRuntimeLatestModel("clipboard")?.data?.window?.offset ?? 0,
+      activeVisible: !!(sr && ar && ar.top >= sr.top - 1 && ar.bottom <= sr.bottom + 1),
+    };
+  })()`);
+  check("history list keeps keyboard selection inside its virtual viewport", fullClipScroll.scrollTop > 0 && fullClipScroll.offset > 0 && fullClipScroll.activeVisible, JSON.stringify({ window: clipModel?.data?.window, ...fullClipScroll }));
+  clipSelection = clipModel?.selection?.primaryId;
+  clipRevision = clipModel?.revision;
   await main.ev('window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { pages: { presenters: { apps: "navigate-grid", clipboard: "clipboard-compact" } } } })');
   check("clipboard switches to compact Presenter", await waitFor(main, '!!document.querySelector(".clip-compact-presenter")'));
+  await sleep(500);
   clipModel = await main.ev('window.__pageRuntimeLatestModel("clipboard")');
   check("clipboard keeps model and selection", clipModel?.selection?.primaryId === clipSelection && clipModel?.revision >= clipRevision, JSON.stringify({ before: clipSelection, after: clipModel?.selection?.primaryId, revision: [clipRevision, clipModel?.revision] }));
+  const compactChrome = await main.ev(`(() => {
+    const scroller = document.querySelector(".clip-compact-list");
+    const row = scroller?.querySelector(".clip-compact-row");
+    return {
+      scrollbar: scroller ? getComputedStyle(scroller).scrollbarWidth : null,
+      rowHeight: row ? getComputedStyle(row).height : null,
+      rendered: scroller?.querySelectorAll(".clip-compact-row").length ?? 0,
+      modelRows: window.__pageRuntimeLatestModel("clipboard")?.data?.items?.length ?? -1,
+    };
+  })()`);
+  check("compact clipboard uses 44px rows, hidden scrollbar and the windowed model", compactChrome.scrollbar === "none" && compactChrome.rowHeight === "44px" && compactChrome.rendered === compactChrome.modelRows, JSON.stringify(compactChrome));
+  for (let index = 0; index < 30; index++) {
+    await main.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }))');
+    await sleep(12);
+  }
+  await sleep(400);
+  await main.shot("page-runtime-clipboard-compact-top.png");
+  const plainSelectionModel = await main.ev('window.__pageRuntimeLatestModel("clipboard")');
+  check("plain selection is not rendered as a multi-select check", plainSelectionModel?.data?.status?.selected === 0 && (await main.ev('!document.querySelector(".clip-compact-row .clip-row-check")')), JSON.stringify({ selected: plainSelectionModel?.data?.status?.selected, checks: await main.ev('document.querySelectorAll(".clip-compact-row .clip-row-check").length') }));
+
+  const hoverWasEnabled = await main.ev('(async () => !!(await window.__TAURI_INTERNALS__.invoke("get_settings"))?.clipboard?.hover_select)()');
+  if (hoverWasEnabled) {
+    await main.ev('window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { clipboard: { hover_select: false } } })');
+    await sleep(300);
+  }
+  const beforeHover = (await main.ev('window.__pageRuntimeLatestModel("clipboard")'))?.selection?.primaryId;
+  const hoverTarget = clipModel?.data?.items?.find((row) => row.id !== beforeHover)?.id;
+  await main.ev(`(() => { const row=[...document.querySelectorAll(".clip-compact-row")].find((el)=>el.dataset.targetId===${JSON.stringify(hoverTarget)}); row?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true })); return !!row; })()`);
+  await sleep(220);
+  const afterHover = (await main.ev('window.__pageRuntimeLatestModel("clipboard")'))?.selection?.primaryId;
+  check("compact clipboard obeys hoverSelect=false", afterHover === beforeHover, JSON.stringify({ beforeHover, afterHover }));
+  await main.ev(`(() => { const row=[...document.querySelectorAll(".clip-compact-row")].find((el)=>el.dataset.targetId===${JSON.stringify(hoverTarget)}); row?.click(); return !!row; })()`);
+  await sleep(300);
+  const afterClick = (await main.ev('window.__pageRuntimeLatestModel("clipboard")'))?.selection?.primaryId;
+  check("first compact-row click selects instead of silently pasting", afterClick === hoverTarget && (await main.ev('!!document.querySelector(".clip-page")')), JSON.stringify({ hoverTarget, afterClick }));
+
+  for (let index = 0; index < 25; index++) {
+    await main.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }))');
+    await sleep(18);
+  }
+  await sleep(600);
+  const scrolledClip = await main.ev('window.__pageRuntimeLatestModel("clipboard")');
+  const scrollCheck = await main.ev(`(() => {
+    const scroller = document.querySelector(".clip-compact-list");
+    const active = scroller?.querySelector('.clip-compact-row[aria-selected="true"]');
+    const sr = scroller?.getBoundingClientRect();
+    const ar = active?.getBoundingClientRect();
+    return {
+      scrollTop: scroller?.scrollTop ?? 0,
+      offset: window.__pageRuntimeLatestModel("clipboard")?.data?.window?.offset ?? 0,
+      activeVisible: !!(sr && ar && ar.top >= sr.top - 1 && ar.bottom <= sr.bottom + 1),
+    };
+  })()`);
+  check("compact clipboard keeps keyboard selection inside the virtual viewport", scrolledClip?.data?.window?.offset > 0 && scrollCheck.activeVisible, JSON.stringify({ window: scrolledClip?.data?.window, ...scrollCheck }));
+  await main.shot("page-runtime-clipboard-compact-scrolled.png");
+
+  await main.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }))');
+  await sleep(250);
+  const multiModel = await main.ev('window.__pageRuntimeLatestModel("clipboard")');
+  check("compact clipboard exposes multi-select state", (multiModel?.data?.selectedIds?.length ?? 0) > 0 && (await main.ev('!!document.querySelector(".clip-compact-row .clip-row-check")')));
+  await main.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))');
+  await sleep(200);
+
+  await main.ev('document.querySelector(".clip-clear-btn")?.click(); "ok"');
+  check("compact clear confirmation opens with the safe action focused", await waitFor(main, '!!document.querySelector(".clip-confirm-overlay") && document.activeElement?.classList.contains("clip-confirm-cancel")'));
+  await main.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))');
+  check("closing compact clear confirmation restores search focus", await waitFor(main, '!document.querySelector(".clip-confirm") && document.activeElement?.id === "search-input"'));
+  if (hoverWasEnabled) {
+    await main.ev('window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { clipboard: { hover_select: true } } })');
+    await sleep(200);
+  }
   await main.shot("page-runtime-clipboard-compact.png");
 
   const settings = await main.ev('window.__TAURI_INTERNALS__.invoke("get_settings")');
@@ -82,7 +230,7 @@ try {
   await main.ev('document.querySelectorAll(".mode-switch-item")[1]?.click(); "ok"');
   await sleep(1200);
   check("Presenter selection restores after restart", await main.ev('!!document.querySelector(".clip-compact-presenter")'));
-  await main.ev('window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { pages: { presenters: { apps: "navigate-grid", clipboard: "clipboard-list" } } } })');
+  await main.ev(`window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { pages: { presenters: ${JSON.stringify(originalPresenters ?? { apps: "navigate-grid", clipboard: "clipboard-list" })} } } })`);
 } finally {
   try { main?.ws.close(); } catch {}
   kill();

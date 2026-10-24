@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#72 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#78 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -4927,3 +4927,71 @@ Presenter 名称，值没有持久化或下发路径。
   `cdp_lupx_verify` ALL PASS；插件、p2、p2b、剪贴板 smoke/p2 与熔断回归 PASS。
 - debug / release `--no-bundle` 构建通过；`cdp_plugin_blank_verify`
   **4/4 PASS**、`cdp_plugin_frame_load_verify` **1/1 PASS**。
+
+## 78. 导航与剪贴板紧凑 Presenter 可用性收口（2026-10-24）
+
+来源：内置页迁移到 Page Service / 可替换 Presenter 后，`navigate-list` 只保留
+无图标、无分区层级的纯文本行；`clipboard-compact` 只有 38px 文本行，且行高、
+窗口切片、选中滚动、悬停门控与清空确认框没有和 Page Service 对齐。紧凑导航
+还暴露出迁移时栏目四向导航没有接回、收起栏目后选择可指向隐藏行的问题。
+
+### 78.1 实现
+
+- 紧凑导航改为带条数与展开箭头的分区列表；行内使用真实应用图标、标题和
+  路径/描述，恢复隐藏滚动条、上下淡出边缘、键盘选中跟随滚动，并让窗口
+  fit 测量识别 `.nav-list-scroll`（含空菜单收缩为搜索行）。清空搜索时若栏目区
+  仍停留在 `grid`，自动选中首个可见栏目，避免有列表却无高亮。
+- Page Service 恢复网格的四向移动；紧凑列表的 ↑/↓ 按可见行线性移动，←/→
+  保留给搜索框光标。列表收起栏目时只绘制首行，并在切换、收起与 Enter 前钳制
+  选择；列表复用同一 `section.reorder.start` intent，store 的插入位置计算支持
+  纵向列表。
+- 紧凑剪贴板改为 44px 虚拟行：28px 内容块、单行标题、`类型 · 来源 · 时间`
+  次行，并显示收藏、多选勾选与失效态。`viewport.request` 增加 `rowHeight`，
+  `lume.clipboard/v1` 增加完整列表的 `selectedIndex`；两套 Presenter 都按
+  自身行高上报视口，键盘移动时把选中的虚拟行滚入视口。
+- 紧凑剪贴板遵守 `hoverSelect`：关闭时悬停不改选，首次点击只选中，已选中行
+  再点击才激活。`item.activate` 改回 ClipboardStore 的统一激活入口，保留空格
+  多选后的合并粘贴。清空确认框补齐遮罩、安全默认焦点、Tab 圈定与关闭后的搜索框
+  焦点恢复；键盘上下文菜单按 Presenter 的选中行定位。
+- `cdp_page_runtime_verify` 增加网格二维方向键、紧凑导航图标/无滚动条/键盘滚动、
+  栏目收起选择钳制、44px 虚拟窗口、悬停门控、首击选择、多选、清空弹窗焦点与
+  重启恢复断言，并在结束时恢复测试前的 Presenter 设置。
+
+### 78.2 踩坑
+
+- Page Service 无法直接操作 Presenter 的滚动元素：只存滚动位置时，键盘选中项
+  移出模型窗口后既无法滚动，也无法重新请求对应的行切片。视口契约必须同时携带
+  `selectedIndex` 与当前 Presenter 的 `rowHeight`，由 Presenter 负责 DOM 滚动。
+- 网格收起栏目的一行可容纳 `barCols` 个条目，列表收起的一行只有一个条目；
+  两套 Presenter 不能共用同一个“可见 reach”。列表必须有独立的线性可达集，并在
+  Enter 前再次钳制，否则会出现看不见的选中项。
+- 指针重排经结构化 intent 过桥后拿不到原始 `currentTarget`；Page Service 需在
+  起点坐标处重新解析源行，store 也要同时识别 `.bar-grid` 与 `.nav-list-items`，
+  否则列表拖拽永远找不到插入点。
+- `hoverSelect=false` 只阻止 hover 改选还不够；紧凑行若点击即激活，首击会直接
+  粘贴。两套 Presenter 必须使用同一“首击选择、再击激活”语义。
+- `ClipboardModel.selectedIds` 在没有多选时包含当前主选中项，直接用
+  `includes` 画勾会把普通选中误表现成多选。勾选态必须同时要求
+  `status.selected > 0`。
+- 紧凑行高改变后仍按 52px 计算虚拟窗口会少渲染/错位；行高必须进入视口 intent，
+  而不是假定两种 Presenter 共用常量。原生滚动条也不会因为 `scrollbar-width`
+  的单条声明在所有 WebView2 版本消失，仍需零宽 WebKit 规则与实测断言。
+
+### 78.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm exec tsc -p examples/tsconfig.json`、
+  `pnpm run test:page-runtime` **10/10 PASS**、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 通过；`cargo check`、
+  `cargo test` **247 passed / 9 ignored**；`node scripts/check_i18n.mjs`
+  PASS（**577 键 × 3 语言**、64 组关键词配对）。
+- `node scripts/cdp_page_runtime_verify.mjs` **24/24 PASS**：网格方向键、两套
+  Presenter 切换与选择保持、历史与紧凑剪贴板虚拟滚动、紧凑导航图标与无滚动条、
+  清空查询回选、键盘选中可见、栏目收起选择钳制、44px 紧凑剪贴板虚拟窗口、
+  `hoverSelect=false`、首击选择、普通选中/多选勾分离、清空弹窗焦点和进程重启恢复。
+- `node scripts/cdp_visual_audit_verify.mjs` **28/28 PASS**（浅色主题、完整历史
+  列表与全局视觉契约）；`node scripts/cdp_mode_query_verify.mjs` **47/47 PASS**。
+- 截图：`test/page-runtime-navigate-list.png`、
+  `test/page-runtime-navigate-list-home.png`、
+  `test/page-runtime-clipboard-compact-top.png`、
+  `test/page-runtime-clipboard-compact.png`、
+  `test/page-runtime-clipboard-compact-scrolled.png`。

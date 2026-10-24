@@ -106,7 +106,8 @@ export function createNavigatePlugin(
       if (id) void session.dispatch({ type: "item.activate", targetId: id });
     },
     handleQuery: page.search.handleQuery,
-    onKey: (event: KeyboardEvent, ctx: ModeKeyContext) => page.onKey(event, ctx),
+    onKey: (event: KeyboardEvent, ctx: ModeKeyContext) =>
+      page.onKey(event, ctx, presenterId() === "navigate-list" ? "list" : "grid"),
     openContextMenu: page.openContextMenu,
     onEscape: () => page.search.popDrill(),
     previewTarget: () => null,
@@ -144,6 +145,7 @@ export function createNavigatePlugin(
             iconFor={host.icons.iconFor}
             dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
             markMouse={() => services.markMouse()}
+            selectionSource={() => services.selectionSource()}
           />
         }
       >
@@ -154,6 +156,7 @@ export function createNavigatePlugin(
           iconFor={host.icons.iconFor}
           dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
           markMouse={() => services.markMouse()}
+          selectionSource={() => services.selectionSource()}
         />
       </Show>
     ),

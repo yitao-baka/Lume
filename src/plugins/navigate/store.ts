@@ -745,7 +745,17 @@ export function createNavigateStore(deps: NavigateDeps) {
    * boxes by row (same top ≈ same row), pick the row under `y`, then the
    * horizontal insertion point within it. Below all rows → the very end. */
   function overIndexInGrid(target: HTMLElement, x: number, y: number): number {
-    const boxes = Array.from(target.querySelectorAll(".result-box")) as HTMLElement[];
+    const list = target.classList.contains("nav-list-items");
+    const boxes = Array.from(
+      target.querySelectorAll<HTMLElement>(list ? ".nav-list-row" : ".result-box")
+    );
+    if (list) {
+      for (let index = 0; index < boxes.length; index++) {
+        const rect = boxes[index].getBoundingClientRect();
+        if (y < rect.top + rect.height / 2) return index;
+      }
+      return boxes.length;
+    }
     const rows: { top: number; bottom: number; indices: number[] }[] = [];
     for (let idx = 0; idx < boxes.length; idx++) {
       const r = boxes[idx].getBoundingClientRect();
@@ -779,7 +789,8 @@ export function createNavigateStore(deps: NavigateDeps) {
   function clearDragStyling() {
     document
       .querySelectorAll(
-        ".result-box.result-dragging,.result-box.result-insert-before,.result-box.result-insert-after"
+        ".result-box.result-dragging,.result-box.result-insert-before,.result-box.result-insert-after," +
+          ".nav-list-row.result-dragging,.nav-list-row.result-insert-before,.nav-list-row.result-insert-after"
       )
       .forEach((c) =>
         c.classList.remove("result-dragging", "result-insert-before", "result-insert-after")
@@ -808,12 +819,13 @@ export function createNavigateStore(deps: NavigateDeps) {
         document.body.classList.add("reorder-dragging"); // no text selection mid-drag
       }
       e.preventDefault();
-      const target = document.querySelector(
-        `.bar-grid[data-bar-id="${dr.sectionId}"]`
-      ) as HTMLElement | null;
+      const target = [...document.querySelectorAll<HTMLElement>(".bar-grid[data-bar-id], .nav-list-items[data-bar-id]")]
+        .find((el) => el.dataset.barId === dr.sectionId) ?? null;
       if (!target) return;
       const overIndex = overIndexInGrid(target, e.clientX, e.clientY);
-      const boxes = Array.from(target.querySelectorAll(".result-box")) as HTMLElement[];
+      const boxes = Array.from(
+        target.querySelectorAll<HTMLElement>(".result-box, .nav-list-row")
+      );
       boxes.forEach((b) => b.classList.remove("result-insert-before", "result-insert-after"));
       // No marker when the drop would be a no-op (same slot or adjacent).
       if (overIndex !== dr.fromIndex && overIndex !== dr.fromIndex + 1) {

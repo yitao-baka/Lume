@@ -4,7 +4,7 @@
 import type { AppEntry, MenuState, PluginIconSpec } from "../../launcher/types";
 import type { IntentResult, JsonValue, PageIntent, PageModel, PageService, ResourceRef } from "../../page-runtime/contracts";
 import { NAVIGATE_SCHEMA, type NavigateItem, type NavigateModel, type NavigateSection } from "../../page-runtime/schemas";
-import type { PluginServices } from "../../plugins/types";
+import type { ModeKeyContext, PluginServices } from "../../plugins/types";
 import { createNavigateStore, GRID_ZONE, type ContributedBar, type NavItem, type NavSection, type NavigateStore } from "../../plugins/navigate/store";
 import { createNavigateSearch, type NavigateSearch } from "../../plugins/navigate/search";
 
@@ -80,7 +80,7 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
   refreshBars: () => Promise<void>;
   onShow: () => Promise<void>;
   reset: () => void;
-  onKey: (e: KeyboardEvent, ctx: { editing: boolean; hasResults: boolean }) => boolean;
+  onKey: (e: KeyboardEvent, ctx: ModeKeyContext, layout?: "grid" | "list") => boolean;
   openContextMenu: () => boolean;
   applySettings: (s: unknown) => void;
 } {
@@ -315,10 +315,16 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
           if (!payload?.sectionId || !Number.isInteger(payload.from)) {
             return { status: "failed", code: "reorder.invalid", message: "Invalid reorder start" };
           }
+          const clientX = Number(payload.clientX ?? 0);
+          const clientY = Number(payload.clientY ?? 0);
+          const source = document
+            .elementFromPoint(clientX, clientY)
+            ?.closest<HTMLElement>(".result-box, .nav-list-row") ?? null;
           nav.beginDrag(payload.sectionId, Number(payload.from), {
-            clientX: Number(payload.clientX ?? 0),
-            clientY: Number(payload.clientY ?? 0),
-          } as PointerEvent);
+            clientX,
+            clientY,
+            currentTarget: source,
+          } as unknown as PointerEvent);
           return { status: "accepted" };
         }
         case "section.reorder": {
@@ -375,16 +381,89 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
     nav.setNavHidden(false);
   }
 
-  function onKey(e: KeyboardEvent, ctx: { editing: boolean; hasResults: boolean }): boolean {
+  /** Flatten the rows the compact list actually paints. A collapsed section
+   * contributes only its first row in list form (the grid contributes one
+   * column-wide row instead). */
+  function moveListSelection(delta: number): boolean {
+    const query = search.appsQuery();
+    if (query !== "") {
+      const items = search.apps();
+      if (items.length === 0) return false;
+      const next = Math.max(0, Math.min(items.length - 1, search.selected() + delta));
+      search.setSelected(next);
+      nav.setZone(GRID_ZONE);
+      return true;
+    }
+
+    const rows: { section: NavSection; index: number; item: NavItem }[] = [];
+    for (const section of nav.sections()) {
+      const limit = section.expandable && !section.expanded() ? Math.min(1, section.items.length) : section.items.length;
+      for (let index = 0; index < limit; index++) {
+        const item = section.items[index];
+        if (item) rows.push({ section, index, item });
+      }
+    }
+    if (rows.length === 0) return false;
+    const current = rows.findIndex((row) => row.section.id === nav.zone() && row.index === row.section.selected());
+    const next = current < 0
+      ? (delta > 0 ? 0 : rows.length - 1)
+      : Math.max(0, Math.min(rows.length - 1, current + delta));
+    const target = rows[next];
+    selectTarget({ kind: "bar", section: target.section, index: target.index, item: target.item });
+    return true;
+  }
+
+  function onKey(e: KeyboardEvent, ctx: ModeKeyContext, layout: "grid" | "list" = "grid"): boolean {
     if (e.isComposing) return false;
+    const empty = search.appsQuery() === "";
+    const vertical = e.key === "ArrowUp" || e.key === "ArrowDown";
+    const horizontal = e.key === "ArrowLeft" || e.key === "ArrowRight";
+    const arrow = vertical || horizontal;
+    if (arrow) {
+      if (!empty) {
+        if (!ctx.hasResults) return false;
+        // In list form left/right belongs to the search caret; up/down walks
+        // the flat result list. The grid keeps the original two-dimensional
+        // movement across every result and plugin-appended row.
+        if (layout === "list" && horizontal) return false;
+        e.preventDefault();
+        ctx.markKeyboard();
+        if (layout === "list") return moveListSelection(vertical ? (e.key === "ArrowDown" ? 1 : -1) : 0);
+        const delta = e.key === "ArrowLeft"
+          ? -1
+          : e.key === "ArrowRight"
+            ? 1
+            : e.key === "ArrowDown"
+              ? ctx.gridCols()
+              : -ctx.gridCols();
+        ctx.moveSelection(delta);
+        return true;
+      }
+      if (nav.sections().length === 0) return false;
+      if (layout === "list" && horizontal) return false;
+      e.preventDefault();
+      ctx.markKeyboard();
+      if (layout === "list") return moveListSelection(e.key === "ArrowDown" ? 1 : -1);
+      nav.moveBarSelection(
+        e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : 0,
+        e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0
+      );
+      return true;
+    }
     if (e.key === "Enter") {
       if (ctx.hasResults) {
         e.preventDefault();
-        void activateTarget(
-          nav.activeSection()
-            ? { kind: "bar", section: nav.activeSection()!, index: nav.activateIndex(nav.activeSection()!), item: nav.activeSection()!.items[nav.activateIndex(nav.activeSection()!)] }
-            : { kind: "result", index: search.selected(), app: search.apps()[search.selected()] }
-        );
+        const section = nav.activeSection();
+        if (section) {
+          const index = layout === "list" && section.expandable && !section.expanded()
+            ? 0
+            : nav.activateIndex(section);
+          const item = section.items[index];
+          if (item) void activateTarget({ kind: "bar", section, index, item });
+        } else {
+          const item = search.apps()[search.selected()];
+          if (item) void activateTarget({ kind: "result", index: search.selected(), app: item });
+        }
         return true;
       }
       return false;
@@ -393,7 +472,8 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
       const section = nav.activeSection();
       if (section?.onDelete) {
         e.preventDefault();
-        section.onDelete(section.selected());
+        const index = layout === "list" && section.expandable && !section.expanded() ? 0 : section.selected();
+        section.onDelete(index);
         return true;
       }
     }
@@ -409,14 +489,21 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
       if (!item) return false;
       selectTarget({ kind: "bar", section, index, item });
     } else if (!search.apps()[search.selected()]) return false;
-    void deps.services;
+    const targetId = section
+      ? itemId(section.id, section.items[nav.activateIndex(section)], nav.activateIndex(section))
+      : resultId(search.apps()[search.selected()], search.selected());
+    const host = document.querySelector(".mode-host.active") ?? document;
+    const anchor = [...host.querySelectorAll<HTMLElement>("[data-target-id]")]
+      .find((el) => el.dataset.targetId === targetId);
+    const rect = anchor?.getBoundingClientRect();
     void service.onIntent?.({
       type: "item.action",
-      targetId: section
-        ? itemId(section.id, section.items[nav.activateIndex(section)], nav.activateIndex(section))
-        : resultId(search.apps()[search.selected()], search.selected()),
+      targetId,
       actionId: "menu",
-      payload: { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+      payload: {
+        x: rect ? rect.left + rect.width / 2 : window.innerWidth / 2,
+        y: rect ? rect.top + rect.height / 2 : window.innerHeight / 2,
+      },
     });
     return true;
   }

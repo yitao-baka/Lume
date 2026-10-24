@@ -74,6 +74,8 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
             data={() => model()?.data as ClipboardModel | undefined}
             selectedId={() => model()?.selection?.primaryId}
             dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
+            markMouse={() => services.markMouse()}
+            selectionSource={() => services.selectionSource()}
           />
         }
       >
@@ -81,6 +83,8 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
           data={() => model()?.data as ClipboardModel | undefined}
           selectedId={() => model()?.selection?.primaryId}
           dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
+          markMouse={() => services.markMouse()}
+          selectionSource={() => services.selectionSource()}
         />
       </Show>
     ),

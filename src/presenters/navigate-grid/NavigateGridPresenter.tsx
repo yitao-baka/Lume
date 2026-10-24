@@ -1,7 +1,7 @@
 //! Default Navigate Presenter. Reads only lume.navigate/v1 data and emits
 //! semantic selection/action/reorder intents.
 
-import { For, Show } from "solid-js";
+import { For, Show, createEffect, onMount } from "solid-js";
 import { t } from "../../i18n";
 import { pickIcon } from "../../launcher/iconSpec";
 import type { ResourceRef } from "../../page-runtime/contracts";
@@ -15,6 +15,7 @@ export interface NavigateGridProps {
   iconFor: (path: string) => string | undefined;
   dispatch: (intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => Promise<unknown>;
   markMouse: () => void;
+  selectionSource: () => "keyboard" | "mouse" | "other";
 }
 
 function resourceSrc(icon: ResourceRef | undefined): string | undefined {
@@ -123,6 +124,18 @@ export function NavigateGridPresenter(props: NavigateGridProps) {
   const results = () => data()?.results?.items ?? [];
   const pluginStart = () => Math.min(Math.max(data()?.results?.pluginStart ?? 0, 0), results().length);
   const resultSelected = (item: NavigateItem) => !data()?.selectedSectionId && props.selectedId() === item.id;
+  const scrollSelectedIntoView = () => {
+    document
+      .querySelector(".mode-host.active .result-selected")
+      ?.scrollIntoView({ block: "nearest" });
+  };
+  createEffect(() => {
+    props.data();
+    props.selectedId();
+    if (props.selectionSource() !== "keyboard") return;
+    queueMicrotask(scrollSelectedIntoView);
+  });
+  onMount(() => queueMicrotask(scrollSelectedIntoView));
   const result = (item: NavigateItem) => (
     <ItemBox
       item={item}

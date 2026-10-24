@@ -104,6 +104,22 @@ contrast-safe tiers.
   the same result artwork; off restores the unmasked presentation.
 - Truncated result names and descriptions expose their complete value through
   the native `title` tooltip.
+- The compact Navigate Presenter is a titled single-column list, not a text
+  dump: each section header carries its item count and disclosure chevron,
+  rows keep the same app artwork and path/description hierarchy as the grid,
+  and keyboard movement keeps the selected row inside the scroll viewport.
+  Collapsed sections expose exactly one row in list form; collapsing must
+  clamp the page selection to that row so `Enter` can never activate a hidden
+  item. It has no native scrollbar and shows fading edges only when content
+  continues beyond a viewport edge.
+- The compact Clipboard Presenter uses a 44px virtual-row rhythm: a 28px
+  content tile, one-line title, and a secondary `kind · source · time` line.
+  Pinned, multi-selected and invalid rows retain the full list's visual cues.
+  Hover selection still obeys 设置 → 剪贴板 → 悬停选中; when it is off the first
+  click only selects and the second activates. Both clipboard Presenters
+  report their painted row height with the viewport intent so the Page Service
+  can return the correct virtual slice, and keyboard selection scrolls the
+  active row into view without a native scrollbar.
 
 ## Window chrome
 

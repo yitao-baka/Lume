@@ -50,7 +50,12 @@ Built-in Page Service / Presenter integration uses
 clipboard pages between their two Presenters, checks that model, query/results
 and selection survive the switch, exercises the windowed clipboard model, and
 verifies the `pages.presenters` setting persists and is restored after a
-process restart.
+process restart. It also covers two-dimensional grid arrows, compact-list
+keyboard/viewport following, collapsed-section selection clamping, hidden
+scrollbars, both clipboard Presenters' virtual scrolling, the compact
+clipboard's 44px row window, `hoverSelect=false`, first-click selection,
+multi-select badges, clear-dialog focus, and search focus restoration after
+closing that dialog.
 
 The disk plugin reference path uses
 `node scripts/cdp_file_search_presenter_verify.mjs`. It mounts

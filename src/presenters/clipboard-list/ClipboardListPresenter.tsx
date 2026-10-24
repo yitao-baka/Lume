@@ -1,7 +1,7 @@
 //! Default clipboard Presenter. All rows/actions come from the windowed Page
 //! Model; Tauri commands and the ClipboardStore stay in the Page Service.
 
-import { For, Show, createEffect, onMount } from "solid-js";
+import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
 import { t } from "../../i18n";
 import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "../../launcher/clipData";
 import { CLIP_ROW_H, type ClipboardItem } from "../../launcher/types";
@@ -13,6 +13,8 @@ export interface ClipboardListProps {
   data: () => ClipboardModel | undefined;
   selectedId: () => string | undefined;
   dispatch: (intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => Promise<unknown>;
+  markMouse: () => void;
+  selectionSource: () => "keyboard" | "mouse" | "other";
 }
 
 function asItem(row: ClipboardRowModel): ClipboardItem {
@@ -57,9 +59,11 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
   const data = () => props.data();
   const rows = () => data()?.items ?? [];
   const selected = (row: ClipboardRowModel) => props.selectedId() === row.id;
-  const checked = (row: ClipboardRowModel) => (data()?.selectedIds ?? []).includes(row.id);
+  const checked = (row: ClipboardRowModel) =>
+    (data()?.status.selected ?? 0) > 0 && (data()?.selectedIds ?? []).includes(row.id);
   const select = (row: ClipboardRowModel) => void props.dispatch({ type: "selection.set", targetId: row.id, payload: { selectedIds: [row.id] } });
   const activate = (row: ClipboardRowModel) => {
+    props.markMouse();
     if (!selected(row)) {
       select(row);
       return;
@@ -67,24 +71,49 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
     void props.dispatch({ type: "item.activate", targetId: row.id });
   };
   const menu = (row: ClipboardRowModel, x: number, y: number) => {
+    props.markMouse();
     void props.dispatch({ type: "item.action", targetId: row.id, actionId: "menu", payload: { x, y } });
   };
   let list: HTMLDivElement | undefined;
+  let resizeObserver: ResizeObserver | undefined;
   let cancelButton: HTMLButtonElement | undefined;
   let confirm: HTMLDivElement | undefined;
+  let clearWasOpen = false;
   const measureViewport = () => {
     if (!list) return;
     void props.dispatch({
       type: "viewport.request",
-      payload: { scrollTop: list.scrollTop, viewportHeight: list.clientHeight },
+      payload: { scrollTop: list.scrollTop, viewportHeight: list.clientHeight, rowHeight: CLIP_ROW_H },
     });
   };
   onMount(() => {
     queueMicrotask(measureViewport);
   });
   createEffect(() => {
-    if (data()?.clearState?.open) queueMicrotask(() => cancelButton?.focus());
+    const open = !!data()?.clearState?.open;
+    if (open && !clearWasOpen) queueMicrotask(() => cancelButton?.focus());
+    if (!open && clearWasOpen) queueMicrotask(() => document.getElementById("search-input")?.focus());
+    clearWasOpen = open;
   });
+  // The Page Service owns the windowed row slice, but only the Presenter owns
+  // the scroll element. Keep keyboard selection visible here and feed the new
+  // scroll position back as a viewport intent.
+  createEffect(() => {
+    const index = data()?.selectedIndex ?? -1;
+    if (index < 0 || !list || props.selectionSource() !== "keyboard") return;
+    const top = index * CLIP_ROW_H;
+    const bottom = top + CLIP_ROW_H;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + 8;
+  });
+  const bindList = (el: HTMLDivElement) => {
+    list = el;
+    resizeObserver?.disconnect();
+    resizeObserver ??= new ResizeObserver(() => queueMicrotask(measureViewport));
+    resizeObserver.observe(el);
+    queueMicrotask(measureViewport);
+  };
+  onCleanup(() => resizeObserver?.disconnect());
   const trapConfirm = (event: KeyboardEvent) => {
     if (event.key !== "Tab" || !confirm) return;
     const focusable = [...confirm.querySelectorAll<HTMLElement>('button,input,[tabindex]:not([tabindex="-1"])')].filter((el) => !el.hasAttribute("disabled"));
@@ -125,16 +154,13 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
         >
           <div
             class="clip-list"
-            ref={(el) => {
-              list = el;
-              queueMicrotask(measureViewport);
-            }}
+            ref={bindList}
             role="listbox"
             onScroll={(event) => {
               if (!list) return;
               void props.dispatch({
                 type: "viewport.request",
-                payload: { scrollTop: event.currentTarget.scrollTop, viewportHeight: list.clientHeight },
+                payload: { scrollTop: event.currentTarget.scrollTop, viewportHeight: list.clientHeight, rowHeight: CLIP_ROW_H },
               });
             }}
           >
@@ -154,7 +180,11 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
                         role="option"
                         aria-selected={selected(row)}
                         data-target-id={row.id}
-                        onMouseMove={() => { if (data()?.hoverSelect) select(row); }}
+                        onMouseMove={() => {
+                          if (!data()?.hoverSelect) return;
+                          props.markMouse();
+                          select(row);
+                        }}
                         onClick={() => activate(row)}
                         onContextMenu={(event) => { event.preventDefault(); menu(row, event.clientX, event.clientY); }}
                       >

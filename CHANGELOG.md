@@ -310,6 +310,34 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **导航与剪贴板紧凑 Presenter 的可用性回归** — 导航紧凑列表改用分区头
+  （标题 / 条数 / 展开箭头）和带真实图标、路径或描述的双层行，补齐无滚动条
+  的视口、键盘跟随滚动、列表线性 ↑/↓、网格二维方向键、栏目收起时的选择钳制
+  和列表拖拽插入反馈；鼠标选择重新标记 `selectionSource`，切换 Presenter 后
+  活动项保持可见。剪贴板紧凑历史改为 44px 虚拟行，保留缩略图、类型 / 来源 /
+  时间、收藏、多选和失效状态；`viewport.request` 现在携带 Presenter 行高，
+  模型发布 `selectedIndex`，修复紧凑与历史列表窗口切片、选中滚动不同步的问题。
+  `hoverSelect=false` 时悬停不再改选，首击只选择、再次点击才粘贴；`item.activate`
+  重新走 ClipboardStore 的统一激活路径，空格多选后的 Enter 合并粘贴不再退化为
+  单条粘贴；普通选中不再被误画成多选勾。清空查询时紧凑导航重新选中首个栏目，
+  不再出现可见列表却无高亮的状态。清空确认框补齐遮罩、焦点陷阱、安全默认焦点和
+  关闭后搜索框焦点恢复。
+  验证：`pnpm exec tsc --noEmit`、`pnpm exec tsc -p examples/tsconfig.json`、
+  `pnpm run test:page-runtime` **10/10 PASS**、`pnpm run build`、
+  `pnpm run tauri build --debug --no-bundle` 通过；`cargo check`、
+  `cargo test` **247 passed / 9 ignored**；`node scripts/check_i18n.mjs`
+  PASS（**577 键 × 3 语言**、64 组关键词配对）；
+  `node scripts/cdp_page_runtime_verify.mjs` **24/24 PASS**（新增网格方向键、
+  两套剪贴板虚拟滚动、紧凑导航图标/滚动跟随/清空查询回选/栏目选择钳制、
+  44px 虚拟窗口、悬停门控、首击选择、普通选中与多选勾分离、清空弹窗焦点与
+  滚动可见性断言）；
+  `node scripts/cdp_visual_audit_verify.mjs` **28/28 PASS**、
+  `node scripts/cdp_mode_query_verify.mjs` **47/47 PASS**；截图
+  `test/page-runtime-navigate-list.png`、`test/page-runtime-navigate-list-home.png`、
+  `test/page-runtime-clipboard-compact-top.png`、
+  `test/page-runtime-clipboard-compact.png`、
+  `test/page-runtime-clipboard-compact-scrolled.png`。
+
 - **自动化规则详情「延迟触发」标签折行把输入框顶下去** — 展开的规则里第三个字段名
   直接用了 `autoDelayTitle` 全句（「延迟触发（毫秒）— 窗口获得焦点后等待多久再按键」），
   窄列里折成两行，同一行的程序 / 快捷键控件被推低半行。新增短标签 `autoDelayLabel`

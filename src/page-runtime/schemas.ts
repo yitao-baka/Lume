@@ -107,6 +107,8 @@ export interface ClipboardModel {
   items: ClipboardRowModel[];
   total: number;
   window: { offset: number; limit: number };
+  /** Index of the primary row in the full (unwindowed) result list. */
+  selectedIndex: number;
   selectedIds: string[];
   primaryId?: string;
   paused: boolean;
@@ -159,6 +161,7 @@ export const clipboardFixture: JsonValue = {
   ],
   total: 2,
   window: { offset: 0, limit: 40 },
+  selectedIndex: 0,
   selectedIds: ["clip:1"],
   primaryId: "clip:1",
   paused: false,

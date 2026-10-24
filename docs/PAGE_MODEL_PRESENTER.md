@@ -270,6 +270,9 @@ Presenter 桥在页面处理器安装前缓存事件；首次 mount、Presenter 
 - Page Service 拥有栏目、合并搜索、激活、菜单、pin/recent/folder 动作和拖拽重排。
 - `lume.navigate/v1` 是唯一页面事实。
 - `navigate-grid` 与 `navigate-list` 消费同一模型，差异只在 DOM 和交互形式。
+- 网格保留二维方向键移动；紧凑列表以 ↑/↓ 线性遍历可见行，←/→ 留给搜索框
+  光标编辑。紧凑列表把收起的栏目显示为一行，并在切换 Presenter、收起栏目与
+  执行 `Enter` 前把选择钳制到可执行行，隐藏项不能被激活。
 - provider、feature、keyword 和 navBars 在 Page Service 内归一化。
 - Presenter 切换不重新搜索，不丢栏目展开和选择。
 
@@ -278,6 +281,12 @@ Presenter 桥在页面处理器安装前缓存事件；首次 mount、Presenter 
 - Page Service 包装 Rust-backed ClipboardStore，只发布视口窗口内的行。
 - Rust 继续拥有采集、去重、合并、历史裁剪、图片缓存和前台粘贴。
 - `clipboard-list` 与 `clipboard-compact` 共用分类、选择、清空、暂停和窗口请求。
+- `viewport.request` 同时上报 `scrollTop`、`viewportHeight` 与当前 Presenter 的
+  `rowHeight`；模型另外发布完整列表中的 `selectedIndex`，Presenter 据此滚动和
+  请求新的窗口化行。历史列表使用 52px 行高，紧凑历史使用 44px。
+- 两套 Presenter 都把首击未选中行解释为“选择”，只有已选中行再点击才激活；
+  `item.activate` 回到 ClipboardStore 的统一激活路径，从而保留空格多选后的
+  合并粘贴。清空确认框是带遮罩、焦点陷阱和安全默认焦点的模态作用域。
 - 预览服务跟随 Page Model 的选择，不依赖 Presenter DOM。
 - 停用页面不改变 Rust 后台采集配置。
 

@@ -129,6 +129,7 @@ export function createWindowSizer(deps: SizerDeps) {
       pageQuery<HTMLElement>(".result-grid") ??
       pageQuery<HTMLElement>(".result-list") ??
       pageQuery<HTMLElement>(".bar-list") ??
+      pageQuery<HTMLElement>(".nav-list-scroll") ??
       pageQuery<HTMLElement>(".page-hint");
     if (!container) return;
 

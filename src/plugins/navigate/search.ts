@@ -196,6 +196,13 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         ...(clipboardImgOk() ? imgFeatureMatches() : []),
       ];
       rebuildEmpty(feats());
+      // Clearing a query removes the grid, so a zone left at "grid" would
+      // leave the visible bars without any selection until another keypress.
+      // Preserve an existing bar zone, otherwise select the first section.
+      if (nav.zone() === "grid") {
+        const first = nav.sections()[0];
+        if (first) nav.setZone(first.id);
+      }
       if (imgFeatureMatches().length > 0) {
         // One cheap probe per empty render (OpenClipboard + format check) —
         // a screenshot taken while the menu is up makes the row appear, and
@@ -504,7 +511,9 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     selected();
     if (services.mode() !== deps.id) return;
     if (services.selectionSource() === "keyboard") {
-      document.querySelector(".result-selected")?.scrollIntoView({ block: "nearest" });
+      document
+        .querySelector(".mode-host.active .result-selected")
+        ?.scrollIntoView({ block: "nearest" });
     }
   });
 

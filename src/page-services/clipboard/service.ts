@@ -95,6 +95,7 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
       items: visible.map((item) => row(item, store.timeDisplayAbs(), store.showSourceApp())),
       total: all.length,
       window: { offset: start, limit: end - start },
+      selectedIndex: all.length > 0 ? Math.max(0, Math.min(selected, all.length - 1)) : -1,
       selectedIds,
       ...(selectedId ? { primaryId: selectedId } : {}),
       paused: store.clipPaused(),
@@ -158,11 +159,16 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
         store.setSelected(Math.max(0, Math.min(max, store.selected() + delta)));
         return { status: "completed" };
       }
-      case "item.activate":
+      case "item.activate": {
+        if (!found) return { status: "failed", code: "target.missing", message: "Clipboard row is missing" };
+        store.setSelected(found.index);
+        store.activate();
+        return { status: "completed" };
+      }
       case "item.action": {
         if (!found) return { status: "failed", code: "target.missing", message: "Clipboard row is missing" };
         store.setSelected(found.index);
-        switch (intent.type === "item.activate" ? "paste" : action) {
+        switch (action) {
           case "copy": store.copyOnly(found.item); return { status: "completed" };
           case "copy-plain": store.copyPlain(found.item); return { status: "completed" };
           case "paste": store.pasteClip(found.item); return { status: "completed" };
@@ -203,10 +209,12 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
         store.onEscape();
         return { status: "completed" };
       case "viewport.request": {
-        const payload = intent.payload as { scrollTop?: number; viewportHeight?: number } | undefined;
+        const payload = intent.payload as { scrollTop?: number; viewportHeight?: number; rowHeight?: number } | undefined;
         store.setClipScrollTop(Number(payload?.scrollTop ?? 0));
         const viewportHeight = Number(payload?.viewportHeight ?? 0);
         if (Number.isFinite(viewportHeight) && viewportHeight > 0) store.setClipViewportH(viewportHeight);
+        const rowHeight = Number(payload?.rowHeight ?? 0);
+        if (Number.isFinite(rowHeight) && rowHeight > 0) store.setClipRowH(rowHeight);
         return { status: "completed" };
       }
       case "query.submit": {
@@ -269,7 +277,7 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
   function openContextMenu(): boolean {
     const item = store.clips()[store.selected()];
     if (!item) return false;
-    const el = document.querySelector<HTMLElement>(".clip-row[aria-selected='true']");
+    const el = document.querySelector<HTMLElement>(".mode-host.active .clip-page [data-target-id][aria-selected='true']");
     const rect = el?.getBoundingClientRect();
     deps.services.openMenu({
       kind: "clip",

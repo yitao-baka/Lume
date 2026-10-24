@@ -82,13 +82,15 @@ export function createClipboardStore(services: PluginServices) {
   let clipScrollEl: HTMLDivElement | undefined;
   const [clipScrollTop, setClipScrollTop] = createSignal(0);
   const [clipViewportH, setClipViewportH] = createSignal(0);
+  /** Painted row height of the active Presenter (52px history, 44px compact). */
+  const [clipRowH, setClipRowH] = createSignal(CLIP_ROW_H);
   /** First/last rendered row of the windowed clipboard list. */
   const clipStart = () =>
-    Math.max(0, Math.floor(clipScrollTop() / CLIP_ROW_H) - CLIP_OVERSCAN);
+    Math.max(0, Math.floor(clipScrollTop() / clipRowH()) - CLIP_OVERSCAN);
   const clipEnd = () =>
     Math.min(
       clips().length,
-      Math.ceil((clipScrollTop() + Math.max(clipViewportH(), 160)) / CLIP_ROW_H) +
+      Math.ceil((clipScrollTop() + Math.max(clipViewportH(), 160)) / clipRowH()) +
         CLIP_OVERSCAN
     );
 
@@ -361,8 +363,8 @@ export function createClipboardStore(services: PluginServices) {
     void clipViewportH(); // re-scroll when the viewport is resized
     const el = clipScrollEl;
     if (!el || services.selectionSource() !== "keyboard") return;
-    const top = selected() * CLIP_ROW_H;
-    const bottom = top + CLIP_ROW_H;
+    const top = selected() * clipRowH();
+    const bottom = top + clipRowH();
     if (top < el.scrollTop) el.scrollTop = top;
     else if (bottom > el.scrollTop + el.clientHeight) {
       el.scrollTop = bottom - el.clientHeight + 8;
@@ -429,6 +431,10 @@ export function createClipboardStore(services: PluginServices) {
     setClipScrollTop,
     clipViewportH,
     setClipViewportH,
+    clipRowH,
+    setClipRowH: (height: number) => {
+      if (Number.isFinite(height) && height >= 28 && height <= 80) setClipRowH(height);
+    },
     clipStart,
     clipEnd,
     bindScrollEl: (el: HTMLDivElement) => {

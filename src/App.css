@@ -352,6 +352,14 @@ body,
   gap: 6px;
   padding: 4px 16px 6px;
   flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.clip-cats::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .clip-cat {
@@ -692,6 +700,164 @@ body,
   margin: 0;
   font-size: 12px;
   color: var(--text-faint);
+}
+
+/* Compact clipboard Presenter: 44px virtual rows with the same selection,
+   pin, multi-select and invalid-entry cues as the full history list. */
+.clip-compact-list {
+  padding: 0 8px 4px;
+}
+
+.clip-compact-spacer {
+  position: relative;
+}
+
+.clip-compact-window {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.clip-compact-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  height: 44px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: transparent;
+  cursor: default;
+  transition: background 90ms ease-out;
+}
+
+.clip-compact-row:hover {
+  background: var(--hover);
+}
+
+.clip-compact-row.result-selected {
+  background: var(--selected);
+  box-shadow: inset 0 0 0 1px var(--accent-border), inset 2px 0 0 var(--accent);
+}
+
+.clip-compact-row.clip-row-multi {
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.clip-compact-row.clip-row-invalid {
+  opacity: 0.58;
+}
+
+.clip-compact-row.clip-row-invalid .clip-compact-title {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.clip-compact-tile {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+.clip-compact-tile-media {
+  background: var(--hover);
+}
+
+.clip-compact-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.clip-compact-tile-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.clip-compact-color {
+  border: 1px solid var(--border-strong);
+}
+
+.clip-compact-glyph {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.clip-compact-glyph.small {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.clip-compact-glyph.text {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.clip-compact-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.clip-compact-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.clip-compact-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.clip-compact-kind {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.clip-compact-dot {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.clip-compact-badges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.clip-compact-row .clip-row-pin {
+  width: 13px;
+  height: 13px;
+}
+
+.clip-compact-row .clip-row-check {
+  width: 17px;
+  height: 17px;
+  font-size: 11px;
 }
 
 /* Built-in plugin list template (manifest template = "list"): a flat
@@ -2781,12 +2947,222 @@ body.settings-window #root {
 }
 
 
-/* Page Model presenter fallback: compact Navigate list. */
-.nav-list-presenter { display: grid; gap: 10px; padding: 10px 14px 14px; max-height: 100%; overflow: auto; }
-.nav-list-section { display: grid; gap: 2px; }
-.nav-list-heading { display: flex; justify-content: space-between; align-items: center; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; padding: 4px 6px; cursor: pointer; }
-.nav-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 34px; padding: 5px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
-.nav-list-row:hover, .nav-list-row.active { background: var(--selection); border-color: var(--border-strong); }
-.nav-list-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nav-list-desc { color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nav-list-results { display: grid; gap: 3px; }
+/* Compact Navigate Presenter: titled sections and one-line app rows with a
+   small artwork slot. It reuses the page's selection language, but keeps the
+   rows flatter than the square grid and never grows a native scrollbar. */
+.nav-list-presenter {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.nav-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  padding: 2px 10px 12px;
+}
+
+.nav-list-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.nav-list-section {
+  padding: 2px 0 6px;
+}
+
+.nav-list-section + .nav-list-section {
+  border-top: 1px solid var(--border);
+}
+
+.nav-list-heading {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-list-heading:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.nav-list-heading.static,
+.nav-list-heading:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.nav-list-heading-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.nav-list-heading-count {
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hover);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-list-chevron {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  flex: none;
+  transform: rotate(-90deg);
+  transition: transform 100ms ease-out;
+}
+
+.nav-list-chevron.expanded {
+  transform: rotate(0deg);
+}
+
+.nav-list-items,
+.nav-list-results {
+  display: grid;
+  gap: 2px;
+}
+
+.nav-list-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: default;
+  transition: background 90ms ease-out, border-color 90ms ease-out;
+}
+
+.nav-list-row:hover {
+  background: var(--hover);
+}
+
+.nav-list-row.active {
+  background: var(--selected);
+  border-color: var(--accent-border);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nav-list-row.disabled {
+  opacity: 0.48;
+}
+
+.nav-list-row.draggable {
+  cursor: grab;
+}
+
+.nav-list-row.result-dragging {
+  opacity: 0.24;
+}
+
+.nav-list-row.result-insert-before {
+  box-shadow: inset 0 2px 0 var(--accent) !important;
+}
+
+.nav-list-row.result-insert-after {
+  box-shadow: inset 0 -2px 0 var(--accent) !important;
+}
+
+.nav-list-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.nav-list-icon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.nav-list-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nav-list-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  line-height: 1.3;
+}
+
+.nav-list-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.nav-list-source {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.nav-list-split {
+  display: flex;
+  align-items: center;
+  margin: 7px 6px 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+
+.nav-list-split.first {
+  margin-top: 2px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.nav-list-presenter > .scroll-fade {
+  left: 10px;
+  right: 10px;
+}

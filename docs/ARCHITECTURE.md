@@ -524,11 +524,15 @@ before adding a field:
   - `navigate/` — the built-in **home page** (id `"apps"`, `home: true`, the
     only `heightPolicy: "fit"` page). Its `index.tsx` joins the navigation
     Page Service to the grid/list Presenters while preserving bar expansion,
-    keyboard/mouse selection, context menus and pinned drag reorder.
+    keyboard/mouse selection, context menus and pinned drag reorder. The list
+    Presenter uses linear ↑/↓ movement and clamps a collapsed section to its
+    one visible row; the grid keeps two-dimensional arrow movement.
   - `clipboard/` — the clipboard-history contribution. Its `index.tsx`
     joins the clipboard Page Service to the history/compact Presenters and
     retains the settings, preview, modal and keyboard lifecycle exposed by
-    `ModeInstance`.
+    `ModeInstance`. Each Presenter reports its painted row height with the
+    viewport intent, so the Page Service can window the same authoritative
+    list at either 52px or 44px rows.
   - `preview/` — a service contribution (satellite-preview routing shared by
     every page that exposes previewable rows).
   - `registry.ts` + `types.ts` — the registry all plugins plug into

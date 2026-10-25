@@ -162,12 +162,14 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
 - At the settings window's `560×420` minimum, the navigation rail compacts its
   rows and remains independently scrollable. The footer never overlaps a
   navigation hit target; the last section stays fully visible and clickable.
-- `appearance.skin` is application-wide. Quiet uses rounded cards, soft
+- `appearance.skin` controls the launcher family; `appearance.settings_skin`
+  controls the settings window independently. Quiet uses rounded cards, soft
   internal controls and quiet structure; Chromatic uses square editorial
-  controls, 1.5px structural rules and numbered settings pages. Both share the
-  same semantic components, DOM identity and responsive layout. Switching skins
-  preserves focus, selection and scroll position, and never adds a CSS border,
-  radius, translucent fill or shadow to the launcher's outer window.
+  controls, 1.5px structural rules and numbered settings pages. Both skins share
+  the same semantic components, DOM identity and responsive layout. Switching a
+  window's skin preserves its focus, selection and scroll position, and never
+  adds a CSS border, radius, translucent fill or shadow to the launcher's outer
+  window.
 - The launcher inner rhythm is skin-owned: Quiet keeps rounded result/clipboard
   rows; Chromatic uses near-square controls, stronger rules and editorial
   section titles. Search row, page and iframe remain one `--surface`; no skin
@@ -178,9 +180,9 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
   Presenters publish the value through `viewport.request`; the Page Service
   uses it for spacer/window math and keeps the selected item visible.
 - `appearance.accent` overlays a user accent without changing skin geometry.
-  Empty means the skin's native accent. For dark Chromatic that is 湖蓝
-  (`#5ac8fa`), with `--settings-selected` using the same 16% mix an explicit
-  Aqua accent produces. Custom values derive `--ui-accent`,
+  Empty means each window's own skin-native accent. For dark Chromatic that is
+  湖蓝 (`#5ac8fa`), with `--settings-selected` using the same 16% mix an
+  explicit Aqua accent produces. Custom values derive `--ui-accent`,
   `--ui-accent-text`, `--ui-accent-border`, `--ui-accent-on` and
   `--ui-focus-ring`; the outer launcher `--surface` is never tinted.
 - Settings surfaces may mix the custom accent into `--settings-canvas`
@@ -197,11 +199,11 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
   structure rule, selected navigation row, on-state switch and small accent
   text. Presets pair every swatch with a localized label; the first preset slot
   is skin-dependent (Quiet leads with Aqua, Chromatic with `#ac8e97`) and stays
-  pinned to the skin default while another color is applied. The native color
-  input keeps a hit area of at least 32×32px.
+  pinned to the settings-window skin default while another color is applied.
+  The native color input keeps a hit area of at least 32×32px.
 - The color input shows the remembered `appearance.accent_custom`, or pure
-  white before one is stored. Picking a preset or switching skins never rewrites
-  it. The entry name applies that color immediately; only the swatch opens the
+  white before one is stored. Picking a preset or switching either skin never
+  rewrites it. The entry name applies that color immediately; only the swatch opens the
   native picker.
 - The About brand block shows the product mark itself — the transparent app
   icon, inverted per `--icon-filter` like the topbar brand, at 104px (78px at

@@ -263,6 +263,7 @@ try {
       appearance: {
         color_mode: "light",
         skin: "quiet",
+        settings_skin: "quiet",
         accent: "",
         accent_custom: "",
         window_width: 540,

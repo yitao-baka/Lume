@@ -1,5 +1,5 @@
-//! Application skin runtime — the single writer for `data-skin`, `--surface`
-//! and the skin's native accent metadata.
+//! Per-window skin runtime — the single writer for `data-skin`, `--surface`
+//! and the active window skin's native accent metadata.
 
 import { createSignal } from "solid-js";
 import { onThemeModeChange, themeMode } from "../theme";

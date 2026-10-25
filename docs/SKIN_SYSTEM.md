@@ -1,6 +1,6 @@
-# 统一皮肤系统
+# 双窗口皮肤系统
 
-本文定义设置窗口、启动器外壳、导航页、剪贴板页、嵌入插件画布和分离插件窗口共用一套应用级皮肤与主题色的运行契约。
+本文定义主启动器与设置窗口分别选择皮肤、同时共享主题色与明暗模式的运行契约。启动器外壳、导航页、剪贴板页、嵌入插件画布和分离插件窗口跟随主窗口皮肤；设置窗口使用独立皮肤。
 
 字段、迁移规则、surface 来源、插件视觉事件和验证矩阵以本文为准；设置交互见 `SETTINGS.md`，视觉边界见 `UI_GUIDELINES.md`，插件载荷见 `PLUGIN_API.md`。
 
@@ -15,32 +15,37 @@
 
 ## 目标
 
-皮肤是应用级视觉语言，不是某一个窗口或某一个页面的局部样式。
+皮肤是窗口级视觉语言：主窗口和设置窗口可以独立选择 Quiet 或 Chromatic，但同一窗口组内保持统一。
 
 目标模型：
 
 ```text
 appearance.skin
-    ├─ 设置窗口
     ├─ 启动器外壳
     ├─ 导航页
     ├─ 剪贴板页
     ├─ 嵌入插件画布
     └─ 分离插件窗口
 
+appearance.settings_skin
+    └─ 设置窗口
+
 appearance.color_mode
-    └─ skin 的正交明暗维度
+    └─ 两个窗口共享的正交明暗维度
+
+appearance.accent
+    └─ 两个窗口共享的强调色身份
 ```
 
 约束：
 
-- 全应用只有一个皮肤偏好：`appearance.skin`。
-- 全应用只有一个主题色偏好：`appearance.accent`。
-- 颜色模式继续使用 `appearance.color_mode`，与皮肤正交。
+- 主窗口皮肤使用 `appearance.skin`，设置窗口皮肤使用 `appearance.settings_skin`。
+- 全应用只有一个主题色偏好：`appearance.accent`；空值在各自窗口按自己的皮肤取默认色。
+- 颜色模式继续使用 `appearance.color_mode`，两个窗口共享。
 - 导航和剪贴板的 Presenter 选择继续使用 `pages.presenters`，与皮肤正交。
 - 皮肤身份、表面颜色和对比度锚点由一份共享元数据定义。
-- CSS 负责视觉 token 与 surface 布局，Rust 负责持久化、DWM 边框和目标窗口的初始表面颜色。
-- 所有窗口在首帧前应用当前皮肤；设置保存后实时同步，不要求重启。
+- CSS 负责视觉 token 与 surface 布局，Rust 负责持久化、主窗 DWM 边框和目标窗口的初始表面颜色。
+- 两个窗口都在首帧前应用各自皮肤；设置保存后实时同步，不要求重启。
 - 内置皮肤由应用自身维护，不允许插件注入任意 CSS 或脚本。
 
 ## 非目标
@@ -51,7 +56,7 @@ appearance.color_mode
 - 不为插件自有 DOM 强制换肤；宿主只保证外框、画布和公开视觉变量一致。
 - 不开放第三方 CSS/JS 皮肤包。若以后需要扩展，应另立声明式皮肤包契约。
 - 不重绘托盘图标、系统原生对话框或 Windows 原生菜单。
-- 卫星预览窗口保持现有自包含视觉，不跟随应用皮肤或主题色。
+- 卫星预览窗口保持现有自包含视觉，不跟随主窗口皮肤或主题色。
 - 不改变插件自己的 `lume.theme.set` 明暗覆盖语义。
 
 ## 实现结构
@@ -60,22 +65,21 @@ appearance.color_mode
 
 设置窗口是独立 webview，由 `src/settings/` 渲染。
 
-- `src/index.tsx` 在 `render()` 前读取 `window.__LUME_CONFIG__`，应用新的
-  `appearance.skin` / `appearance.accent`。
+- `src/index.tsx` 在 `render()` 前按窗口 label 选择 `appearance.settings_skin`。
 - `src/skins/runtime.ts` 写入 `data-skin` 与 `--surface`。
 - `src/skins/accent.ts` 写入 `data-accent` 与五层 `--ui-*` 强调 token。
 - `src/settings/Settings.tsx` 负责即时预览、自动保存、失败回滚和外部刷新。
-- 设置窗口的 DWM 边框被清除；其内部 canvas 由设置皮肤 token 定义，但根节点
-  `--surface` 仍来自共享皮肤元数据。
+- 设置窗口的 DWM 边框被清除；其内部 canvas 由设置皮肤 token 定义，根节点
+  `--surface` 来自设置皮肤元数据。
 
 ### 主启动器
 
 主启动器是单个不透明 webview。
 
-- `.launcher` 使用当前皮肤的 `--surface`。
+- `.launcher` 使用 `appearance.skin` 对应的 `--surface`。
 - DWM 可见边框区域由 `window::set_panel_frame_border` 使用同一皮肤/明暗组合。
 - 启动器面板、DWM 与插件默认画布的表面色由 `appearance.skin` +
-  `appearance.color_mode` 共同决定。
+  `appearance.color_mode` 共同决定，与 `appearance.settings_skin` 无关。
 - 导航页和剪贴板页通过 keep-alive host 挂载在同一个 `.results` 中。
 - 搜索行和页面之间不允许出现色差、分隔线或局部圆角。
 
@@ -94,7 +98,7 @@ Page Service 持有业务数据和动作，Presenter 只负责 DOM、布局和�
 
 - 嵌入主启动器的磁盘插件 Presenter 位于沙箱 iframe 中。
 - `src/page-runtime/presenterBridge.tsx` 从共享 `skins.json` 解析 iframe 初始背景，并在 `theme` / `skin` 事件中更新 `--lume-page-bg`、`--lume-page-accent` 与 `data-lume-skin`。
-- 分离插件窗口由 `src/pluginWindow.tsx` 渲染外壳，由 `plugin_window.rs` 在创建时设置不透明背景色。
+- 分离插件窗口由 `src/pluginWindow.tsx` 渲染外壳，由 `plugin_window.rs` 在创建时设置不透明背景色；两者都跟随主窗口的 `appearance.skin`。
 - 插件自己的 `theme` 事件继续只传 `"light" | "dark"`，不能把字符串载荷改成对象而破坏现有插件。
 - 皮肤信息通过附加 `skin` 事件和 `theme.get()` 附加字段提供，不改变 API 2 的 `theme` 字符串载荷。
 
@@ -102,10 +106,10 @@ Page Service 持有业务数据和动作，Presenter 只负责 DOM、布局和�
 
 1. **单一面板**：任何一个启动器窗口在任何时刻只有一个连续的启动器表面色。搜索行、页面、iframe 默认画布和 DWM 边框条必须相同。
 2. **外层几何不变**：启动器外层仍然没有 CSS border、border-radius 或半透明填充；圆角、阴影和边框条由 DWM 负责。皮肤只能改变内部构图和 token。
-3. **单一皮肤偏好**：导航页和剪贴板页不各自保存皮肤。两者跟随同一个 `appearance.skin`。
+3. **双窗口皮肤边界**：主窗口皮肤覆盖启动器、导航、剪贴板、嵌入插件画布和分离插件窗口；设置窗口只跟随 `appearance.settings_skin`。
 4. **颜色模式正交**：切换皮肤不改变 `appearance.color_mode`；系统模式仍由现有 `prefers-color-scheme` 监听解析。
 5. **Presenter 正交**：切换皮肤不重建 Page Service、Page Session 或 Presenter 选择。
-6. **首帧一致**：主窗、设置窗和分离插件窗都在首次渲染前应用皮肤，不能先画默认皮肤再跳变。
+6. **首帧一致**：主窗读取 `appearance.skin`，设置窗读取 `appearance.settings_skin`，分离插件窗读取主窗皮肤；都不能先画默认皮肤再跳变。
 7. **表面来源一致**：启动器外层表面色由一份共享元数据同时驱动 CSS、Presenter iframe 默认背景、分离插件窗口背景和 Rust DWM 边框。
 8. **主题色不染启动器外层表面**：自定义主题色只改变交互强调、选中、焦点、链接和低透明度内容层，不改 `--surface`，避免 DWM 与 iframe 需要实时复算 color-mix。
 9. **没有新增权限面**：皮肤与主题色属于宿主视觉设置，不新增 Tauri capability、插件权限或数据库。
@@ -118,8 +122,9 @@ Page Service 持有业务数据和动作，Presenter 只负责 DOM、布局和�
 
 | 键 | 类型 | 默认值 | 作用范围 |
 |---|---|---|---|
-| `appearance.skin` | string | `quiet` | 设置窗、启动器、导航、剪贴板、插件外壳与画布 |
-| `appearance.accent` | string | `""` | 全应用交互强调色；空值使用当前皮肤默认色 |
+| `appearance.skin` | string | `quiet` | 启动器、导航、剪贴板、插件外壳与画布、分离插件窗口 |
+| `appearance.settings_skin` | string | `quiet` | 设置窗口 |
+| `appearance.accent` | string | `""` | 全应用交互强调色；空值使用各窗口自身皮肤的默认色 |
 | `appearance.accent_custom` | string | `""` | 主题色取色器最后使用的颜色；空值显示纯白色 |
 
 `appearance.color_mode` 保持：
@@ -135,6 +140,7 @@ Page Service 持有业务数据和动作，Presenter 只负责 DOM、布局和�
 language = "system"
 color_mode = "system"
 skin = "quiet"
+settings_skin = "quiet"
 accent = ""
 accent_custom = ""
 ```
@@ -149,7 +155,8 @@ clipboard = "clipboard-list"
 
 ### 规范化
 
-- `skin` 只接受注册表中的已知 id；未知值、空值回落到 `quiet`。
+- `skin` / `settings_skin` 只接受注册表中的已知 id；未知值、空值各自回落到 `quiet`。
+- 任一皮肤字段缺失时继承另一个，兼容统一皮肤时代只有 `skin` 或更早只有 `settings_skin` 的配置；两个字段都存在时独立生效。
 - `accent` 与 `accent_custom` 只接受 3 位或 6 位十六进制颜色；统一转成小写 `#rrggbb`。
 - 非法主题色回落到 `""`，即跟随当前皮肤默认强调色。
 - 所有反序列化入口都必须经过同一规范化函数：读取、patch 合并、导入、恢复默认、恢复备份和整表保存。
@@ -264,7 +271,7 @@ Rust 的初始化脚本继续把完整设置注入 `window.__LUME_CONFIG__`。
 主启动器和设置窗共享的 `src/index.tsx` 在 `render()` 前执行：
 
 ```text
-normalize skin
+select window skin (`skin` or `settings_skin`)
 normalize accent
 apply data-skin
 apply color mode
@@ -289,7 +296,7 @@ host color_mode + plugin color mode override
 ### 实时更新
 
 ```text
-设置窗口修改 skin / accent
+设置窗口修改 skin / settings_skin / accent
     ↓
 save_settings_patch
     ↓
@@ -299,9 +306,9 @@ window::apply_settings 更新主窗 DWM 边框
     ↓
 emit settings-applied
     ↓
-主启动器、设置窗、分离插件窗重新 get_settings
+主启动器按 `skin`、设置窗按 `settings_skin`、分离插件窗按 `skin` 重新 get_settings
     ↓
-统一运行时重新应用 data-skin / data-theme / --surface / accent tokens
+各窗口重新应用自己的 data-skin / data-theme / --surface / accent tokens
     ↓
 插件 Presenter 收到附加的 skin 视觉事件
 ```
@@ -315,8 +322,8 @@ emit settings-applied
   1. 解析当前皮肤下的 `--surface`；
   2. 重新计算自定义主题色在当前明暗下的对比度 token；
   3. 重新推送插件画布所需的 surface 与 accent。
-- Rust 的 `WindowEvent::ThemeChanged` 路径重新解析 `appearance.skin + appearance.color_mode`，更新主窗 DWM 边框。
-- 切换明暗不得改变 `appearance.skin`，也不得重建 Presenter。
+- Rust 的 `WindowEvent::ThemeChanged` 路径重新解析 `appearance.skin + appearance.color_mode`，更新主窗 DWM 边框；不读取设置窗皮肤。
+- 切换明暗不得改变 `appearance.skin` / `appearance.settings_skin`，也不得重建 Presenter。
 
 ## 表面与 DWM
 
@@ -361,7 +368,7 @@ skin_surface(skin, resolvedMode) -> (u8, u8, u8)
 
 `plugin_window.rs`：
 
-- 从设置快照读取 `appearance.skin`。
+- 从设置快照读取主窗口的 `appearance.skin`。
 - 使用插件有效颜色模式解析插件窗口表面。
 - 创建窗口时设置对应的不透明 background color。
 - 运行中皮肤变化时由 webview CSS 重新绘制，不依赖重建窗口。
@@ -376,7 +383,7 @@ skin_surface(skin, resolvedMode) -> (u8, u8, u8)
 
 ### 设置窗口
 
-设置窗口继续清除 DWM 边框。它的 `--settings-canvas` 由设置 surface 样式定义，不参与启动器 DWM 表面的逐像素约束。
+设置窗口继续清除 DWM 边框。它的 `data-skin` 与 `--surface` 来自 `appearance.settings_skin`，不参与启动器 DWM 表面的逐像素约束。
 
 ## 主题色
 
@@ -453,7 +460,7 @@ skin_surface(skin, resolvedMode) -> (u8, u8, u8)
 ### 根属性
 
 - `data-theme="dark|light"`：明暗模式。
-- `data-skin="quiet|chromatic"`：应用级皮肤。
+- `data-skin="quiet|chromatic"`：当前 webview 的皮肤；主窗与设置窗各自写入。
 - `data-accent="custom"`：仅在自定义主题色生效时存在。
 
 旧 `data-settings-skin` 和 `data-settings-accent` selector 不再存在；运行时只写 `data-skin` / `data-accent`，避免两套规则并存。
@@ -550,7 +557,7 @@ Presenter 必须使用该值：
 
 - 当前有效 `data-theme` 对应的画布色
 - `--lume-page-bg`
-- 当前皮肤 id
+- 主窗口当前皮肤 id
 - 当前有效主题色
 
 新增公开视觉事件，保留旧事件：
@@ -578,7 +585,7 @@ skin   -> { id, accent, surface } （新增，可忽略）
 
 `src/pluginWindow.tsx`：
 
-- 首帧读取 `__LUME_CONFIG__`，应用统一皮肤、主题色和插件有效明暗。
+- 首帧读取 `__LUME_CONFIG__`，应用主窗口皮肤、主题色和插件有效明暗。
 - `settings-applied` 后重新读取设置并重算外壳。
 - 把 skin/accent 附加到 `plugin-state` 推送。
 - 页面 Presenter 仍通过 `theme` 和新增 `skin` 事件获得有效视觉状态。
@@ -594,7 +601,7 @@ skin   -> { id, accent, surface } （新增，可忽略）
 
 - 不新增插件权限。
 - 皮肤 id、主题色和表面色属于非敏感视觉元数据。
-- 不允许插件修改全局 skin 或 accent。
+- 不允许插件修改主窗口或设置窗口的 skin，也不允许修改全局 accent。
 - 不允许插件提供 CSS 注入宿主。
 
 ## 设置界面
@@ -609,7 +616,7 @@ skin   -> { id, accent, surface } （新增，可忽略）
 
 交互：
 
-- 皮肤用现有 RadioCards 交互，保留方向键、Home、End 和 roving tabindex。
+- 主窗口皮肤与设置窗口皮肤各用一组 RadioCards，保留方向键、Home、End 和 roving tabindex。
 - 主题色继续使用现有预设和取色器，但文案改为全应用主题色。
 - 切换皮肤或主题色不得重建页面、丢失焦点或改变滚动位置。
 - 保存失败时同时回滚：
@@ -624,11 +631,12 @@ skin   -> { id, accent, surface } （新增，可忽略）
 
 需要明确告诉用户：
 
-- 皮肤影响设置窗口、启动器、导航、剪贴板和插件外壳。
+- 主窗口皮肤影响启动器、导航、剪贴板、嵌入插件画布和分离插件窗口。
+- 设置窗口皮肤只影响设置窗口。
 - 主题色影响全应用强调态，但不改变启动器外层表面。
 - 插件自绘页面可能只跟随画布和公开变量，不保证内部布局完全重绘。
 
-文案使用 `appearanceSkin*` / `appearanceAccent*` 键，三语同步；旧 `settingsSkin*` / `settingsAccent*` 键不再存在。
+文案使用 `appearanceSkin*`、`appearanceSettingsSkin*` 与 `appearanceAccent*` 键，三语同步。
 
 ## 数据迁移与兼容
 
@@ -636,13 +644,13 @@ skin   -> { id, accent, surface } （新增，可忽略）
 
 | 旧字段 | 新字段 | 迁移规则 |
 |---|---|---|
-| `settings_skin` | `skin` | 新字段缺失时使用旧值；两者都非法时回落 `quiet` |
-| `settings_accent` | `accent` | 新字段缺失时使用旧值；新字段显式为空时保持空 |
+| 旧 `settings_skin` | `skin` + `settings_skin` | 仅旧字段存在时两窗继承同一值；新 `skin` 存在时设置窗缺省继承主窗 |
+| 旧 `settings_accent` | `accent` | 新字段缺失时使用旧值；新字段显式为空时保持空 |
 | `settings_accent_custom` | `accent_custom` | 同上 |
 
 ### 读取规则
 
-- 新字段存在且合法：以新字段为准。
+- 新字段存在且合法：以新字段为准；`skin` 与 `settings_skin` 都存在时互不覆盖。
 - 新字段缺失：迁移合法旧字段。
 - 新字段存在但非法：回落默认值，不让整份设置失败。
 - 新字段显式为空（主题色）：保留空的“跟随皮肤”语义，不复活旧主题色。
@@ -662,8 +670,9 @@ skin   -> { id, accent, surface } （新增，可忽略）
 
 必须覆盖：
 
-- 旧 Quiet 配置迁移后仍为 Quiet。
-- 旧 Chromatic 配置迁移后仍为 Chromatic。
+- 只有 `skin` 的配置迁移后两窗都保持该皮肤。
+- 只有旧 `settings_skin` 的配置迁移后两窗保持该皮肤。
+- 两字段同时存在时分别保留，不被迁移逻辑合并。
 - 旧自定义主题色迁移后仍生效。
 - 新字段显式清空主题色后不会从旧字段重新出现。
 - 手写未知 skin 不导致整份设置回退。
@@ -687,13 +696,13 @@ skin   -> { id, accent, surface } （新增，可忽略）
 | `src/theme.css` | 保留启动器基础 token；`--surface` 由统一运行时写入 |
 | `src/theme.ts` | 保留 `data-theme` 与系统明暗监听，移除硬编码 surface |
 | `src/App.tsx` | 应用运行时皮肤、主题色和表面；皮肤变化后重测布局 |
-| `src/index.tsx` | 主窗与设置窗首帧统一应用 skin / color mode / accent |
+| `src/index.tsx` | 主窗首帧应用 `skin`，设置窗首帧应用 `settings_skin` |
 | `src/App.css` | 增加内部几何 token；保持外层单面板契约 |
 | `src/settings/Settings.tsx` | 更新字段、首帧、即时预览、保存回滚和外部刷新 |
 | `src/settings/AppearancePane.tsx` | 更新字段 id、文案、预览和取色器 |
 | `src/settings/catalog.ts` | 更新搜索目录和关键词 |
 | `src/settings/types.ts` | 更新 `SettingsData`、默认值和类型 |
-| `src/pluginWindow.tsx` | 首帧应用统一皮肤；settings-applied 重算；推送 skin 元数据 |
+| `src/pluginWindow.tsx` | 首帧跟随主窗口 `skin`；settings-applied 重算；推送 skin 元数据 |
 | `src/pluginWindow.css` | 使用统一 surface/token，不写死颜色 |
 | `src/components/TitleBar.css` | 共用 accent、surface 和结构 token |
 | `src/plugins/types.ts` | 扩展插件颜色状态中的 skin/accent 字段 |
@@ -712,7 +721,7 @@ skin   -> { id, accent, surface } （新增，可忽略）
 | `languages/zh-TW.json` | 同步文案 |
 | `scripts/skin_system_unit_test.mjs` | 注册表、surface、行高与 accent token 单测 |
 | `scripts/cdp_skin_system_verify.mjs` | 跨 surface、插件画布、分离窗口、行高与首帧回归 |
-| `scripts/cdp_settings_skin_verify.mjs` | 适配 `data-skin` 与统一皮肤字段 |
+| `scripts/cdp_settings_skin_verify.mjs` | 验证设置窗 `settings_skin`、独立性、保存与响应式 |
 | `scripts/cdp_settings_accent_verify.mjs` | 验证全局 accent 与启动器 surface 边界 |
 | `scripts/cdp_plugin_theme_verify.mjs` | 增加 skin/accent/surface 推送断言 |
 
@@ -740,8 +749,8 @@ node scripts/check_i18n.mjs
 
 ### Rust 单元测试
 
-- 缺省 settings 生成 `skin = "quiet"`、空 accent。
-- 旧 `settings_skin` / `settings_accent` / `settings_accent_custom` 迁移。
+- 缺省 settings 生成 `skin = "quiet"`、`settings_skin = "quiet"` 与空 accent。
+- 旧 `settings_skin` / `settings_accent` / `settings_accent_custom` 迁移，且两个皮肤字段存在时保持独立。
 - 新字段显式空值与旧字段共存的优先级。
 - 未知 skin 回落。
 - 主题色 3/6 位展开、大小写规范化、非法值回落。
@@ -755,8 +764,9 @@ node scripts/check_i18n.mjs
 `scripts/cdp_skin_system_verify.mjs` 覆盖：
 
 - 启动即使用已保存皮肤；主窗和设置窗无默认皮肤闪帧。
-- 通过真实设置 UI 切换 Quiet / Chromatic，主窗、设置窗、导航、剪贴板即时更新。
-- 重启进程后皮肤保持。
+- 主窗 Quiet + 设置窗 Chromatic、主窗 Chromatic + 设置窗 Quiet 双向独立生效。
+- 通过真实设置 UI 切换设置窗皮肤时主窗皮肤不变；切换主窗皮肤时设置窗皮肤不变。
+- 重启进程后两个皮肤字段分别保持。
 - 未知皮肤值回落 Quiet，不影响其余设置。
 - 两套皮肤 × 两种明暗下：
   - `.launcher` 计算背景等于共享 `skins.json` 表面。
@@ -787,7 +797,7 @@ node scripts/check_i18n.mjs
 - 新增 `lume.on.skin` 收到 `{ id, accent, surface }`。
 - `lume.theme.get()` 保留旧字段并增加 skin/accent。
 - 插件皮肤事件在嵌入和分离窗口都只作用于本人。
-- 插件自有颜色模式仍可固定明暗，皮肤仍全局生效。
+- 插件自有颜色模式仍可固定明暗，皮肤继续跟随主窗口 `appearance.skin`。
 - 沙箱 Presenter 的背景像素与宿主表面一致。
 - 插件无法调用新的皮肤控制 RPC。
 
@@ -799,13 +809,13 @@ node scripts/check_i18n.mjs
 - 窗口最小宽度、设置窗窄布局、模式胶囊溢出和长文案截断。
 - 真实拖拽、键盘焦点、屏幕阅读器名称和原生取色器。
 - 分离插件窗口移动、缩放、重新打开后表面与 chrome 一致。
-- 预览窗保持现有自包含视觉，不因全局皮肤意外改色。
+- 预览窗保持现有自包含视觉，不因主窗口皮肤意外改色。
 
 ## 验收标准
 
 验收需同时满足：
 
-1. 用户只需选择一次皮肤，设置窗、启动器、导航、剪贴板、嵌入插件画布和分离插件窗口都使用该皮肤。
+1. 用户可以分别选择主窗口与设置窗口皮肤；主窗口皮肤覆盖启动器、导航、剪贴板、嵌入插件画布和分离插件窗口。
 2. 皮肤与明暗模式、Presenter 选择、插件颜色模式可以自由组合，互不覆盖。
 3. 自定义主题色是全局概念，设置窗、启动器、嵌入插件画布和分离插件窗口的强调态保持一致；启动器外层表面不被主题色隐式染色。
 4. 四个 skin/mode 组合的启动器表面由一份共享元数据同时决定 CSS、iframe 画布、插件窗口背景和 DWM 边框。
@@ -824,11 +834,11 @@ node scripts/check_i18n.mjs
 |---|---|
 | Rust、TypeScript 和 CSS 各自维护表面色导致 DWM 色差 | 以 `src/skins/skins.json` 为共享来源；Rust `include_str!`，前端直接 import |
 | 自定义 accent 染色 `--surface` 导致 DWM 无法匹配 | accent 不染启动器外层表面；设置窗可局部染色 |
-| 设置窗和启动器共享 CSS 导致样式泄漏 | 所有皮肤规则按 `data-skin` 和 surface 容器双重作用域 |
+| 设置窗和启动器共享 CSS 导致样式泄漏 | 每个 webview 只写自己的 `data-skin`；皮肤规则按 `data-skin` 和 surface 容器双重作用域 |
 | 皮肤切换重建 DOM、丢焦点或滚动 | 只改根属性/CSS 变量；Presenter 不重建 Page Service，必要时显式恢复可见选中项 |
 | 剪贴板行高与虚拟窗口不同步 | 行高进入皮肤契约，Presenters 统一使用并重新上报 viewport |
 | 插件主题事件对象化破坏旧插件 | 保留 `theme` 字符串；新增 `skin` 事件和附加字段 |
-| 旧用户皮肤/主题色丢失 | 读取期兼容三个旧字段，写入期统一迁移到新字段 |
+| 旧用户皮肤/主题色丢失 | 读取期兼容旧皮肤/主题色字段；只在任一皮肤缺失时做继承，两个新字段存在时独立保存 |
 | 未知配置让窗口无样式 | Rust 与 TypeScript 双重规范化并回落 Quiet |
 | Chromatic 破坏启动器外层几何 | 外层仍无 border/radius/透明；变体只作用于内部 |
 | 首帧读取异步导致闪屏 | Rust 初始化脚本 + 渲染前同步应用 |
@@ -846,7 +856,7 @@ node scripts/check_i18n.mjs
 
 ## 交付边界
 
-本方案只增加应用级内置皮肤和主题色基础设施，不改变：
+本契约只定义双窗口内置皮肤与全局主题色基础设施，不改变：
 
 - Page Service 的业务逻辑；
 - Presenter 的模型契约；

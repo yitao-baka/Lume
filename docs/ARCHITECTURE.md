@@ -356,8 +356,8 @@ edits before the next patch. The Rust side merges that patch into the current
 `SettingsState` under its lock, so autosave cannot roll back plugin
 enable/disable, plugin geometry / theme preferences, last-page bookmarks or
 remember-checks writes made in the meantime. A failed write restores the
-affected controls plus the skin and accent DOM to the confirmed
-snapshot, then exposes retry in the footer. Import,
+affected controls plus the active window's skin and the accent DOM to the
+confirmed snapshot, then exposes retry in the footer. Import,
 restore-default and restore-backup call the same runtime-apply helper as a
 normal save (window geometry, hotkey, dedup index, index refresh + watcher,
 plugin dev watcher, `settings-applied`), so file replacement is never
@@ -601,27 +601,31 @@ before adding a field:
     word navigation, …) inside text fields.
 - The settings window reuses the same build via the window label
   (`src/settings/` — grouped navigation, shared semantic rows, command search,
-  autosave, and the shared Quiet / Chromatic skin; see `docs/SETTINGS.md`).
+  autosave, and a Quiet / Chromatic skin independent from the launcher; see
+  `docs/SETTINGS.md`).
   Its catalog indexes localized labels, summaries/details, keywords, current
   values, and live plugin manifest/setting metadata; result jumps focus the
   exact row. The confirm dialog owns a focus trap with inert background, all
   shared switches/radios expose accessible names and selected state, and
   `setLocale()` synchronizes `documentElement.lang`.
-- `src/skins/` is the application visual runtime. `skins.json` is the single
-  machine-readable source for skin ids, launcher surfaces and accent contrast
+- `src/skins/` is the visual runtime shared by both webviews. `skins.json` is
+  the single machine-readable source for skin ids, surfaces and accent contrast
   anchors; Rust embeds it with `include_str!` and derives DWM/detached-window
-  colors from the same values. `runtime.ts` owns `data-skin` and `--surface`;
-  `accent.ts` owns `data-accent`, the five `--ui-accent*` tiers and
-  `--ui-focus-ring`. Both run before `render()` from `__LUME_CONFIG__` and
-  recompute on resolved light/dark changes. The settings surface may mix the
-  custom accent into its own canvas/rail/panel/control tokens; the launcher
-  outer surface never receives that tint.
-- The accent palette's first preset is the only skin-dependent swatch: Quiet
-  leads with Aqua, Chromatic with its original `#ac8e97` (whose dark default
-  is Aqua). The picker shows `appearance.accent_custom` — the remembered color,
-  written together with the accent on commit — or pure white while it is empty;
-  the 默认 swatch reads the skin's native accent metadata, so it stays the skin
-  default instead of following the accent in use.
+  colors from the same values. Each window's `runtime.ts` writes its own
+  `data-skin` and `--surface`: the launcher family uses `appearance.skin`, while
+  settings uses `appearance.settings_skin`. `accent.ts` owns `data-accent`, the
+  five `--ui-accent*` tiers and `--ui-focus-ring`; it derives against that
+  window's skin. Both run before `render()` from `__LUME_CONFIG__` and recompute
+  on resolved light/dark changes. The settings surface may mix the custom accent
+  into its own canvas/rail/panel/control tokens; the launcher outer surface
+  never receives that tint.
+- The accent palette's first preset is the only skin-dependent swatch and
+  follows the settings-window skin: Quiet leads with Aqua, Chromatic with its
+  original `#ac8e97` (whose dark default is Aqua). The picker shows
+  `appearance.accent_custom` — the remembered color, written together with the
+  accent on commit — or pure white while it is empty; the 默认 swatch reads that
+  skin's native accent metadata, so it stays the skin default instead of
+  following the accent in use.
   The
   satellite preview is its own entry (`src/preview.tsx`). Its compact header
   names the current file/content type and owns the in-window `close_preview`

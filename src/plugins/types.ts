@@ -36,7 +36,7 @@ export interface PluginColorState {
   mode: ColorMode;
   /** The launcher's effective mode, which a `"system"` pref follows. */
   host: ColorMode;
-  /** Application-wide skin id. */
+  /** Launcher-window skin id (the settings window has its own skin). */
   skin: SkinId;
   /** Custom accent (`""` = follow the skin). */
   accent: string;

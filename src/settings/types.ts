@@ -27,9 +27,11 @@ export interface SettingsData {
     language: string;
     /** `"system"` | `"dark"` | `"light"` — launcher + settings theme. */
     color_mode: string;
-    /** `"quiet"` | `"chromatic"` — application-wide visual language. */
+    /** `"quiet"` | `"chromatic"` — launcher-window visual language. */
     skin: SkinId;
-    /** Application-wide accent: empty follows the skin, otherwise #rrggbb. */
+    /** `"quiet"` | `"chromatic"` — settings-window visual language. */
+    settings_skin: SkinId;
+    /** Application-wide accent: empty follows each window's skin, otherwise #rrggbb. */
     accent: string;
     /** The color the custom picker last stored — remembered independently of
      * `accent`. Empty = the picker shows pure white. */
@@ -179,6 +181,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
     language: "system",
     color_mode: "system",
     skin: "quiet",
+    settings_skin: "quiet",
     accent: "",
     accent_custom: "",
     entry_size: 110,

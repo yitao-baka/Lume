@@ -146,7 +146,7 @@ const reloadSettings = async () => {
   await waitReady();
 };
 const setAppearance = async (skin, colorMode, accent, custom) => {
-  const appearance = { skin: skin, color_mode: colorMode };
+  const appearance = { skin: skin, settings_skin: skin, color_mode: colorMode };
   if (accent !== undefined) appearance.accent = accent;
   if (custom !== undefined) appearance.accent_custom = custom;
   await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', { patch: {

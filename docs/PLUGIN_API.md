@@ -445,7 +445,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 |---|---|---|
 | `env` | `form: "launcher" \| "window"` | **宿主形态常量**：同步字符串，注入桥在页面脚本运行前钉死——`"launcher"` = 启动器主窗口内嵌页，`"window"` = 独立窗口内的 view/titlebar 帧；逻辑帧（§6.9）恒为 `"launcher"`。**判别宿主形态只用它**——不要数父文档 iframe 数：keep-alive 让启动器同时挂着多个已访问模式页（iframe 数 ≥ 2 是常态），数法会误判 |
 | `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` / `detach()` | 与内置工厂 `ctx.app` 同面。`setPlaceholder` 自定本模式搜索框占位文字（§6.10）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（§8.1）；`setSubInput`/`removeSubInput` 接管/交还搜索框（§10.1）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（§10.3）；`detach()` 把本模式分离为独立窗口（§6.8）——`detachable` 插件自绘分离按钮（常驻/纯图标等形态自定）时调用它，快照/建窗/回放与宿主内置悬停按钮同一条路 |
-| `theme` | `set(mode)` / `get()` | **本插件自己的颜色模式**：`"system"`（跟随启动器）/ `"light"` / `"dark"`。只作用于本插件 —— 本模式页画布、独立窗口的 chrome 与任务栏图标一起切，**启动器自身主题不受影响**；宿主落盘（`settings.plugins.color_modes`），重启与独立窗口首帧即生效。`get()` 返回 `{pref, mode, host, skin, accent}`；`skin` / `accent` 是应用级视觉状态，插件只读。非法取值 reject。免权限（插件本地 UI，§8.2）。细节见 §6.7 |
+| `theme` | `set(mode)` / `get()` | **本插件自己的颜色模式**：`"system"`（跟随启动器）/ `"light"` / `"dark"`。只作用于本插件 —— 本模式页画布、独立窗口的 chrome 与任务栏图标一起切，**启动器自身主题不受影响**；宿主落盘（`settings.plugins.color_modes`），重启与独立窗口首帧即生效。`get()` 返回 `{pref, mode, host, skin, accent}`；`skin` 是主窗口视觉皮肤，`accent` 是全局主题色；两者均由宿主设置决定，插件只读。非法取值 reject。免权限（插件本地 UI，§8.2）。细节见 §6.7 |
 | `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `readImage()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`readImage()` 返回 PNG data URI（无图 = null；`img` feature 的取数路径，§9.3）；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（§8.1） |
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated`（§8.1） |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
@@ -488,7 +488,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 | `subInput` | `string` | 本模式调 `app.setSubInput` 接管搜索框后，每一次按键（§10.1） |
 | `settings` | `Record<string, unknown>` | 用户在设置页改动了本插件的声明式设置（§11.3）；页面 `load` 后的握手会重放当前值 |
 | `theme` | `"light" \| "dark"` | 颜色模式推送。沙箱后页面读不到宿主文档，宿主在就绪握手重放当前值，并在变化时推给本模式页与分离窗口。**载荷是本插件「生效」的明暗**：`theme.set` 定过 light/dark 就是它（此时启动器翻转不再影响本插件），否则＝启动器的有效模式——页面按它切换自己的明暗即可 |
-| `skin` | `{id, accent, surface}` | 应用级视觉状态推送。`id` 是 `quiet` / `chromatic`，`accent` 是当前自定义色（空值表示跟随皮肤），`surface` 是本插件生效明暗下的实色画布。宿主在 ready 握手、皮肤/主题色变化、系统明暗变化与插件颜色模式切换后推送；旧插件可以忽略。桥接同时把 `--lume-page-bg`、`--lume-page-accent` 和 `document.documentElement.dataset.lumeSkin` 更新为同一状态 |
+| `skin` | `{id, accent, surface}` | 主窗口视觉状态推送。`id` 是主窗口 `appearance.skin`（`quiet` / `chromatic`），`accent` 是当前全局自定义色（空值表示跟随皮肤），`surface` 是本插件生效明暗与主窗皮肤下的实色画布。宿主在 ready 握手、皮肤/主题色变化、系统明暗变化与插件颜色模式切换后推送；旧插件可以忽略。桥接同时把 `--lume-page-bg`、`--lume-page-accent` 和 `document.documentElement.dataset.lumeSkin` 更新为同一状态 |
 | `key` | `{key, code, ctrlKey, shiftKey, altKey, metaKey}` | 模式激活时转发非编辑目标的 keydown。桥接在事件分发后一个任务才转发，因此页面自己的冒泡监听可先用 `preventDefault` 消费。`lume.on.key` 返回 `true`（或 Promise<true>）表示页面已消费；未消费的 Esc 才会关闭预览、独立窗口或启动器。 |
 | `snapshot` | — | 宿主索取快照时调用 `lume.on.snapshot = () => state`（§6.4） |
 | `restore` | `state` | 跨窗口/重挂载恢复时调用 `lume.on.restore = (state) => {}`（§6.4） |
@@ -575,7 +575,7 @@ Presenter 在 detach、窗口关闭回流或 keep-alive LRU 淘汰前接收
    `theme.set` 不会替页面改 DOM。
 5. **回读**：`lume.theme.get()` → `{pref, mode, host, skin, accent}`（本插件
    偏好 / 生效明暗 / 宿主明暗 / 应用皮肤 / 自定义主题色）。`mode` 就是上面
-   `theme` 事件的载荷；`skin`/`accent` 与应用级设置一致，随 `skin` 事件更新。
+   `theme` 事件的载荷；`skin` 与主窗口设置一致，`accent` 与全局主题色一致，随 `skin` 事件更新。
 6. **权限**：无需声明（它只改插件自己的表面，碰不到启动器与其它插件；§8.2）。
 7. **失败要当心**：非法取值 reject（宿主与 Rust 两侧都校验），桥接层照例把
    reject 记到控制台并返回 `undefined` —— 见 §6.1「每条 RPC 都要判空」。
@@ -736,8 +736,9 @@ titlebar = "titlebar.html"   # 可选；launcher 内嵌时忽略
   registry 监听本窗口 `data-theme`、皮肤与主题色变化，向模式页 post
   `theme` / `skin`，向分离窗口经 `plugin_window_push_state` 携带
   `theme`、`themePref`、`skin`、`accent` 与已解析的 `surface`（§6.2 事件表）。
-  **`theme` 推送值是本插件生效的明暗**（`theme.set` 覆盖）；全局皮肤与主题色
-  始终来自应用设置。独立窗口的**窗口自身**（chrome/标题栏/窗口底色/任务栏
+  **`theme` 推送值是本插件生效的明暗**（`theme.set` 覆盖）；皮肤始终来自主窗口
+  `appearance.skin`，主题色始终来自全局 `appearance.accent`。独立窗口的
+  **窗口自身**（chrome/标题栏/窗口底色/任务栏
   图标）按「偏好 ⊕ 启动器设置」判明暗：只在 `theme` 上做不够，因为
   `"system"` 还得跟随系统（`applyPluginColorMode`，src/theme.ts）。
 - **静默推送的窗口过滤（实测坑）**：Tauri 的 JS `listen()` 默认目标是
@@ -1863,7 +1864,7 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
   安全焦点 / Esc·取消不落盘 / 确认落盘 / 降级黄字）。
 - `cdp_p2b_verify.mjs` — files 拖入 / img 剪贴板图片 / template="list" 列表模板 /
   磁贴指针重排 / folder·image·extensions 类别匹配。
-- `cdp_skin_system_verify.mjs` — 统一皮肤系统：四组 skin/mode 的
+- `cdp_skin_system_verify.mjs` — 双窗口皮肤系统：独立/混搭 skin 组合与四组 mode 的
   CSS/像素/iframe/分离窗口 surface、插件颜色覆盖正交性、剪贴板双 Presenter
   行高与选择保持、全局主题色不染启动器外层表面、fresh-process 首帧。
 - `cdp_plugin_theme_verify.mjs` — 插件自身颜色模式：

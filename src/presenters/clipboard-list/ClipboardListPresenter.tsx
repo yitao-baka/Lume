@@ -1,7 +1,7 @@
 //! Default clipboard Presenter. All rows/actions come from the windowed Page
 //! Model; Tauri commands and the ClipboardStore stay in the Page Service.
 
-import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, on, onCleanup, onMount, untrack } from "solid-js";
 import { t } from "../../i18n";
 import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "../../launcher/clipData";
 import type { ClipboardItem } from "../../launcher/types";
@@ -92,9 +92,12 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
   onMount(() => {
     queueMicrotask(measureViewport);
   });
-  createEffect(() => {
-    const height = rowHeight();
-    const index = data()?.selectedIndex ?? -1;
+  // A skin change can alter the row rhythm without rebuilding the Presenter.
+  // Only row-height changes re-anchor the selected row; following every model
+  // revision here would snap wheel scrolling back to the selection as soon as
+  // the Page Service published the new viewport window.
+  createEffect(on(rowHeight, (height) => {
+    const index = untrack(() => data()?.selectedIndex ?? -1);
     if (index >= 0 && list) {
       const top = index * height;
       const bottom = top + height;
@@ -104,7 +107,7 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
       }
     }
     queueMicrotask(measureViewport);
-  });
+  }));
   createEffect(() => {
     const open = !!data()?.clearState?.open;
     if (open && !clearWasOpen) queueMicrotask(() => cancelButton?.focus());
@@ -114,14 +117,14 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
   // The Page Service owns the windowed row slice, but only the Presenter owns
   // the scroll element. Keep keyboard selection visible here and feed the new
   // scroll position back as a viewport intent.
-  createEffect(() => {
-    const index = data()?.selectedIndex ?? -1;
+  createEffect(on(() => data()?.selectedIndex ?? -1, (index) => {
     if (index < 0 || !list || props.selectionSource() !== "keyboard") return;
-    const top = index * rowHeight();
-    const bottom = top + rowHeight();
+    const height = untrack(rowHeight);
+    const top = index * height;
+    const bottom = top + height;
     if (top < list.scrollTop) list.scrollTop = top;
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + 8;
-  });
+  }));
   const bindList = (el: HTMLDivElement) => {
     list = el;
     resizeObserver?.disconnect();
@@ -172,6 +175,7 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
             class="clip-list"
             ref={bindList}
             role="listbox"
+            onWheel={() => props.markMouse()}
             onScroll={(event) => {
               if (!list) return;
               void props.dispatch({

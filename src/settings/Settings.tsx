@@ -81,6 +81,12 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+/** The skin this settings webview renders. Older injected settings only carry
+ * `skin`, which remains the fallback until Rust writes both keys. */
+function activeSettingsSkin(value: SettingsData | null | undefined): string | undefined {
+  return value?.appearance.settings_skin ?? value?.appearance.skin;
+}
+
 /** Apply a minimal settings patch to a local snapshot. Arrays replace. */
 function applyPatch(base: SettingsData, patch: SettingsPatch): SettingsData {
   const next = clone(base) as unknown as Record<string, unknown>;
@@ -177,7 +183,8 @@ export default function Settings() {
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [saveState, setSaveState] = createSignal<SaveState>("saved");
   const [saveError, setSaveError] = createSignal<string | null>(null);
-  const [skinError, setSkinError] = createSignal<string | null>(null);
+  const [launcherSkinError, setLauncherSkinError] = createSignal<string | null>(null);
+  const [settingsSkinError, setSettingsSkinError] = createSignal<string | null>(null);
   const [accentError, setAccentError] = createSignal<string | null>(null);
   const [lastUndo, setLastUndo] = createSignal<{
     before: SettingsData;
@@ -262,11 +269,12 @@ export default function Settings() {
           setBaseline(clone(normalized));
           setSaveState("saved");
           setSaveError(null);
-          setSkinError(null);
+          setLauncherSkinError(null);
+          setSettingsSkinError(null);
           setAccentError(null);
           setLastUndo(null);
           failedSnapshot = null;
-          applySkin(normalized.appearance.skin);
+          applySkin(activeSettingsSkin(normalized));
           applyAccent(normalized.appearance.accent);
         });
       })
@@ -281,7 +289,8 @@ export default function Settings() {
   function queueSave(patch: SettingsPatch) {
     failedSnapshot = null;
     setSaveError(null);
-    setSkinError(null);
+    setLauncherSkinError(null);
+    setSettingsSkinError(null);
     setAccentError(null);
     setSaveState("saving");
     if (saveTimer) clearTimeout(saveTimer);
@@ -313,7 +322,8 @@ export default function Settings() {
       batch(() => {
         setBaseline(clone(snapshot));
         setSaveState("saved");
-        setSkinError(null);
+        setLauncherSkinError(null);
+        setSettingsSkinError(null);
         setAccentError(null);
         setLastUndo({ before: clone(base), after: clone(snapshot) });
       });
@@ -327,13 +337,16 @@ export default function Settings() {
         setSaveState("error");
         setSaveError(message);
         if (keys.includes("appearance.skin")) {
-          setSkinError(t("appearanceSkinSaveFailed"));
+          setLauncherSkinError(t("appearanceSkinSaveFailed"));
+        }
+        if (keys.includes("appearance.settings_skin")) {
+          setSettingsSkinError(t("appearanceSettingsSkinSaveFailed"));
         }
         if (keys.includes("appearance.accent")) {
           setAccentError(t("appearanceAccentSaveFailed"));
         }
         setSettings(clone(base));
-        applySkin(base.appearance.skin);
+        applySkin(activeSettingsSkin(base));
         applyAccent(base.appearance.accent);
       });
       return false;
@@ -357,9 +370,11 @@ export default function Settings() {
     }
     const snapshot = failedSnapshot;
     failedSnapshot = null;
+    setLauncherSkinError(null);
+    setSettingsSkinError(null);
     setAccentError(null);
     setSettings(clone(snapshot));
-    applySkin(snapshot.appearance.skin);
+    applySkin(activeSettingsSkin(snapshot));
     applyAccent(snapshot.appearance.accent);
     setSaveState("saving");
     await saveNow();
@@ -374,7 +389,7 @@ export default function Settings() {
     }
     const focusBefore = document.activeElement as HTMLElement | null;
     const scrollBefore = bodyEl?.scrollTop ?? 0;
-    if (normalized.skin) applySkin(normalized.skin);
+    if (normalized.settings_skin) applySkin(normalized.settings_skin);
     if ("accent" in normalized) {
       applyAccent(normalized.accent);
     }
@@ -407,11 +422,11 @@ export default function Settings() {
       setTimeout(restoreAccentFocus, 150);
       setTimeout(restoreAccentFocus, 420);
     }
-    if (normalized.skin) {
+    if (normalized.settings_skin) {
       const restoreSkinFocus = () => {
         if (bodyEl) bodyEl.scrollTop = scrollBefore;
         const currentSelected = document.querySelector<HTMLElement>(
-          '[data-setting-id="appearance.skin"] [role="radio"][aria-checked="true"]',
+          '[data-setting-id="appearance.settings_skin"] [role="radio"][aria-checked="true"]',
         );
         const target = focusBefore?.isConnected ? focusBefore : currentSelected;
         target?.focus({ preventScroll: true });
@@ -468,7 +483,7 @@ export default function Settings() {
     setLastUndo(null);
     if (undoTimer) clearTimeout(undoTimer);
     setSettings(next);
-    applySkin(next.appearance.skin);
+    applySkin(activeSettingsSkin(next));
     applyAccent(next.appearance.accent);
     queueSave(inverse);
   }
@@ -603,10 +618,11 @@ export default function Settings() {
             setBaseline(clone(normalized));
             setSaveState("saved");
             setSaveError(null);
-            setSkinError(null);
+            setLauncherSkinError(null);
+            setSettingsSkinError(null);
             setAccentError(null);
             setLastUndo(null);
-            applySkin(normalized.appearance.skin);
+            applySkin(activeSettingsSkin(normalized));
             applyAccent(normalized.appearance.accent);
           });
         },
@@ -690,7 +706,7 @@ export default function Settings() {
     if (!value) return;
     setLocale(resolveLocale(value.appearance.language));
     applyColorMode(value.appearance.color_mode);
-    applySkin(value.appearance.skin);
+    applySkin(activeSettingsSkin(value));
     document.documentElement.dataset.settingsSaveState = saveState();
   });
 
@@ -970,7 +986,8 @@ export default function Settings() {
                   onReload={() => loadSettings(true)}
                   confirmDiscard={async () => (await saveNow()) && saveState() !== "error"}
                   pluginSearchQuery={pluginDeepQuery()}
-                  skinError={skinError()}
+                  launcherSkinError={launcherSkinError()}
+                  settingsSkinError={settingsSkinError()}
                   accentError={accentError()}
                   onAccentPreview={(value) => applyAccent(value)}
                   onNavigate={navigateTo}
@@ -1088,7 +1105,8 @@ function SectionBody(props: {
   onReload: () => void;
   confirmDiscard: () => Promise<boolean>;
   pluginSearchQuery: string;
-  skinError: string | null;
+  launcherSkinError: string | null;
+  settingsSkinError: string | null;
   accentError: string | null;
   onAccentPreview: (value: string) => void;
   onNavigate: (section: SectionId) => void;
@@ -1101,7 +1119,8 @@ function SectionBody(props: {
         <AppearancePane
           settings={props.settings}
           onChange={props.onUpdateAppearance}
-          skinError={props.skinError}
+          launcherSkinError={props.launcherSkinError}
+          settingsSkinError={props.settingsSkinError}
           accentError={props.accentError}
           onAccentPreview={props.onAccentPreview}
         />

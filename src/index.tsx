@@ -28,13 +28,20 @@ const cfg = (window as any).__LUME_CONFIG__ as
   | {
       appearance?: {
         skin?: string;
+        settings_skin?: string;
         color_mode?: string;
         accent?: string;
       };
     }
   | undefined;
 applyColorMode(cfg?.appearance?.color_mode ?? "system");
-applySkin(cfg?.appearance?.skin);
+// Each webview owns one skin. The detached plugin windows are part of the
+// launcher shell and therefore follow `skin`, not `settings_skin`.
+applySkin(
+  isSettings
+    ? cfg?.appearance?.settings_skin ?? cfg?.appearance?.skin
+    : cfg?.appearance?.skin ?? cfg?.appearance?.settings_skin,
+);
 applyAccent(cfg?.appearance?.accent);
 
 render(

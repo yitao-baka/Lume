@@ -157,9 +157,20 @@ const seedClipboard = async (label) => {
   execSync(`powershell -NoProfile -Command "Set-Clipboard -Value '${text}'"`, { stdio: "ignore" });
   await sleep(1600);
 };
+const seedClipboardRows = async (count) => {
+  for (let i = 0; i < count; i++) {
+    const text = `Lume wheel row ${Date.now()}-${i}`;
+    execSync(`powershell -NoProfile -Command "Set-Clipboard -Value '${text}'"`, { stdio: "ignore" });
+    await sleep(360);
+  }
+};
 const setSettings = async (patch) => {
   const current = await invoke("get_settings");
-  Object.assign(current.appearance, patch.appearance ?? {});
+  const appearance = patch.appearance ?? {};
+  Object.assign(current.appearance, appearance);
+  if (appearance.skin !== undefined && appearance.settings_skin === undefined) {
+    current.appearance.settings_skin = appearance.skin;
+  }
   if (patch.colorModes !== undefined) current.plugins.color_modes = patch.colorModes;
   if (patch.presenters !== undefined) current.pages.presenters = patch.presenters;
   await invoke("save_settings", { new: current });
@@ -222,20 +233,59 @@ await setSettings({
   presenters: { clipboard: "clipboard-list" },
 });
 await main.evalJs(`document.querySelector(".search-input")?.focus(); true`);
+await seedClipboardRows(14);
+
+// Independent window skins are intentional input, not a transient mismatch.
+await setSettings({
+  appearance: { skin: "quiet", settings_skin: "chromatic", color_mode: "light", accent: "" },
+  colorModes: {},
+});
+await reloadSettings();
+const independentOne = await settings.evalJs(`({
+  settingsSkin: document.documentElement.dataset.skin,
+  surface: document.documentElement.style.getPropertyValue("--surface").trim(),
+})`);
+const launcherOne = await main.evalJs(`({
+  launcherSkin: document.documentElement.dataset.skin,
+  surface: document.documentElement.style.getPropertyValue("--surface").trim(),
+})`);
+check("launcher Quiet + settings Chromatic apply independently",
+  launcherOne.launcherSkin === "quiet" && launcherOne.surface === SURFACES.quiet.light &&
+  independentOne.settingsSkin === "chromatic" && independentOne.surface === SURFACES.chromatic.light,
+  JSON.stringify({ launcherOne, independentOne }));
+
+await setSettings({
+  appearance: { skin: "chromatic", settings_skin: "quiet", color_mode: "light", accent: "" },
+  colorModes: {},
+});
+await reloadSettings();
+const independentTwo = await settings.evalJs(`({
+  settingsSkin: document.documentElement.dataset.skin,
+  surface: document.documentElement.style.getPropertyValue("--surface").trim(),
+})`);
+const launcherTwo = await main.evalJs(`({
+  launcherSkin: document.documentElement.dataset.skin,
+  surface: document.documentElement.style.getPropertyValue("--surface").trim(),
+})`);
+check("launcher Chromatic + settings Quiet apply independently",
+  launcherTwo.launcherSkin === "chromatic" && launcherTwo.surface === SURFACES.chromatic.light &&
+  independentTwo.settingsSkin === "quiet" && independentTwo.surface === SURFACES.quiet.light,
+  JSON.stringify({ launcherTwo, independentTwo }));
 
 // ── ① first-frame persistence + shared surface source ───────────────────
 for (const [skin, modes] of Object.entries(SURFACES)) {
   for (const [mode, surface] of Object.entries(modes)) {
     await setSettings({ appearance: { skin, color_mode: mode, accent: "" }, colorModes: {} });
     await reloadSettings();
-    const settingsFrame = await settings.evalJs(`({
+    const settingsFrame = await settings.evalJs(`(async () => ({
       skin: document.documentElement.dataset.skin,
       theme: document.documentElement.dataset.theme,
       surface: document.documentElement.style.getPropertyValue("--surface").trim(),
-      configured: window.__LUME_CONFIG__?.appearance?.skin,
-    })`);
+      configured: (await window.__TAURI_INTERNALS__.invoke("get_settings")).appearance.settings_skin,
+    }))()`);
     check(`${skin}/${mode} settings refresh uses the shared skin metadata`,
-      settingsFrame.skin === skin && settingsFrame.theme === mode && settingsFrame.surface === surface,
+      settingsFrame.skin === skin && settingsFrame.theme === mode &&
+        settingsFrame.surface === surface && settingsFrame.configured === skin,
       JSON.stringify(settingsFrame));
 
     const mainFrame = await main.evalJs(`({
@@ -438,6 +488,43 @@ for (let i = 0; i < 20; i++) {
   await sleep(150);
 }
 await sleep(250);
+
+// A real wheel gesture must survive the viewport intent round-trip. The old
+// model-driven auto-scroll snapped back to the selected row on every publish.
+for (const presenter of ["clipboard-list", "clipboard-compact"]) {
+  await setSettings({ appearance: { skin: "quiet" }, presenters: { clipboard: presenter } });
+  await sleep(500);
+  await main.evalJs(`(() => {
+    document.getElementById("search-input")?.focus();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    return true;
+  })()`);
+  await sleep(160);
+  const point = await main.evalJs(`(() => {
+    const list = document.querySelector(".mode-host.active .clip-list");
+    if (!list) return null;
+    list.scrollTop = 0;
+    const rect = list.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + Math.min(rect.height / 2, 120) };
+  })()`);
+  if (point) {
+    await main.send("Input.dispatchMouseEvent", {
+      type: "mouseWheel",
+      x: point.x,
+      y: point.y,
+      deltaX: 0,
+      deltaY: 420,
+    });
+  }
+  await sleep(350);
+  const early = await main.evalJs(`document.querySelector(".mode-host.active .clip-list")?.scrollTop ?? -1`);
+  await sleep(500);
+  const settled = await main.evalJs(`document.querySelector(".mode-host.active .clip-list")?.scrollTop ?? -1`);
+  check(`${presenter} wheel scroll does not snap back after model refresh`,
+    !!point && early > 100 && settled > 100 && Math.abs(settled - early) <= 2,
+    JSON.stringify({ point, early, settled }));
+}
+
 for (const [skin, listH, compactH] of [["quiet", 52, 44], ["chromatic", 56, 48]]) {
   await setSettings({ appearance: { skin }, presenters: { clipboard: "clipboard-list" } });
   await sleep(450);

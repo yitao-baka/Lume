@@ -48,12 +48,22 @@ impl Settings {
         // New fields win whenever present. Legacy fields are consulted only
         // when the corresponding new key is absent, so an explicitly empty
         // accent remains empty instead of reviving an old color.
-        let skin = self
-            .appearance
-            .skin
-            .take()
-            .or_else(|| self.appearance.legacy_settings_skin.take())
+        // `skin` is the launcher skin; `settings_skin` is the settings-window
+        // skin. Either key missing inherits the other so pre-dual-skin files
+        // keep their existing app-wide appearance. Once both are present
+        // they are independent.
+        let launcher_skin = self.appearance.skin.take();
+        let settings_skin = self.appearance.settings_skin.take();
+        let shared_skin = launcher_skin
+            .as_deref()
+            .or(settings_skin.as_deref())
             .unwrap_or_default();
+        let launcher_skin = normalize_skin(
+            launcher_skin.as_deref().unwrap_or(shared_skin),
+        );
+        let settings_skin = normalize_skin(
+            settings_skin.as_deref().unwrap_or(shared_skin),
+        );
         let accent = self
             .appearance
             .accent
@@ -66,7 +76,8 @@ impl Settings {
             .take()
             .or_else(|| self.appearance.legacy_settings_accent_custom.take())
             .unwrap_or_default();
-        self.appearance.skin = Some(normalize_skin(&skin).to_string());
+        self.appearance.skin = Some(launcher_skin.to_string());
+        self.appearance.settings_skin = Some(settings_skin.to_string());
         self.appearance.accent = Some(normalize_accent(&accent));
         self.appearance.accent_custom = Some(normalize_accent(&accent_custom));
     }
@@ -189,11 +200,15 @@ pub struct Appearance {
     /// `"system"` | `"dark"` | `"light"` — launcher + settings theme.
     #[serde(default = "default_color_mode")]
     pub color_mode: String,
-    /// Application-wide visual skin: `"quiet"` (default) | `"chromatic"`.
-    /// Option distinguishes a missing new key from an explicit value so old
-    /// `settings_skin` data can migrate without overriding a new choice.
+    /// Launcher-window visual skin: `"quiet"` (default) | `"chromatic"`.
+    /// Applies to the launcher, navigation, clipboard, embedded plugin
+    /// canvases and detached plugin windows.
     #[serde(default)]
     pub skin: Option<String>,
+    /// Settings-window visual skin: `"quiet"` (default) | `"chromatic"`.
+    /// Missing inherits `skin`, preserving the former app-wide skin setting.
+    #[serde(default)]
+    pub settings_skin: Option<String>,
     /// Application-wide accent: empty follows the skin, otherwise a
     /// normalized lowercase `#rrggbb`.
     #[serde(default)]
@@ -204,8 +219,6 @@ pub struct Appearance {
     pub accent_custom: Option<String>,
     /// Read-only compatibility inputs. They migrate during `normalize()` and
     /// are dropped by the next write.
-    #[serde(default, rename = "settings_skin", skip_serializing)]
-    legacy_settings_skin: Option<String>,
     #[serde(default, rename = "settings_accent", skip_serializing)]
     legacy_settings_accent: Option<String>,
     #[serde(default, rename = "settings_accent_custom", skip_serializing)]
@@ -285,11 +298,19 @@ pub struct Appearance {
 }
 
 impl Appearance {
-    /// Normalized application skin. `normalize()` keeps this populated for
-    /// every settings object crossing a public boundary; the fallback covers
+    /// Normalized launcher skin. `normalize()` keeps this populated for every
+    /// settings object crossing a public boundary; the fallback covers
     /// directly constructed structs in tests and callers.
     pub fn skin(&self) -> &str {
         self.skin.as_deref().unwrap_or("quiet")
+    }
+
+    /// Normalized settings-window skin. Missing values inherit the launcher
+    /// skin, matching the former app-wide skin contract.
+    pub fn settings_skin(&self) -> &str {
+        self.settings_skin
+            .as_deref()
+            .unwrap_or_else(|| self.skin())
     }
 
     /// Normalized application accent (`""` = follow the skin).
@@ -632,9 +653,9 @@ impl Default for Settings {
                 language: "system".into(),
                 color_mode: "system".into(),
                 skin: Some(default_skin()),
+                settings_skin: Some(default_skin()),
                 accent: Some(String::new()),
                 accent_custom: Some(String::new()),
-                legacy_settings_skin: None,
                 legacy_settings_accent: None,
                 legacy_settings_accent_custom: None,
                 entry_size: 110,
@@ -1361,50 +1382,73 @@ mod tests {
         assert_eq!(next.index.cache_refresh_interval_minutes, 5);
     }
 
-    /// Application skin: absent new keys migrate from the old settings-window
-    /// field, unknown values fall back to quiet, and known values round-trip.
+    /// Launcher and settings skins: defaults stay synchronized, old files
+    /// that only contain either key inherit it in both windows, and explicit
+    /// values are independent and round-trip.
     #[test]
-    fn skin_defaults_migrates_and_round_trips() {
-        let base = temp_base("settings-skin");
+    fn skins_default_migrate_and_round_trip() {
+        let base = temp_base("settings-skins");
         ensure_settings_files(&base).unwrap();
 
         let defaults = read_settings(&base);
         assert_eq!(defaults.appearance.skin(), "quiet");
+        assert_eq!(defaults.appearance.settings_skin(), "quiet");
         let factory = fs::read_to_string(default_path(&base)).unwrap();
         assert!(factory.contains("skin = \"quiet\""));
-        assert!(!factory.contains("settings_skin ="));
+        assert!(factory.contains("settings_skin = \"quiet\""));
 
-        // Legacy files used `settings_skin`; it seeds the new field.
         let full = fs::read_to_string(settings_path(&base)).unwrap();
-        let legacy = full.replace(
-            "skin = \"quiet\"",
-            "settings_skin = \"chromatic\"",
-        );
-        fs::write(settings_path(&base), legacy).unwrap();
-        assert_eq!(read_settings(&base).appearance.skin(), "chromatic");
 
-        // An unknown new value falls back to quiet without failing the rest
-        // of the settings document.
-        let unknown = full.replace(
-            "skin = \"quiet\"",
-            "skin = \"neon-from-the-future\"",
-        );
-        fs::write(settings_path(&base), unknown).unwrap();
-        let loaded = read_settings(&base);
-        assert_eq!(loaded.appearance.skin(), "quiet");
-        assert_eq!(loaded.appearance.color_mode, "system");
+        // A pre-dual-skin file with only `skin` applies it to both windows.
+        let launcher_only = full
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("settings_skin ="))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace("skin = \"quiet\"", "skin = \"chromatic\"");
+        fs::write(settings_path(&base), launcher_only).unwrap();
+        let inherited = read_settings(&base);
+        assert_eq!(inherited.appearance.skin(), "chromatic");
+        assert_eq!(inherited.appearance.settings_skin(), "chromatic");
 
-        let mut next = loaded;
-        next.appearance.skin = Some("chromatic".into());
+        // A legacy settings-window-only file keeps its former app-wide
+        // effective appearance on both windows after upgrade.
+        let settings_only = full
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("skin ="))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace("settings_skin = \"quiet\"", "settings_skin = \"chromatic\"");
+        fs::write(settings_path(&base), settings_only).unwrap();
+        let legacy = read_settings(&base);
+        assert_eq!(legacy.appearance.skin(), "chromatic");
+        assert_eq!(legacy.appearance.settings_skin(), "chromatic");
+
+        // Once both values exist they are independent.
+        let mut next = defaults;
+        next.appearance.skin = Some("quiet".into());
+        next.appearance.settings_skin = Some("chromatic".into());
         write_settings_light(&base, &next).unwrap();
-        assert_eq!(read_settings(&base).appearance.skin(), "chromatic");
-        let merged = merge_settings_patch(
-            &next,
+        let round_trip = read_settings(&base);
+        assert_eq!(round_trip.appearance.skin(), "quiet");
+        assert_eq!(round_trip.appearance.settings_skin(), "chromatic");
+
+        // Unknown values degrade locally instead of failing the document.
+        let unknown_settings = merge_settings_patch(
+            &round_trip,
+            serde_json::json!({ "appearance": { "settings_skin": "not-a-skin" } }),
+        )
+        .unwrap();
+        assert_eq!(unknown_settings.appearance.skin(), "quiet");
+        assert_eq!(unknown_settings.appearance.settings_skin(), "quiet");
+        let unknown_launcher = merge_settings_patch(
+            &round_trip,
             serde_json::json!({ "appearance": { "skin": "not-a-skin" } }),
         )
         .unwrap();
-        assert_eq!(merged.appearance.skin(), "quiet");
-        assert_eq!(merged.appearance.color_mode, next.appearance.color_mode);
+        assert_eq!(unknown_launcher.appearance.skin(), "quiet");
+        assert_eq!(unknown_launcher.appearance.settings_skin(), "chromatic");
+        assert_eq!(unknown_launcher.appearance.color_mode, round_trip.appearance.color_mode);
         fs::remove_dir_all(&base).ok();
     }
 
@@ -1494,25 +1538,30 @@ mod tests {
         fs::remove_dir_all(&base).ok();
     }
 
-    /// The same parser handles legacy fields from imported files, default.toml
-    /// and backup.toml. Unknown skins degrade locally instead of failing the
-    /// whole document, and the next serialization contains only new keys.
+    /// The same parser handles legacy skin/accent fields from imported files,
+    /// default.toml and backup.toml. Unknown skins degrade locally instead of
+    /// failing the whole document, and writes include both current skin keys.
     #[test]
     fn legacy_skin_fields_survive_all_file_entry_points() {
         let base = temp_base("legacy-skin-entry-points");
         ensure_settings_files(&base).unwrap();
         let full = fs::read_to_string(settings_path(&base)).unwrap();
         let legacy = full
-            .replace("skin = \"quiet\"", "settings_skin = \"chromatic\"")
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("skin ="))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace("settings_skin = \"quiet\"", "settings_skin = \"chromatic\"")
             .replace("accent = \"\"", "settings_accent = \"#6F7CFF\"")
             .replace(
                 "accent_custom = \"\"",
                 "settings_accent_custom = \"#ABCDEF\"",
             );
 
-        // Import-shaped parse.
+        // Import-shaped parse. A lone legacy settings skin applies to both.
         let imported = parse_settings_text(&legacy).unwrap();
         assert_eq!(imported.appearance.skin(), "chromatic");
+        assert_eq!(imported.appearance.settings_skin(), "chromatic");
         assert_eq!(imported.appearance.accent(), "#6f7cff");
         assert_eq!(imported.appearance.accent_custom(), "#abcdef");
 
@@ -1521,10 +1570,11 @@ mod tests {
         let backup_text = fs::read_to_string(backup_path(&base)).unwrap();
         let restored = parse_settings_text(&backup_text).unwrap();
         assert_eq!(restored.appearance.skin(), "chromatic");
+        assert_eq!(restored.appearance.settings_skin(), "chromatic");
         assert_eq!(restored.appearance.accent(), "#6f7cff");
 
-        // Factory-default-shaped parse with an unknown skin: only the skin
-        // value degrades; unrelated fields and accent remain intact.
+        // Factory-default-shaped parse with an unknown settings skin: only
+        // that value degrades; unrelated fields and accent remain intact.
         let unknown = legacy.replace(
             "settings_skin = \"chromatic\"",
             "settings_skin = \"not-a-skin\"",
@@ -1533,15 +1583,17 @@ mod tests {
         let defaults_text = fs::read_to_string(default_path(&base)).unwrap();
         let defaults = parse_settings_text(&defaults_text).unwrap();
         assert_eq!(defaults.appearance.skin(), "quiet");
+        assert_eq!(defaults.appearance.settings_skin(), "quiet");
         assert_eq!(defaults.appearance.accent(), "#6f7cff");
         assert_eq!(defaults.appearance.language, "system");
 
-        // The next canonical write drops all legacy keys and keeps new ones.
+        // The next canonical write drops legacy accent keys and keeps both
+        // current skin keys.
         write_settings_light(&base, &imported).unwrap();
         let canonical = fs::read_to_string(settings_path(&base)).unwrap();
         assert!(canonical.contains("skin = \"chromatic\""));
+        assert!(canonical.contains("settings_skin = \"chromatic\""));
         assert!(canonical.contains("accent = \"#6f7cff\""));
-        assert!(!canonical.contains("settings_skin"));
         assert!(!canonical.contains("settings_accent"));
         fs::remove_dir_all(&base).ok();
     }

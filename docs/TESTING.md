@@ -107,10 +107,12 @@ the satellite preview title/close path.
 
 Settings interaction/accessibility regressions are covered by
 `node scripts/cdp_settings_skin_verify.mjs`. It opens the embedded debug settings
-window and checks Quiet / Chromatic across system-resolved light and dark modes,
-`data-skin`, grouped tab semantics, focus and scroll
-preservation while switching skins, catalog search (including a disk plugin's
-declarative setting), autosave persistence, save failure/rollback with a
+window and checks Quiet / Chromatic for both `appearance.skin` and
+`appearance.settings_skin` across system-resolved light and dark modes,
+`data-skin`, grouped tab semantics, focus and scroll preservation while
+switching the settings skin, proof that a settings-skin change leaves the
+launcher skin untouched, catalog search (including a disk plugin's declarative
+setting), autosave persistence, save failure/rollback with a
 read-only `settings.toml`, real confirmation dialogs, and all nine pages at
 `1040×720` and `560×420` without horizontal overflow. It also asserts the
 hover tooltip/click dialog help path without row reflow, switch knob geometry in
@@ -132,13 +134,15 @@ search, autosave status bar, restore confirmation, clipboard disabled-slider
 dependency, keycap shortcuts, and page screenshots. The former
 `cdp_settings_ux_audit_verify.mjs` filename forwards to the skin verifier.
 
-The unified skin system uses `node scripts/cdp_skin_system_verify.mjs`. It
-checks all four skin/mode combinations against the shared metadata in the
-launcher DOM and rendered pixels, the settings first frame after a fresh
-process, embedded Presenter canvases and their compatibility with plugin color
-overrides, the detached-window surface, both clipboard Presenter row heights,
-selection/DOM preservation across skin switches, and the rule that a custom
-accent never tints the launcher's outer surface.
+The dual-window skin system uses `node scripts/cdp_skin_system_verify.mjs`. It
+checks launcher Quiet + settings Chromatic and the reverse combination,
+all four skin/mode combinations against the shared metadata in the launcher DOM
+and rendered pixels, the settings first frame after a fresh process, embedded
+Presenter canvases and their compatibility with plugin color overrides, the
+detached-window surface, both clipboard Presenter row heights, selection/DOM
+preservation across skin switches, real mouse-wheel scrolling in both clipboard
+Presenters (including no snap-back after virtual-window refresh), and the rule
+that a custom accent never tints the launcher's outer surface.
 
 ## Manual verification
 
@@ -313,16 +317,18 @@ dev URL instead.
    未豁免插件页冷启动；清单 `keep_session = true` 或 设置 → 插件 打开豁免的
    插件应保留查询与页面状态（但落地仍是导航页）；总开关关闭后不重置。
    自动验证：`node scripts/cdp_idle_reset_verify.mjs`（需先构建 debug exe）。
-8. **Search** — `Ctrl+F`, then search 「应用皮肤」「闲置重置」 or a disk
-   plugin's declarative label (e.g. 「列表前缀」): one row-level result appears;
-   Enter jumps to the exact row and focuses its container. A nonsense query
-   shows the localized no-match suggestions. Esc clears the overlay.
-9. **Skins and accent** — switch Quiet ↔ Chromatic in 外观. Focus stays on the
-   skin radio and scroll position is preserved. The settings window, launcher,
-   navigation, clipboard, embedded plugin canvas and detached plugin window all
-   switch together; Chromatic must not add a CSS border/radius to the launcher's
-   outer window. Repeat with light/dark mode: both skins use their own palette,
-   and a plugin's own light/dark override remains orthogonal. Select each accent
+8. **Search** — `Ctrl+F`, then search 「主窗口皮肤」「设置窗口皮肤」「闲置重置」 or
+   a disk plugin's declarative label (e.g. 「列表前缀」): each row-level setting
+   appears once; Enter jumps to the exact row and focuses its container. A
+   nonsense query shows the localized no-match suggestions. Esc clears the overlay.
+9. **Skins and accent** — in 外观, choose Quiet ↔ Chromatic separately for the
+   launcher and settings window. Focus stays on the active skin radio and scroll
+   position is preserved; changing either window's skin leaves the other
+   unchanged. The launcher skin covers navigation, clipboard, embedded plugin
+   canvas and detached plugin window, while Chromatic must not add a CSS
+   border/radius to the launcher's outer window. Repeat with light/dark mode:
+   both skins use their own palette, and a plugin's own light/dark override
+   remains orthogonal. Select each accent
    preset and a custom color with the native color picker; focus, selected rows,
    switches and small accent text update immediately, values survive restart,
    **默认** restores the native skin, and clicking the custom entry's name

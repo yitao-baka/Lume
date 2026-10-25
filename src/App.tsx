@@ -779,7 +779,7 @@ function App() {
   }
 
   /** Apply the persisted settings the launcher renders live: UI language,
-   * color mode, application skin/accent, entry-box size and max height.
+   * color mode, launcher skin/accent, entry-box size and max height.
    * Width/position are Rust-owned. */
   async function applyRuntimeSettings() {
     try {

@@ -249,11 +249,24 @@ export default function AppearancePane(props: {
   settings: SettingsData;
   onChange: (patch: Partial<SettingsData["appearance"]>) => void;
   onAccentPreview: (value: string) => void;
-  skinError?: string | null;
+  launcherSkinError?: string | null;
+  settingsSkinError?: string | null;
   accentError?: string | null;
   children?: JSX.Element;
 }) {
   const a = () => props.settings.appearance;
+  const skinOptions = () => [
+    {
+      value: "quiet",
+      label: t("appearanceSkinQuiet"),
+      description: t("appearanceSkinQuietHint"),
+    },
+    {
+      value: "chromatic",
+      label: t("appearanceSkinChromatic"),
+      description: t("appearanceSkinChromaticHint"),
+    },
+  ];
   return (
     <>
       <SettingGroup title={t("groupAppearanceTheme")} number="01.1">
@@ -306,23 +319,34 @@ export default function AppearancePane(props: {
             label={t("appearanceSkin")}
             value={a().skin}
             className="settings-skin-options"
-            options={[
-              {
-                value: "quiet",
-                label: t("appearanceSkinQuiet"),
-                description: t("appearanceSkinQuietHint"),
-              },
-              {
-                value: "chromatic",
-                label: t("appearanceSkinChromatic"),
-                description: t("appearanceSkinChromaticHint"),
-              },
-            ]}
+            options={skinOptions()}
             onChange={(value) => props.onChange({ skin: value as SkinId })}
           />
-          <Show when={props.skinError}>
+          <Show when={props.launcherSkinError}>
             <span class="settings-inline-error" role="alert">
-              {props.skinError}
+              {props.launcherSkinError}
+            </span>
+          </Show>
+        </SettingRow>
+        <SettingRow
+          id="appearance.settings_skin"
+          label={t("appearanceSettingsSkin")}
+          summary={t("appearanceSettingsSkinHint")}
+          details={[t("appearanceSettingsSkinDetail")]}
+          class="settings-skin-row"
+        >
+          <RadioCards
+            label={t("appearanceSettingsSkin")}
+            value={a().settings_skin}
+            className="settings-skin-options"
+            options={skinOptions()}
+            onChange={(value) =>
+              props.onChange({ settings_skin: value as SkinId })
+            }
+          />
+          <Show when={props.settingsSkinError}>
+            <span class="settings-inline-error" role="alert">
+              {props.settingsSkinError}
             </span>
           </Show>
         </SettingRow>
@@ -339,7 +363,7 @@ export default function AppearancePane(props: {
           <AccentPalette
             value={a().accent}
             custom={a().accent_custom}
-            skin={a().skin}
+            skin={a().settings_skin ?? a().skin}
             onPreview={props.onAccentPreview}
             onChange={(value) => props.onChange({ accent: value })}
             onCustomChange={(value) =>

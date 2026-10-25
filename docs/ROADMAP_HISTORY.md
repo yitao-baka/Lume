@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#80 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#82 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -5132,3 +5132,51 @@ Presenter 名称，值没有持久化或下发路径。
   `scripts/cdp_skin_system_verify.mjs`；同步 `SETTINGS.md`、
   `UI_GUIDELINES.md`、`ARCHITECTURE.md`、`PLUGIN_API.md`、`TESTING.md`、
   `README.md` 与本文件。未新增插件权限、Tauri capability、数据库或网络依赖。
+
+## 82. 双窗口独立皮肤与剪贴板滚轮抖动（2026-10-25）
+
+### 82.1 数据与迁移
+
+- `appearance.skin` 保持为主窗口皮肤，覆盖启动器、导航、剪贴板、嵌入插件画布、
+  分离插件窗口与主窗 DWM；新增 `appearance.settings_skin` 只控制设置窗口。
+- 两个字段任一缺失时继承另一个，因此统一皮肤时代只有 `skin`、或更早只有
+  `settings_skin` 的文件仍保持原有效外观；两个字段都存在时独立生效。未知值各自
+  回落 `quiet`，保存、patch、导入、恢复默认与恢复备份走同一 Rust 规范化路径。
+- 主题色和明暗模式继续全局共享；空主题色按各窗口自己的皮肤取默认强调色。
+  设置页主题色预设与「默认」色块按设置窗皮肤解析。
+
+### 82.2 首帧与实时更新
+
+- `src/index.tsx` 按窗口 label 选择皮肤：主窗读 `skin`，设置窗读
+  `settings_skin`；分离插件窗口与主窗 Presenter 继续读 `skin`。
+- `Settings.tsx` 的即时预览、保存回滚、重试、撤销和恢复默认全改用设置窗字段；
+  修改主窗皮肤不再让设置窗临时换肤，修改设置窗皮肤也不发主窗换肤意图。
+- 外观页新增“主窗口皮肤 / 设置窗口皮肤”两行独立 RadioCards，目录搜索、三语文案、
+  行内保存错误、首帧注入、DWM、iframe 和分离窗口行为同步更新。
+- `SKIN_SYSTEM.md` 的目标模型由单皮肤改为双皮肤；`SETTINGS.md`、
+  `UI_GUIDELINES.md`、`ARCHITECTURE.md`、`PLUGIN_API.md`、`TESTING.md` 与
+  `README.md` 同步说明主窗皮肤、设置窗皮肤和全局主题色的边界。
+
+### 82.3 剪贴板滚轮抖动
+
+- 根因是两个 clipboard Presenter 的“保持选中项可见”`createEffect` 同时跟踪
+  `data()`。滚轮触发 `viewport.request` 后，Page Service 发布新的虚拟窗口模型，
+  副作用再次运行并把 `scrollTop` 拉回键盘选中行；下一帧 window offset 又按旧
+  滚动位置更新，形成反复回弹。
+- 行高变化现在只触发一次可见性校正与 viewport 重测；键盘选区变化通过显式依赖
+  自动滚动；滚轮手势先调用 `markMouse()` 取得导航所有权。两个 Presenter 的
+  滚动路径保持一致。
+
+### 82.4 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  **251 passed / 9 ignored**、`pnpm run test:skin-system` **11/11**、Page Runtime
+  **13/13**、`check_i18n` **580 键 × 3 语言**、debug `--no-bundle` 构建通过。
+- `cdp_settings_skin_verify` **62/62 PASS**：双皮肤四组合、主窗与设置窗
+  双向切换互不影响、搜索、焦点/滚动保持、保存失败回滚、撤销、默认恢复、
+  560×420 九页。
+- `cdp_skin_system_verify` **39/39 PASS**：主窗 Quiet + 设置窗 Chromatic 及反向
+  组合、四组 skin/mode 的 CSS/像素/iframe/分离窗口 surface、fresh-process
+  首帧，以及两个 clipboard Presenter 的真实鼠标滚轮 420px 稳定滚动。
+- `cdp_settings_accent_verify` **47/47 PASS**、`cdp_settings_smoke` ALL PASS。
+  未新增插件权限、Tauri capability、数据库、插件 API 版本或网络依赖。

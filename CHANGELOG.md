@@ -11,7 +11,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
-- **统一皮肤系统** — `appearance.skin` / `appearance.accent` 现在是应用级设置，
+- **主窗口与设置窗口独立皮肤** — `appearance.skin` 继续控制启动器、导航、
+  剪贴板、嵌入插件画布与分离插件窗口，新增 `appearance.settings_skin` 只控制
+  设置窗口；两者都默认 `quiet`，可分别选择 Quiet / Chromatic。主题色和明暗模式
+  继续全局共享，空主题色按各窗口自身皮肤取默认强调色；旧配置只有任一皮肤字段时
+  两窗继承同一值，统一皮肤时代的既有外观不变。外观页新增独立设置行，主窗与设置窗切换
+  互不影响，首帧、失败回滚、撤销、恢复默认、导入和备份恢复都走同一 Rust
+  规范化路径。验证：`pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、
+  `cargo test` **251 passed / 9 ignored**、`pnpm run test:skin-system` **11/11**、
+  Page Runtime **13/13**、`check_i18n` **580 键 × 3 语言**、debug
+  `--no-bundle` 构建通过；`cdp_settings_skin_verify` **62/62 PASS**、
+  `cdp_skin_system_verify` **39/39 PASS**（含主窗/设置窗双向独立皮肤、
+  四组 skin/mode surface、iframe/分离窗口与 fresh-process 首帧）、
+  `cdp_settings_accent_verify` **47/47 PASS**、`cdp_settings_smoke` ALL PASS。
+- **统一皮肤系统（历史基线，现由上方双窗口皮肤扩展）** — 最初将 `appearance.skin` / `appearance.accent` 作为共享设置，
   统一设置窗、启动器、导航、剪贴板、嵌入插件画布与分离插件窗口；新增
   `src/skins/skins.json` 作为 CSS、Presenter iframe、插件窗口背景和 Rust DWM
   边框共用的 surface/对比度元数据，Rust 以 `include_str!` 读取。旧
@@ -346,6 +359,12 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **剪贴板历史滚轮抖动** — 两个剪贴板 Presenter 的“保持选中项可见”副作用会跟随
+  每次 Page Model 发布执行；滚轮触发 `viewport.request`、模型换上新的虚拟窗口后，
+  副作用又把 `scrollTop` 拉回键盘选中行，形成反复回弹。现在行高变化只重测并锚定
+  选中项，键盘选区变化才自动滚动，滚轮手势先取得鼠标导航所有权；真实鼠标滚轮
+  在两种 Presenter 下滚动到 420px 后保持稳定。验证：`cdp_skin_system_verify`
+  **39/39 PASS**（新增 list / compact 真实滚轮、350ms 与 850ms 位置一致断言）。
 - **导航与剪贴板紧凑 Presenter 的可用性回归** — 导航紧凑列表改用分区头
   （标题 / 条数 / 展开箭头）和带真实图标、路径或描述的双层行，补齐无滚动条
   的视口、键盘跟随滚动、列表线性 ↑/↓、网格二维方向键、栏目收起时的选择钳制

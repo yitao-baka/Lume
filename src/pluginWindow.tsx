@@ -87,7 +87,7 @@ function App() {
   // configured language (the injected config already carries it).
   setLocale(resolveLocale(cfg?.appearance?.language ?? "system"));
   applyWindowTheme();
-  applySkin(cfg?.appearance?.skin);
+  applySkin(cfg?.appearance?.skin ?? cfg?.appearance?.settings_skin);
   applyAccent(cfg?.appearance?.accent);
 
   // Titlebar label — the manifest name once plugin_window_meta answers.

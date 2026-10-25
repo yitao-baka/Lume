@@ -2,7 +2,7 @@
 //! default history list. It keeps the dense 44px rhythm while preserving row
 //! identity, source/time metadata, multi-select, pin and invalid states.
 
-import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, on, onCleanup, onMount, untrack } from "solid-js";
 import { t } from "../../i18n";
 import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "../../launcher/clipData";
 import type { ClipboardItem } from "../../launcher/types";
@@ -118,11 +118,11 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
   onCleanup(() => resizeObserver?.disconnect());
 
   // A skin change can alter the row rhythm without rebuilding the Presenter.
-  // Keep the selected item visible and immediately publish the new height to
-  // the Page Service so spacer/windowing math stays in sync.
-  createEffect(() => {
-    const height = rowHeight();
-    const index = data()?.selectedIndex ?? -1;
+  // Only row-height changes re-anchor the selected row; following every model
+  // revision here would snap wheel scrolling back to the selection as soon as
+  // the Page Service published the new viewport window.
+  createEffect(on(rowHeight, (height) => {
+    const index = untrack(() => data()?.selectedIndex ?? -1);
     if (index >= 0 && list) {
       const top = index * height;
       const bottom = top + height;
@@ -132,7 +132,7 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
       }
     }
     queueMicrotask(measureViewport);
-  });
+  }));
 
   createEffect(() => {
     const open = !!data()?.clearState?.open;
@@ -143,14 +143,14 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
   // Keyboard selection can move outside the present model window. Scroll the
   // authoritative index into view; the resulting scroll event asks the Page
   // Service for a fresh row slice.
-  createEffect(() => {
-    const index = data()?.selectedIndex ?? -1;
+  createEffect(on(() => data()?.selectedIndex ?? -1, (index) => {
     if (index < 0 || !list || props.selectionSource() !== "keyboard") return;
-    const top = index * rowHeight();
-    const bottom = top + rowHeight();
+    const height = untrack(rowHeight);
+    const top = index * height;
+    const bottom = top + height;
     if (top < list.scrollTop) list.scrollTop = top;
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + 8;
-  });
+  }));
 
   const trapConfirm = (event: KeyboardEvent) => {
     if (event.key !== "Tab" || !confirm) return;
@@ -206,6 +206,7 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
             ref={bindList}
             role="listbox"
             aria-label={t("clipboard")}
+            onWheel={() => props.markMouse()}
             onScroll={(event) => void props.dispatch({
               type: "viewport.request",
               payload: {

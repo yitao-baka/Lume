@@ -42,10 +42,11 @@ The goal is:
   height in clipboard mode)
 - Settings window — grouped personalization / efficiency / management
   navigation, command-style search, autosave with undo, and layered help
-- Unified skin system — one Quiet / Chromatic skin plus a global accent across
-  settings, launcher, navigation, clipboard, embedded plugin canvases and
-  detached plugin windows; CSS, iframe, window background and DWM border share
-  the same surface metadata
+- Dual-window skin system — choose Quiet / Chromatic independently for the
+  launcher and settings window, with a shared accent and color mode; the
+  launcher skin covers navigation, clipboard, embedded plugin canvases and
+  detached plugin windows, while CSS, iframe, window background and DWM border
+  share one surface metadata source
 - Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows
 - Whole-drive file search — Everything IPC first, then the LumeSVC

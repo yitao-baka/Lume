@@ -765,17 +765,24 @@ fn ensure_settings_files(base: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Parse one TOML settings boundary and apply every schema migration /
+/// normalization step. Read, import, restore-default and restore-backup all
+/// use this function so a field rename cannot behave differently by entry
+/// point.
+fn parse_settings_text(text: &str) -> Result<Settings, String> {
+    let mut settings: Settings = toml::from_str(text).map_err(|e| e.to_string())?;
+    settings.index.migrate();
+    settings.normalize();
+    ensure_known_system_dirs(&mut settings);
+    Ok(settings)
+}
+
 /// Read the effective settings: `settings.toml`, falling back to defaults on
 /// any error (missing or corrupt file).
 fn read_settings(base: &Path) -> Settings {
     fs::read_to_string(settings_path(base))
         .ok()
-        .and_then(|text| {
-            let mut s: Settings = toml::from_str(&text).ok()?;
-            s.index.migrate();
-            s.normalize();
-            Some(s)
-        })
+        .and_then(|text| parse_settings_text(&text).ok())
         .unwrap_or_default()
 }
 
@@ -1038,10 +1045,7 @@ pub fn import_settings(
     state: State<SettingsState>,
 ) -> Result<(), String> {
     let text = fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
-    let mut imported: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
-    imported.index.migrate();
-    imported.normalize();
-    ensure_known_system_dirs(&mut imported);
+    let imported = parse_settings_text(&text)?;
     let mut guard = state.0.lock().unwrap();
     let old = guard.clone();
     write_settings(&paths::base_dir(), &imported, &old)?;
@@ -1056,10 +1060,7 @@ pub fn import_settings(
 pub fn restore_default(app: AppHandle, state: State<SettingsState>) -> Result<(), String> {
     let base = paths::base_dir();
     let text = fs::read_to_string(default_path(&base)).map_err(|e| e.to_string())?;
-    let mut defaults: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
-    defaults.index.migrate();
-    defaults.normalize();
-    ensure_known_system_dirs(&mut defaults);
+    let defaults = parse_settings_text(&text)?;
     let mut guard = state.0.lock().unwrap();
     let old = guard.clone();
     write_settings(&base, &defaults, &old)?;
@@ -1074,10 +1075,7 @@ pub fn restore_default(app: AppHandle, state: State<SettingsState>) -> Result<()
 pub fn restore_backup(app: AppHandle, state: State<SettingsState>) -> Result<(), String> {
     let base = paths::base_dir();
     let text = fs::read_to_string(backup_path(&base)).map_err(|e| e.to_string())?;
-    let mut restored: Settings = toml::from_str(&text).map_err(|e| e.to_string())?;
-    restored.index.migrate();
-    restored.normalize();
-    ensure_known_system_dirs(&mut restored);
+    let restored = parse_settings_text(&text)?;
     let mut guard = state.0.lock().unwrap();
     let old = guard.clone();
     // Light write: the file being restored is `backup.toml`, and
@@ -1493,6 +1491,58 @@ mod tests {
         .unwrap();
         assert_eq!(cleared.appearance.accent_custom(), "");
         assert_eq!(cleared.appearance.accent(), "#6f7cff");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// The same parser handles legacy fields from imported files, default.toml
+    /// and backup.toml. Unknown skins degrade locally instead of failing the
+    /// whole document, and the next serialization contains only new keys.
+    #[test]
+    fn legacy_skin_fields_survive_all_file_entry_points() {
+        let base = temp_base("legacy-skin-entry-points");
+        ensure_settings_files(&base).unwrap();
+        let full = fs::read_to_string(settings_path(&base)).unwrap();
+        let legacy = full
+            .replace("skin = \"quiet\"", "settings_skin = \"chromatic\"")
+            .replace("accent = \"\"", "settings_accent = \"#6F7CFF\"")
+            .replace(
+                "accent_custom = \"\"",
+                "settings_accent_custom = \"#ABCDEF\"",
+            );
+
+        // Import-shaped parse.
+        let imported = parse_settings_text(&legacy).unwrap();
+        assert_eq!(imported.appearance.skin(), "chromatic");
+        assert_eq!(imported.appearance.accent(), "#6f7cff");
+        assert_eq!(imported.appearance.accent_custom(), "#abcdef");
+
+        // Backup-shaped parse.
+        fs::write(backup_path(&base), &legacy).unwrap();
+        let backup_text = fs::read_to_string(backup_path(&base)).unwrap();
+        let restored = parse_settings_text(&backup_text).unwrap();
+        assert_eq!(restored.appearance.skin(), "chromatic");
+        assert_eq!(restored.appearance.accent(), "#6f7cff");
+
+        // Factory-default-shaped parse with an unknown skin: only the skin
+        // value degrades; unrelated fields and accent remain intact.
+        let unknown = legacy.replace(
+            "settings_skin = \"chromatic\"",
+            "settings_skin = \"not-a-skin\"",
+        );
+        fs::write(default_path(&base), unknown).unwrap();
+        let defaults_text = fs::read_to_string(default_path(&base)).unwrap();
+        let defaults = parse_settings_text(&defaults_text).unwrap();
+        assert_eq!(defaults.appearance.skin(), "quiet");
+        assert_eq!(defaults.appearance.accent(), "#6f7cff");
+        assert_eq!(defaults.appearance.language, "system");
+
+        // The next canonical write drops all legacy keys and keeps new ones.
+        write_settings_light(&base, &imported).unwrap();
+        let canonical = fs::read_to_string(settings_path(&base)).unwrap();
+        assert!(canonical.contains("skin = \"chromatic\""));
+        assert!(canonical.contains("accent = \"#6f7cff\""));
+        assert!(!canonical.contains("settings_skin"));
+        assert!(!canonical.contains("settings_accent"));
         fs::remove_dir_all(&base).ok();
     }
 

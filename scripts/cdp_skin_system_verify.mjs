@@ -251,11 +251,103 @@ for (const [skin, modes] of Object.entries(SURFACES)) {
   }
 }
 
-// ── ② embedded plugin canvas follows skin + plugin-resolved mode ────────
-await setSettings({ appearance: { skin: "quiet", color_mode: "light", accent: "" }, colorModes: {} });
+// ── ② navigation query / selection / scroll survive a skin switch ───────
+await setSettings({
+  appearance: {
+    skin: "quiet",
+    color_mode: "light",
+    accent: "",
+    window_height: 160,
+  },
+  colorModes: {},
+  presenters: { apps: "navigate-grid", clipboard: "clipboard-list" },
+});
+const navMode = await main.evalJs(`(() => {
+  const button = Array.from(document.querySelectorAll(".mode-switch-item"))
+    .find((el) => /导航|navigate/i.test((el.getAttribute("aria-label") || "") + " " + (el.title || "")));
+  button?.click();
+  return button?.getAttribute("aria-label") ?? "";
+})()`);
+check("switched back to the navigation page", !!navMode, navMode);
+await sleep(450);
+let navQuery = "";
+for (const candidate of ["a", "e", "cmd", "c"]) {
+  await type(candidate);
+  await sleep(550);
+  if (await main.evalJs(`(() => {
+    const grid = document.querySelector(".mode-host.active .result-grid");
+    return !!grid && grid.scrollHeight > grid.clientHeight && !!grid.querySelector(".result-box");
+  })()`)) {
+    navQuery = candidate;
+    break;
+  }
+}
+check("navigation search produced a scrollable result grid", !!navQuery, navQuery || "no query");
+if (navQuery) {
+  await main.evalJs(`(() => {
+    const grid = document.querySelector(".mode-host.active .result-grid");
+    const first = grid?.querySelector(".result-box");
+    if (!grid || !first) return false;
+    grid.__skinStable = 91;
+    grid.scrollTop = 64;
+    first.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    return true;
+  })()`);
+  await sleep(250);
+  const navBefore = await main.evalJs(`(() => {
+    const grid = document.querySelector(".mode-host.active .result-grid");
+    return {
+      query: document.getElementById("search-input").value,
+      selected: grid?.querySelector(".result-selected")?.dataset.targetId ?? "",
+      scroll: grid?.scrollTop ?? 0,
+      stable: grid?.__skinStable ?? 0,
+      radius: grid?.querySelector(".result-box") ? getComputedStyle(grid.querySelector(".result-box")).borderRadius : "",
+    };
+  })()`);
+  await setSettings({ appearance: { skin: "chromatic" } });
+  await sleep(550);
+  const navAfter = await main.evalJs(`(() => {
+    const grid = document.querySelector(".mode-host.active .result-grid");
+    return {
+      query: document.getElementById("search-input").value,
+      selected: grid?.querySelector(".result-selected")?.dataset.targetId ?? "",
+      scroll: grid?.scrollTop ?? 0,
+      stable: grid?.__skinStable ?? 0,
+      radius: grid?.querySelector(".result-box") ? getComputedStyle(grid.querySelector(".result-box")).borderRadius : "",
+    };
+  })()`);
+  check("skin switch preserves navigation query, selection, DOM and scroll",
+    navBefore.selected !== "" &&
+      navAfter.query === navBefore.query &&
+      navAfter.selected === navBefore.selected &&
+      Math.abs(navAfter.scroll - navBefore.scroll) <= 2 &&
+      navAfter.stable === navBefore.stable,
+    JSON.stringify({ before: navBefore, after: navAfter }));
+  check("Chromatic launcher rules reach navigation content without rebuilding it",
+    navBefore.radius !== navAfter.radius && navAfter.radius === "2px",
+    JSON.stringify({ before: navBefore.radius, after: navAfter.radius }));
+}
+
+// ── ③ embedded plugin canvas follows skin + plugin-resolved mode ────────
+await setSettings({
+  appearance: {
+    skin: "quiet",
+    color_mode: "light",
+    accent: "#d96c95",
+    accent_custom: "#d96c95",
+    window_height: 520,
+  },
+  colorModes: {},
+});
 check("entered hello-mode for canvas checks", await enterHelloMode());
 let area = await pagePoint(main);
 check("embedded plugin frame mounted", !!area, JSON.stringify(area));
+const presenterInjection = await main.evalJs(`document.querySelector(".plugin-frame")?.getAttribute("srcdoc") ?? ""`);
+check("embedded Presenter receives skin, surface and accent before page load",
+  presenterInjection.includes('--lume-page-bg:#fbfbfd') &&
+    presenterInjection.includes('--lume-page-accent:#d96c95') &&
+    presenterInjection.includes('dataset.lumeSkin="quiet"'),
+  presenterInjection.slice(0, 240));
 for (const [skin, mode] of [["quiet", "light"], ["quiet", "dark"], ["chromatic", "light"], ["chromatic", "dark"]]) {
   await setSettings({ appearance: { skin, color_mode: mode, accent: "" }, colorModes: {} });
   await sleep(250);
@@ -278,8 +370,16 @@ await type("theme:system");
 await sleep(700);
 await setSettings({ colorModes: {} });
 
-// ── ③ detached window first frame + canvas ──────────────────────────────
-await setSettings({ appearance: { skin: "chromatic", color_mode: "light", accent: "" }, colorModes: {} });
+// ── ④ detached window first frame + canvas + accent shell ──────────────
+await setSettings({
+  appearance: {
+    skin: "chromatic",
+    color_mode: "light",
+    accent: "#d96c95",
+    accent_custom: "#d96c95",
+  },
+  colorModes: {},
+});
 await main.evalJs(`document.querySelector(".detach-btn")?.click(); true`);
 await sleep(1800);
 let detached = await findPage(
@@ -301,9 +401,15 @@ if (detached) {
     skin: document.documentElement.dataset.skin,
     theme: document.documentElement.dataset.theme,
     surface: document.documentElement.style.getPropertyValue("--surface").trim(),
+    accent: document.documentElement.style.getPropertyValue("--ui-accent-raw").trim(),
+    accentText: document.documentElement.style.getPropertyValue("--ui-accent-text").trim(),
+    accentBorder: document.documentElement.style.getPropertyValue("--ui-accent-border").trim(),
+    focus: document.documentElement.style.getPropertyValue("--ui-focus-ring").trim(),
   })`);
-  check("detached window first frame carries Chromatic light surface",
-    frame.skin === "chromatic" && frame.theme === "light" && frame.surface === SURFACES.chromatic.light,
+  check("detached window first frame carries Chromatic light surface and accent",
+    frame.skin === "chromatic" && frame.theme === "light" &&
+      frame.surface === SURFACES.chromatic.light && frame.accent === "#d96c95" &&
+      [frame.accentText, frame.accentBorder, frame.focus].every((value) => /^#[0-9a-f]{6}$/.test(value)),
     JSON.stringify(frame));
   const detachedArea = await pagePoint(detached);
   const detachedPixel = detachedArea ? await detached.pixel(detachedArea.x, detachedArea.y) : null;
@@ -316,7 +422,7 @@ if (detached) {
   detached.ws.close();
 }
 
-// ── ④ clipboard skin rhythm + selection/scroll preservation ─────────────
+// ── ⑤ clipboard skin rhythm + selection/scroll preservation ─────────────
 await seedClipboard("row-rhythm");
 await setSettings({ appearance: { skin: "quiet", color_mode: "dark", accent: "" }, presenters: { clipboard: "clipboard-list" } });
 await main.evalJs(`[...document.querySelectorAll(".mode-switch-item")].find((el) => el.textContent.includes("剪贴板") || el.textContent.toLowerCase().includes("clipboard"))?.click(); true`);
@@ -385,7 +491,32 @@ check("skin switch preserves clipboard selection and DOM identity",
   JSON.stringify({ before: selectionBefore, after: selectionAfter }));
 check("skin switch updates the active clipboard row rhythm", selectionAfter.rowHeight === 56, JSON.stringify(selectionAfter));
 
-// ── ⑤ global accent changes emphasis but never the outer surface ────────
+// Keyboard navigation must keep working after the virtual row height changes.
+await main.evalJs(`document.getElementById("search-input")?.focus(); true`);
+for (let i = 0; i < 18; i++) {
+  await main.evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" })); true`);
+  await sleep(30);
+}
+await sleep(450);
+const keyboardAfterResize = await main.evalJs(`(() => {
+  const list = document.querySelector(".mode-host.active .clip-list");
+  const row = document.querySelector(".mode-host.active .result-selected");
+  if (!list || !row) return null;
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  return {
+    selected: row.dataset.targetId ?? "",
+    scrollTop: list.scrollTop,
+    rowHeight: Math.round(row.getBoundingClientRect().height),
+    visible: rowRect.top >= listRect.top && rowRect.bottom <= listRect.bottom,
+  };
+})()`);
+check("keyboard navigation remains visible after Chromatic row-height growth",
+  !!keyboardAfterResize && keyboardAfterResize.visible &&
+    keyboardAfterResize.scrollTop > 0 && keyboardAfterResize.rowHeight === 56,
+  JSON.stringify(keyboardAfterResize));
+
+// ── ⑥ global accent changes emphasis but never the outer surface ────────
 await setSettings({ appearance: { skin: "chromatic", color_mode: "dark", accent: "#d96c95", accent_custom: "#d96c95" }, colorModes: {} });
 await reloadSettings();
 const accentState = await main.evalJs(`(() => {
@@ -407,7 +538,7 @@ check("custom accent is global but the launcher outer surface stays skin-owned",
   JSON.stringify({ ...accentState, pixel: hex(accentSurface) }));
 await main.shot("chromatic-dark-accent");
 
-// ── ⑥ fresh-process first paint ─────────────────────────────────────────
+// ── ⑦ fresh-process first paint ─────────────────────────────────────────
 await setSettings({
   appearance: { skin: "chromatic", color_mode: "light", accent: "", accent_custom: "" },
   colorModes: {},
@@ -446,7 +577,7 @@ check("fresh process injects the current skin into settings before render",
   firstSettings.skin === "chromatic" && firstSettings.theme === "light" && firstSettings.surface === SURFACES.chromatic.light && firstSettings.configured === "chromatic",
   JSON.stringify(firstSettings));
 
-// ── ⑦ reset scratch settings ────────────────────────────────────────────
+// ── ⑧ reset scratch settings ────────────────────────────────────────────
 await setSettings({
   appearance: { skin: "quiet", color_mode: "dark", accent: "", accent_custom: "" },
   colorModes: {},

@@ -20,10 +20,10 @@ All notable changes to Lume are documented here. Format based on
   但不染启动器外层 `--surface`；Presenter 新增 `skin` 事件与
   `theme.get()` 的 `skin`/`accent` 字段，剪贴板行高改由皮肤接口驱动并同步虚拟
   列表窗口。验证：`pnpm run test:skin-system` **11/11**、Page Runtime
-  **13/13**、`cdp_skin_system_verify` **29/29**、`cdp_plugin_theme_verify`
+  **13/13**、`cdp_skin_system_verify` **35/35**、`cdp_plugin_theme_verify`
   **30/30**、`cdp_settings_skin_verify` **60/60**、
   `cdp_settings_accent_verify` **47/47**、`cdp_visual_audit_verify`
-  **28/28**、`cargo test` **250 passed / 9 ignored**、`check_i18n` **576 键 ×
+  **28/28**、`cargo test` **251 passed / 9 ignored**、`check_i18n` **576 键 ×
   3 语言**、TypeScript、Vite 与 debug `--no-bundle` 构建通过。
 - **页面运行时安全与故障恢复收口** — Presenter/逻辑帧加入严格 CSP，关闭原生
   `fetch`/XHR/WebSocket/EventSource/表单/信标等绕过宿主网络权限的出口；Presenter
@@ -481,7 +481,7 @@ All notable changes to Lume are documented here. Format based on
 
 ### Documentation
 
-- **文档归档治理** — 建立 [docs/History/README.md](docs/History/README.md) 与归档规范；将 13 份退出活跃集合的报告、审计与被取代设计移入 `docs/History/`，设置面板审查截图随报告归档；`BUG_REPORT.md` 的未实施加固建议仍留在活跃区，现行契约继续留在根目录。同步更新 `AGENTS.md`、`CHANGELOG.md`、`ROADMAP_HISTORY.md`、归档文档互链与 CDP 注释。验证：全仓 Markdown 相对链接扫描 0 失效、11 张审查截图引用 0 缺失；`pnpm run build`（126 modules）、`cargo check`、`cargo test` **250 passed / 9 ignored**、`git diff --check` 通过（cargo test 保留既有 explorer unused import warning）。
+- **文档归档治理** — 建立 [docs/History/README.md](docs/History/README.md) 与归档规范；将 13 份退出活跃集合的报告、审计与被取代设计移入 `docs/History/`，设置面板审查截图随报告归档；`BUG_REPORT.md` 的未实施加固建议仍留在活跃区，现行契约继续留在根目录。同步更新 `AGENTS.md`、`CHANGELOG.md`、`ROADMAP_HISTORY.md`、归档文档互链与 CDP 注释。验证：全仓 Markdown 相对链接扫描 0 失效、11 张审查截图引用 0 缺失；`pnpm run build`（126 modules）、`cargo check`、`cargo test` **251 passed / 9 ignored**、`git diff --check` 通过（cargo test 保留既有 explorer unused import warning）。
 
 - **用户可见文案语义审查报告** — 新增
   [UX_TEXT_AUDIT_2026-10-22.md](docs/History/UX_TEXT_AUDIT_2026-10-22.md)：对

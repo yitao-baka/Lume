@@ -5071,7 +5071,7 @@ Presenter 名称，值没有持久化或下发路径。
 ### 80.2 验证
 
 - 全仓 Markdown 相对链接扫描 0 失效；设置面板审查的 11 张截图引用 0 缺失；`git diff --check` 通过。
-- `pnpm run build` 通过（126 modules）；`cargo check` 通过；`cargo test` **250 passed / 9 ignored**。cargo test 仍输出既有的 `explorer.rs` unused import warning。
+- `pnpm run build` 通过（126 modules）；`cargo check` 通过；`cargo test` **251 passed / 9 ignored**。cargo test 仍输出既有的 `explorer.rs` unused import warning。
 
 ## 81. 统一皮肤系统（2026-10-25）
 
@@ -5115,11 +5115,12 @@ Presenter 名称，值没有持久化或下发路径。
 ### 81.3 验证
 
 - `pnpm run test:skin-system` **11/11**；Page Runtime 单测 **13/13**；
-  `cargo test` **250 passed / 9 ignored**；`check_i18n` **576 键 × 3 语言**；
+  `cargo test` **251 passed / 9 ignored**；`check_i18n` **576 键 × 3 语言**；
   TypeScript、Vite 与 debug `--no-bundle` 构建通过。
-- `cdp_skin_system_verify.mjs` **29/29**：四个 skin/mode 的 CSS 与 1×1 像素、
-  首帧注入、嵌入/分离插件画布、插件颜色覆盖正交性、剪贴板双 Presenter 行高、
-  选择与 DOM 保持、自定义 accent 不改外层 surface。
+- `cdp_skin_system_verify.mjs` **35/35**：四个 skin/mode 的 CSS 与 1×1 像素、
+  首帧注入、嵌入/分离插件画布与 accent、插件颜色覆盖正交性、导航查询/选择/
+  滚动保持、剪贴板双 Presenter 行高、方向键滚动与选择/DOM 保持、自定义 accent
+  不改外层 surface。
 - `cdp_plugin_theme_verify.mjs` **30/30**：保留原颜色覆盖语义，并校验嵌入/分离
   表面推送 `skin` / `accent` / `surface`。
 - `cdp_settings_skin_verify.mjs` **60/60**；

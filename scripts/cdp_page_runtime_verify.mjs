@@ -169,6 +169,30 @@ try {
     };
   })()`);
   check("history list keeps keyboard selection inside its virtual viewport", fullClipScroll.scrollTop > 0 && fullClipScroll.offset > 0 && fullClipScroll.activeVisible, JSON.stringify({ window: clipModel?.data?.window, ...fullClipScroll }));
+  await main.ev('(() => { const el=document.querySelector(".clip-list"); el?.dispatchEvent(new WheelEvent("wheel", { bubbles: true })); return !!el; })()');
+  const scrollGeometry = await main.ev(`(() => {
+    const el = document.querySelector(".clip-list");
+    return { max: el ? el.scrollHeight - el.clientHeight : 0 };
+  })()`);
+  await main.ev('(() => { const el=document.querySelector(".clip-list"); if(!el) return false; el.scrollTop=1; el.dispatchEvent(new Event("scroll")); return true; })()');
+  await sleep(120);
+  const fadeNearTop = await main.ev('({ top: !!document.querySelector(".scroll-fade.top"), bottom: !!document.querySelector(".scroll-fade.bottom") })');
+  check("clipboard fades follow real scrollTop near the top", scrollGeometry.max > 2 && fadeNearTop.top && fadeNearTop.bottom, JSON.stringify({ scrollGeometry, fadeNearTop }));
+  await main.ev(`(() => { const el=document.querySelector(".clip-list"); if(!el) return false; el.scrollTop=${scrollGeometry.max - 1}; el.dispatchEvent(new Event("scroll")); return true; })()`);
+  await sleep(120);
+  const fadeNearBottom = await main.ev('({ top: !!document.querySelector(".scroll-fade.top"), bottom: !!document.querySelector(".scroll-fade.bottom") })');
+  check("clipboard bottom fade remains one pixel before the end", fadeNearBottom.top && fadeNearBottom.bottom, JSON.stringify(fadeNearBottom));
+  const fadeEndGeometry = await main.ev(`(() => {
+    const el=document.querySelector(".clip-list");
+    if(!el) return null;
+    el.scrollTop=el.scrollHeight;
+    el.dispatchEvent(new Event("scroll"));
+    return { scrollTop: el.scrollTop, clientHeight: el.clientHeight, scrollHeight: el.scrollHeight };
+  })()`);
+  await sleep(120);
+  const fadeAtBottom = await main.ev('({ top: !!document.querySelector(".scroll-fade.top"), bottom: !!document.querySelector(".scroll-fade.bottom") })');
+  const fadeEndActual = await main.ev(`(() => { const el=document.querySelector(".clip-list"); return { scrollTop: el?.scrollTop ?? -1, clientHeight: el?.clientHeight ?? -1, scrollHeight: el?.scrollHeight ?? -1 }; })()`);
+  check("clipboard bottom fade disappears only at the true end", fadeAtBottom.top && !fadeAtBottom.bottom, JSON.stringify({ fadeAtBottom, fadeEndGeometry, fadeEndActual }));
   clipSelection = clipModel?.selection?.primaryId;
   clipRevision = clipModel?.revision;
   await main.ev('window.__TAURI_INTERNALS__.invoke("save_settings_patch", { patch: { pages: { presenters: { apps: "navigate-grid", clipboard: "clipboard-compact" } } } })');

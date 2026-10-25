@@ -4,12 +4,13 @@
 
 import { t } from "../../i18n";
 import type { ClipboardItem, ClipKind } from "../../launcher/types";
-import { previewTarget as clipPreviewTarget } from "../../launcher/clipData";
+import { basename, clipTitle, fileContent, previewTarget as clipPreviewTarget } from "../../launcher/clipData";
 import { CLIP_CATS } from "../../launcher/types";
 import type { IntentResult, JsonValue, PageIntent, PageModel, PageService, ResourceRef } from "../../page-runtime/contracts";
 import { CLIPBOARD_SCHEMA, type ClipboardCategory, type ClipboardModel, type ClipboardRowModel } from "../../page-runtime/schemas";
 import type { PluginServices } from "../../plugins/types";
 import { createClipboardStore, type ClipboardStore } from "../../plugins/clipboard/store";
+import { clipContentPreview, fitClipboardFileListPreview, fitClipboardModelWindow } from "./modelBudget";
 
 export interface ClipboardPageDeps {
   services: PluginServices;
@@ -23,16 +24,24 @@ function thumbRef(item: ClipboardItem): ResourceRef | undefined {
   return item.thumb ? { kind: "thumbnail", src: item.thumb } : undefined;
 }
 
-function row(item: ClipboardItem, timeAbsolute: boolean, showSource: boolean): ClipboardRowModel {
+function row(
+  item: ClipboardItem,
+  timeAbsolute: boolean,
+  showSource: boolean,
+  includeThumb: boolean,
+): ClipboardRowModel {
+  const paths = item.kind === "file" ? item.content.split(/\r?\n/).filter(Boolean) : [];
+  const firstPath = paths[0] ?? "";
+  const preview = clipContentPreview(item.content);
   return {
     id: clipTargetId(item),
     numericId: item.id,
     kind: item.kind,
-    title: item.kind === "text" ? item.content.slice(0, 160) : item.kind === "file" ? item.content.split(/\r?\n/).filter(Boolean)[0] ?? "File" : "Image",
+    title: clipTitle(item).split(/\r?\n/)[0].slice(0, 160),
     ...(showSource && item.source_app ? { description: item.source_app } : {}),
-    content: item.content,
+    content: preview,
     createdAt: item.created_at,
-    ...(thumbRef(item) ? { thumb: thumbRef(item) } : {}),
+    ...(includeThumb && thumbRef(item) ? { thumb: thumbRef(item) } : {}),
     pinned: item.pinned,
     ...(showSource ? { sourceApp: item.source_app } : {}),
     timeLabel: timeAbsolute ? new Date(item.created_at).toLocaleString() : new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -40,6 +49,10 @@ function row(item: ClipboardItem, timeAbsolute: boolean, showSource: boolean): C
     mergedCount: item.merged_count,
     valid: item.valid,
     checked: item.checked,
+    ...(item.kind === "file" && paths.length > 0
+      ? { fileCount: paths.length, fileKind: fileContent(basename(firstPath)) }
+      : {}),
+    ...(item.content.length > preview.length ? { contentTruncated: true } : {}),
     actions: [
       "copy",
       ...(item.has_html ? ["copy-plain"] : []),
@@ -88,52 +101,75 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
           ? all.filter((item) => item.pinned).length
           : all.filter((item) => item.kind === category.kind).length,
     }));
-    const model: ClipboardModel = {
-      query: store.clipQuery(),
-      categories,
-      activeCategory: store.clipKind(),
-      items: visible.map((item) => row(item, store.timeDisplayAbs(), store.showSourceApp())),
-      total: all.length,
-      window: { offset: start, limit: end - start },
-      selectedIndex: all.length > 0 ? Math.max(0, Math.min(selected, all.length - 1)) : -1,
-      selectedIds,
-      ...(selectedId ? { primaryId: selectedId } : {}),
-      paused: store.clipPaused(),
-      status: {
+    let preview = store.previewEnabled()
+      ? clipPreviewTarget(all[selected], store.rememberChecks())
+      : null;
+    // A multi-file preview is another unbounded list. Keep its useful head
+    // bounded by entries and serialized bytes; the complete checked set
+    // remains authoritative in the store.
+    if (preview?.kind === "filelist") {
+      const fileList = preview as unknown as { paths?: unknown; checked?: unknown };
+      const paths = Array.isArray(fileList.paths)
+        ? fileList.paths.filter((path): path is string => typeof path === "string")
+        : [];
+      const checked = Array.isArray(fileList.checked)
+        ? fileList.checked.filter((index): index is number => typeof index === "number")
+        : null;
+      preview = { ...preview, ...fitClipboardFileListPreview(paths, checked) } as typeof preview;
+    }
+    const nextRevision = revision + 1;
+    const buildModel = (items: ClipboardRowModel[]): PageModel => {
+      const model: ClipboardModel = {
+        query: store.clipQuery(),
+        categories,
+        activeCategory: store.clipKind(),
+        items,
         total: all.length,
-        selected: multi.size,
-        text: multi.size > 0 ? t("clipSelected", { count: multi.size }) : t("clipTotal", { count: all.length }),
-      },
-      clearState: { open: store.clearOpen(), keepPinned: store.keepPinned() },
-      showSourceApp: store.showSourceApp(),
-      timeDisplay: store.timeDisplayAbs() ? "absolute" : "relative",
-      hoverSelect: store.hoverSelect(),
-      previewEnabled: store.previewEnabled(),
-      emptyText: store.clipQuery() ? t("noResults") : t("noClipboardHistory"),
-    };
-    revision++;
-    return {
-      runtime: "lume.page/v1",
-      schema: CLIPBOARD_SCHEMA,
-      revision,
-      status: !store.loaded() ? "loading" : all.length === 0 ? "empty" : "ready",
-      data: model as unknown as JsonValue,
-      selection: {
-        ...(selectedId ? { primaryId: selectedId } : {}),
+        window: { offset: start, limit: items.length },
+        selectedIndex: all.length > 0 ? Math.max(0, Math.min(selected, all.length - 1)) : -1,
         selectedIds,
-      },
-      ...(() => {
-        const preview = store.previewEnabled() ? clipPreviewTarget(all[selected], store.rememberChecks()) : null;
-        if (!preview || !selectedId) return {};
-        return {
-          preview: {
-            kind: preview.kind,
-            targetId: selectedId,
-            payload: preview as unknown as JsonValue,
-          },
-        };
-      })(),
+        ...(selectedId ? { primaryId: selectedId } : {}),
+        paused: store.clipPaused(),
+        status: {
+          total: all.length,
+          selected: multi.size,
+          text: multi.size > 0 ? t("clipSelected", { count: multi.size }) : t("clipTotal", { count: all.length }),
+        },
+        clearState: { open: store.clearOpen(), keepPinned: store.keepPinned() },
+        showSourceApp: store.showSourceApp(),
+        timeDisplay: store.timeDisplayAbs() ? "absolute" : "relative",
+        hoverSelect: store.hoverSelect(),
+        previewEnabled: store.previewEnabled(),
+        emptyText: store.clipQuery() ? t("noResults") : t("noClipboardHistory"),
+      };
+      return {
+        runtime: "lume.page/v1",
+        schema: CLIPBOARD_SCHEMA,
+        revision: nextRevision,
+        status: !store.loaded() ? "loading" : all.length === 0 ? "empty" : "ready",
+        data: model as unknown as JsonValue,
+        selection: {
+          ...(selectedId ? { primaryId: selectedId } : {}),
+          selectedIds,
+        },
+        ...(preview && selectedId
+          ? {
+              preview: {
+                kind: preview.kind,
+                targetId: selectedId,
+                payload: preview as unknown as JsonValue,
+              },
+            }
+          : {}),
+      };
     };
+    const candidates = visible.map((item) => ({
+      full: row(item, store.timeDisplayAbs(), store.showSourceApp(), true),
+      compact: row(item, store.timeDisplayAbs(), store.showSourceApp(), false),
+    }));
+    const fitted = fitClipboardModelWindow(candidates, buildModel);
+    revision = nextRevision;
+    return buildModel(fitted.items);
   }
 
   function findItem(targetId?: string): { item: ClipboardItem; index: number } | null {
@@ -241,7 +277,10 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
       store.setClipQuery(query);
       await store.search(query);
     },
-    async onShow() { await store.search(store.clipQuery()); },
+    // The root pipeline's `runSearch()` is the single query entry for mode
+    // activation and summon. Searching here as well doubled every clipboard
+    // database read (and every image decode) on the show path.
+    onShow() {},
     onHide() {},
   };
 

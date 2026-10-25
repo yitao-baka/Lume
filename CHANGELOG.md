@@ -360,6 +360,32 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **插件系统、导航页与剪贴板专项审计修复** — 按
+  [归档专项审计](docs/History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-25.md)
+  收口 F-01–F-14：主窗、逻辑宿主与分离窗口统一安装 WebView2 顶层/子帧导航及
+  `window.open` 拦截，共享环境使用只丢弃请求的本机 deny proxy；剪贴板 Page Model
+  改为按真实字节预算开窗（4,096 字符预览、缩略图逐行降级、多文件预览同时受 256 条与序列化字节预算约束），
+  非法/超限模型显示可见错误；逻辑宿主在 load / settings-applied / plugin-reload
+  刷新 manifest，provider/service 使用 `logic` role、仅 Page Service 获得
+  `service` role 与 secrets；磁盘 `navBars` 等待 logic-ready 与实际 hook 后异步
+  刷新并带 generation 防迟到覆盖；导航结果使用短 ID + target map，分离窗口就绪
+  状态重放 query；剪贴板一次切换只查一次库、渐隐跟随真实滚动几何；recent/pins/
+  clipboard 在任何 webview 创建前初始化；文本剪贴板、原始文件/缩略图/图标命令补齐
+  Rust `plugin_id` + `host_token` 门；卸载逻辑帧移除 message listener、清 pending
+  timer 并取消未完成回执；`.lupx` 将确认卡 SHA-256 绑定到私有 staging 副本，替换
+  源文件会在落盘前被拒；clippy 恒真比较与既有 warning 一并清零。验证：
+  `pnpm exec tsc --noEmit`、`pnpm run build`（127 modules）、
+  `pnpm run test:page-runtime` **14/14**、`pnpm run test:clipboard-model`
+  **9/9**、`cargo check`、`cargo test` **253 passed / 9 ignored**、
+  `cargo clippy --all-targets --message-format=short` **0 warning**、debug
+  `--no-bundle` 构建通过；`cdp_page_runtime_verify` **30/30 PASS**、
+  `cdp_presenter_network_verify` **10/10 PASS**、`cdp_sandbox_verify`
+  **19/19 PASS**、`cdp_plugin_audit_runtime_verify` **21/21 PASS**、
+  `cdp_clipboard_smoke` PASS（单次切换 1 次查询）、`cdp_clipboard_p2` PASS、
+  `cdp_lupx_verify` ALL PASS（含检查后替换源文件被拒）、
+  `cdp_plugin_v2_verify` **5/5 PASS**、`cdp_detached_page_runtime_verify`
+  **12/12 PASS**、`cdp_circuit_verify` PASS（7 hooks / 0 pending）、
+  `check_i18n` **580 键 × 3 语言**。
 - **忽略应用图标与模式栏三项视口** — 忽略应用网格现在显示程序图标与归一化名称，
   删除按钮只在整行悬停或键盘焦点进入时叠加显示；图标路径按运行中窗口、App
   Paths、开始菜单快捷方式和 PATH 顺序解析，并复用共享图标缓存，无法解析时回退

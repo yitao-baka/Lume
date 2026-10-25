@@ -325,12 +325,15 @@ interface LumeSecretsApi {
   get(key: string): Promise<string | null>;
 }
 
-interface LumePluginCtx {
+/** Page Service mode additionally receives the model publisher and declared
+ * Credential Manager slots. Provider/service logic and ordinary mode logic use
+ * the common `LumePluginCtx` above and do not receive these fields. */
+interface LumePageServiceCtx extends LumePluginCtx {
   page: LumePageServiceApi;
   secrets: LumeSecretsApi;
 }
 
-/** api 2 mode service entry. */
+/** api 2 mode service entry; its create(ctx) receives `LumePageServiceCtx`. */
 interface LumeModeServiceLogic {
   getModel(): LumePageModel | Promise<LumePageModel>;
   onIntent?(intent: LumePageIntent): LumeIntentResult | Promise<LumeIntentResult>;

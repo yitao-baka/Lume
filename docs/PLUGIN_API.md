@@ -761,11 +761,20 @@ titlebar = "titlebar.html"   # 可选；launcher 内嵌时忽略
 opaque-origin 沙箱 iframe（`pluginLogicFrame.html?plugin=<id>`，classic
 script——opaque origin 下 module 脚本按 CORS 取数会被自定义协议拒绝）。
 WebView2 站点隔离给每帧独立 renderer 进程：插件死循环只拖死自己的进程。
+逻辑帧的 sandbox 只有 `allow-scripts allow-modals`（没有
+`allow-same-origin`、`allow-forms`、`allow-popups`）；provider/service 与普通
+mode 逻辑使用 `logic` role，只有 Page Service mode 使用 `service` role。
 
 registry 不 `import()` 任何第三方代码：`loadDiskPlugins` 注册**代理贡献**
 （provider/mode/service 的 hook 全部变为跨窗口 RPC `logicCall`，8s 超时；
 帧内未实现的 hook 安全返回 `undefined`），并发 `plugin_logic_push{kind:"load"}`
-让 supervisor 建帧。视图、快照（§6.8）、权限台账全部不变。
+让 supervisor 建帧。视图、快照（§6.8）与同一套权限台账不变。
+
+**权限清单时效**：supervisor 的权限源是本地 manifest map。启动时读取
+`get_plugins` 建立该 map；`settings-applied`、`plugin-reload` 与每次 `load`
+都会刷新，`load` 载荷同时携带当前 manifest。安装或编辑权限后无需重启进程，
+下一次 capability 调用即按新清单 fail-closed 判定。同一插件的 `load` / `unload`
+经串行生命周期队列执行，旧帧的异步卸载不会吊销新帧令牌。
 
 **通信拓扑**（全部经 Rust 中继，没有跨窗口 postMessage）：
 
@@ -794,7 +803,11 @@ registry 不 `import()` 任何第三方代码：`loadDiskPlugins` 注册**代理
 恒定低水位内存修剪）；supervisor 就绪后通告 `plugin-logic-host-ready`，
 registry（重）发全部 load（覆盖建窗竞态）；宿主窗口 `Destroyed` →
 `plugin-logic-host-closed` → registry 重建并重载（10s 内二次崩溃放弃）；
-禁用/重载/卸载 → `plugin_logic_push{kind:"unload"}` 拆帧 + 清令牌。
+禁用/重载/卸载 → `plugin_logic_push{kind:"unload"}` 拆帧 + 清令牌。拆帧同时
+移除该帧的 message listener、清空 pending timers，并对尚未完成的 load/hook
+回执失败，避免热重载累积闭包或让 registry 等满超时。`logic-loaded` 动作携带
+实际存在的 hook 名；registry 以它解除 readiness、补投设置，并只对真实声明的
+`navBars` 发起异步刷新。
 
 **声明式设置的时序**：`applyPluginSettings` 首投可能早于逻辑就绪——registry
 暂存（`pendingLogicSettings`），帧加载完成（supervisor 发 `logic-loaded`
@@ -901,6 +914,9 @@ Page Service 的 `ctx.page`：
 Page Service 还独有 `ctx.secrets.has(key)` / `ctx.secrets.get(key)`。秘密值只存在
 Windows Credential Manager，不进入模型、事件、日志、快照或 Presenter。设置窗
 通过 `plugin_secret_status/set/clear` 管理清单声明的槽位，并且从不回读明文。
+只有 Page Service mode 的逻辑帧会被登记为 `service` role；provider、service 与
+普通 mode 逻辑均为 `logic` role，不能访问 `page/secrets`。Rust 侧也只接受
+`service` / `logic` 两种 host role。
 
 Presenter 的 `lume.page`：
 
@@ -927,7 +943,16 @@ live 状态。
 `plugin_page_bridge_call` / `plugin_page_bridge_reply` 与同一 Page Session
 交换 `getModel`、Intent 和生命周期调用；Rust 校验调用窗口标签、请求 id、操作
 白名单和 1 MiB 载荷上限。模型、Presenter 选择和 Presenter 设置从启动器推送到
-独立 Presenter；关闭窗口后回到原 Page Session，不重建服务。
+独立 Presenter；就绪握手先重放当前 `query`，再重放 `show`，标题栏 Presenter 与
+`lume.on.query` 因此和 Page Model 对齐。关闭窗口后回到原 Page Session，不重建服务。
+
+Page Model 是轻量索引，不是大文本或二进制的传输通道。每次 publish 都在
+PageSession 校验结构、可结构化克隆性与 1 MiB 字节上限；非法/超限快照会转成
+可见的 `model.invalid` 错误页，而不是让 Solid effect 崩溃后留下空白。内置剪贴板
+页面按真实字节预算开窗：完整文本留在 Page Service，模型只带 4,096 字符显示
+预览；图片优先保留完整缩略图，必要时逐行降级为无缩略图；多文件预览先限制 256
+条，再按序列化字节预算收缩。Presenter 需要原始内容时通过 Intent / target id 读取，
+不把全量数据塞进模型。
 
 Presenter 的 `titlebar` 文件在独立窗口的 chrome 槽位中以第二个受限 Presenter
 iframe 挂载。它同样只能使用 `lume.page`、主题和外壳安全动作，接收相同模型与
@@ -1667,7 +1692,10 @@ permissions = ["network", "clipboard", "fs.write"]
 关系只决定措辞，任何关系确认后都安装，降级即回滚旧包）→ 确认 →
 `plugin_lupx_install` 解压换位。这个对话框就是权限模型的
 「安装时知情同意」时刻：确认前不写盘，安装失败留在框内报错，Esc / 取消
-放弃。**卸载**：每张磁盘插件卡（内置无）的卸载按钮，经同一个确认对话框。
+放弃。**确认卡展示的 SHA-256 同时作为 `expectedSha256` 传回安装命令**；Rust
+先把源文件复制到私有 staging，之后只对同一副本重新哈希、验签、统计事实和
+解压。检查后替换源文件会在写入插件目录前因 SHA-256 不匹配被拒。
+**卸载**：每张磁盘插件卡（内置无）的卸载按钮，经同一个确认对话框。
 
 **签名**：包内可选条目 `LUME.SIGN`（ed25519）——签名工具与宿主同源：
 
@@ -1687,7 +1715,8 @@ Rust 侧（`plugin_install.rs`）语义：
 
 | 环节 | 行为 |
 |---|---|
-| 校验 | 清单解析（`parse_manifest`）+ 必须显式声明 `id`（包内无目录名可回退）+ `valid_plugin_id` 字符集；entry 名逐段守卫（`\`→`/` 规范化——PowerShell 兼容、拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点、单段 ≤120 字符）；单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096；前两者按**实测**解压字节判定（zip 头部声明的未压缩大小可伪造——解压/哈希时逐块计数，声明与实测不一致的包直接拒绝） |
+| 确认绑定 | `inspect` 返回归档 SHA-256；安装必须携带该值。源文件先复制到 `<base>/data/install-staging/package-*.lupx`，哈希、验签、事实统计与提取全部读同一副本，源路径不再打开；哈希不符或格式非法直接拒绝 |
+| 校验 | 清单解析（`parse_manifest`）+ 必须显式声明 `id`（包内无目录名可回退）+ `valid_plugin_id` 字符集；entry 名逐段守卫（`\`→`/` 规范化——PowerShell 兼容、拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点、单段 ≤120 字符）；单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096；前两者按**实测**解压字节判定（zip 头部声明的未压缩大小可伪造——解压/哈希时逐块计数，声明与实测不一致的包直接拒绝）；`LUME.SIGN` 是签名元数据，不计入 payload 文件数与字节数 |
 | 换位 | 解压到 `<base>/data/install-staging/<id>-<ts>`（**不在 `plugins/` 下**——半成品不会被扫描发现）→ 旧安装 rename 到 staging 备份 → rename 到位（**失败自动还原旧安装**）→ 旧安装私有 `files/` 移入新目录（目录名常量在 `plugin_fs::PRIVATE_FILES_DIRNAME`；无则跳过，双方都有则逐项合并、**旧数据赢**同路径冲突；恢复失败把旧安装改名 `<id>-files-recovery-<pid>` 留在 `plugins/` 待手动处理——数据安全前不删备份）→ 清备份 |
 | 生效 | 双事件：`settings-applied`（清单刷新）+ `plugin-reload`（已加载模块立即从新文件重 import——**升级无需重启**） |
 | 卸载 | 删 `<plugins>/<id>/`（私有 `files/` 随目录走——它就在插件目录里；`data/plugin_store.db` 的文档**保留**）；目录不存在不算错（重复卸载幂等） |
@@ -1724,7 +1753,9 @@ Rust 侧（`plugin_install.rs`）语义：
    跨域取数走 `lume.http`。
 2. **Rust 命令侧白名单**（`plugin_perm.rs`）：每个宿主能力命令按清单
    `permissions` 校验调用方 plugin_id（fail-closed；原生路径 = main 窗口且
-   无 plugin_id）；清单缓存随 `get_plugins`/`reload_plugin` 刷新。
+   无 plugin_id）；清单缓存随 `get_plugins`/`reload_plugin` 刷新。文本剪贴板、
+   原始文件读取、缩略图、视频缩略图与图标批处理同样要求 `plugin_id` +
+   `host_token`，不再只依赖前端台账或 origin。
 3. **前端守卫**（`permissions.ts`）：负责知情同意与本地化文案（§11.4）。
 
 **归属判定**（`plugin_perm::resolve_plugin_caller`）：逻辑宿主的调用必须带
@@ -1755,6 +1786,13 @@ settings 类无权限命令对 main 窗口内的帧仍按声称 id 计——彻�
   未签名包维持确认流 + 展示 SHA-256。
 - **网络内网防护**（§8.1 http）：插件请求默认拒绝回环/私网/链路本地目标，
   `network_allow` 白名单放行；重定向逐跳重检（302 跳内网同样被拒）。
+- **WebView2 导航出口**：`webview_guard.rs` 在主窗、逻辑宿主和每个分离窗口
+  安装顶层/子帧导航与新窗拦截。逻辑帧只允许 `about:blank`、`about:srcdoc`
+  或宿主编写的 `pluginLogicFrame.html`；所有 `NewWindowRequested` 被抑制。
+  共享 WebView2 环境额外使用只丢弃请求的本机 HTTP 代理，因此即使事件链晚于
+  首次请求，目标服务也收不到插件帧的数据。宿主能力自身的 HTTP 仍走
+  Rust/WinHTTP，不受该代理影响。`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 只追加，
+  不覆盖 Wry 默认参数（CDP 与无控制台 release 形态保持可用）。
 - **插件熔断**：同一插件连续 3 次 hook 失败（超时/推送失败/ok:false）→
   标记离线 + toast，其调用快速失败、load 不重发（其余插件不受影响）；
   重载/保存设置复位。帧卡死由 supervisor 6s 兜底回执（先于 registry 8s
@@ -1833,8 +1871,16 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
   set/switch/search/clear/consume/adopt/toggle）——共享查询的搬运、行进入
   消耗与开关过渡最终只落到框内文字，探针靠它断言 mirror 写入与 consume；
   `scripts/cdp_mode_query_verify.mjs` 的判据。
-- `window.__rpcLog` / `__logicEntries`（逻辑宿主）：帧 rpc 结局摘要与
-  每插件帧状态（`loaded`/`calls`）。
+- `window.__rpcLog` / `__logicEntries` / `__logicHookLog`（逻辑宿主）：帧 rpc
+  结局摘要、每插件帧状态（`loaded`/`calls`）与最近 hook 回执。
+  `__logicListenerProbe.listenerCount()` / `.pendingCalls()` 分别返回 message
+  listener 数与所有帧的待决调用数，用于断言重载不泄漏。
+- `window.__pluginRegistryProbe`（main）：注册贡献、manifest 可见性，以及逻辑
+  `loaded` / `pending` / 实际 hook 集；`window.__navBarsProbe`（main）记录每次
+  异步栏目刷新 `{seq, ids, applied}`，用于判断迟到结果是否被 generation 丢弃。
+- `window.__summonStartedAt` / `__summonCompletedAt`（main）标记一次呼出的
+  开始与完成；`window.__launcherTestQuery(q)` 在隐藏窗口里走与输入框相同的
+  setQuery + runSearch 路径，避免 CDP 直接改 DOM 绕过真实路由。
 - `window.__pluginThemes`（各窗口）：本插件的颜色模式偏好写入
   记录 `[{id, pref, source}]`（`source` = main/window/settings/launcher）——
   沙箱页面不可达、分离窗口的 `data-theme` 只反映当前值，探针靠它读**意图**
@@ -1854,14 +1900,24 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
 
 - `cdp_sandbox_verify.mjs` — 沙箱：opaque iframe 隔离 +
   桥接/按键/焦点在沙箱内照常 + Rust 命令侧白名单（探针插件
-  `scripts/fixtures/sandbox-probe/` 在沙箱内自检）。
+  `scripts/fixtures/sandbox-probe/` 在沙箱内自检），并断言 recent/pins/
+  clipboard 状态在 webview 创建前就绪。
+- `cdp_presenter_network_verify.mjs` — 嵌入与分离 Presenter、逻辑帧的
+  `fetch`、form、WebSocket、EventSource、图片与 `location`/meta refresh/
+  anchor/`window.open` 自导航都到不了本地探针；同时检查 CSP 与 deny proxy 出口。
+- `cdp_plugin_audit_runtime_verify.mjs` — 专项运行时回归：清单权限热刷新、
+  `service` / `logic` role 边界、异步 `navBars`、长结果 ID 激活、分离窗口
+  query 重放、逻辑 listener/pending 清理与重复重载。
+- `cdp_page_runtime_verify.mjs` — 导航/剪贴板 Page Runtime：双 Presenter、
+  选择保持、剪贴板单次查询、真实滚动渐隐、虚拟窗口与尺寸/设置恢复。
 - `cdp_plugin_window_verify.mjs` — 独立窗口：分离 →
   状态握手 → 聚焦/enter 投递 → Esc 销毁 → 几何记忆 → 禁用自动关窗。
 - `cdp_p3_verify.mjs` — 数据层/权限/私有文件/声明式设置。
 - `cdp_lupx_verify.mjs` — `.lupx` 安装/卸载：inspect
-  形状与拒绝路径 → 安装未重启可用 → subdir/升级/卸载 → 设置页按钮与卸载
-  确认框 → 安装确认弹窗（拦 IPC fetch 桩掉原生文件对话框：事实块 / inert /
-  安全焦点 / Esc·取消不落盘 / 确认落盘 / 降级黄字）。
+  形状与拒绝路径 → inspect 后替换源文件被 SHA-256 绑定拒绝 → 安装未重启可用 →
+  subdir/升级/卸载 → 设置页按钮与卸载确认框 → 安装确认弹窗（拦 IPC fetch
+  桩掉原生文件对话框：事实块 / inert / 安全焦点 / Esc·取消不落盘 / 确认落盘 /
+  降级黄字）。
 - `cdp_p2b_verify.mjs` — files 拖入 / img 剪贴板图片 / template="list" 列表模板 /
   磁贴指针重排 / folder·image·extensions 类别匹配。
 - `cdp_skin_system_verify.mjs` — 双窗口皮肤系统：独立/混搭 skin 组合与四组 mode 的

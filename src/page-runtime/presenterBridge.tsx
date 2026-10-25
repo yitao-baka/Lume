@@ -269,7 +269,9 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
 /** Presenter documents are opaque-origin sandboxes. CSP closes the browser's
  * native network paths (fetch/XHR/WebSocket/EventSource/forms/subresources)
  * so a page cannot bypass the host's permission-checked HTTP proxy. Asset
- * URLs remain available only for host-resolved icons and media. */
+ * URLs remain available only for host-resolved icons and media. Frame and
+ * top-level navigation are rejected natively by `webview_guard`; current
+ * WebView2 builds do not enforce `navigate-to`. */
 const PRESENTER_CSP = [
   "default-src 'none'",
   "base-uri 'none'",
@@ -278,7 +280,6 @@ const PRESENTER_CSP = [
   "child-src 'none'",
   "connect-src 'none'",
   "form-action 'none'",
-  "navigate-to 'none'",
   "script-src 'unsafe-inline' blob:",
   "style-src 'unsafe-inline'",
   "img-src data: blob: asset: lume-resource: http://asset.localhost https://asset.localhost",

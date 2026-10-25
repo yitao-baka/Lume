@@ -1,8 +1,8 @@
-mod apps;
 pub mod agent;
 pub mod appicon;
-pub mod cache;
+mod apps;
 mod automation;
+pub mod cache;
 mod clipboard;
 mod dirwatch;
 mod envwatch;
@@ -13,14 +13,15 @@ mod hotkey;
 mod i18n;
 mod icons;
 pub mod input;
-pub mod paths;
-pub mod pipe;
 mod notify;
+pub mod paths;
+mod pins;
+pub mod pipe;
+mod plugin_devwatch;
 mod plugin_fs;
 mod plugin_host;
 mod plugin_install;
 mod plugin_logic;
-mod plugin_devwatch;
 mod plugin_net;
 mod plugin_page;
 mod plugin_perm;
@@ -29,13 +30,13 @@ pub mod plugin_sign;
 mod plugin_store;
 mod plugin_window;
 mod plugins;
-mod pins;
 pub mod recent;
 pub mod settings;
 pub mod svc;
 mod texts;
 mod tray;
 pub mod usnidx;
+mod webview_guard;
 mod window;
 
 use tauri::{Emitter, Manager, WindowEvent};
@@ -53,9 +54,7 @@ enum InstanceGuard {
 /// Lume never multi-opens. The handle must stay alive for the whole run.
 fn acquire_single_instance() -> InstanceGuard {
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{
-        CloseHandle, GetLastError, HANDLE, ERROR_ALREADY_EXISTS,
-    };
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
     use windows::Win32::System::Threading::CreateMutexW;
 
     let name: Vec<u16> = "LumeLauncher_SingleInstance"
@@ -121,15 +120,22 @@ pub fn run() {
             // Serialize the effective settings and set window.__LUME_CONFIG__
             // via an initialization script so SolidJS can read them synchronously
             // from createSignal defaults — no async IPC race on first paint.
-            let current = app
-                .state::<settings::SettingsState>()
-                .current();
-            let config_json = serde_json::to_string(&current)
-                .unwrap_or_else(|_| "{}".into());
+            let current = app.state::<settings::SettingsState>().current();
+            let config_json = serde_json::to_string(&current).unwrap_or_else(|_| "{}".into());
             // Rust-rendered shell text (window titles, tray, notifications)
             // follows the configured language, else the system UI language.
             let ui_lang = i18n::UiLang::from_setting(&current.appearance.language);
             let init_script = format!("window.__LUME_CONFIG__ = {config_json};");
+
+            // Clipboard, pins and recent must be managed before the first
+            // webview exists: the hidden launcher can invoke these commands as
+            // soon as its document loads (state-not-managed startup race).
+            clipboard::init(app);
+            pins::init(app);
+            recent::init(app);
+
+            // Must run before the first WebView2 environment is created.
+            webview_guard::configure_browser_environment();
 
             // Main launcher window (replaces tauri.conf.json windows[0]).
             tauri::WebviewWindowBuilder::new(
@@ -164,6 +170,7 @@ pub fn run() {
             // window::apply_settings; the shadow and the Win11 rounded corners
             // stay.
             if let Some(mw) = app.get_webview_window("main") {
+                webview_guard::install(&mw);
                 window::set_panel_frame_border(
                     &mw,
                     current.appearance.skin(),
@@ -375,15 +382,9 @@ pub fn run() {
             envwatch::init();
             // Watch the index dirs for file changes and refresh on change
             // (FindFirstChangeNotification, event-driven — no polling).
-            dirwatch::start(&app.handle());
+            dirwatch::start(app.handle());
             // Dev-mode plugin directory watch (edit → auto hot-reload, #32.7).
-            plugin_devwatch::start(&app.handle());
-            // Clipboard history listener + SQLite store (docs/ARCHITECTURE.md).
-            clipboard::init(app);
-            // Pinned-apps store (Navigate main-menu bar).
-            pins::init(app);
-            // Recent-opens store (Navigate main-menu bar, above the pins).
-            recent::init(app);
+            plugin_devwatch::start(app.handle());
             // System tray icon (Restart / Exit right-click menu).
             tray::setup(app);
             // Theme-matched app icon (dark/light artwork pair) on the windows'

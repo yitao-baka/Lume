@@ -19,7 +19,7 @@
 //               并把焦点还给触发按钮、确认后真实落盘、降级关系黄字提示
 // 截图：test/lupx_settings.png、test/lupx_install_dialog.png
 import { spawn, execSync } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync, openSync, existsSync, readFileSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, openSync, existsSync, readFileSync, cpSync } from "node:fs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
@@ -194,8 +194,26 @@ const subdir = await tryInvoke("plugin_lupx_inspect", { sourcePath: abs("lupx_su
 check("inspect: 顶层目录形状可解析且只计前缀内 2 个文件",
   subdir.ok && subdir.ok.id === "lupx-demo" && subdir.ok.fileCount === 2, JSON.stringify(subdir.ok ?? subdir.err));
 
+// Confirmation facts are bound to the bytes actually installed: inspect one
+// package, replace the source path, then install with the old SHA-256.
+cpSync(abs("lupx_v1.lupx"), abs("lupx_replace.lupx"));
+const replaceInfo = await tryInvoke("plugin_lupx_inspect", { sourcePath: abs("lupx_replace.lupx") });
+writeFileSync(abs("lupx_replace.lupx"), readFileSync(abs("lupx_v2.lupx")));
+const replaced = await tryInvoke("plugin_lupx_install", {
+  sourcePath: abs("lupx_replace.lupx"),
+  expectedSha256: replaceInfo.ok?.sha256,
+});
+check("install: inspect 后替换源文件会被 SHA-256 绑定拒绝",
+  replaced.err && (replaced.err.includes("SHA-256") || replaced.err.includes("changed")),
+  replaced.err);
+check("install: 被拒绝的替换包没有写入插件目录", !existsSync(`${BASE}/plugins/lupx-demo`));
+rmSync(abs("lupx_replace.lupx"), { force: true });
+
 // ── ② install → 无需重启即可用 ──
-const inst = await tryInvoke("plugin_lupx_install", { sourcePath: abs("lupx_v1.lupx") });
+const inst = await tryInvoke("plugin_lupx_install", {
+  sourcePath: abs("lupx_v1.lupx"),
+  expectedSha256: v1.ok?.sha256,
+});
 check("install: 命令成功返回", inst.ok && inst.ok.id === "lupx-demo", JSON.stringify(inst.ok ?? inst.err));
 await sleep(1200); // settings-applied → refreshPlugins → import
 check("install: get_plugins 列出该插件", (await pluginIds()).includes("lupx-demo"), (await pluginIds()).join(","));
@@ -205,7 +223,10 @@ const rows1 = await rowNames();
 check("install: provider 搜索行直接可用（未重启）", rows1.some((r) => r.includes("LUPX 测试条目")), JSON.stringify(rows1));
 
 // ── ③ subdir 形状安装（前缀外散文件不落盘） ──
-const instSub = await tryInvoke("plugin_lupx_install", { sourcePath: abs("lupx_subdir.lupx") });
+const instSub = await tryInvoke("plugin_lupx_install", {
+  sourcePath: abs("lupx_subdir.lupx"),
+  expectedSha256: subdir.ok?.sha256,
+});
 check("install: subdir 形状成功且 fileCount=2", instSub.ok && instSub.ok.fileCount === 2, JSON.stringify(instSub.ok ?? instSub.err));
 await sleep(1200);
 check("install: 前缀外 README.txt 未落盘", !existsSync(`${BASE}/plugins/README.txt`));
@@ -222,7 +243,10 @@ const v2 = await tryInvoke("plugin_lupx_inspect", { sourcePath: abs("lupx_v2.lup
 check("inspect: 已装同 id → existingVersion=1.0.0 + relation=upgrade",
   v2.ok && v2.ok.existingVersion === "1.0.0" && v2.ok.relation === "upgrade",
   JSON.stringify(v2.ok?.existingVersion));
-await tryInvoke("plugin_lupx_install", { sourcePath: abs("lupx_v2.lupx") });
+await tryInvoke("plugin_lupx_install", {
+  sourcePath: abs("lupx_v2.lupx"),
+  expectedSha256: v2.ok?.sha256,
+});
 await sleep(1400);
 check("upgrade: 私有 files/ 保留（升级不清数据）",
   existsSync(`${BASE}/plugins/lupx-demo/files/upgrade-keep.txt`)

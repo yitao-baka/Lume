@@ -500,7 +500,7 @@ pub fn icons_for(paths: &[String]) -> HashMap<String, Option<String>> {
 }
 
 fn in_query(prefix: &str, n: usize) -> String {
-    let placeholders = std::iter::repeat("?").take(n).collect::<Vec<_>>().join(",");
+    let placeholders = std::iter::repeat_n("?", n).collect::<Vec<_>>().join(",");
     format!("{prefix} ({placeholders})")
 }
 

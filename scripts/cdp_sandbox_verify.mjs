@@ -14,7 +14,7 @@
 // 进入沙箱页的通道，也让「桥接在沙箱内照常工作」成为被测事实。
 // 截图：test/sandbox_frame.png
 import { spawn, execSync } from "node:child_process";
-import { writeFileSync, mkdirSync, rmSync, cpSync, openSync } from "node:fs";
+import { writeFileSync, mkdirSync, rmSync, cpSync, openSync, readFileSync } from "node:fs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 try { execSync("taskkill /F /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
@@ -174,6 +174,18 @@ check("④c native file_search (no id, main window) still works", nativeSearch =
 const gatedSearch = await tryInvoke("file_search", { query: "readme", pluginId: "hello-mode" });
 check("④d file_search with unauthorized pluginId is denied",
   /permission denied|search\.files/.test(gatedSearch), gatedSearch);
+const clipboardText = await tryInvoke("get_clipboard_text", { pluginId: "sandbox-probe" });
+check("④e clipboard text is gated by the clipboard capability",
+  /permission denied|clipboard/.test(clipboardText), clipboardText);
+const fileText = await tryInvoke("get_file_text", { path: "does-not-matter.txt", pluginId: "sandbox-probe" });
+check("④f file text is gated before touching the path",
+  /permission denied|fs\.read/.test(fileText), fileText);
+const fileIcons = await tryInvoke("get_app_icons", { paths: ["C:\\Windows\\notepad.exe"], pluginId: "sandbox-probe" });
+check("④g file icons are gated by fs.read",
+  /permission denied|fs\.read/.test(fileIcons), fileIcons);
+const startupLog = readFileSync("test/sandbox_lume.log", "utf8");
+check("startup initializes recent/pins/clipboard before webviews",
+  !startupLog.includes("state not managed"), startupLog.match(/state not managed[^\r\n]*/)?.[0] ?? "");
 
 console.log(`\nSANDBOX VERIFY ${fail === 0 ? "OK" : "FAILED"} (${pass} passed, ${fail} failed)`);
 process.exit(fail === 0 ? 0 : 1);

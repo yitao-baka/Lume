@@ -8,6 +8,7 @@ entry = "service.js"
 page_runtime = true
 default_presenter = "default"
 keywords = ["presenternetworkprobe"]
+detachable = true
 
 [[presenters]]
 id = "default"

@@ -447,7 +447,7 @@ fn position_at_mouse(window: &WebviewWindow) -> tauri::Result<()> {
 fn show(window: &WebviewWindow) -> tauri::Result<()> {
     // Restore Normal BEFORE the show so the browser can swap the page memory
     // back while the window is still hidden (the hotkey frame isn't stalled).
-    restore_main(&window.app_handle());
+    restore_main(window.app_handle());
     apply_geometry(window)?;
     window.show()?;
     window.set_focus()?;
@@ -540,7 +540,7 @@ pub fn close_settings(app: AppHandle) -> Result<(), String> {
 /// ever control itself — no label validation needed, and the opaque plugin
 /// iframe (which cannot invoke commands) has no path here. Custom commands
 /// are ungated by ACL by design (see capabilities/plugin-windows.json).
-
+///
 /// Minimize the calling window (titlebar ─ button).
 #[tauri::command]
 pub fn window_minimize(window: WebviewWindow) -> Result<(), String> {

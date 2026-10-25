@@ -215,6 +215,19 @@ const circuitLog: { id: string; why: string; at: number }[] = [];
 const logicPendingReady = new Set<string>();
 
 const logicReadyWaiters = new Map<string, Set<() => void>>();
+const logicHooks = new Map<string, Set<string>>();
+let navigateBarsRefresh: (() => void | Promise<void>) | undefined;
+
+/** Composition root hook: a logic frame becoming ready can reveal navBars
+ * that were not registered when the previous refresh ran. */
+export function setNavigateBarsRefresh(fn: () => void | Promise<void>): void {
+  navigateBarsRefresh = fn;
+}
+
+function logicHasHook(id: string, name: string): boolean {
+  const hooks = logicHooks.get(id);
+  return hooks ? hooks.has(name) : true;
+}
 
 function resolveLogicReady(id: string): void {
   const waiters = logicReadyWaiters.get(id);
@@ -322,8 +335,13 @@ function pushLogicLoad(id: string): void {
   if (logicOffline.has(id)) return;
   logicPendingReady.add(id); // 帧就绪信号（logic-loaded）到达前 hook 快速失败
   logicLoadedIds.add(id);
+  const manifest = manifests().find((item) => item.id === id);
   void invoke("plugin_logic_host_ensure")
-    .then(() => invoke("plugin_logic_push", { id, kind: "load", payload: {} }))
+    .then(() => invoke("plugin_logic_push", {
+      id,
+      kind: "load",
+      payload: manifest ? { manifest } : {},
+    }))
     .catch((err) => plog.error(id, "logic load push failed:", err));
 }
 
@@ -334,9 +352,14 @@ async function restartLogicService(id: string): Promise<void> {
   resetCircuit(id);
   logicPendingReady.add(id);
   logicLoadedIds.add(id);
+  const manifest = manifests().find((item) => item.id === id);
   await invoke("plugin_logic_host_ensure");
   await invoke("plugin_logic_push", { id, kind: "unload", payload: {} });
-  await invoke("plugin_logic_push", { id, kind: "load", payload: {} });
+  await invoke("plugin_logic_push", {
+    id,
+    kind: "load",
+    payload: manifest ? { manifest } : {},
+  });
   await waitForLogicReady(id);
 }
 
@@ -418,7 +441,12 @@ function handleLogicAction(id: string, action: string, args: Record<string, unkn
       // （applyPluginSettings 的首投可能早于逻辑就绪而落空）。
       {
         logicPendingReady.delete(id);
+        const hooks = Array.isArray(args.hooks)
+          ? args.hooks.filter((hook): hook is string => typeof hook === "string")
+          : [];
+        logicHooks.set(id, new Set(hooks));
         resolveLogicReady(id);
+        void navigateBarsRefresh?.();
         const values = pendingLogicSettings.get(id);
         if (values) {
           pendingLogicSettings.delete(id);
@@ -646,18 +674,19 @@ function navBarsContribution(
   dir?: string
 ): (() => Promise<NavBarContribution[]> | NavBarContribution[]) | undefined {
   if (typeof logic.navBars !== "function") return undefined;
-  return () => {
+  return async () => {
     try {
-      return Promise.resolve(
-        normalizeNavBarContributions(
-          pluginId,
-          (logic.navBars as () => unknown)(),
-          dir
-        )
-      );
+      // The logic proxy always exposes functions, and the real hook may be
+      // synchronous or asynchronous. Wait for the shared logic host first,
+      // then await the RPC result before validating it: Promise.resolve()
+      // around a not-yet-awaited RPC used to normalize the Promise itself.
+      await waitForLogicReady(pluginId);
+      if (!logicHasHook(pluginId, "navBars")) return [];
+      const raw = await (logic.navBars as () => unknown)();
+      return normalizeNavBarContributions(pluginId, raw, dir);
     } catch (err) {
       console.error("[plugins] navBars failed:", pluginId, err);
-      return Promise.resolve([]);
+      return [];
     }
   };
 }
@@ -690,6 +719,7 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
     if (plugins[i].id === id) plugins.splice(i, 1);
   }
   logicLoadedIds.delete(id);
+  logicHooks.delete(id);
   clearThrottledCalls(id);
   resetCircuit(id); // 重载 = 重新开始：熔断状态不跨代（#32.4）
   // 重载窗口 = 未就绪：帧已拆、新帧未起，期间的 hook 快速失败（不计熔断）。
@@ -1123,6 +1153,7 @@ function registerPageRuntimeDetachedSupplier(id: string, runtime: PageRuntimeMod
         state: {
           pageRuntime: true,
           show,
+          query: runtime.instance.query(),
           presenter,
           presenterSettings,
           theme: pluginColorMode(id, currentThemeMode()),
@@ -1653,5 +1684,27 @@ export function modeById(id: ModeId): ModeInstance | undefined {
 export function previewPlugins(): LauncherPlugin[] {
   return plugins.filter((p) => p.preview && isEnabled(p.id));
 }
+
+// CDP probe for plugin registration and logic-readiness state.
+(window as unknown as { __pluginRegistryProbe?: unknown }).__pluginRegistryProbe = {
+  plugins: () => plugins.map((plugin) => ({
+    id: plugin.id,
+    provider: !!plugin.provider,
+    mode: !!plugin.mode,
+    lifecycle: !!plugin.lifecycle,
+    navBars: !!plugin.navBars,
+    enabled: isEnabled(plugin.id),
+  })),
+  manifests: () => manifests().map((manifest) => ({
+    id: manifest.id,
+    enabled: manifest.enabled,
+    apiError: manifest.apiError,
+  })),
+  logic: () => ({
+    loaded: [...logicLoadedIds],
+    pending: [...logicPendingReady],
+    hooks: Object.fromEntries([...logicHooks].map(([id, hooks]) => [id, [...hooks]])),
+  }),
+};
 
 export { isEnabled as pluginEnabled };

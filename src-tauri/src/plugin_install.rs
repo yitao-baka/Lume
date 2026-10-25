@@ -32,7 +32,10 @@ use zip::ZipArchive;
 
 use crate::paths::base_dir;
 use crate::plugin_sign::{verify_sign_blob, SIGN_ENTRY};
-use crate::plugins::{parse_manifest, valid_plugin_id, validate_manifest, PluginManifest, PresenterManifest, SecretSpec};
+use crate::plugins::{
+    parse_manifest, valid_plugin_id, validate_manifest, PluginManifest, PresenterManifest,
+    SecretSpec,
+};
 
 /// Cap on one extracted file, applied to the **measured** decompressed bytes
 /// (never the header's declaration). A plugin is view HTML + a JS bundle +
@@ -43,6 +46,8 @@ const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Cap on archive entries (zip-file-count guard).
 const MAX_ENTRIES: usize = 4096;
+/// Cap on the package file itself before it is copied into private staging.
+const MAX_ARCHIVE_BYTES: u64 = 320 * 1024 * 1024;
 
 /// What the confirmation card shows before anything is written to disk.
 #[derive(Debug, Clone, Serialize)]
@@ -131,7 +136,9 @@ fn segment_ok(seg: &str) -> Result<(), String> {
         return Err("archive entry name contains a control character".into());
     }
     if seg.ends_with([' ', '.']) {
-        return Err(format!("\"{seg}\" is not a usable name (trailing space or dot)"));
+        return Err(format!(
+            "\"{seg}\" is not a usable name (trailing space or dot)"
+        ));
     }
     let stem = seg.split('.').next().unwrap_or(seg).to_ascii_uppercase();
     if RESERVED_NAMES.contains(&stem.as_str()) {
@@ -151,7 +158,9 @@ fn segment_ok(seg: &str) -> Result<(), String> {
 pub(crate) fn normalize_entry(raw: &str) -> Result<String, String> {
     let unified = raw.replace('\\', "/");
     if unified.contains(':') {
-        return Err(format!("archive entry \"{raw}\" must not be an absolute path"));
+        return Err(format!(
+            "archive entry \"{raw}\" must not be an absolute path"
+        ));
     }
     let mut parts: Vec<&str> = Vec::new();
     for seg in unified.split('/') {
@@ -232,7 +241,10 @@ fn read_lupx_verified(
     let file = std::fs::File::open(path).map_err(|e| format!("cannot open archive: {e}"))?;
     let mut zip = ZipArchive::new(file).map_err(|e| format!("not a readable zip archive: {e}"))?;
     if zip.len() > MAX_ENTRIES {
-        return Err(format!("archive has {} entries (cap {MAX_ENTRIES})", zip.len()));
+        return Err(format!(
+            "archive has {} entries (cap {MAX_ENTRIES})",
+            zip.len()
+        ));
     }
     // Pass 1: validate every name, remember where each entry lives. The
     // running byte counter bounds the whole decompression (bomb guard).
@@ -242,7 +254,9 @@ fn read_lupx_verified(
     // here, excluded from the payload facts, verified after the manifest.
     let mut sign_blob: Option<String> = None;
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| format!("archive entry {i}: {e}"))?;
+        let mut entry = zip
+            .by_index(i)
+            .map_err(|e| format!("archive entry {i}: {e}"))?;
         let raw = entry.name().to_string();
         let normalized = normalize_entry(&raw)?;
         if normalized.is_empty() {
@@ -291,15 +305,16 @@ fn read_lupx_verified(
         }
     }
     // Locate the manifest: archive root first, then a single top-level dir.
-    let (raw_manifest, prefix) =
-        if let Some(e) = entries.iter().find(|e| e.normalized == "plugin.toml") {
-            (e.raw.clone(), String::new())
-        } else {
-            let mut in_dirs: Vec<&Entry> = entries
-                .iter()
-                .filter(|e| e.normalized.ends_with("/plugin.toml"))
-                .collect();
-            match in_dirs.len() {
+    let (raw_manifest, prefix) = if let Some(e) =
+        entries.iter().find(|e| e.normalized == "plugin.toml")
+    {
+        (e.raw.clone(), String::new())
+    } else {
+        let mut in_dirs: Vec<&Entry> = entries
+            .iter()
+            .filter(|e| e.normalized.ends_with("/plugin.toml"))
+            .collect();
+        match in_dirs.len() {
                 1 => {
                     let e = in_dirs.pop().unwrap();
                     let prefix = e.normalized[..e.normalized.len() - "/plugin.toml".len()]
@@ -313,7 +328,7 @@ fn read_lupx_verified(
                     return Err("ambiguous archive: several top-level directories hold a plugin.toml".into())
                 }
             }
-        };
+    };
     let prefix_root = if prefix.is_empty() {
         String::new()
     } else {
@@ -361,17 +376,26 @@ fn read_lupx_verified(
     // install. Unsigned archives keep the plain confirmation-card flow.
     let signed = sign_blob.is_some();
     if let Some(blob) = sign_blob {
-        verify_sign_blob(&blob, text.as_bytes(), &signed_file_list(&prefix, &entries), trust)?;
+        verify_sign_blob(
+            &blob,
+            text.as_bytes(),
+            &signed_file_list(&prefix, &entries),
+            trust,
+        )?;
     }
     // Whole-archive hash for the confirmation card (integrity display /
     // comparing distributions).
     let archive_sha256 = {
         use sha2::Digest;
-        let mut file = std::fs::File::open(path).map_err(|e| format!("cannot open archive: {e}"))?;
+        let mut file =
+            std::fs::File::open(path).map_err(|e| format!("cannot open archive: {e}"))?;
         let mut hasher = sha2::Sha256::new();
         std::io::copy(&mut file, &mut hasher).map_err(|e| format!("hash archive: {e}"))?;
         let digest: [u8; 32] = hasher.finalize().into();
-        digest.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        digest
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
     };
     Ok(LupxArchive {
         manifest,
@@ -399,7 +423,9 @@ fn load_trust_keys(base: &Path) -> Vec<ed25519_dalek::VerifyingKey> {
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().is_some_and(|x| !x.eq_ignore_ascii_case("pub")) {
+            if p.extension()
+                .is_some_and(|x| !x.eq_ignore_ascii_case("pub"))
+            {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&p) else {
@@ -459,6 +485,35 @@ pub fn cleanup_staging(base: &Path) {
     }
 }
 
+/// Copy the user-selected package into private staging before any validation
+/// or extraction. Every subsequent operation reads this copy, so replacing the
+/// source path between inspect and install cannot change what is installed.
+fn stage_lupx(base: &Path, source_path: &str) -> Result<PathBuf, String> {
+    let metadata =
+        std::fs::metadata(source_path).map_err(|e| format!("cannot stat archive: {e}"))?;
+    if !metadata.is_file() {
+        return Err("selected package is not a file".into());
+    }
+    if metadata.len() > MAX_ARCHIVE_BYTES {
+        return Err(format!(
+            "package is {} bytes (cap {MAX_ARCHIVE_BYTES})",
+            metadata.len()
+        ));
+    }
+    let root = staging_root(base);
+    std::fs::create_dir_all(&root).map_err(|e| format!("create staging dir: {e}"))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let staged = root.join(format!("package-{stamp}-{}.lupx", std::process::id()));
+    if let Err(error) = std::fs::copy(source_path, &staged) {
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!("cannot stage archive: {error}"));
+    }
+    Ok(staged)
+}
+
 /// Extract the archive's in-prefix entries under `staging`. Returns the
 /// extracted file count and byte total (the archive's real payload, which the
 /// confirmation card should show).
@@ -468,11 +523,16 @@ fn extract_to(source_path: &str, prefix: &str, staging: &Path) -> Result<(usize,
     let mut files = 0usize;
     let mut total = 0u64;
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| format!("archive entry {i}: {e}"))?;
+        let mut entry = zip
+            .by_index(i)
+            .map_err(|e| format!("archive entry {i}: {e}"))?;
         let raw = entry.name().to_string();
         let normalized = normalize_entry(&raw)?;
         if normalized.is_empty() || entry.is_dir() {
             continue;
+        }
+        if normalized.eq_ignore_ascii_case(SIGN_ENTRY) {
+            continue; // signature metadata, not payload
         }
         let relative = if prefix.is_empty() {
             normalized
@@ -564,8 +624,7 @@ fn restore_private_files(base: &Path, backup: &Path, target: &Path, id: &str) ->
         std::fs::rename(&src, &dst).map_err(|e| e.to_string())
     } else {
         merge_move(&src, &dst).and_then(|()| {
-            std::fs::remove_dir_all(&src)
-                .map_err(|e| format!("remove emptied source: {e}"))
+            std::fs::remove_dir_all(&src).map_err(|e| format!("remove emptied source: {e}"))
         })
     };
     match moved {
@@ -618,7 +677,11 @@ fn merge_move(src: &Path, dst: &Path) -> Result<(), String> {
 fn existing_version(base: &Path, id: &str) -> Option<String> {
     let text = std::fs::read_to_string(base.join("plugins").join(id).join("plugin.toml")).ok()?;
     let m = parse_manifest(&text).ok()?;
-    let resolved = if m.id.is_empty() { id.to_string() } else { m.id };
+    let resolved = if m.id.is_empty() {
+        id.to_string()
+    } else {
+        m.id
+    };
     if resolved == id {
         Some(m.version)
     } else {
@@ -630,13 +693,17 @@ fn existing_version(base: &Path, id: &str) -> Option<String> {
 /// plus the rest (`None` when the segment is a bare number — semver ranks a
 /// release above its own prerelease suffixes).
 fn segment_key(seg: &str) -> (u64, Option<&str>) {
-    let digits = seg
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .count();
+    let digits = seg.chars().take_while(|c| c.is_ascii_digit()).count();
     let num = seg[..digits].parse().unwrap_or(0);
     let suffix = &seg[digits..];
-    (num, if suffix.is_empty() { None } else { Some(suffix) })
+    (
+        num,
+        if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix)
+        },
+    )
 }
 
 /// Compare two manifest versions semver-ish: dot-separated segments compare
@@ -708,25 +775,47 @@ fn inspect_lupx(source_path: &str) -> Result<LupxInfo, String> {
     let arch = read_lupx(source_path)?;
     let existing = existing_version(&base, &arch.manifest.id);
     let relation = install_relation(&arch.manifest.version, existing.as_deref());
-    Ok(LupxInfo {
-        id: arch.manifest.id.clone(),
-        name: arch.manifest.name.clone(),
-        version: arch.manifest.version.clone(),
-        kind: arch.manifest.kind.clone(),
-        description: arch.manifest.description.clone(),
-        permissions: arch.manifest.permissions.clone(),
+    Ok(lupx_info(arch, existing, relation))
+}
+
+fn lupx_info(
+    arch: LupxArchive,
+    existing_version: Option<String>,
+    relation: &'static str,
+) -> LupxInfo {
+    LupxInfo {
+        id: arch.manifest.id,
+        name: arch.manifest.name,
+        version: arch.manifest.version,
+        kind: arch.manifest.kind,
+        description: arch.manifest.description,
+        permissions: arch.manifest.permissions,
         api: arch.manifest.api,
-        model: arch.manifest.model.clone(),
-        default_presenter: arch.manifest.default_presenter.clone(),
-        presenters: arch.manifest.presenters.clone(),
-        secrets: arch.manifest.secrets.clone(),
+        model: arch.manifest.model,
+        default_presenter: arch.manifest.default_presenter,
+        presenters: arch.manifest.presenters,
+        secrets: arch.manifest.secrets,
         file_count: arch.file_count,
         total_bytes: arch.total_bytes,
-        existing_version: existing,
+        existing_version,
         relation,
         signature: if arch.signed { "valid" } else { "unsigned" },
         sha256: arch.archive_sha256,
-    })
+    }
+}
+
+fn assert_expected_sha256(expected: &str, actual: &str) -> Result<(), String> {
+    let expected = expected.trim();
+    if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("the confirmation SHA-256 is malformed; inspect the package again".into());
+    }
+    if !expected.eq_ignore_ascii_case(actual) {
+        return Err(
+            "the package changed after inspection (SHA-256 mismatch); inspect it again before installing"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 /// Validate + extract + swap a `.lupx` into `<base>/plugins/<id>/`, replacing
@@ -734,13 +823,22 @@ fn inspect_lupx(source_path: &str) -> Result<LupxInfo, String> {
 /// facts and the version relation that was acted on (computed before the
 /// swap — afterwards the installed manifest IS the package's). (Split from
 /// the command so tests can drive it without an app.)
-fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64, &'static str), String> {
+fn install_into_checked(
+    base: &Path,
+    source_path: &str,
+    expected_sha256: Option<&str>,
+) -> Result<(String, usize, u64, &'static str, LupxArchive), String> {
     // Trust roots come from `base` — the caller's data dir, not whatever the
     // process-wide `base_dir()` happens to be (tests drive other bases).
     let arch = read_lupx_verified(source_path, &load_trust_keys(base))?;
+    if let Some(expected) = expected_sha256 {
+        assert_expected_sha256(expected, &arch.archive_sha256)?;
+    }
     let id = arch.manifest.id.clone();
-    let relation =
-        install_relation(&arch.manifest.version, existing_version(base, &id).as_deref());
+    let relation = install_relation(
+        &arch.manifest.version,
+        existing_version(base, &id).as_deref(),
+    );
     let plugins = base.join("plugins");
     std::fs::create_dir_all(&plugins).map_err(|e| format!("create plugins dir: {e}"))?;
     let staging_root = staging_root(base);
@@ -763,6 +861,12 @@ fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64, &
         let _ = std::fs::remove_dir_all(&staging);
         return Err("archive holds no files for this plugin".into());
     }
+    if files != arch.file_count || total != arch.total_bytes {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(
+            "archive facts changed between validation and extraction; install refused".into(),
+        );
+    }
     if let Err(e) = swap_installed(base, &staging, &id) {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(e);
@@ -771,6 +875,15 @@ fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64, &
         "[plugins] installed \"{id}\" ({} file(s), {total} bytes) from {source_path}",
         files
     );
+    Ok((id, files, total, relation, arch))
+}
+
+#[cfg(test)]
+fn install_into(
+    base: &Path,
+    source_path: &str,
+) -> Result<(String, usize, u64, &'static str), String> {
+    let (id, files, total, relation, _) = install_into_checked(base, source_path, None)?;
     Ok((id, files, total, relation))
 }
 
@@ -786,45 +899,35 @@ fn install_into(base: &Path, source_path: &str) -> Result<(String, usize, u64, &
 #[tauri::command]
 pub async fn plugin_lupx_install(
     source_path: String,
+    expected_sha256: String,
     window: tauri::WebviewWindow,
     app: tauri::AppHandle,
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
 ) -> Result<LupxInfo, String> {
     crate::plugin_perm::deny_from_plugin_windows(&window)?;
     use tauri::Emitter;
-    let (id, info) = tauri::async_runtime::spawn_blocking(
-        move || -> Result<(String, LupxInfo), String> {
+    let (id, info) =
+        tauri::async_runtime::spawn_blocking(move || -> Result<(String, LupxInfo), String> {
             let base = base_dir();
-            let (id, file_count, total_bytes, relation) = install_into(&base, &source_path)?;
-            // Response facts from the same archive the swap consumed (the
-            // installed copy holds byte-identical content).
-            let arch = read_lupx(&source_path)?;
-            let info = LupxInfo {
-                id: arch.manifest.id,
-                name: arch.manifest.name,
-                version: arch.manifest.version,
-                kind: arch.manifest.kind,
-                description: arch.manifest.description,
-                permissions: arch.manifest.permissions,
-                api: arch.manifest.api,
-                model: arch.manifest.model,
-                default_presenter: arch.manifest.default_presenter,
-                presenters: arch.manifest.presenters,
-                secrets: arch.manifest.secrets,
-                file_count,
-                total_bytes,
-                existing_version: None, // installed by now; the card is gone
-                relation,               // what the swap just acted on
-                signature: if arch.signed { "valid" } else { "unsigned" },
-                sha256: arch.archive_sha256,
-            };
-            Ok((id, info))
-        },
-    )
-    .await
-    .map_err(|e| format!("install worker panicked: {e}"))??;
+            let staged = stage_lupx(&base, &source_path)?;
+            let result = (|| -> Result<(String, LupxInfo), String> {
+                let (id, _, _, relation, arch) = install_into_checked(
+                    &base,
+                    staged.to_string_lossy().as_ref(),
+                    Some(&expected_sha256),
+                )?;
+                // Facts come from the same staged archive that was validated,
+                // extracted and swapped; the source path is never reopened.
+                Ok((id, lupx_info(arch, None, relation)))
+            })();
+            let _ = std::fs::remove_file(&staged);
+            result
+        })
+        .await
+        .map_err(|e| format!("install worker panicked: {e}"))??;
     crate::plugin_perm::invalidate(&perms, &id);
-    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    app.emit("settings-applied", ())
+        .map_err(|e| e.to_string())?;
     app.emit("plugin-reload", id).map_err(|e| e.to_string())?;
     Ok(info)
 }
@@ -859,7 +962,8 @@ pub fn plugin_uninstall(
     use tauri::Emitter;
     uninstall_dir(&base_dir(), &id)?;
     crate::plugin_perm::invalidate(&perms, &id);
-    app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
+    app.emit("settings-applied", ())
+        .map_err(|e| e.to_string())?;
     app.emit("plugin-reload", id).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -958,16 +1062,22 @@ mod tests {
     #[test]
     fn inspect_rejects_broken_and_hostile_archives() {
         let no_manifest = make_zip("nomanifest", &[("main.js", b"x".as_slice())]);
-        assert!(inspect_lupx(&no_manifest).unwrap_err().contains("no plugin.toml"));
+        assert!(inspect_lupx(&no_manifest)
+            .unwrap_err()
+            .contains("no plugin.toml"));
         let no_id = make_zip("noid", &[("plugin.toml", b"name = \"no id\"\n".as_slice())]);
-        assert!(inspect_lupx(&no_id).unwrap_err().contains("must declare an id"));
+        assert!(inspect_lupx(&no_id)
+            .unwrap_err()
+            .contains("must declare an id"));
         let bad_id = make_zip(
             "badid",
             &[("plugin.toml", b"id = \"..\\\\evil\"\n".as_slice())],
         );
         assert!(inspect_lupx(&bad_id).unwrap_err().contains("not usable"));
         let bad_manifest = make_zip("badtoml", &[("plugin.toml", b"not = [valid".as_slice())]);
-        assert!(inspect_lupx(&bad_manifest).unwrap_err().contains("invalid plugin.toml"));
+        assert!(inspect_lupx(&bad_manifest)
+            .unwrap_err()
+            .contains("invalid plugin.toml"));
         let ambiguous = make_zip(
             "ambiguous",
             &[("a/plugin.toml", MANIFEST), ("b/plugin.toml", MANIFEST)],
@@ -1020,7 +1130,10 @@ mod tests {
         let payload = vec![0u8; 1024 * 1024];
         let zip = make_zip(
             "lying",
-            &[("plugin.toml", MANIFEST), ("payload.bin", payload.as_slice())],
+            &[
+                ("plugin.toml", MANIFEST),
+                ("payload.bin", payload.as_slice()),
+            ],
         );
         patch_declared_size(&zip, b"payload.bin", 4096);
 
@@ -1047,7 +1160,10 @@ mod tests {
         let leftovers: Vec<_> = std::fs::read_dir(base.join("data").join("install-staging"))
             .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
             .unwrap_or_default();
-        assert!(leftovers.is_empty(), "staging must be cleaned up: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "staging must be cleaned up: {leftovers:?}"
+        );
         std::fs::remove_dir_all(&base).ok();
         std::fs::remove_dir_all(&staging).ok();
         std::fs::remove_file(&zip).ok();
@@ -1062,7 +1178,10 @@ mod tests {
         let payload = vec![0u8; (MAX_ENTRY_BYTES + 1) as usize];
         let zip = make_zip(
             "cap",
-            &[("plugin.toml", MANIFEST), ("payload.bin", payload.as_slice())],
+            &[
+                ("plugin.toml", MANIFEST),
+                ("payload.bin", payload.as_slice()),
+            ],
         );
         patch_declared_size(&zip, b"payload.bin", 4096);
         let err = inspect_lupx(&zip).unwrap_err();
@@ -1113,7 +1232,10 @@ mod tests {
     #[test]
     fn failed_swap_restores_the_previous_installation() {
         let base = temp_base("restore");
-        let v1 = make_zip("v1", &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())]);
+        let v1 = make_zip(
+            "v1",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
         install_into(&base, &v1).unwrap();
         // Force the final rename to fail deterministically: the staging
         // directory does not exist. The v1 installation must come back.
@@ -1133,11 +1255,23 @@ mod tests {
         assert_eq!(cmp_versions("1.0.0", "1.0.0"), Equal);
         assert_eq!(cmp_versions("1.2.0", "1.0.0"), Greater);
         assert_eq!(cmp_versions("1.0.0", "1.2.0"), Less);
-        assert_eq!(cmp_versions("1.10.0", "1.9.0"), Greater, "numeric, not lexicographic");
+        assert_eq!(
+            cmp_versions("1.10.0", "1.9.0"),
+            Greater,
+            "numeric, not lexicographic"
+        );
         assert_eq!(cmp_versions("2.0.0", "1.9.9"), Greater);
-        assert_eq!(cmp_versions("1.0", "1.0.0"), Equal, "missing segments count as 0");
+        assert_eq!(
+            cmp_versions("1.0", "1.0.0"),
+            Equal,
+            "missing segments count as 0"
+        );
         assert_eq!(cmp_versions("1.0", "1.0.1"), Less);
-        assert_eq!(cmp_versions("1.0.0", "1.0.0-alpha"), Greater, "release > prerelease");
+        assert_eq!(
+            cmp_versions("1.0.0", "1.0.0-alpha"),
+            Greater,
+            "release > prerelease"
+        );
         assert_eq!(cmp_versions("1.0.0-alpha", "1.0.0-beta"), Less);
         assert_eq!(cmp_versions("0.9.0", "1.0.0"), Less);
     }
@@ -1151,7 +1285,10 @@ mod tests {
         );
         let fresh = read_lupx(&v1).unwrap();
         assert_eq!(
-            install_relation(&fresh.manifest.version, existing_version(&base, "demo").as_deref()),
+            install_relation(
+                &fresh.manifest.version,
+                existing_version(&base, "demo").as_deref()
+            ),
             "fresh"
         );
         install_into(&base, &v1).unwrap();
@@ -1165,13 +1302,19 @@ mod tests {
         );
         let arch2 = read_lupx(&v2).unwrap();
         assert_eq!(
-            install_relation(&arch2.manifest.version, existing_version(&base, "demo").as_deref()),
+            install_relation(
+                &arch2.manifest.version,
+                existing_version(&base, "demo").as_deref()
+            ),
             "upgrade"
         );
         // Same version → reinstall.
         let again = read_lupx(&v1).unwrap();
         assert_eq!(
-            install_relation(&again.manifest.version, existing_version(&base, "demo").as_deref()),
+            install_relation(
+                &again.manifest.version,
+                existing_version(&base, "demo").as_deref()
+            ),
             "reinstall"
         );
         // Older package → downgrade (allowed, the card just warns).
@@ -1184,7 +1327,10 @@ mod tests {
         );
         let arch0 = read_lupx(&v0).unwrap();
         assert_eq!(
-            install_relation(&arch0.manifest.version, existing_version(&base, "demo").as_deref()),
+            install_relation(
+                &arch0.manifest.version,
+                existing_version(&base, "demo").as_deref()
+            ),
             "downgrade"
         );
         // install_into reports the relation it acted on, computed pre-swap.
@@ -1270,7 +1416,10 @@ mod tests {
     #[test]
     fn uninstall_removes_the_directory_and_is_idempotent() {
         let base = temp_base("uninstall");
-        let zip = make_zip("v1", &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())]);
+        let zip = make_zip(
+            "v1",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
         install_into(&base, &zip).unwrap();
         assert!(base.join("plugins").join("demo").exists());
         uninstall_dir(&base, "demo").unwrap();
@@ -1285,9 +1434,9 @@ mod tests {
 
     fn test_signing_key(seed_byte: u8) -> ed25519_dalek::SigningKey {
         use base64::Engine;
-        crate::plugin_sign::parse_seed_b64(&base64::engine::general_purpose::STANDARD.encode(
-            [seed_byte; 32],
-        ))
+        crate::plugin_sign::parse_seed_b64(
+            &base64::engine::general_purpose::STANDARD.encode([seed_byte; 32]),
+        )
         .unwrap()
     }
 
@@ -1298,7 +1447,10 @@ mod tests {
         let out_path = std::env::temp_dir().join(format!(
             "lume-lupx-tampered-{}-{}.zip",
             std::process::id(),
-            path.chars().filter(|c| c.is_ascii_digit()).take(6).collect::<String>()
+            path.chars()
+                .filter(|c| c.is_ascii_digit())
+                .take(6)
+                .collect::<String>()
         ));
         let out_f = std::fs::File::create(&out_path).unwrap();
         let mut out = zip::ZipWriter::new(out_f);
@@ -1324,7 +1476,10 @@ mod tests {
             "sig",
             &[
                 ("demo/plugin.toml", MANIFEST),
-                ("demo/main.js", b"export default { search: () => [] }".as_slice()),
+                (
+                    "demo/main.js",
+                    b"export default { search: () => [] }".as_slice(),
+                ),
                 ("demo/res/icon.svg", b"<svg/>".as_slice()),
             ],
         );
@@ -1373,7 +1528,10 @@ mod tests {
     #[test]
     fn lupx_unsigned_still_installs_with_hash_shown() {
         let base = temp_base("unsigned");
-        let zip = make_zip("unsigned2", &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())]);
+        let zip = make_zip(
+            "unsigned2",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
         let arch = read_lupx(&zip).unwrap();
         assert!(!arch.signed);
         assert_eq!(arch.archive_sha256.len(), 64);
@@ -1425,5 +1583,22 @@ mod tests {
         for f in [zip, zip2] {
             std::fs::remove_file(f).ok();
         }
+    }
+
+    #[test]
+    fn install_refuses_confirmation_hash_mismatch() {
+        let base = temp_base("hash-bind");
+        let zip = make_zip(
+            "hash-bind",
+            &[("plugin.toml", MANIFEST), ("main.js", b"v1".as_slice())],
+        );
+        let arch = read_lupx_verified(&zip, &[]).unwrap();
+        let wrong = "0".repeat(64);
+        assert_ne!(arch.archive_sha256, wrong);
+        let err = install_into_checked(&base, &zip, Some(&wrong)).unwrap_err();
+        assert!(err.contains("SHA-256 mismatch"), "{err}");
+        assert!(!base.join("plugins").join("demo").exists());
+        std::fs::remove_dir_all(&base).ok();
+        std::fs::remove_file(&zip).ok();
     }
 }

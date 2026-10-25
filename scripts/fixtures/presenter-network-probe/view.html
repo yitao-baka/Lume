@@ -2,6 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <meta http-equiv="refresh" content="0; url=__PROBE_BASE__/meta-refresh?secret=presenter" />
     <style>body { font: 14px sans-serif; padding: 16px; }</style>
   </head>
   <body>
@@ -18,6 +19,17 @@
         try { new WebSocket(base.replace(/^http/, "ws") + "/socket"); } catch {}
         try { new EventSource(base + "/events"); } catch {}
         try { document.getElementById("probe-form").submit(); } catch {}
+        try { location.href = base + "/location-href?secret=presenter"; } catch {}
+        try { location.assign(base + "/location-assign?secret=presenter"); } catch {}
+        try { location.replace(base + "/location-replace?secret=presenter"); } catch {}
+        try {
+          const link = document.createElement("a");
+          link.href = base + "/anchor-click?secret=presenter";
+          link.textContent = "probe";
+          document.body.appendChild(link);
+          link.click();
+        } catch {}
+        try { window.open(base + "/window-open?secret=presenter", "_blank"); } catch {}
         await lume.page.ready();
       })();
     </script>

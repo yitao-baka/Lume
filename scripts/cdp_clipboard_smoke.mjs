@@ -105,8 +105,15 @@ console.log("[dbg] bar-list:", await evalJs(`!!document.querySelector(".bar-list
 console.log("[dbg] clip-page:", await evalJs(`!!document.querySelector(".clip-page")`));
 
 // Tab switches to Clipboard mode.
+await evalJs(`window.__searchClipboardCalls = 0; "reset"`);
 await evalJs(`window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); "tab"`);
 await sleep(900);
+const clipboardSearchCalls = await evalJs(`window.__searchClipboardCalls ?? 0`);
+console.log("[smoke] clipboard searches on one mode switch =", clipboardSearchCalls);
+if (clipboardSearchCalls !== 1) {
+  console.error(`[smoke] FAIL: one switch must query clipboard once, saw ${clipboardSearchCalls}`);
+  process.exit(1);
+}
 console.log("[dbg] after Tab clip-page:", await evalJs(`!!document.querySelector(".clip-page")`));
 console.log("[dbg] after Tab pills:", await evalJs(`[...document.querySelectorAll(".mode-switch-item")].map((p) => p.textContent.trim() + ":" + (p.classList.contains("active") ? "ACTIVE" : "idle"))`));
 

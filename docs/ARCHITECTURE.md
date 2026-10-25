@@ -11,6 +11,8 @@ Tauri IPC
         ▼
 Rust Core (src-tauri/src/)
   ├─ window.rs   — show / hide / toggle the launcher surface
+  ├─ webview_guard.rs — native WebView2 frame navigation / new-window guard
+  │                and the shared deny-only HTTP proxy
   ├─ plugins.rs  — plugin discovery (`<base>/plugins/*/plugin.toml`) +
   │                manifest registry (`get_plugins`, reload, pinyin keywords)
   ├─ plugin_perm.rs — Rust-side permission whitelist: every host-capability
@@ -25,7 +27,8 @@ Rust Core (src-tauri/src/)
   ├─ plugin_store.rs / plugin_fs.rs — document DB, declarative settings and
   │                plugin-private files
   ├─ plugin_install.rs / plugin_sign.rs — `.lupx` inspect/install/uninstall,
-  │                staging swap, private-file preservation, ed25519 signatures
+  │                inspect-bound source staging, swap, private-file preservation,
+  │                ed25519 signatures
   ├─ plugin_logic.rs / plugin_devwatch.rs — logic-host protocol and dev reload
   ├─ plugin_page.rs — service-role Page Model/event channel (role token + 1 MiB gate)
   ├─ plugin_secret.rs — service-only Windows Credential Manager secret slots
@@ -96,6 +99,24 @@ read as one uniform surface, corners included (Win11 rounding is DWM's).
 `clear_dwm_border()` (COLOR_NONE) is what the settings/preview/detached-plugin
 windows use. `DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)`
 reports the strip; see docs/ROADMAP_HISTORY.md for the pixel measurements.
+
+### `webview_guard.rs`
+Every launcher-owned host window (`main`, `plugin-logic-host` and each
+`plugin-<id>` detached window) installs the native WebView2 boundary after the
+webview is created. Top-level navigation stays on the app origin or
+`about:blank` / `about:srcdoc`; child frames may additionally load the
+host-authored `pluginLogicFrame.html`. The guard subscribes to
+`NavigationStarting`, `FrameNavigationStarting`, per-frame
+`ICoreWebView2Frame2::NavigationStarting` and `NewWindowRequested`, so
+`location`, meta refresh, anchor navigation and `window.open` cannot turn a
+network-denied plugin frame into an outbound request.
+
+The shared WebView2 environment also points HTTP(S) traffic at a deny-only
+loopback listener; requests are accepted and dropped rather than forwarded.
+The application's real network path is Rust/WinHTTP and is unaffected. The
+proxy and CDP flags are appended to
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` instead of replacing Wry's default
+browser arguments.
 
 ### `apps.rs`
 - **Index**: `AppIndex` state holds in-memory mirrors of the System32 and
@@ -514,10 +535,18 @@ before adding a field:
 - `src/page-runtime/` — the framework-independent page contract and host
   runtime: serializable `PageModel`, revisioned model store, Page Intent
   routing, Presenter compatibility/fallback and built-in model schemas.
+  `PageSession.publish` validates every service snapshot; a malformed or
+  oversized model becomes a visible `model.invalid` page error instead of an
+  empty/crashed Presenter.
 - `src/page-services/` — built-in pages' logic layer. `navigate/service.ts`
   owns the bar registry, merged search pipeline, actions and drag-reorder;
   `clipboard/service.ts` wraps the Rust-backed clipboard store and publishes
-  only the visible row window.
+  only the visible row window. `clipboard/modelBudget.ts` keeps that window
+  under the 1 MiB Page Model limit: text rows carry a 4,096-character display
+  preview, oversized thumbnails are dropped before rows, multi-file previews
+  stop at 256 entries and shrink further to their serialized-byte budget, and
+  the longest contiguous row window that fits is published. Full values remain
+  addressable through Page Intents instead of riding in the model.
 - `src/presenters/` — replaceable page renderers. Navigation has the default
   grid and a compact list; clipboard has the full history list and a compact
   history. Each Presenter consumes only the model plus a `dispatch` function.
@@ -558,7 +587,12 @@ before adding a field:
     Rust side discovers manifests
     (`<base>/plugins/<id>/plugin.toml`) in `plugins.rs` and carries the
     enabled set in `settings.plugins.disabled`. Adding a launcher page no
-    longer touches the shell. The registry also owns the mode-pill data:
+    longer touches the shell. Logic manifests travel with every `load` push and
+    are refreshed on `settings-applied` / `plugin-reload`; per-plugin
+    lifecycle work is serialized so an old `unload` cannot revoke a new
+    token. `navBars` waits for the logic-ready signal and its declared hook set,
+    then awaits the real RPC result; navigation refreshes use a generation so
+    stale asynchronous columns cannot overwrite newer ones. The registry also owns the mode-pill data:
     a manifest `hidden = true` mode is filtered out of the pill bar and the
     switch-key cycle (its entry is the Navigate search row), and every
     Navigate row a plugin contributes defaults to the plugin's own icon set
@@ -695,8 +729,9 @@ before adding a field:
   hourly (differential), so search reflects new files without a manual rescan.
 - `ActiveHotkey` is set at startup from registering the configured toggle
   combo (empty when another app owns it) and read by the frontend on mount.
-- `ClipboardState` (SQLite connection + sequence tracking) is managed at
-  startup; the listener thread shares it through `AppHandle`.
+- `ClipboardState` (SQLite connection + sequence tracking) is initialized
+  before any webview is created; recent/pins state follows the same startup
+  order. The listener thread shares the clipboard state through `AppHandle`.
 
 ## Tests
 

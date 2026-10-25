@@ -7,6 +7,7 @@
     "start": "vite",
     "dev": "vite",
     "build": "vite build",
+    "test:clipboard-model": "node scripts/clipboard_model_unit_test.mjs",
     "test:page-runtime": "node scripts/page_runtime_unit_test.mjs",
     "test:skin-system": "node scripts/skin_system_unit_test.mjs",
     "serve": "vite preview",

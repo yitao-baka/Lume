@@ -204,7 +204,7 @@ function PreviewApp() {
     }
     if (r.kind === "textfile" && r.path) {
       try {
-        setText(await invoke<string>("get_file_text", { path: r.path }));
+        setText(await invoke<string>("get_file_text", { path: r.path, pluginId: "preview" }));
       } catch (e) {
         console.error("[preview] text file load failed", e);
         setError(true);
@@ -229,7 +229,7 @@ function PreviewApp() {
       // Shell thumbnail (a frame) as the player's poster — shown until play
       // (the player is preload="none", so without it the area is just black).
       if (r.kind === "video") {
-        void invoke<string>("get_video_thumb", { path: r.path })
+        void invoke<string>("get_video_thumb", { path: r.path, pluginId: "preview" })
           .then(setPoster)
           .catch(() => setPoster(null));
       }

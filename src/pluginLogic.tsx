@@ -45,10 +45,13 @@ seedPluginColorPrefs(
   (window as unknown as { __LUME_CONFIG__?: SettingsData }).__LUME_CONFIG__?.plugins?.color_modes
 );
 
-const SANDBOX = "allow-scripts allow-forms allow-popups allow-modals";
+const SANDBOX = "allow-scripts allow-modals";
+const permissionManifests = new Map<string, PluginManifest>();
+setPermissionSource((id) => permissionManifests.get(id));
 
 interface FrameCall {
   kind: "load" | "hook";
+  name?: string;
   resolve?: (v: unknown) => void;
   reject?: (e: unknown) => void;
   /** hook 回执兜底（#32.4）：帧卡死/不回执时主动回执失败并清槽，
@@ -58,17 +61,24 @@ interface FrameCall {
 
 interface LogicEntry {
   token: string;
+  role: "service" | "logic";
   dir: string;
   entry: string;
   frame: HTMLIFrameElement | undefined;
+  messageHandler: ((event: MessageEvent) => void) | undefined;
   loaded: boolean;
   calls: Map<number, FrameCall>;
   callSeq: number;
 }
 
 const entries = new Map<string, LogicEntry>();
+let messageListenerCount = 0;
 // CDP verify tap（同 __pluginStates/__pwClosed 模式）
 (window as unknown as { __logicEntries?: Map<string, LogicEntry> }).__logicEntries = entries;
+(window as unknown as { __logicListenerProbe?: unknown }).__logicListenerProbe = {
+  listenerCount: () => messageListenerCount,
+  pendingCalls: () => [...entries.values()].reduce((sum, entry) => sum + entry.calls.size, 0),
+};
 /** 最近 80 条帧 rpc 的结局摘要（#32 加固核验用；CDP 直读）。 */
 const rpcLog: {
   id: string;
@@ -78,6 +88,8 @@ const rpcLog: {
   resultType: string;
 }[] = [];
 (window as unknown as { __rpcLog?: unknown }).__rpcLog = rpcLog;
+const hookLog: { id: string; name?: string; callId: number; ok: boolean; result?: unknown; error?: string }[] = [];
+(window as unknown as { __logicHookLog?: unknown }).__logicHookLog = hookLog;
 
 function postTo(entry: LogicEntry, msg: unknown) {
   entry.frame?.contentWindow?.postMessage(msg, "*");
@@ -153,14 +165,26 @@ async function readPluginFile(id: string, entry: LogicEntry, rawPath: string): P
   });
 }
 
-async function loadPlugin(id: string) {
+async function loadPlugin(id: string, suppliedManifest?: PluginManifest) {
   if (entries.has(id)) return;
-  let meta: { dir: string; entry: string; name: string; api: number };
+  let meta: { dir: string; entry: string; name: string; api: number; role: "service" | "logic" };
   try {
-    meta = await invoke<{ dir: string; entry: string; name: string; api: number }>(
-      "plugin_logic_meta",
-      { id }
-    );
+    if (suppliedManifest) {
+      permissionManifests.set(id, suppliedManifest);
+      meta = {
+        dir: suppliedManifest.dir,
+        entry: suppliedManifest.entry,
+        name: suppliedManifest.name,
+        api: suppliedManifest.api,
+        role: suppliedManifest.kind === "mode" && suppliedManifest.pageRuntime &&
+          suppliedManifest.presenters.length > 0 ? "service" : "logic",
+      };
+    } else {
+      meta = await invoke<{ dir: string; entry: string; name: string; api: number; role: "service" | "logic" }>(
+        "plugin_logic_meta",
+        { id }
+      );
+    }
   } catch (err) {
     plog.error(id, "logic host: meta fetch failed:", err);
     return;
@@ -178,15 +202,17 @@ async function loadPlugin(id: string) {
   const token = crypto.randomUUID();
   const entry: LogicEntry = {
     token,
+    role: meta.role,
     dir: meta.dir,
     entry: meta.entry,
     frame: undefined,
+    messageHandler: undefined,
     loaded: false,
     calls: new Map(),
     callSeq: 0,
   };
   try {
-    await invoke("plugin_logic_register_tokens", { entries: [{ id, token, role: "service" }] });
+    await invoke("plugin_logic_register_tokens", { entries: [{ id, token, role: meta.role }] });
   } catch (err) {
     plog.error(id, "logic host: token register failed:", err);
     return;
@@ -194,11 +220,14 @@ async function loadPlugin(id: string) {
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", SANDBOX);
   frame.style.display = "none";
-  frame.src = `pluginLogicFrame.html?plugin=${encodeURIComponent(id)}`;
+  frame.src = `pluginLogicFrame.html?plugin=${encodeURIComponent(id)}&role=${meta.role}`;
   document.getElementById("root")?.appendChild(frame);
   entry.frame = frame;
   entries.set(id, entry);
-  window.addEventListener("message", (e: MessageEvent) => onFrameMessage(id, entry, e));
+  const messageHandler = (e: MessageEvent) => onFrameMessage(id, entry, e);
+  entry.messageHandler = messageHandler;
+  window.addEventListener("message", messageHandler);
+  messageListenerCount++;
   plog.info(id, "logic host: iframe created");
 }
 
@@ -215,7 +244,7 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
         const hooks = (result as { hooks?: string[] } | null)?.hooks ?? [];
         plog.info(id, `logic host: loaded (${hooks.length} hooks: ${hooks.join("/")})`);
         // 通知启动器：逻辑就绪（registry 解除"未就绪"快速失败并补投积压设置）。
-        void invoke("plugin_logic_action", { token: entry.token, action: "logic-loaded", args: {} }).catch(
+        void invoke("plugin_logic_action", { token: entry.token, action: "logic-loaded", args: { hooks } }).catch(
           (err) => plog.error(id, "logic-loaded relay failed:", err)
         );
       },
@@ -242,6 +271,8 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
     if (call.kind === "load") {
       r.ok ? call.resolve?.(r.result) : call.reject?.(new Error(r.error ?? "logic load failed"));
     } else {
+      hookLog.push({ id, name: call.name, callId: r.callId, ok: r.ok, result: r.result, error: r.error });
+      if (hookLog.length > 80) hookLog.shift();
       // hook 回执 → 经 Rust 令牌中继回 main（registry 按 callId 收口）
       void invoke("plugin_logic_result", {
         token: entry.token,
@@ -338,13 +369,53 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
   }
 }
 
-function unloadPlugin(id: string) {
+async function unloadPlugin(id: string): Promise<void> {
   const entry = entries.get(id);
   if (!entry) return;
+  if (entry.messageHandler) {
+    window.removeEventListener("message", entry.messageHandler);
+    messageListenerCount = Math.max(0, messageListenerCount - 1);
+  }
+  const cancellations: Promise<unknown>[] = [];
+  for (const [callId, call] of entry.calls) {
+    if (call.timer) window.clearTimeout(call.timer);
+    if (call.kind === "load") {
+      call.reject?.(new Error(`logic unloaded during load: ${id}`));
+    } else {
+      cancellations.push(
+        invoke("plugin_logic_result", {
+          token: entry.token,
+          callId,
+          ok: false,
+          result: null,
+          error: `logic unloaded: ${id}`,
+        }).catch(() => undefined)
+      );
+    }
+  }
+  entry.calls.clear();
   entry.frame?.remove();
   entries.delete(id);
+  await Promise.allSettled(cancellations);
   // 令牌表清空该插件（Rust 侧 drop）
-  void invoke("plugin_logic_register_tokens", { entries: [{ id, token: null }] }).catch(() => {});
+  await invoke("plugin_logic_register_tokens", { entries: [{ id, token: null, role: "logic" }] }).catch(() => {});
+}
+
+/** Serialize per-plugin lifecycle work. Rust relays `unload` and `load` as
+ * separate events; without this queue the new token could be registered
+ * before the old unload's token-drop landed, which would immediately revoke
+ * the fresh iframe. */
+const lifecycleQueues = new Map<string, Promise<void>>();
+function queueLifecycle(id: string, task: () => Promise<void>): void {
+  const previous = lifecycleQueues.get(id) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(task)
+    .catch((err) => plog.error(id, "logic lifecycle failed:", err));
+  lifecycleQueues.set(id, next);
+  void next.finally(() => {
+    if (lifecycleQueues.get(id) === next) lifecycleQueues.delete(id);
+  });
 }
 
 function callHook(id: string, payload: { callId: number; name: string; args: unknown[] }) {
@@ -378,7 +449,7 @@ function callHook(id: string, payload: { callId: number; name: string; args: unk
       error: `logic hook timeout after ${HOOK_TIMEOUT_MS}ms: ${payload.name}`,
     }).catch(() => {});
   }, HOOK_TIMEOUT_MS);
-  entry.calls.set(payload.callId, { kind: "hook", timer });
+  entry.calls.set(payload.callId, { kind: "hook", name: payload.name, timer });
   postTo(entry, {
     __lumeCall: {
       callId: payload.callId,
@@ -388,23 +459,45 @@ function callHook(id: string, payload: { callId: number; name: string; args: unk
   });
 }
 
+async function refreshPermissionSource(): Promise<void> {
+  const list = await invoke<PluginManifest[]>("get_plugins");
+  permissionManifests.clear();
+  for (const manifest of list) permissionManifests.set(manifest.id, manifest);
+  setPermissionSource((pid: string) => list.find((x) => x.id === pid));
+}
+
+async function refreshHostSettings(): Promise<void> {
+  try {
+    const settings = await invoke<SettingsData>("get_settings");
+    hostColorSetting = settings.appearance?.color_mode ?? "system";
+    hostSkin = normalizeSkin(settings.appearance?.skin);
+    hostAccent = normalizeAccent(settings.appearance?.accent);
+    seedPluginColorPrefs(settings.plugins?.color_modes);
+  } catch (err) {
+    plog.error(null, "logic host: settings refresh failed:", err);
+  }
+}
+
 async function start() {
-  // 权限源的清单来源（与分离窗口同样的接线方式）
-  void invoke<PluginManifest[]>("get_plugins")
-    .then((list) => setPermissionSource((pid: string) => list.find((x) => x.id === pid)))
-    .catch((err) => plog.error(null, "logic host: permission source wire failed:", err));
+  // 权限源必须在任何 iframe 执行前就绪；settings-applied / plugin-reload /
+  // 每次 load 都会重新读取磁盘清单，避免安装或编辑权限后必须重启进程。
+  try {
+    await refreshPermissionSource();
+  } catch (err) {
+    plog.error(null, "logic host: permission source wire failed:", err);
+  }
 
   const unlisteners: UnlistenFn[] = [];
   unlisteners.push(
     await listen("settings-applied", () => {
-      void invoke<SettingsData>("get_settings")
-        .then((settings) => {
-          hostColorSetting = settings.appearance?.color_mode ?? "system";
-          hostSkin = normalizeSkin(settings.appearance?.skin);
-          hostAccent = normalizeAccent(settings.appearance?.accent);
-          seedPluginColorPrefs(settings.plugins?.color_modes);
-        })
-        .catch((err) => plog.error(null, "logic host: settings refresh failed:", err));
+      void Promise.allSettled([refreshHostSettings(), refreshPermissionSource()]);
+    })
+  );
+  unlisteners.push(
+    await listen<string>("plugin-reload", () => {
+      void refreshPermissionSource().catch((err) =>
+        plog.error(null, "logic host: reload permission refresh failed:", err)
+      );
     })
   );
   unlisteners.push(
@@ -413,9 +506,10 @@ async function start() {
       (e) => {
         const { id, kind, payload } = e.payload;
         if (kind === "load") {
-          void loadPlugin(id);
+          const manifest = (payload as { manifest?: PluginManifest }).manifest;
+          queueLifecycle(id, () => loadPlugin(id, manifest));
         } else if (kind === "unload") {
-          unloadPlugin(id);
+          queueLifecycle(id, () => unloadPlugin(id));
         } else if (kind === "event") {
           const entry = entries.get(id);
           if (entry) postTo(entry, { __lumeEvent: { type: payload.type, payload: payload.payload } });

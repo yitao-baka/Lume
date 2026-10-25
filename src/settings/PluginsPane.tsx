@@ -558,7 +558,10 @@ export default function PluginsPane(props: {
    * `settings-applied` / `plugin-reload`, so the launcher picks the plugin up
    * immediately; a rejection keeps the dialog open with the error inline. */
   async function installLupx(source: string, info: LupxInfo) {
-    await invoke("plugin_lupx_install", { sourcePath: source });
+    await invoke("plugin_lupx_install", {
+      sourcePath: source,
+      expectedSha256: info.sha256,
+    });
     await refresh();
     showStatus(true, t("pluginsInstallDone", { name: info.name || info.id }));
   }

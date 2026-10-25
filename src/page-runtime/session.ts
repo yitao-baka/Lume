@@ -69,9 +69,7 @@ export class PageSession {
     if (this.destroyed) throw new Error("Page Session was destroyed");
     this.service = service;
     const model = await service.getModel();
-    const published = this.store.publish(model);
-    this.traceModel(published);
-    return published;
+    return this.publish(model);
   }
 
   async mount(
@@ -119,10 +117,38 @@ export class PageSession {
   }
 
   publish(model: PageModel): PageModel {
-    const published = this.store.publish(model);
-    this.traceModel(published);
-    this.presenterHost.updateModel(published);
-    return published;
+    try {
+      const published = this.store.publish(model);
+      this.traceModel(published);
+      this.presenterHost.updateModel(published);
+      return published;
+    } catch (error) {
+      // A malformed or oversized service snapshot must become a visible page
+      // failure instead of escaping a Solid effect and leaving the Presenter on
+      // its previous/empty state.
+      const message = String(error);
+      const previous = this.store.get();
+      const revision = Math.max(previous?.revision ?? 0, model?.revision ?? 0) + 1;
+      const failed: PageModel = {
+        runtime: "lume.page/v1",
+        schema: this.schema,
+        revision,
+        status: "error",
+        data: {},
+        error: { code: "model.invalid", message },
+      };
+      pushDiagnostic("__pageModels", {
+        pageId: this.pageId,
+        schema: this.schema,
+        revision,
+        status: "error",
+        error: message,
+      });
+      const published = this.store.publish(failed);
+      this.presenterHost.updateModel(published);
+      console.error(`[page-runtime] ${this.pageId}: page model rejected:`, message);
+      return published;
+    }
   }
 
   emit(event: PageEvent): void {

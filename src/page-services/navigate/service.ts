@@ -55,12 +55,20 @@ function barActionList(section: NavSection): string[] {
   return ["open", "open-as-admin", "reveal", "pin", "unpin", "remove-recent", "menu"];
 }
 
-function itemId(sectionId: string, item: NavItem, index: number): string {
-  return "bar:" + sectionId + ":" + index + ":" + item.id;
-}
-
-function resultId(app: AppEntry, index: number): string {
-  return "result:" + (app.path || app.name) + ":" + index;
+/** Stable short target id. Full paths stay in the model's `path` field; the
+ * Intent Router only needs an opaque key below its 256-character limit. */
+function targetId(kind: string, key: string, index: number, used: Set<string>): string {
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const base = `${kind}:${(hash >>> 0).toString(36)}:${index.toString(36)}`;
+  let id = base;
+  let salt = 0;
+  while (used.has(id)) id = `${base}:${(++salt).toString(36)}`;
+  used.add(id);
+  return id;
 }
 
 function asAppEntry(item: NavItem): AppEntry {
@@ -104,26 +112,38 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
   });
 
   let revision = 0;
+  let barsRefreshSeq = 0;
+  const barsProbe: unknown[] = [];
+  (window as unknown as { __navBarsProbe?: unknown }).__navBarsProbe = barsProbe;
   const targets = new Map<string, NavigateTarget>();
 
   async function refreshBars(): Promise<void> {
+    const seq = ++barsRefreshSeq;
+    const results = await Promise.allSettled(
+      deps.navBarPlugins().map(async (p) => ({ id: p.id, bars: await p.navBars() }))
+    );
     const contribs: ContributedBar[] = [];
-    for (const p of deps.navBarPlugins()) {
-      try {
-        const bars = await p.navBars();
-        if (Array.isArray(bars)) contribs.push(...bars);
-      } catch (err) {
-        console.error("navBars failed:", p.id, err);
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        if (Array.isArray(result.value.bars)) contribs.push(...result.value.bars);
+      } else {
+        console.error("navBars failed:", result.reason);
       }
     }
-    nav.setPluginBars(contribs);
+    const applied = seq === barsRefreshSeq;
+    barsProbe.push({ seq, ids: contribs.map((bar) => bar.id), applied });
+    if (barsProbe.length > 40) barsProbe.shift();
+    if (applied) nav.setPluginBars(contribs);
   }
 
   function snapshot(): PageModel {
     targets.clear();
+    const usedTargetIds = new Set<string>();
+    const barIds = new Map<string, string>();
     const sections: NavigateSection[] = nav.sections().map((section) => {
       const items = section.items.map((item, index) => {
-        const id = itemId(section.id, item, index);
+        const id = targetId("bar", `${section.id}\u0000${item.id}\u0000${item.path}`, index, usedTargetIds);
+        barIds.set(`${section.id}:${index}`, id);
         targets.set(id, { kind: "bar", section, index, item });
         return {
           id,
@@ -147,8 +167,10 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
         ...(section.wrap ? { wrap: true } : {}),
       };
     });
+    const resultIds: string[] = [];
     const results = search.apps().map((app, index) => {
-      const id = resultId(app, index);
+      const id = targetId("result", `${app.path || app.name}\u0000${app.name}`, index, usedTargetIds);
+      resultIds[index] = id;
       targets.set(id, { kind: "result", index, app });
       return {
         id,
@@ -163,8 +185,8 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
     const query = search.appsQuery();
     const selectedId =
       section?.items[section.selected()]
-        ? itemId(section.id, section.items[section.selected()], section.selected())
-        : results[search.selected()]?.id;
+        ? barIds.get(`${section.id}:${section.selected()}`)
+        : resultIds[search.selected()];
     const data: NavigateModel = {
       query,
       sections,
@@ -489,9 +511,13 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
       if (!item) return false;
       selectTarget({ kind: "bar", section, index, item });
     } else if (!search.apps()[search.selected()]) return false;
-    const targetId = section
-      ? itemId(section.id, section.items[nav.activateIndex(section)], nav.activateIndex(section))
-      : resultId(search.apps()[search.selected()], search.selected());
+    const activeIndex = section ? nav.activateIndex(section) : search.selected();
+    const targetId = [...targets.entries()].find(([, target]) =>
+      section
+        ? target.kind === "bar" && target.section.id === section.id && target.index === activeIndex
+        : target.kind === "result" && target.index === activeIndex
+    )?.[0];
+    if (!targetId) return false;
     const host = document.querySelector(".mode-host.active") ?? document;
     const anchor = [...host.querySelectorAll<HTMLElement>("[data-target-id]")]
       .find((el) => el.dataset.targetId === targetId);

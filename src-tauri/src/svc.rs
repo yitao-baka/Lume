@@ -703,7 +703,6 @@ unsafe extern "system" fn control_handler(
     let handle = STATUS_HANDLE
         .lock()
         .unwrap()
-        .clone()
         .map(|h| SERVICE_STATUS_HANDLE(h as *mut core::ffi::c_void));
     match ctrl {
         SERVICE_CONTROL_STOP => {

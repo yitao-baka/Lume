@@ -803,6 +803,7 @@ pub fn plugin_presenter_settings_get(
 
 /// Store one declared Presenter setting and notify the launcher runtime.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn plugin_presenter_settings_put(
     id: String,
     presenter: String,
@@ -1003,7 +1004,7 @@ mod tests {
         assert_eq!(storage_get(&root, "demo", "greeting").unwrap(), Some("\"hi\"".into()));
         // The manifest id wins over the directory name, like the old writer.
         assert_eq!(storage_get(&root, "odd", "k").unwrap(), Some("1".into()));
-        assert!(demo.join("storage.json").exists() == false);
+        assert!(!demo.join("storage.json").exists());
         assert!(demo.join("storage.json.migrated").exists());
         assert!(bad.join("storage.json").exists(), "unreadable file left alone");
 

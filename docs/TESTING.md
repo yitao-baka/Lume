@@ -10,11 +10,13 @@ Rust unit tests and frontend compile checks are the baseline:
 pnpm install
 pnpm exec tsc --noEmit
 pnpm run test:page-runtime
+pnpm run test:clipboard-model
 pnpm run test:skin-system
 pnpm run build
 cd src-tauri
 cargo check
 cargo test
+cargo clippy --all-targets --message-format=short
 ```
 
 The Page Runtime foundation has browser-independent checks through
@@ -22,7 +24,16 @@ The Page Runtime foundation has browser-independent checks through
 revision monotonicity and frame coalescing, JSON/cycle/size rejection,
 resource-scheme validation, intent target/action checks, collection-window
 bounds, Presenter compatibility fallback, model/selection retention across
-Presenter switches, and remount after repeated Presenter failures.
+Presenter switches, remount after repeated Presenter failures, and the visible
+`model.invalid` fallback for a malformed service snapshot.
+
+`pnpm run test:clipboard-model` loads `modelBudget.ts` through Vite SSR and
+checks the 1 MiB clipboard budget: the unmodified image history exceeds the
+model cap, the fitted window stays non-empty and valid, oversized thumbnails
+fall back per row, large text becomes a 4,096-character preview, the multi-file
+preview is shortened by both entry count and serialized bytes, and both
+clipboard Presenters' fade conditions follow real `scrollTop` / `clientHeight` /
+`scrollHeight` geometry rather than the overscanned window offset.
 
 `pnpm run test:skin-system` loads the same modules through Vite SSR and checks
 skin normalization, the four shared surfaces, clipboard row heights, accent
@@ -61,7 +72,9 @@ keyboard/viewport following, collapsed-section selection clamping, hidden
 scrollbars, both clipboard Presenters' virtual scrolling, the compact
 clipboard's 44px row window, `hoverSelect=false`, first-click selection,
 multi-select badges, clear-dialog focus, and search focus restoration after
-closing that dialog.
+closing that dialog. It also asserts that one clipboard mode switch performs
+exactly one database search and that both Presenter fade edges flip only at the
+real top/bottom scroll positions.
 
 The disk plugin reference path uses
 `node scripts/cdp_file_search_presenter_verify.mjs`. It mounts
@@ -514,8 +527,11 @@ dev URL instead.
    `node scripts/cdp_api_gate_verify.mjs` negative fixture proves api-1
    provider/feature/mode code never executes and cannot open a detached
    window; `node scripts/cdp_presenter_network_verify.mjs` proves fetch,
-   no-cors, forms, WebSocket, EventSource, image beacons and logic-frame fetches
-   never reach a loopback HTTP probe. `node
+   no-cors, forms, WebSocket, EventSource, image beacons, logic-frame fetches and
+   `location` / meta refresh / anchor / `window.open` self-navigation never reach
+   a loopback HTTP probe in both the embedded and detached Presenter, with the
+   deny-only WebView2 proxy as the last outlet.
+   `node
    scripts/cdp_runtime_recovery_verify.mjs` covers Page Service retry,
    all-Presenter failure visibility and fit/fixed sizer handoff. The
    feature series (file drop / clipboard image / list template / tile reorder)
@@ -523,13 +539,19 @@ dev URL instead.
    rpc.ts cases) run as `node scripts/cdp_p2b_verify.mjs`; it enables its two
    fixture plugins itself.
 2. **Sandbox and permissions** — `node scripts/cdp_sandbox_verify.mjs` proves
-   opaque-origin isolation, bridge behavior and Rust-side command whitelisting.
-   A plugin that calls an undeclared capability must fail with an explicit
-   message.
+   opaque-origin isolation, bridge behavior and Rust-side command whitelisting
+   for clipboard/file/icon commands. A plugin that calls an undeclared capability
+   must fail with an explicit message. The audit runtime probe also verifies that
+   only Page Service mode receives the `service` role and provider logic cannot
+   reach `page/secrets`.
 3. **Logic isolation and circuit breaker** — `node
    scripts/cdp_circuit_verify.mjs`; verify three consecutive hook failures mark
    only that plugin offline, while pure-view modes never accumulate false
-   timeouts.
+   timeouts. The script explicitly enters hello-mode and confirms entry hooks
+   still dispatch with no pending call slots.
+   `node scripts/cdp_plugin_audit_runtime_verify.mjs` covers manifest permission
+   hot refresh, async disk `navBars`, long provider result IDs, detached query
+   replay, and listener/timer cleanup across repeated reloads.
 4. **Detached windows & session continuity** — `node scripts/cdp_plugin_window_verify.mjs`,
    `node scripts/cdp_plugin_blank_verify.mjs` and `node scripts/cdp_plugin_state_verify.mjs`
    (fixture `examples/plugins/state-probe`): cover open/focus/state restore/close,
@@ -570,8 +592,9 @@ dev URL instead.
    (`__LUME_CONFIG__` injection). It restores the setting and removes its
    fixture on exit.
 7. **`.lupx` packages** — `node scripts/cdp_lupx_verify.mjs`; cover inspect,
-   install, overwrite relation (`upgrade` / `reinstall` / `downgrade`),
-   uninstall and private-file preservation. The install confirmation dialog runs
+   inspect-then-replace rejection through the staged SHA-256 binding, install,
+   overwrite relation (`upgrade` / `reinstall` / `downgrade`), uninstall and
+   private-file preservation. The install confirmation dialog runs
    end to end by stubbing the native file dialog at the Windows IPC `fetch`
    seam: fact block, `aria-modal` + overlay, background `inert`, focus on the
    safe cancel action, Esc / cancel leaving nothing on disk, and confirm writing

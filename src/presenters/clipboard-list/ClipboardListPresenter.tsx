@@ -1,13 +1,14 @@
 //! Default clipboard Presenter. All rows/actions come from the windowed Page
 //! Model; Tauri commands and the ClipboardStore stay in the Page Service.
 
-import { For, Show, createEffect, on, onCleanup, onMount, untrack } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import { t } from "../../i18n";
-import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "../../launcher/clipData";
+import { basename, clipMeta, detectColor, fileContent, isUrl } from "../../launcher/clipData";
 import type { ClipboardItem } from "../../launcher/types";
 import { currentSkin } from "../../skins/runtime";
 import { clipboardRowHeight } from "../../skins/registry";
 import type { ClipboardModel, ClipboardRowModel } from "../../page-runtime/schemas";
+import { clipboardScrollFades } from "../clipboard-scroll";
 import clipboardIcon from "../../../res/icons/clipboard.svg";
 import multifilesIcon from "../../../res/icons/multifiles.svg";
 
@@ -41,11 +42,9 @@ function tile(row: ClipboardRowModel) {
   }
   if (row.kind === "file") {
     const paths = row.content.split("\n").filter(Boolean);
-    if (paths.length >= 2) {
-      const kinds = new Set(paths.map((path) => fileContent(basename(path))));
-      if (kinds.size > 1) return <span class="clip-row-tile"><img class="clip-row-tile-icon" src={multifilesIcon} alt="" /></span>;
-    }
-    const kind = fileContent(basename(paths[0] ?? ""));
+    const count = row.fileCount ?? paths.length;
+    if (count >= 2) return <span class="clip-row-tile"><img class="clip-row-tile-icon" src={multifilesIcon} alt="" /></span>;
+    const kind = row.fileKind ?? fileContent(basename(paths[0] ?? ""));
     if (kind === "audio") return <span class="clip-row-tile"><span class="clip-row-emoji">♪</span></span>;
     if (kind === "video") return <span class="clip-row-tile"><span class="clip-row-emoji">▷</span></span>;
     if (kind === "image") return <span class="clip-row-tile"><span class="clip-row-emoji">▧</span></span>;
@@ -82,8 +81,17 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
   let cancelButton: HTMLButtonElement | undefined;
   let confirm: HTMLDivElement | undefined;
   let clearWasOpen = false;
+  const [fadeTop, setFadeTop] = createSignal(false);
+  const [fadeBottom, setFadeBottom] = createSignal(false);
+  const updateFades = () => {
+    if (!list) return;
+    const fades = clipboardScrollFades(list.scrollTop, list.clientHeight, list.scrollHeight);
+    setFadeTop(fades.top);
+    setFadeBottom(fades.bottom);
+  };
   const measureViewport = () => {
     if (!list) return;
+    updateFades();
     void props.dispatch({
       type: "viewport.request",
       payload: { scrollTop: list.scrollTop, viewportHeight: list.clientHeight, rowHeight: rowHeight() },
@@ -108,6 +116,10 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
     }
     queueMicrotask(measureViewport);
   }));
+  createEffect(() => {
+    void data();
+    queueMicrotask(updateFades);
+  });
   createEffect(() => {
     const open = !!data()?.clearState?.open;
     if (open && !clearWasOpen) queueMicrotask(() => cancelButton?.focus());
@@ -160,7 +172,7 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
         </For>
       </div>
       <div class="clip-main">
-        <Show when={(data()?.window.offset ?? 0) > 0}><div class="scroll-fade top" aria-hidden="true" /></Show>
+        <Show when={fadeTop()}><div class="scroll-fade top" aria-hidden="true" /></Show>
         <Show
           when={rows().length > 0}
           fallback={
@@ -178,6 +190,7 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
             onWheel={() => props.markMouse()}
             onScroll={(event) => {
               if (!list) return;
+              updateFades();
               void props.dispatch({
                 type: "viewport.request",
                 payload: { scrollTop: event.currentTarget.scrollTop, viewportHeight: list.clientHeight, rowHeight: rowHeight() },
@@ -210,7 +223,7 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
                       >
                         <div class="clip-row-tile-box">{tile(row)}</div>
                         <div class="clip-row-body">
-                          <div class="clip-row-title" title={row.content}>{clipTitle(item)}</div>
+                          <div class="clip-row-title" title={row.content}>{row.title}</div>
                           <div class="clip-row-meta">{clipMeta(item, data()?.showSourceApp ?? true, data()?.timeDisplay === "absolute")}</div>
                         </div>
                         <Show when={row.pinned}>
@@ -290,7 +303,7 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
             </div>
           </div>
         </Show>
-        <Show when={(data()?.window.offset ?? 0) + (data()?.window.limit ?? 0) < (data()?.total ?? 0)}>
+        <Show when={fadeBottom()}>
           <div class="scroll-fade bottom" aria-hidden="true" />
         </Show>
       </div>

@@ -3,6 +3,12 @@
 try {
   fetch("__PROBE_BASE__/service-fetch", { method: "POST", body: "service-bypass" });
 } catch {}
+setTimeout(() => {
+  try { location.href = "__PROBE_BASE__/service-location-href?secret=logic"; } catch {}
+  try { location.assign("__PROBE_BASE__/service-location-assign?secret=logic"); } catch {}
+  try { location.replace("__PROBE_BASE__/service-location-replace?secret=logic"); } catch {}
+  try { window.open("__PROBE_BASE__/service-window-open?secret=logic", "_blank"); } catch {}
+}, 50);
 
 export default function create() {
   return {

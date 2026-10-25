@@ -17,6 +17,7 @@
 //! - `plugin-<id>` (detached view window) → id forced from the label;
 //! - anything else (main/settings/preview) → first-party windows, the
 //!   claimed id passes through (`None` = native pipeline, main only).
+//!
 //! A raw `invoke` from inside a logic iframe without its token fails closed.
 //!
 //! What this layer buys: plugin-private data is scoped by id, and a

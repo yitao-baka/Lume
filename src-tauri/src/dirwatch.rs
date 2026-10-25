@@ -116,7 +116,7 @@ fn watch_dirs(settings: &crate::settings::Settings) -> Vec<(PathBuf, bool)> {
 
 /// Create a change-notification handle for one directory. Returns None when
 /// the directory doesn't exist or the API fails.
-unsafe fn make_handle(dir: &PathBuf, recursive: bool) -> Option<HANDLE> {
+unsafe fn make_handle(dir: &std::path::Path, recursive: bool) -> Option<HANDLE> {
     let path = dir.to_string_lossy();
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     FindFirstChangeNotificationW(PCWSTR(wide.as_ptr()), recursive, NOTIFY_FILTER).ok()

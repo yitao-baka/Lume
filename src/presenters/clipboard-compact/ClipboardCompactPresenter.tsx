@@ -2,14 +2,15 @@
 //! default history list. It keeps the dense 44px rhythm while preserving row
 //! identity, source/time metadata, multi-select, pin and invalid states.
 
-import { For, Show, createEffect, on, onCleanup, onMount, untrack } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup, onMount, untrack } from "solid-js";
 import { t } from "../../i18n";
-import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "../../launcher/clipData";
+import { basename, clipMeta, detectColor, fileContent, isUrl } from "../../launcher/clipData";
 import type { ClipboardItem } from "../../launcher/types";
 import { currentSkin } from "../../skins/runtime";
 import { clipboardRowHeight } from "../../skins/registry";
 import type { ClipboardRowModel } from "../../page-runtime/schemas";
 import type { ClipboardListProps } from "../clipboard-list/ClipboardListPresenter";
+import { clipboardScrollFades } from "../clipboard-scroll";
 import clipboardIcon from "../../../res/icons/clipboard.svg";
 import multifilesIcon from "../../../res/icons/multifiles.svg";
 
@@ -35,8 +36,7 @@ function kindLabel(row: ClipboardRowModel): string {
   if (row.kind === "audio") return t("clipCategoryMusic");
   if (row.kind === "video") return t("clipCategoryVideo");
   if (row.kind === "file") {
-    const first = row.content.split(/\r?\n/).find(Boolean) ?? "";
-    const kind = fileContent(basename(first));
+    const kind = row.fileKind ?? fileContent(basename(row.content.split(/\r?\n/).find(Boolean) ?? ""));
     if (kind === "audio") return t("clipCategoryMusic");
     if (kind === "video") return t("clipCategoryVideo");
     if (kind === "image") return t("clipCategoryImage");
@@ -58,11 +58,11 @@ function CompactTile(props: { row: ClipboardRowModel }) {
   }
   if (props.row.kind === "file") {
     const paths = props.row.content.split(/\r?\n/).filter(Boolean);
-    if (paths.length >= 2) {
+    if ((props.row.fileCount ?? paths.length) >= 2) {
       return <span class="clip-compact-tile"><img class="clip-compact-tile-icon" src={multifilesIcon} alt="" /></span>;
     }
     const name = basename(paths[0] ?? "");
-    const kind = fileContent(name);
+    const kind = props.row.fileKind ?? fileContent(name);
     const glyph = kind === "audio" ? "♪" : kind === "video" ? "▷" : kind === "image" ? "▧" : kind === "text" ? "≡" : kind === "pdf" ? "PDF" : (name.split(".").pop() || "FILE").slice(0, 4).toUpperCase();
     return <span class="clip-compact-tile"><span class="clip-compact-glyph" classList={{ small: glyph.length > 2 }}>{glyph}</span></span>;
   }
@@ -100,8 +100,17 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
   let cancelButton: HTMLButtonElement | undefined;
   let confirm: HTMLDivElement | undefined;
   let clearWasOpen = false;
+  const [fadeTop, setFadeTop] = createSignal(false);
+  const [fadeBottom, setFadeBottom] = createSignal(false);
+  const updateFades = () => {
+    if (!list) return;
+    const fades = clipboardScrollFades(list.scrollTop, list.clientHeight, list.scrollHeight);
+    setFadeTop(fades.top);
+    setFadeBottom(fades.bottom);
+  };
   const measureViewport = () => {
     if (!list) return;
+    updateFades();
     void props.dispatch({
       type: "viewport.request",
       payload: { scrollTop: list.scrollTop, viewportHeight: list.clientHeight, rowHeight: rowHeight() },
@@ -133,6 +142,11 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
     }
     queueMicrotask(measureViewport);
   }));
+
+  createEffect(() => {
+    void data();
+    queueMicrotask(updateFades);
+  });
 
   createEffect(() => {
     const open = !!data()?.clearState?.open;
@@ -190,7 +204,7 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
         </For>
       </div>
       <div class="clip-main">
-        <Show when={(data()?.window.offset ?? 0) > 0}><div class="scroll-fade top" aria-hidden="true" /></Show>
+        <Show when={fadeTop()}><div class="scroll-fade top" aria-hidden="true" /></Show>
         <Show
           when={rows().length > 0}
           fallback={
@@ -207,14 +221,17 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
             role="listbox"
             aria-label={t("clipboard")}
             onWheel={() => props.markMouse()}
-            onScroll={(event) => void props.dispatch({
-              type: "viewport.request",
-              payload: {
-                scrollTop: event.currentTarget.scrollTop,
-                viewportHeight: event.currentTarget.clientHeight,
-                rowHeight: rowHeight(),
-              },
-            })}
+            onScroll={(event) => {
+              updateFades();
+              void props.dispatch({
+                type: "viewport.request",
+                payload: {
+                  scrollTop: event.currentTarget.scrollTop,
+                  viewportHeight: event.currentTarget.clientHeight,
+                  rowHeight: rowHeight(),
+                },
+              });
+            }}
           >
             <div class="clip-compact-spacer" style={{ height: (data()?.total ?? 0) * rowHeight() + "px" }}>
               <div class="clip-compact-window" style={{ top: (data()?.window.offset ?? 0) * rowHeight() + "px" }}>
@@ -248,7 +265,7 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
                       >
                         <CompactTile row={row} />
                         <span class="clip-compact-copy">
-                          <span class="clip-compact-title">{clipTitle(item) || row.title}</span>
+                          <span class="clip-compact-title">{row.title}</span>
                           <span class="clip-compact-meta">
                             <span class="clip-compact-kind">{kindLabel(row)}</span>
                             <span class="clip-compact-dot" aria-hidden="true">·</span>
@@ -273,7 +290,7 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
             </div>
           </div>
         </Show>
-        <Show when={(data()?.window.offset ?? 0) + (data()?.window.limit ?? 0) < (data()?.total ?? 0)}>
+        <Show when={fadeBottom()}>
           <div class="scroll-fade bottom" aria-hidden="true" />
         </Show>
       </div>

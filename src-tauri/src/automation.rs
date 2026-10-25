@@ -776,7 +776,7 @@ mod tests {
         assert!(matches_rule("notepad.exe", r"C:\Windows\System32\notepad.exe", "notepad.exe"));
         assert!(matches_rule("NOTEPAD.EXE", r"C:\Windows\System32\notepad.exe", "notepad.exe"));
         assert!(matches_rule("Notepad", r"C:\Windows\System32\notepad.exe", "notepad.exe"));
-        assert_eq!(matches_rule("powerpnt.exe", r"C:\Windows\System32\notepad.exe", "notepad.exe"), false);
+        assert!(!matches_rule("powerpnt.exe", r"C:\Windows\System32\notepad.exe", "notepad.exe"));
     }
 
     #[test]
@@ -791,16 +791,16 @@ mod tests {
             r"C:\Games\MyApp.exe",
             "MyApp.exe"
         ));
-        assert_eq!(matches_rule(
+        assert!(!matches_rule(
             r"C:\Other\MyApp.exe",
             r"C:\Games\MyApp.exe",
             "MyApp.exe"
-        ), false);
+        ));
     }
 
     #[test]
     fn empty_rule_never_matches() {
-        assert_eq!(matches_rule("", r"C:\a.exe", "a.exe"), false);
+        assert!(!matches_rule("", r"C:\a.exe", "a.exe"));
     }
 
     /// The key table itself now lives with the injection primitives

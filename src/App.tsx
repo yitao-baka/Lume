@@ -52,6 +52,7 @@ import {
   reloadDiskPlugin,
   setPluginDetached,
   setPluginServices,
+  setNavigateBarsRefresh,
 } from "./plugins/registry";
 import { createHostStack, dropSessionFrame, dropSessionFrames, putSessionFrame } from "./launcher/session";
 import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
@@ -426,6 +427,15 @@ function App() {
     await activeMode()?.search(q);
   }
 
+  // CDP probe for flows that need a deterministic query dispatch while the
+  // native window is hidden or focus is owned by the automation harness.
+  (window as unknown as { __launcherTestQuery?: (q: string) => Promise<string> }).__launcherTestQuery =
+    async (q: string) => {
+      setQuery(q);
+      await runSearch(q);
+      return query();
+    };
+
   /** Show a transient toast at the bottom of the launcher (auto-dismisses). */
   function showToast(text: string, opts?: { undo?: () => void; duration?: number }) {
     window.clearTimeout(toastTimer);
@@ -596,6 +606,7 @@ function App() {
       sizer.scheduleResize();
     },
   });
+  setNavigateBarsRefresh(() => navigatePlugin.refreshBars());
   const clipboardPlugin = createClipboardPlugin(services);
   const preview = createPreviewPlugin({
     previewTarget: () => activeMode()?.previewTarget() ?? null,
@@ -1188,6 +1199,7 @@ function App() {
     // (Rust `is_mid_drag` suppresses the hide on that side), and re-arming
     // there would clear summon-scoped state mid-drag.
     const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
+      (window as unknown as { __summonStartedAt?: number }).__summonStartedAt = Date.now();
       for (const p of allPlugins()) p.lifecycle?.onShow?.();
       beginSummon();
       await runSearch(query());
@@ -1195,7 +1207,9 @@ function App() {
       // the empty-menu auto-select land after the summon search.
       for (const p of modePlugins()) await p.instance.onShow?.();
       queueMicrotask(() => document.getElementById("search-input")?.focus());
+      (window as unknown as { __summonCompletedAt?: number }).__summonCompletedAt = Date.now();
     });
+    (window as unknown as { __summonListenerReadyAt?: number }).__summonListenerReadyAt = Date.now();
     onCleanup(() => unlisten());
 
     // Idle-reset anchor (docs/ROADMAP_HISTORY.md #46): every hide path in Rust funnels

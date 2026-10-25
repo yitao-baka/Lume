@@ -92,6 +92,15 @@ export function runPageRuntimeSelfTests(): string[] {
     })(),
     "large inline image thumbnails must pass the resource length guard"
   );
+  expect(
+    (() => {
+      validatePageModel(model(1, {
+        icon: { kind: "url", src: "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E" },
+      }));
+      return true;
+    })(),
+    "UTF-8 SVG data URLs used by navBars must pass the resource whitelist"
+  );
   passed.push("resource scheme whitelist and selection");
 
   const intentModel = model(1, {
@@ -172,6 +181,20 @@ export function runPageRuntimeSelfTests(): string[] {
 
 export async function runPageRuntimeAsyncSelfTests(): Promise<string[]> {
   const passed: string[] = [];
+  const guarded = new PageSession({
+    pageId: "selftest-invalid-model",
+    schema: COLLECTION_SCHEMA,
+    presenters: fixturePresenters,
+    modelStore: { schedule: () => 1, cancel: () => {} },
+  });
+  const rejected = guarded.publish(model(1, { fn: () => 1 }));
+  expect(
+    rejected.status === "error" && rejected.error?.code === "model.invalid" && guarded.store.get()?.status === "error",
+    "oversized or malformed snapshots must publish a visible page error"
+  );
+  await guarded.dispose();
+  passed.push("invalid Page Model becomes a visible page error");
+
   const initial = model(1, collectionFixture as CollectionModel as never);
   const session = new PageSession({
     pageId: "selftest-session",

@@ -74,7 +74,7 @@ pub fn register(app: &tauri::App, combo: &str) {
         Err(e) => {
             eprintln!("[hotkey] {combo} unavailable: {e}");
             eprintln!("[hotkey] no toggle shortcut — free the combo or change it in Settings");
-            notify_unavailable(&app.handle(), combo);
+            notify_unavailable(app.handle(), combo);
         }
     }
 }

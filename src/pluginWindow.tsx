@@ -442,9 +442,8 @@ function App() {
       const env = s.snapshot as { v?: number; frames?: Record<string, unknown> } | null | undefined;
       const frames = env?.v === 2 ? env.frames : undefined;
       if (frames?.titlebar !== undefined) pageRuntime?.postTitlebar("restore", frames.titlebar);
-      if (s.show) {
-        pageRuntime?.postEvent("show");
-      }
+      // Match the launcher's established replay order: the titlebar's query
+      // mirror must be current before the page receives show/enter.
       if (typeof s.query === "string") {
         lastQuery = s.query;
         // A pushed query is an input to the authoritative Page Service, then
@@ -454,6 +453,9 @@ function App() {
           plog.error(id, "detached query push failed:", err)
         );
         pageRuntime?.postEvent("query", s.query);
+      }
+      if (s.show) {
+        pageRuntime?.postEvent("show");
       }
       if (s.enter) pageRuntime?.postEvent("enter", s.enter);
       if (s.settings) pageRuntime?.postEvent("settings", s.settings);

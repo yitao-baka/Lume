@@ -231,7 +231,7 @@ async fn trash_impl(paths: Vec<String>) -> Result<(), String> {
         from.push(0);
         let mut op = SHFILEOPSTRUCTW {
             hwnd: std::ptr::null_mut(),
-            wFunc: FO_DELETE as u32,
+            wFunc: FO_DELETE,
             pFrom: from.as_ptr(),
             pTo: std::ptr::null(),
             // FOF_ALLOWUNDO is the recycle-bin semantic itself; the other
@@ -488,8 +488,6 @@ pub async fn get_terminal_icons() -> Result<TerminalIcons, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// Live round trip: create a temp file, trash it, verify it left the disk
     /// (it then sits in the Recycle Bin). `#[ignore]`d so regular test runs
     /// don't touch the shell / recycle bin — run with `-- --ignored`.

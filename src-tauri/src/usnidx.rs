@@ -391,6 +391,12 @@ impl Engine {
     }
 }
 
+impl Default for Engine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn build(engine: Arc<Engine>) {
     let generation = engine.inner.lock().unwrap().generation;
     let roots = ntfs_fixed_roots();
@@ -740,7 +746,8 @@ fn scan_volume(root: &str) -> Result<VolumeIndex, String> {
                 let units = name_len / 2;
                 let slice = &bytes[off + name_off..off + name_off + units * 2];
                 let name: Vec<u16> = slice
-                    .chunks_exact(2)
+                    .as_chunks::<2>().0
+                    .iter()
                     .map(|p| u16::from_le_bytes([p[0], p[1]]))
                     .collect();
                 records += 1;
@@ -834,7 +841,8 @@ fn spawn_usn_worker(engine: &Arc<Engine>, root: &str, generation: u64) {
                         let units = name_len / 2;
                         let slice = &bytes[off + name_off..off + name_off + units * 2];
                         let name: Vec<u16> = slice
-                            .chunks_exact(2)
+                            .as_chunks::<2>().0
+                            .iter()
                             .map(|p| u16::from_le_bytes([p[0], p[1]]))
                             .collect();
                         apply_usn_record(vol, frn, parent, reason, attrs, &name);
@@ -942,7 +950,7 @@ mod tests {
         upsert(&mut v, 10, 5, &name_u16("old.txt"), false);
         // Rename arrives as OLD_NAME then NEW_NAME records for the same FRN.
         apply_usn_record(&mut v, 10, 5, USN_REASON_RENAME_OLD_NAME, 0, &name_u16("old.txt"));
-        assert!(v.map.get(&10).is_none());
+        assert!(!v.map.contains_key(&10));
         apply_usn_record(&mut v, 10, 5, USN_REASON_RENAME_NEW_NAME, 0, &name_u16("new.txt"));
         assert_eq!(resolve_path(&v, 10).as_deref(), Some("C:\\new.txt"));
         assert_eq!(v.files, 1); // -1 +1 across the rename

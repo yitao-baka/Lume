@@ -81,7 +81,17 @@ async function waitFor(client, expression, timeout = 8000) {
   return false;
 }
 
+async function findDetached() {
+  for (let i = 0; i < 50; i++) {
+    const target = (await targets()).find((item) => item.type === "page" && item.url.includes(`plugin.html?plugin=${PLUGIN_ID}`));
+    if (target) return connect(target.webSocketDebuggerUrl);
+    await sleep(200);
+  }
+  return null;
+}
+
 let main;
+let detached;
 try {
   for (let i = 0; i < 50 && !main; i++) {
     for (const target of (await targets()).filter((item) => item.type === "page" && item.url.includes("tauri.localhost"))) {
@@ -120,20 +130,49 @@ try {
     })`)));
   }
   check("network probe mode is discoverable", keyword);
-  await main.evaluate(`[...document.querySelectorAll("[data-target-id]")].find((el) => el.textContent.includes("Presenter Network Probe"))?.click(); true`);
+  const entered = await main.evaluate(`(async () => {
+    const find = () => [...document.querySelectorAll("[data-target-id]")].find((el) => el.textContent.includes("Presenter Network Probe"));
+    const first = find();
+    first?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return !!first;
+  })()`);
+  check("network probe result dispatches activation", entered);
   const ready = await waitFor(main, 'window.__presenterStates.some((state) => state.pageId === "presenter-network-probe" && state.status === "ready")');
+  if (!ready) {
+    console.log("READY DIAG", JSON.stringify(await main.evaluate(`({
+      states: window.__presenterStates ?? [],
+      plog: (window.__plog ?? []).slice(-20),
+      body: document.body.innerText.slice(0, 500),
+    })`)));
+    console.log("TARGETS DIAG", JSON.stringify((await targets()).map((target) => ({ type: target.type, title: target.title, url: target.url }))));
+  }
   check("Presenter still reaches ready under CSP", ready);
   await sleep(1600);
-  check("fetch/no-cors/form/WebSocket/EventSource/img/service requests all stay inside the WebView", requests.length === 0, JSON.stringify(requests));
+  check("fetch/form/socket/image/service and self-navigation requests all stay inside the WebView", requests.length === 0, JSON.stringify(requests));
   const frame = await main.evaluate(`(() => {
     const el = document.querySelector("iframe.presenter-frame");
     return el ? { sandbox: el.getAttribute("sandbox") || "", srcdoc: el.getAttribute("srcdoc") || "" } : null;
   })()`);
   check("network CSP is present and connect-src is disabled", !!frame?.srcdoc.includes("connect-src 'none'"));
+
+  // Detached windows are a separate WebView2 creation path. Their Presenter
+  // executes the same view.html, so it must be covered by the native guard
+  // even though the embedded frame checks already passed.
+  const detachClicked = await main.evaluate('(() => { const button = document.querySelector(".detach-btn"); button?.click(); return !!button; })()');
+  check("network probe exposes detached Presenter", detachClicked);
+  detached = await findDetached();
+  check("detached Presenter window opens", !!detached);
+  if (detached) {
+    const detachedReady = await waitFor(detached, '!!document.querySelector("iframe.presenter-frame")');
+    check("detached Presenter reaches the isolated page", detachedReady);
+    await sleep(1600);
+    check("detached Presenter self-navigation stays inside the WebView", requests.length === 0, JSON.stringify(requests));
+  }
 } catch (error) {
   console.error("PRESENTER NETWORK VERIFY ERROR", error);
   failures++;
 } finally {
+  try { detached?.ws.close(); } catch {}
   try { main?.ws.close(); } catch {}
   try { execSync("taskkill /F /T /IM lume.exe 2>NUL", { stdio: "ignore" }); } catch {}
   await new Promise((resolve) => server.close(resolve));

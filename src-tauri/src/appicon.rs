@@ -94,11 +94,12 @@ fn themed_hicon(dark: bool) -> Option<HICON> {
 /// conversion). Shared by the theme icons and the per-plugin icons.
 fn hicon_from_rgba(width: u32, height: u32, rgba: &[u8]) -> Option<SendHicon> {
     let mut xor: Vec<u8> = rgba.to_vec();
-    for px in xor.chunks_exact_mut(4) {
+    for px in xor.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let and: Vec<u8> = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>().0
+        .iter()
         .map(|px| 255u8.wrapping_sub(px[3]))
         .collect();
     unsafe {
@@ -242,7 +243,8 @@ fn pixels_for(record: &PluginIconRecord, dark: bool) -> Option<(u32, u32, Vec<u8
 /// Invert RGB, keep alpha — the same treatment as `--icon-filter: invert(1)`
 /// (theme.css) the launcher applies to plugin icons in dark mode.
 fn invert_rgb(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>().0
+        .iter()
         .flat_map(|px| [255 - px[0], 255 - px[1], 255 - px[2], px[3]])
         .collect()
 }

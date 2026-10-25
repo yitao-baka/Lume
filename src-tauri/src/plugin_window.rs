@@ -118,6 +118,7 @@ pub fn window_label(id: &str) -> String {
 /// constructed). From the async worker, Tauri's builder dispatches to the
 /// main loop and waits on a channel, which is the supported path.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn plugin_window_open(
     id: String,
     icon_png: Option<String>,
@@ -209,12 +210,13 @@ pub async fn plugin_window_open(
     .shadow(true)
     .background_color(tauri::window::Color(r, g, b, 255))
     .visible(false)
-    .initialization_script(&format!("window.__LUME_CONFIG__ = {config_json};"));
+    .initialization_script(format!("window.__LUME_CONFIG__ = {config_json};"));
     builder = match remembered {
         Some(b) => builder.position(b.x, b.y),
         None => builder.center(),
     };
     let win = builder.build().map_err(|e| e.to_string())?;
+    crate::webview_guard::install(&win);
     // shadow(true) windows draw DWM's documented 1px white border — suppress
     // it (shadow + Win11 rounded corners stay).
     crate::window::clear_dwm_border(&win);

@@ -590,7 +590,8 @@ fn read_len_wide(buf: &[u8], off: usize) -> Result<(String, usize), &'static str
         return Err("truncated string");
     }
     let units: Vec<u16> = buf[chars_at..chars_at + len * 2]
-        .chunks_exact(2)
+        .as_chunks::<2>().0
+        .iter()
         .map(|p| u16::from_le_bytes([p[0], p[1]]))
         .collect();
     Ok((String::from_utf16_lossy(&units), chars_at + len * 2 + 2))
@@ -608,11 +609,11 @@ fn filetime_ms(ft: u64) -> Option<u64> {
 
 /// Read a NUL-terminated UTF-16 string at a byte offset inside the list buffer.
 fn read_wide_at(buf: &[u8], off: usize) -> Option<String> {
-    if off >= buf.len() || off % 2 != 0 {
+    if off >= buf.len() || !off.is_multiple_of(2) {
         return None;
     }
     let mut chars = Vec::with_capacity((buf.len() - off) / 2);
-    for pair in buf[off..].chunks_exact(2) {
+    for pair in buf[off..].as_chunks::<2>().0 {
         let unit = u16::from_le_bytes([pair[0], pair[1]]);
         if unit == 0 {
             return String::from_utf16(&chars).ok();

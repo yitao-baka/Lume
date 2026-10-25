@@ -925,7 +925,7 @@ pub fn validate_index_dir(path: String) -> IndexDirValidation {
     } else if let Some(rest) = normalized.strip_prefix(r"\\?\") {
         normalized = rest.to_string();
     }
-    while normalized.ends_with(|c| c == '\\' || c == '/')
+    while normalized.ends_with(['\\', '/'])
         && !(normalized.len() == 3 && normalized.as_bytes()[1] == b':')
     {
         normalized.pop();
@@ -1888,10 +1888,10 @@ mod tests {
         assert_eq!(s.index.user_index.len(), 2);
         assert_eq!(s.index.user_index[0].name, "A");
         assert_eq!(s.index.user_index[0].path, "C:\\Projects\\A");
-        assert_eq!(s.index.user_index[0].no_files, false);
+        assert!(!s.index.user_index[0].no_files);
         assert_eq!(s.index.user_index[1].name, "B");
         assert_eq!(s.index.user_index[1].path, "C:\\Projects\\B");
-        assert_eq!(s.index.user_index[1].no_files, true);
+        assert!(s.index.user_index[1].no_files);
         // Re-running is a no-op (already key-value).
         let mark = s.index.user_index.clone();
         s.index.migrate();

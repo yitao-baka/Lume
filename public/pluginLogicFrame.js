@@ -12,6 +12,7 @@
   "use strict";
   var params = new URLSearchParams(location.search);
   var pluginId = params.get("plugin") || "";
+  var role = params.get("role") === "service" ? "service" : "logic";
   var __dbg = (window.__frameDebug = window.__frameDebug || []);
 
   function post(msg) {
@@ -67,17 +68,6 @@
     // 宿主里（独立窗口只有 view/titlebar 帧），所以恒为 "launcher"——与视图
     // 桥同面，插件在逻辑里读 `lume.env.form` 不会炸。
     env: { form: "launcher" },
-    page: {
-      publish: function (model) { return call("page.publish", { model: model }); },
-      patch: function (update) { return call("page.patch", { update: update }); },
-      emit: function (event) { return call("page.emit", { event: event }); },
-      setError: function (error) { return call("page.error", { error: error }); },
-      clearError: function () { return call("page.clearError"); },
-    },
-    secrets: {
-      has: function (key) { return call("secrets.has", { key: key }); },
-      get: function (key) { return call("secrets.get", { key: key }); },
-    },
     theme: {
       // 本插件自己的颜色模式（§6C）：system 跟随启动器，light/dark 固定
       // 本插件的明暗。与视图桥同一条 theme.set/get 路由。
@@ -191,6 +181,24 @@
     },
     on: {},
   };
+
+  // Page Service capabilities are exposed only to an api-2 mode whose
+  // manifest owns a Page Model and Presenter set. Provider/service/legacy
+  // logic frames still share the rest of the host API, but cannot publish a
+  // Page Model or read Credential Manager secrets even if they craft an RPC.
+  if (role === "service") {
+    window.lume.page = {
+      publish: function (model) { return call("page.publish", { model: model }); },
+      patch: function (update) { return call("page.patch", { update: update }); },
+      emit: function (event) { return call("page.emit", { event: event }); },
+      setError: function (error) { return call("page.error", { error: error }); },
+      clearError: function () { return call("page.clearError"); },
+    };
+    window.lume.secrets = {
+      has: function (key) { return call("secrets.has", { key: key }); },
+      get: function (key) { return call("secrets.get", { key: key }); },
+    };
+  }
 
   // ── ESM 加载器：取文本（supervisor 代理）→ 相对导入改写为帧内 blob URL
   //    → import()。opaque origin 里帧自建的 blob 自洽可导。 ──

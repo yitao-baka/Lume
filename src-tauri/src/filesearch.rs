@@ -172,6 +172,7 @@ impl SvcBackendStatus {
 /// echoes it as `filter` only when a backend really applied it — callers must
 /// treat a missing echo as "not filtered" rather than trusting the request.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn file_search(
     query: String,
     max: Option<u32>,
@@ -212,7 +213,7 @@ pub async fn file_search(
         run_search(&query, max, offset, sort, &filter, filter_echo)
     })
     .await
-    .map(|out| Ok(out))
+    .map(Ok)
     .unwrap_or_else(|e| {
         eprintln!("[filesearch] join failed: {e}");
         Ok(unavailable())
@@ -558,8 +559,8 @@ fn stat_page(hits: &mut [FileHit]) {
 fn sort_page(hits: &mut [FileHit], s: &str) {
     let desc = s.ends_with("_desc");
     match s.trim_end_matches("_desc") {
-        "name" => hits.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-        "path" => hits.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase())),
+        "name" => hits.sort_by_key(|a| a.name.to_lowercase()),
+        "path" => hits.sort_by_key(|a| a.path.to_lowercase()),
         "size" => hits.sort_by_key(|h| h.size.unwrap_or(0)),
         "mtime" => hits.sort_by_key(|h| h.mtime.unwrap_or(0)),
         _ => return,

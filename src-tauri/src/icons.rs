@@ -149,7 +149,7 @@ pub(crate) fn bitmap_to_png(bitmap: windows::Win32::Graphics::Gdi::HBITMAP) -> O
 
         // 32-bit DIBs are BGRA on Windows → swap to RGBA for the PNG encoder.
         let mut rgba = Vec::with_capacity(pixels.len());
-        for px in pixels.chunks_exact(4) {
+        for px in pixels.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
         }
 
@@ -166,7 +166,28 @@ pub(crate) fn bitmap_to_png(bitmap: windows::Win32::Graphics::Gdi::HBITMAP) -> O
 /// extracting (and storing) the missing ones. Identical icons share one row in
 /// `data/icons.db`, so e.g. the default exe icon is stored once and reused.
 #[tauri::command]
-pub async fn get_app_icons(paths: Vec<String>) -> Result<Vec<IconData>, String> {
+pub async fn get_app_icons(
+    paths: Vec<String>,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<Vec<IconData>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "fs.read",
+    )?;
+    get_app_icons_inner(paths).await
+}
+
+/// Internal first-party icon lookup (clipboard ignore-list resolution uses
+/// this without manufacturing a webview caller identity).
+pub(crate) async fn get_app_icons_inner(paths: Vec<String>) -> Result<Vec<IconData>, String> {
     let cached = cache::icons_for(&paths);
     let mut result = Vec::with_capacity(paths.len());
     let mut missing: Vec<String> = Vec::new();

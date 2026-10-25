@@ -5,10 +5,11 @@
 // the registry burned the 8s timeout → 3 summons = circuit open toast
 // 「文件秒搜」连续调用失败 without ever opening the plugin.
 //
-// Sequence: summon/hide ×3 (each cycle used to count one failure), wait past
-// the 8s timeout, then assert __logicCircuit is clean. hello-mode (enabled
-// for this run, has entry) proves the entry path still flows: its onQuery
-// console.log is captured inside the logic frame via a console patch.
+// Sequence: enter hello-mode, summon/hide ×3 (each cycle used to count one
+// failure), wait past the 8s timeout, then assert __logicCircuit is clean.
+// hello-mode (enabled for this run, has entry) proves the entry path still
+// flows: its onQuery calls are counted through the supervisor's pending-call
+// map.
 //
 // Run against the built debug exe (no vite): rebuild first with
 // `pnpm run tauri build --debug --no-bundle`. Settings: the script enables
@@ -108,6 +109,19 @@ try {
   }
   console.log("hello-mode probe:", helloPatched);
 
+  // Make hello-mode the active page so each summon's runSearch reaches its
+  // real entry hook. Relying on the persisted page here made this probe depend
+  // on user settings and silently count zero hooks when Navigate was active.
+  const helloSelected = await m.evalJs(`(() => {
+    const pill = Array.from(document.querySelectorAll(".mode-switch-item"))
+      .find((el) => (el.getAttribute("title") || el.textContent || "").includes("Hello Mode"));
+    if (!pill) return false;
+    pill.click();
+    return true;
+  })()`);
+  if (!helloSelected) throw new Error("hello-mode pill missing");
+  await sleep(1800);
+
   // ── 复现序列：3 轮呼出/隐藏（修复前每轮 ≥1 次超时计数，第 3 次开熔断）──
   for (let i = 0; i < 3; i++) {
     await m.evalJs(`window.__TAURI_INTERNALS__.invoke("toggle_launcher")`); // hide
@@ -150,7 +164,7 @@ try {
   pass = fails.length === 0;
   console.log(pass ? "PASS: circuit clean (no false-positive)" : `FAIL: circuit failures — ${fails.join(", ")}`);
   if (helloPatched && helloProbe) {
-    // onMount clearSearch + 每轮 show/hide 各一次广播 → ≥3 次 onQuery hook；
+    // 进入 Hello Mode 一次 + 每轮 show 的 runSearch → ≥3 次 onQuery hook；
     // callsLeft=0 = 帧对每次调用都有回执（守卫没把 entry 路径打断）。
     const n = helloProbe.hookDispatched ?? 0;
     if (helloProbe.loaded === true && n >= 3 && helloProbe.callsLeft === 0) {

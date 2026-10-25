@@ -115,7 +115,7 @@ fn watch_thread(app: AppHandle) {
         };
 
         let result = unsafe { WaitForMultipleObjects(std::slice::from_ref(&h), false, POLL) };
-        if result.0 >= WAIT_OBJECT_0.0 && result.0 < WAIT_OBJECT_0.0 + 1 {
+        if result == WAIT_OBJECT_0 {
             unsafe {
                 let _ = FindNextChangeNotification(h);
             }

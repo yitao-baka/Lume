@@ -192,9 +192,9 @@ export function createHostApi(
       },
     },
     clipboard: {
-      readText: () => inv<string | null>("get_clipboard_text"),
+      readText: () => inv<string | null>("get_clipboard_text", { pluginId: id }),
       writeText: async (text) => {
-        await inv("set_clipboard_text", { text });
+        await inv("set_clipboard_text", { text, pluginId: id });
       },
       writeImage: async (data) => {
         plog.debug(id, "clipboard.writeImage:", data.length, "bytes");
@@ -358,26 +358,26 @@ export function createHostApi(
         plog.debug(id, "fs.readText:", path);
         // >512KB rejects (Rust side) — the plugin shows a "preview first
         // 512KB" message; binary content comes back lossy-UTF8 decoded.
-        return inv<string>("get_file_text", { path });
+        return inv<string>("get_file_text", { path, pluginId: id });
       },
       bytes: (path: string) => {
         plog.debug(id, "fs.bytes:", path);
         // Raw bytes, base64 (≤32 MB, Rust side). The sandbox made plugin
         // pages opaque origins, so fetch(asset://) is CORS-refused there —
         // binary preview renderers (pdf.js / SheetJS) get their bytes here.
-        return inv<string>("get_file_bytes", { path });
+        return inv<string>("get_file_bytes", { path, pluginId: id });
       },
       thumb: (path: string) => {
         plog.debug(id, "fs.thumb:", path);
-        return inv<string>("get_file_thumb", { path }); // base64 PNG data URI
+        return inv<string>("get_file_thumb", { path, pluginId: id }); // base64 PNG data URI
       },
       videoPoster: (path: string) => {
         plog.debug(id, "fs.videoPoster:", path);
-        return inv<string>("get_video_thumb", { path }); // base64 PNG data URI
+        return inv<string>("get_video_thumb", { path, pluginId: id }); // base64 PNG data URI
       },
       icon: (paths: string[]) => {
         plog.debug(id, "fs.icon:", paths.length, "path(s)");
-        return inv<{ path: string; icon: string | null }[]>("get_app_icons", { paths });
+        return inv<{ path: string; icon: string | null }[]>("get_app_icons", { paths, pluginId: id });
       },
       writeText: (name, text) => {
         plog.debug(id, "fs.writeText:", name, text.length, "chars");

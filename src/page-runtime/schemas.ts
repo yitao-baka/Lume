@@ -87,6 +87,11 @@ export interface ClipboardRowModel {
   description?: string;
   icon?: ResourceRef;
   content: string;
+  /** `content` is a display preview; the full value stays in the service. */
+  contentTruncated?: boolean;
+  /** File rows only: total path count and first file's display kind. */
+  fileCount?: number;
+  fileKind?: string;
   createdAt: number;
   thumb?: ResourceRef;
   pinned: boolean;

@@ -286,7 +286,8 @@ fn next_created_at(conn: &Connection) -> rusqlite::Result<i64> {
 /// 2. Auto-merge (合并复制 on + within window + no paste since) → append to the
 ///    most recent text row (newline-joined, `merged_count` + 1).
 /// 3. Otherwise insert a fresh row (`merged_count = 1`).
-/// Prunes afterwards.
+///    Prunes afterwards.
+#[allow(clippy::too_many_arguments)]
 fn insert_text_history(
     conn: &Connection,
     text: &str,
@@ -589,7 +590,7 @@ fn row_to_item(row: Row, base: &Path) -> ClipboardItem {
     // needs its PNG; a file row needs at least one surviving path.
     let valid = match row.kind.as_str() {
         "text" => true,
-        "image" => row.path.as_deref().map_or(false, |p| base.join(p).exists()),
+        "image" => row.path.as_deref().is_some_and(|p| base.join(p).exists()),
         "file" => row
             .content
             .lines()
@@ -624,7 +625,7 @@ fn parse_checked_json(s: &str) -> Option<Vec<u32>> {
 fn row_invalid(row: &Row, base: &Path) -> bool {
     match row.kind.as_str() {
         "text" => false,
-        "image" => row.path.as_deref().map_or(true, |p| !base.join(p).exists()),
+        "image" => row.path.as_deref().is_none_or(|p| !base.join(p).exists()),
         "file" => {
             let mut any = false;
             for p in row.content.lines().filter(|l| !l.trim().is_empty()) {
@@ -1273,7 +1274,21 @@ fn io_err(e: impl std::fmt::Display) -> rusqlite::Error {
 /// Read the current system clipboard TEXT (None = non-text or empty).
 /// Exposed to plugins via the `clipboard.readText()` host API.
 #[tauri::command]
-pub fn get_clipboard_text() -> Result<Option<String>, String> {
+pub fn get_clipboard_text(
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<Option<String>, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "clipboard",
+    )?;
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     match cb.get().text() {
         Ok(text) => Ok(if text.is_empty() { None } else { Some(text) }),
@@ -1283,7 +1298,22 @@ pub fn get_clipboard_text() -> Result<Option<String>, String> {
 
 /// Write plain text to the system clipboard (plugin `clipboard.writeText`).
 #[tauri::command]
-pub fn set_clipboard_text(text: String) -> Result<(), String> {
+pub fn set_clipboard_text(
+    text: String,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "clipboard",
+    )?;
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
     cb.set_text(text).map_err(|e| e.to_string())
 }
@@ -1514,7 +1544,7 @@ pub async fn clipboard_ignore_app_icons(apps: Vec<String>) -> Vec<IgnoredAppIcon
     .unwrap_or_default();
 
     let paths: Vec<String> = resolved.values().cloned().collect();
-    let icons = crate::icons::get_app_icons(paths).await.unwrap_or_default();
+    let icons = crate::icons::get_app_icons_inner(paths).await.unwrap_or_default();
     let icon_by_path: HashMap<String, String> = icons
         .into_iter()
         .filter_map(|entry| entry.icon.map(|icon| (entry.path, icon)))
@@ -1729,6 +1759,7 @@ pub fn plugin_clipboard_read_image(
 /// Like a normal copy, the payload STAYS on the clipboard afterwards.
 /// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn plugin_clipboard_paste(
     text: Option<String>,
     image: Option<String>,
@@ -1857,7 +1888,22 @@ pub fn set_clipboard_paused(paused: bool, state: State<ClipboardState>) -> Resul
 /// content is lossy-decoded as UTF-8 so a stray .txt with a weird encoding
 /// still previews).
 #[tauri::command]
-pub fn get_file_text(path: String) -> Result<String, String> {
+pub fn get_file_text(
+    path: String,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<String, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "fs.read",
+    )?;
     let bytes = fs::read(&path).map_err(|e| e.to_string())?;
     if bytes.len() > 512 * 1024 {
         return Err("file too large to preview".into());
@@ -1871,7 +1917,22 @@ pub fn get_file_text(path: String) -> Result<String, String> {
 /// call restores the byte channel the asset protocol used to provide
 /// (fs.read permission, frontend ledger). Cap mirrors the thumbnail path.
 #[tauri::command]
-pub async fn get_file_bytes(path: String) -> Result<String, String> {
+pub async fn get_file_bytes(
+    path: String,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<String, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "fs.read",
+    )?;
     // Off the main thread: a 32 MB read + ~43 MB base64 string is hundreds of
     // milliseconds of blocking work that would otherwise freeze every IPC.
     tauri::async_runtime::spawn_blocking(move || {
@@ -1891,7 +1952,22 @@ pub async fn get_file_bytes(path: String) -> Result<String, String> {
 /// in the renderer's image cache after the preview closes (same pipeline the
 /// clipboard image rows use for their `thumb`).
 #[tauri::command]
-pub async fn get_file_thumb(path: String) -> Result<String, String> {
+pub async fn get_file_thumb(
+    path: String,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<String, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "fs.read",
+    )?;
     // Off the main thread (`get_video_thumb` has the same rationale): sync
     // commands run on the main (UI) thread, and decoding a multi-megabyte image
     // there would stall every other IPC for the duration.
@@ -1912,7 +1988,22 @@ pub async fn get_file_thumb(path: String) -> Result<String, String> {
 /// base64 PNG data URI, or an error when the shell has no thumbnail provider
 /// for the file (the frontend then shows a placeholder).
 #[tauri::command]
-pub async fn get_video_thumb(path: String) -> Result<String, String> {
+pub async fn get_video_thumb(
+    path: String,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: tauri::WebviewWindow,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+) -> Result<String, String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "fs.read",
+    )?;
     // Run the shell extraction off the main thread: sync commands run on the
     // main (STA) thread where `CoInitializeEx(COINIT_MULTITHREADED)` fails with
     // RPC_E_CHANGED_MODE; the blocking pool is a fresh COM context, and the
@@ -2424,7 +2515,7 @@ mod tests {
         // Fill with an opaque red so the PNG is a real image.
         unsafe {
             let px = std::slice::from_raw_parts_mut(bits as *mut u8, 64 * 64 * 4);
-            for p in px.chunks_exact_mut(4) {
+            for p in px.as_chunks_mut::<4>().0 {
                 p[0] = 0;
                 p[1] = 0;
                 p[2] = 255; // BGRA → red
@@ -3069,7 +3160,8 @@ mod tests {
 
     fn decode_wide(bytes: &[u8]) -> Vec<u16> {
         bytes
-            .chunks_exact(2)
+            .as_chunks::<2>().0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect()
     }
@@ -3144,8 +3236,9 @@ mod tests {
         insert_file_history(&conn, &[p1.clone(), p2.clone()], TEST_SRC, TEST_CAP, &base, true).unwrap();
         assert!(search_history(&conn, "", "all", 20, &base, false).unwrap()[0].valid, "all paths present → valid");
         insert_file_history(&conn, &[p1.clone(), missing.clone()], TEST_SRC, TEST_CAP, &base, true).unwrap();
-        assert!(search_history(&conn, "", "all", 20, &base, false).unwrap()[0].valid, "a surviving path keeps the row usable");
-        insert_file_history(&conn, &[missing.clone()], TEST_SRC, TEST_CAP, &base, true).unwrap();
+        let rows = search_history(&conn, "", "all", 20, &base, false).unwrap();
+        assert!(rows[0].valid, "a surviving path keeps the row usable");
+        insert_file_history(&conn, std::slice::from_ref(&missing), TEST_SRC, TEST_CAP, &base, true).unwrap();
         assert!(!search_history(&conn, "", "all", 20, &base, false).unwrap()[0].valid, "no surviving path → row invalid");
         fs::remove_dir_all(&base).ok();
     }

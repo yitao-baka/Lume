@@ -1562,7 +1562,7 @@ entry = \"view.html\"
         assert_eq!(m.features[0].icon_light, "rule-light.svg");
         assert_eq!(m.features[0].icon_dark, "rule-dark.svg");
         assert_eq!(m.features[1].icon_light, "", "omitted → legacy-only");
-        assert_eq!(m.features[1].over, true);
+        assert!(m.features[1].over);
         assert_eq!(m.features[1].max_length, Some(40));
         // The frontend sees camelCase (directional serde rename).
         let json = serde_json::to_string(&m.features[0]).unwrap();

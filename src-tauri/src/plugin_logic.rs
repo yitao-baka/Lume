@@ -55,8 +55,9 @@ pub async fn plugin_logic_host_ensure(
     .decorations(false)
     .skip_taskbar(true)
     .visible(false)
-    .initialization_script(&format!("window.__LUME_CONFIG__ = {config_json};"));
+    .initialization_script(format!("window.__LUME_CONFIG__ = {config_json};"));
     let win = builder.build().map_err(|e| e.to_string())?;
+    crate::webview_guard::install(&win);
     // 隐藏窗口常年空闲 —— 与 settings/preview 同等的低水位内存修剪。
     crate::window::set_memory_target(&app, LOGIC_HOST_LABEL, true);
     let app2 = app.clone();
@@ -71,10 +72,7 @@ pub async fn plugin_logic_host_ensure(
 /// Destroy the shared logic host window (teardown / tests; normal unload
 /// removes per-plugin iframes inside the window instead).
 #[tauri::command]
-pub fn plugin_logic_host_close(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-) -> Result<(), String> {
+pub fn plugin_logic_host_close(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
         return Err("plugin_logic_host_close: launcher window only".into());
     }
@@ -102,11 +100,20 @@ pub fn plugin_logic_meta(
     if let Some(reason) = &m.api_error {
         return Err(format!("plugin \"{id}\" was rejected: {reason}"));
     }
+    // `service` is reserved for an api-2 Page Service mode. Provider/service
+    // plugins and legacy modes keep the general logic role; Rust page/secrets
+    // commands reject them even if the frame crafts the RPC directly.
+    let role = if m.kind == "mode" && m.page_runtime && !m.presenters.is_empty() {
+        "service"
+    } else {
+        "logic"
+    };
     Ok(serde_json::json!({
         "dir": m.dir,
         "entry": m.entry,
         "name": m.name,
         "api": m.api,
+        "role": role,
     }))
 }
 
@@ -125,9 +132,9 @@ pub async fn plugin_logic_read_file(
     if window.label() != LOGIC_HOST_LABEL {
         return Err("plugin_logic_read_file: logic host window only".into());
     }
-    let (resolved, role) = resolve_plugin_caller_role(&perms, &window, Some(&id), Some(&token))?;
-    if resolved.as_deref() != Some(id.as_str()) || role != "service" {
-        return Err("plugin_logic_read_file: token does not belong to this service".into());
+    let (resolved, _) = resolve_plugin_caller_role(&perms, &window, Some(&id), Some(&token))?;
+    if resolved.as_deref() != Some(id.as_str()) {
+        return Err("plugin_logic_read_file: token does not belong to this plugin".into());
     }
     tauri::async_runtime::spawn_blocking(move || read_plugin_source(&id, &path))
         .await
@@ -146,8 +153,8 @@ fn read_plugin_source(id: &str, path: &str) -> Result<String, String> {
     }
     let root = std::fs::canonicalize(&manifest.dir)
         .map_err(|error| format!("plugin directory unavailable: {error}"))?;
-    let target = std::fs::canonicalize(path)
-        .map_err(|error| format!("plugin file unavailable: {error}"))?;
+    let target =
+        std::fs::canonicalize(path).map_err(|error| format!("plugin file unavailable: {error}"))?;
     let root_text = root.to_string_lossy().replace('/', "\\").to_lowercase();
     let target_text = target.to_string_lossy().replace('/', "\\").to_lowercase();
     if target_text != root_text && !target_text.starts_with(&(root_text + "\\")) {
@@ -167,7 +174,7 @@ fn read_plugin_source(id: &str, path: &str) -> Result<String, String> {
 }
 
 fn default_host_role() -> String {
-    "service".into()
+    "logic".into()
 }
 
 /// One token entry: `token = None` drops every token of that plugin (unload).
@@ -191,6 +198,9 @@ pub fn plugin_logic_register_tokens(
         return Err("plugin_logic_register_tokens: wrong window".into());
     }
     for e in entries {
+        if e.token.is_some() && !matches!(e.role.as_str(), "service" | "logic") {
+            return Err(format!("unknown host role \"{}\"", e.role));
+        }
         match e.token {
             Some(token) => crate::plugin_perm::register_host_token(&perms, &token, &e.id, &e.role),
             None => crate::plugin_perm::drop_host_tokens(&perms, &e.id),
@@ -261,6 +271,7 @@ pub fn plugin_logic_action(
 
 /// 宿主 supervisor → 启动器：一次 hook 调用的回执（registry 按 callId 收口）。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn plugin_logic_result(
     token: String,
     call_id: u64,

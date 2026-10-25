@@ -1,0 +1,7 @@
+id = "audit-runtime-probe"
+name = "Audit Runtime Probe"
+version = "1.0.0"
+kind = "provider"
+api = 2
+entry = "main.js"
+keywords = ["auditruntime"]

@@ -140,7 +140,7 @@ fn host_allowed(host: &str, allow: &[String]) -> bool {
         if a == "*" || a == host {
             return true;
         }
-        a.strip_prefix("*.").map_or(false, |suffix| {
+        a.strip_prefix("*.").is_some_and(|suffix| {
             !suffix.is_empty() && host.ends_with(&format!(".{suffix}"))
         })
     })
@@ -283,7 +283,7 @@ fn fetch_blocking_checked(
         }
 
         let host_w = HSTRING::from(host.as_str());
-        let connect = unsafe { WinHttpConnect(session.0, PCWSTR(host_w.as_ptr()), port as u16, 0) };
+        let connect = unsafe { WinHttpConnect(session.0, PCWSTR(host_w.as_ptr()), port, 0) };
         if connect.is_null() {
             return Err(format!("WinHttpConnect failed for \"{host}\""));
         }
@@ -380,14 +380,14 @@ fn fetch_blocking_checked(
 
         // Manual redirect: re-check and re-issue (301/302/303 → GET, no body;
         // 307/308 keep method + body, per common client behaviour).
-        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+        if matches!(status, 301..=303 | 307 | 308) {
             let Some(loc) = headers.get("location") else {
                 return Err(format!("redirect {status} without a Location header"));
             };
             let next = current
                 .join(loc.trim())
                 .map_err(|e| format!("bad redirect target \"{loc}\": {e}"))?;
-            if matches!(status, 301 | 302 | 303) {
+            if matches!(status, 301..=303) {
                 method = "GET".into();
                 body_bytes.clear();
             }

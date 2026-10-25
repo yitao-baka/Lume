@@ -167,7 +167,7 @@ fn filter_files(apps: &[AppEntry], query: &str) -> Vec<AppEntry> {
     let query = query.trim();
     if query.is_empty() {
         let mut all = apps.to_vec();
-        all.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        all.sort_by_key(|a| a.name.to_lowercase());
         all.truncate(BROWSE_CAP);
         return all;
     }

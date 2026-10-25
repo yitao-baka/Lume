@@ -5257,3 +5257,88 @@ Presenter 名称，值没有持久化或下发路径。
   `cdp_visual_audit_verify` **28/28**。截屏：
   `test/settings-smoke/clipboard-ignore-hover.png`、
   `test/mode_bar_icons_labels.png`。
+
+## 85. 插件系统、导航页与剪贴板专项审计修复（2026-10-25）
+
+原始发现、复现件与影响面见
+[专项审计](History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-25.md)。
+
+### 85.1 安全边界与插件身份
+
+- 新增 `src-tauri/src/webview_guard.rs`，在主窗、逻辑宿主和分离插件窗口安装
+  WebView2 `NavigationStarting`、聚合/逐帧 `FrameNavigationStarting`、
+  `FrameCreated` 与 `NewWindowRequested` 拦截。插件帧的 `location.href`、
+  `assign` / `replace`、meta refresh、anchor 和 `window.open` 不再能向任意
+  HTTP(S) 地址发请求。
+- 整个共享 WebView2 环境追加 deny-only 本机 HTTP 代理；即使导航事件晚于首次
+  请求，目标服务也收不到数据。代理参数与 CDP 参数追加到
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`，没有替换 Wry 默认参数（替换后曾让
+  逻辑宿主卡死）。真实插件 HTTP 由 Rust/WinHTTP 发出，不受代理影响。
+- 逻辑宿主 sandbox 收窄为 `allow-scripts allow-modals`；provider/service/普通
+  mode 仅登记 `logic`，只有 Page Service mode 登记 `service`，因此不再获得
+  `page/secrets`。Rust host-role 校验也只接受这两个角色。
+- 逻辑宿主 manifest map 在启动、`settings-applied`、`plugin-reload` 与每次
+  `load` 时刷新；load 载荷携带当前 manifest。按插件串行生命周期队列消除了旧
+  `unload` 吊销新 token 的竞态。`plugin_logic_read_file` 改为只校验 token 归属，
+  不再错误要求 `service` role。
+- `get_clipboard_text`、`set_clipboard_text`、`get_file_text`、
+  `get_file_bytes`、`get_file_thumb`、`get_video_thumb`、`get_app_icons` 增加
+  `plugin_id` + `host_token` 与 Rust capability 校验；原生调用仍限 main。
+- `.lupx` inspect 返回的 SHA-256 成为安装前置条件。安装先把源文件复制到
+  `data/install-staging` 私有副本，再用同一副本验签、哈希、统计和解压；源路径
+  不再参与后续读取。检查后替换源文件会被拒绝且不写插件目录；`LUME.SIGN` 不进入
+  payload 文件数/字节数。
+
+### 85.2 逻辑、导航与分离窗口
+
+- `navBarsContribution` 等待 logic-ready 和 `logic-loaded` 返回的实际 hook 集，
+  再 `await logic.navBars()`；导航页刷新加入 generation，旧异步栏目结果不能覆盖
+  新结果。新增 `audit-runtime-probe` 覆盖异步栏目、权限热刷新与长路径结果。
+- 导航结果 ID 改为 FNV 短 ID + 索引 + 冲突盐，完整路径保留在模型 `path`；
+  右键 Intent 通过 target map 查目标，329 字符路径不再触发 Intent Router 的
+  256 字符拒绝。导航栏的 UTF-8 SVG data URL 同时加入资源白名单。
+- 分离窗口 ready 状态推送补上 `query`；`pluginWindow.tsx` 先重放 query 再重放
+  `show`，标题栏 Presenter、`lume.on.query` 与 Page Model 使用同一查询。
+
+### 85.3 剪贴板、启动与清理
+
+- `clipboard/modelBudget.ts` 接管 Page Model 窗口：文本只带 4,096 字符预览，
+  多文件预览先限制 256 条、再按序列化字节收缩，图片按“完整缩略图 → 无缩略图”逐行预算，发布最长的
+  连续可容纳窗口并保证低于 1 MiB。完整文本/文件数据留在 Page Service，由 Intent
+  的 target id 访问。
+- `PageSession.publish` 捕获不可克隆、结构非法或超限模型，发布可见
+  `model.invalid` 错误页；不再让 Solid effect 崩溃后显示空白。
+- 剪贴板 `onShow()` 不再重复查询，root `runSearch()` 成为唯一入口
+  （`__searchClipboardCalls=1`）。两个 Presenter 的上下渐隐改为读取真实
+  `scrollTop/clientHeight/scrollHeight`，1px 误差和 overscan offset 不再推迟或
+  提前关闭。
+- `lib.rs` 在创建任何 webview 前初始化 clipboard/pins/recent 状态，首屏命令不再
+  出现 `state not managed`。逻辑帧 unload 移除 message listener、清理 pending
+  timers、取消未完成 hook 回执；`__logicListenerProbe` 断言 listener 数等于
+  entry 数且 pending=0。
+- Rust clippy 恒真比较与既有 warning 收口，`cargo clippy --all-targets` 回到
+  warning-free。没有执行全仓 `cargo fmt`，避免重建历史格式。
+
+### 85.4 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`（127 modules）、
+  `pnpm run test:page-runtime` **14/14**、`pnpm run test:clipboard-model`
+  **9/9**、`cargo check`、`cargo test` **253 passed / 9 ignored**、
+  `cargo clippy --all-targets --message-format=short` **0 warning**、debug
+  `pnpm run tauri build --debug --no-bundle` 通过。
+- `cdp_page_runtime_verify` **30/30**：单次切换 1 次查询，顶部/底部渐隐分别只在
+  真实滚动边界切换，窗口化模型与双 Presenter 选择保持正常。
+- `cdp_presenter_network_verify` **10/10**：嵌入与分离 Presenter 的 fetch、
+  form、socket、image、service、self-navigation 均未到达本地探针（请求数组为空），
+  CSP 保持；分离窗口的原生导航守卫也由真实窗口路径覆盖。
+- `cdp_sandbox_verify` **19/19**：opaque sandbox、能力门、文件/剪贴板/图标负向
+  调用与启动顺序全部通过。
+- `cdp_plugin_audit_runtime_verify` **21/21**：权限热刷新、角色隔离、异步
+  navBars、长 ID Intent、分离 query、listener/timer 清理与重复 reload 全部通过。
+- `cdp_clipboard_smoke` PASS（单次 mode switch 查询数 1）；`cdp_clipboard_p2`
+  PASS（暂停/恢复、双行合并）。
+- `cdp_lupx_verify` ALL PASS：inspect 后替换源文件被 SHA-256 绑定拒绝，拒绝包
+  未写入插件目录；正常安装、subdir、升级、私有文件保留、卸载与确认弹窗通过。
+- `cdp_plugin_v2_verify` **5/5**、`cdp_detached_page_runtime_verify` **12/12**、
+  `cdp_circuit_verify` PASS（hello-mode 显式进入后 7 次 hook、0 pending）、
+  `check_i18n` **580 键 × 3 语言**。

@@ -1,7 +1,7 @@
 /* Shared settings shell and semantic components. Skin files supply only
    tokens and geometry; this file owns layout, focus and responsive behavior. */
 
-html[data-settings-skin] body.settings-window {
+html[data-skin] body.settings-window {
   margin: 0;
   overflow: hidden;
   background: var(--settings-canvas);
@@ -9,7 +9,7 @@ html[data-settings-skin] body.settings-window {
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
 
-html[data-settings-skin] body.settings-window #root {
+html[data-skin] body.settings-window #root {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -33,11 +33,12 @@ html[data-settings-skin] body.settings-window #root {
   --border-strong: var(--settings-line-strong);
   --hover: var(--settings-hover);
   --selected: var(--settings-selected);
-  --accent: var(--settings-structure);
-  --accent-text: var(--settings-structure-text);
+  --accent: var(--ui-accent);
+  --accent-text: var(--ui-accent-text);
   --accent-tint: var(--settings-selected);
-  --accent-border: var(--settings-structure);
-  --focus-ring: var(--settings-structure);
+  --accent-border: var(--ui-accent-border);
+  --accent-on: var(--ui-accent-on);
+  --focus-ring: var(--ui-focus-ring);
   --danger-text: var(--settings-signal-text);
   --danger-border: var(--settings-signal);
   --warning-text: var(--settings-signal-text);
@@ -68,7 +69,7 @@ html[data-settings-skin] body.settings-window #root {
 }
 
 .settings :focus-visible {
-  outline: var(--settings-focus-width) solid var(--settings-structure);
+  outline: var(--settings-focus-width) solid var(--ui-focus-ring);
   outline-offset: 2px;
 }
 
@@ -2460,14 +2461,14 @@ button.settings-toggle.on .settings-toggle-knob {
   .plg-filter-chips::-webkit-scrollbar { height: 0; }
 }
 
-html[data-settings-skin="quiet"] .plg-master-detail { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); }
-html[data-settings-skin="chromatic"] .plg-master-detail { grid-template-columns: 274px minmax(0, 1fr); }
-html[data-settings-skin="chromatic"] .plg-master-detail,
-html[data-settings-skin="chromatic"] .plg-master-detail .plg-card,
-html[data-settings-skin="chromatic"] .plg-filter-chips,
-html[data-settings-skin="chromatic"] .plg-filter-chip { border-radius: 0; }
+html[data-skin="quiet"] .plg-master-detail { grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); }
+html[data-skin="chromatic"] .plg-master-detail { grid-template-columns: 274px minmax(0, 1fr); }
+html[data-skin="chromatic"] .plg-master-detail,
+html[data-skin="chromatic"] .plg-master-detail .plg-card,
+html[data-skin="chromatic"] .plg-filter-chips,
+html[data-skin="chromatic"] .plg-filter-chip { border-radius: 0; }
 @media (max-width: 899px) {
-  html[data-settings-skin] .plg-master-detail { grid-template-columns: 1fr; }
+  html[data-skin] .plg-master-detail { grid-template-columns: 1fr; }
 }
 
 .plg-dev-options {
@@ -2653,7 +2654,7 @@ html[data-settings-skin="chromatic"] .plg-filter-chip { border-radius: 0; }
   color: var(--settings-text);
 }
 
-html[data-settings-skin="chromatic"] .settings-accent-option.active {
+html[data-skin="chromatic"] .settings-accent-option.active {
   box-shadow: inset 0 -3px 0 var(--settings-structure);
 }
 

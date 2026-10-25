@@ -4,8 +4,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyColorMode } from "./theme";
 import App from "./App";
 import SettingsApp from "./settings/Settings";
-import { applySettingsSkin } from "./settings/skin";
-import { applySettingsAccent } from "./settings/accent";
+import { applySkin } from "./skins/runtime";
+import { applyAccent } from "./skins/accent";
+import "./skins/index.css";
 
 // One build serves both windows: the launcher (`main`) and the settings
 // window (`settings`). Branch on the window label.
@@ -17,25 +18,24 @@ try {
 }
 if (isSettings) {
   document.body.classList.add("settings-window");
-  // First-frame skin/theme: the Rust initialization script has already put
-  // the effective settings on the window, so no async IPC/flash is involved.
-  const cfg = (window as any).__LUME_CONFIG__ as
-    | {
-        appearance?: {
-          settings_skin?: string;
-          color_mode?: string;
-          settings_accent?: string;
-        };
-      }
-    | undefined;
-  applySettingsSkin(cfg?.appearance?.settings_skin);
-  applyColorMode(cfg?.appearance?.color_mode ?? "system");
-  applySettingsAccent(cfg?.appearance?.settings_accent);
-} else {
-  // Launcher: apply the OS-preferred theme before first paint (the stored
-  // color_mode is applied right after get_settings resolves).
-  applyColorMode("system");
 }
+
+// One first-frame path for both windows: the Rust initialization script has
+// already injected the effective settings, so color mode, skin and accent are
+// all in place before Solid's first render. Setting color mode first lets the
+// skin surface pick the correct resolved light/dark entry.
+const cfg = (window as any).__LUME_CONFIG__ as
+  | {
+      appearance?: {
+        skin?: string;
+        color_mode?: string;
+        accent?: string;
+      };
+    }
+  | undefined;
+applyColorMode(cfg?.appearance?.color_mode ?? "system");
+applySkin(cfg?.appearance?.skin);
+applyAccent(cfg?.appearance?.accent);
 
 render(
   () => (isSettings ? <SettingsApp /> : <App />),

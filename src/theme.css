@@ -27,12 +27,17 @@
   --border-strong: rgba(255, 255, 255, 0.16);
   --hover: rgba(255, 255, 255, 0.08);
   --selected: rgba(255, 255, 255, 0.14);
-  --accent: #5ac8fa;
-  --accent-text: #5ac8fa;
-  --accent-tint: rgba(90, 200, 250, 0.16);
-  --accent-border: rgba(90, 200, 250, 0.62);
-  --accent-on: #06131a;
-  --focus-ring: #5ac8fa;
+  --ui-accent: #5ac8fa;
+  --ui-accent-text: #5ac8fa;
+  --ui-accent-border: rgba(90, 200, 250, 0.62);
+  --ui-accent-on: #06131a;
+  --ui-focus-ring: #5ac8fa;
+  --accent: var(--ui-accent);
+  --accent-text: var(--ui-accent-text);
+  --accent-tint: color-mix(in srgb, var(--ui-accent) 16%, transparent);
+  --accent-border: var(--ui-accent-border);
+  --accent-on: var(--ui-accent-on);
+  --focus-ring: var(--ui-focus-ring);
   --danger-text: #ff7b72;
   --danger-fill: #c7353c;
   --danger-on: #ffffff;
@@ -69,12 +74,17 @@
   /* The legacy cyan is unreadable on a near-white panel. Decorative accents
      stay saturated; small text, links and selected chips use the darker
      accent-text tier. */
-  --accent: #0969da;
-  --accent-text: #0757b8;
-  --accent-tint: rgba(9, 105, 218, 0.14);
-  --accent-border: rgba(7, 87, 184, 0.72);
-  --accent-on: #ffffff;
-  --focus-ring: #0969da;
+  --ui-accent: #0969da;
+  --ui-accent-text: #0757b8;
+  --ui-accent-border: rgba(7, 87, 184, 0.72);
+  --ui-accent-on: #ffffff;
+  --ui-focus-ring: #0969da;
+  --accent: var(--ui-accent);
+  --accent-text: var(--ui-accent-text);
+  --accent-tint: color-mix(in srgb, var(--ui-accent) 14%, transparent);
+  --accent-border: var(--ui-accent-border);
+  --accent-on: var(--ui-accent-on);
+  --focus-ring: var(--ui-focus-ring);
   --danger-text: #b42318;
   --danger-fill: #b42318;
   --danger-on: #ffffff;

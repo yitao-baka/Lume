@@ -45,12 +45,30 @@ impl Settings {
     /// Enforce cross-field value normalization after any deserialization
     /// boundary (read, patch merge, import, restore, full save).
     fn normalize(&mut self) {
-        self.appearance.settings_skin =
-            normalize_settings_skin(&self.appearance.settings_skin).to_string();
-        self.appearance.settings_accent =
-            normalize_settings_accent(&self.appearance.settings_accent);
-        self.appearance.settings_accent_custom =
-            normalize_settings_accent(&self.appearance.settings_accent_custom);
+        // New fields win whenever present. Legacy fields are consulted only
+        // when the corresponding new key is absent, so an explicitly empty
+        // accent remains empty instead of reviving an old color.
+        let skin = self
+            .appearance
+            .skin
+            .take()
+            .or_else(|| self.appearance.legacy_settings_skin.take())
+            .unwrap_or_default();
+        let accent = self
+            .appearance
+            .accent
+            .take()
+            .or_else(|| self.appearance.legacy_settings_accent.take())
+            .unwrap_or_default();
+        let accent_custom = self
+            .appearance
+            .accent_custom
+            .take()
+            .or_else(|| self.appearance.legacy_settings_accent_custom.take())
+            .unwrap_or_default();
+        self.appearance.skin = Some(normalize_skin(&skin).to_string());
+        self.appearance.accent = Some(normalize_accent(&accent));
+        self.appearance.accent_custom = Some(normalize_accent(&accent_custom));
     }
 }
 
@@ -171,21 +189,27 @@ pub struct Appearance {
     /// `"system"` | `"dark"` | `"light"` — launcher + settings theme.
     #[serde(default = "default_color_mode")]
     pub color_mode: String,
-    /// Settings-window visual skin: `"quiet"` (default) | `"chromatic"`.
-    /// Unknown values normalize back to `quiet` at every deserialization
-    /// boundary, so a hand-edited/imported file can never leave the settings
-    /// webview unstyled.
-    #[serde(default = "default_settings_skin")]
-    pub settings_skin: String,
-    /// Settings-window accent: empty follows the skin, otherwise a normalized
-    /// lowercase `#rrggbb`. This value never affects the launcher or plugins.
+    /// Application-wide visual skin: `"quiet"` (default) | `"chromatic"`.
+    /// Option distinguishes a missing new key from an explicit value so old
+    /// `settings_skin` data can migrate without overriding a new choice.
     #[serde(default)]
-    pub settings_accent: String,
-    /// The color the user last picked in the custom picker — remembered
-    /// independently of `settings_accent` (picking a preset must not rewrite
-    /// it). Empty = the picker shows pure white.
+    pub skin: Option<String>,
+    /// Application-wide accent: empty follows the skin, otherwise a
+    /// normalized lowercase `#rrggbb`.
     #[serde(default)]
-    pub settings_accent_custom: String,
+    pub accent: Option<String>,
+    /// The color last picked in the custom picker. Empty = pure-white picker
+    /// fallback; selecting a preset never rewrites this memory.
+    #[serde(default)]
+    pub accent_custom: Option<String>,
+    /// Read-only compatibility inputs. They migrate during `normalize()` and
+    /// are dropped by the next write.
+    #[serde(default, rename = "settings_skin", skip_serializing)]
+    legacy_settings_skin: Option<String>,
+    #[serde(default, rename = "settings_accent", skip_serializing)]
+    legacy_settings_accent: Option<String>,
+    #[serde(default, rename = "settings_accent_custom", skip_serializing)]
+    legacy_settings_accent_custom: Option<String>,
     /// Entry-box edge length in px — the square box wrapping each main-menu
     /// entry (grid columns adapt to fit).
     #[serde(default = "default_entry_size")]
@@ -260,6 +284,25 @@ pub struct Appearance {
     pub idle_reset_minutes: u32,
 }
 
+impl Appearance {
+    /// Normalized application skin. `normalize()` keeps this populated for
+    /// every settings object crossing a public boundary; the fallback covers
+    /// directly constructed structs in tests and callers.
+    pub fn skin(&self) -> &str {
+        self.skin.as_deref().unwrap_or("quiet")
+    }
+
+    /// Normalized application accent (`""` = follow the skin).
+    pub fn accent(&self) -> &str {
+        self.accent.as_deref().unwrap_or("")
+    }
+
+    /// Last custom-picker color (`""` = the picker shows white).
+    pub fn accent_custom(&self) -> &str {
+        self.accent_custom.as_deref().unwrap_or("")
+    }
+}
+
 /// Default last page: the Navigate main menu.
 fn default_last_page() -> String {
     "apps".into()
@@ -285,14 +328,14 @@ fn default_color_mode() -> String {
     "system".into()
 }
 
-fn default_settings_skin() -> String {
+fn default_skin() -> String {
     "quiet".into()
 }
 
 /// Normalize the settings-window skin. Kept as a string (not a strict enum)
 /// so future skin names in external files degrade to the default instead of
 /// failing the whole settings document.
-pub fn normalize_settings_skin(value: &str) -> &'static str {
+pub fn normalize_skin(value: &str) -> &'static str {
     match value {
         "chromatic" => "chromatic",
         _ => "quiet",
@@ -301,7 +344,7 @@ pub fn normalize_settings_skin(value: &str) -> &'static str {
 
 /// Normalize the settings-window accent. Only literal 3- or 6-digit hex colors
 /// are accepted; everything else falls back to the empty "follow skin" value.
-fn normalize_settings_accent(value: &str) -> String {
+fn normalize_accent(value: &str) -> String {
     let raw = value.trim();
     if raw.is_empty() {
         return String::new();
@@ -588,9 +631,12 @@ impl Default for Settings {
             appearance: Appearance {
                 language: "system".into(),
                 color_mode: "system".into(),
-                settings_skin: "quiet".into(),
-                settings_accent: String::new(),
-                settings_accent_custom: String::new(),
+                skin: Some(default_skin()),
+                accent: Some(String::new()),
+                accent_custom: Some(String::new()),
+                legacy_settings_skin: None,
+                legacy_settings_accent: None,
+                legacy_settings_accent_custom: None,
                 entry_size: 110,
                 round_app_icons: false,
                 window_width: 720,
@@ -1317,59 +1363,63 @@ mod tests {
         assert_eq!(next.index.cache_refresh_interval_minutes, 5);
     }
 
-    /// Settings-window skin: old files default to quiet, unknown values are
-    /// normalized at every read/merge boundary, and the two known values
-    /// round-trip without disturbing other appearance fields.
+    /// Application skin: absent new keys migrate from the old settings-window
+    /// field, unknown values fall back to quiet, and known values round-trip.
     #[test]
-    fn settings_skin_defaults_normalizes_and_round_trips() {
+    fn skin_defaults_migrates_and_round_trips() {
         let base = temp_base("settings-skin");
         ensure_settings_files(&base).unwrap();
 
-        // Missing key (pre-skin settings.toml) → quiet.
-        let full = fs::read_to_string(settings_path(&base)).unwrap();
-        let legacy = full
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("settings_skin ="))
-            .collect::<Vec<_>>()
-            .join("\n");
-        fs::write(settings_path(&base), legacy).unwrap();
-        assert_eq!(read_settings(&base).appearance.settings_skin, "quiet");
+        let defaults = read_settings(&base);
+        assert_eq!(defaults.appearance.skin(), "quiet");
+        let factory = fs::read_to_string(default_path(&base)).unwrap();
+        assert!(factory.contains("skin = \"quiet\""));
+        assert!(!factory.contains("settings_skin ="));
 
-        // Unknown value must not fail deserialization; it normalizes to quiet.
+        // Legacy files used `settings_skin`; it seeds the new field.
+        let full = fs::read_to_string(settings_path(&base)).unwrap();
+        let legacy = full.replace(
+            "skin = \"quiet\"",
+            "settings_skin = \"chromatic\"",
+        );
+        fs::write(settings_path(&base), legacy).unwrap();
+        assert_eq!(read_settings(&base).appearance.skin(), "chromatic");
+
+        // An unknown new value falls back to quiet without failing the rest
+        // of the settings document.
         let unknown = full.replace(
-            "settings_skin = \"quiet\"",
-            "settings_skin = \"neon-from-the-future\"",
+            "skin = \"quiet\"",
+            "skin = \"neon-from-the-future\"",
         );
         fs::write(settings_path(&base), unknown).unwrap();
         let loaded = read_settings(&base);
-        assert_eq!(loaded.appearance.settings_skin, "quiet");
+        assert_eq!(loaded.appearance.skin(), "quiet");
+        assert_eq!(loaded.appearance.color_mode, "system");
 
-        // Known optional skin round-trips, and a patch with an unknown value
-        // is normalized before it can reach the settings window.
         let mut next = loaded;
-        next.appearance.settings_skin = "chromatic".into();
+        next.appearance.skin = Some("chromatic".into());
         write_settings_light(&base, &next).unwrap();
-        assert_eq!(read_settings(&base).appearance.settings_skin, "chromatic");
+        assert_eq!(read_settings(&base).appearance.skin(), "chromatic");
         let merged = merge_settings_patch(
             &next,
-            serde_json::json!({ "appearance": { "settings_skin": "not-a-skin" } }),
+            serde_json::json!({ "appearance": { "skin": "not-a-skin" } }),
         )
         .unwrap();
-        assert_eq!(merged.appearance.settings_skin, "quiet");
+        assert_eq!(merged.appearance.skin(), "quiet");
         assert_eq!(merged.appearance.color_mode, next.appearance.color_mode);
         fs::remove_dir_all(&base).ok();
     }
 
-    /// Settings-window accent accepts only opaque 3/6-digit hex values,
-    /// normalizes them, and degrades malformed input to the follow-skin value
-    /// without disturbing the rest of the appearance section.
+    /// Application accent accepts only opaque 3/6-digit hex values, migrates
+    /// the old settings-window keys, and keeps an explicit empty new value
+    /// from reviving legacy data.
     #[test]
-    fn settings_accent_defaults_normalizes_and_round_trips() {
-        assert_eq!(normalize_settings_accent(""), "");
-        assert_eq!(normalize_settings_accent("   "), "");
-        assert_eq!(normalize_settings_accent("#5cf"), "#55ccff");
-        assert_eq!(normalize_settings_accent("AABBCC"), "#aabbcc");
-        assert_eq!(normalize_settings_accent("#AbCdEf"), "#abcdef");
+    fn accent_defaults_migrates_and_round_trips() {
+        assert_eq!(normalize_accent(""), "");
+        assert_eq!(normalize_accent("   "), "");
+        assert_eq!(normalize_accent("#5cf"), "#55ccff");
+        assert_eq!(normalize_accent("AABBCC"), "#aabbcc");
+        assert_eq!(normalize_accent("#AbCdEf"), "#abcdef");
         for invalid in [
             "#abcd",
             "#aabbccdd",
@@ -1379,63 +1429,70 @@ mod tests {
             "#12345g",
             "url(https://example.com/x)",
         ] {
-            assert_eq!(normalize_settings_accent(invalid), "", "{invalid}");
+            assert_eq!(normalize_accent(invalid), "", "{invalid}");
         }
 
         let base = temp_base("settings-accent");
         ensure_settings_files(&base).unwrap();
         let defaults = read_settings(&base);
-        assert_eq!(defaults.appearance.settings_accent, "");
-        assert_eq!(defaults.appearance.settings_accent_custom, "");
+        assert_eq!(defaults.appearance.accent(), "");
+        assert_eq!(defaults.appearance.accent_custom(), "");
         let factory = fs::read_to_string(default_path(&base)).unwrap();
-        assert!(factory.contains("settings_accent = \"\""));
-        assert!(factory.contains("settings_accent_custom = \"\""));
+        assert!(factory.contains("accent = \"\""));
+        assert!(factory.contains("accent_custom = \"\""));
+        assert!(!factory.contains("settings_accent ="));
 
-        // Older files without the keys read as the follow-skin value.
+        // Legacy values migrate into the new fields.
         let full = fs::read_to_string(settings_path(&base)).unwrap();
         let legacy = full
-            .lines()
-            .filter(|line| {
-                !line.trim_start().starts_with("settings_accent =")
-                    && !line.trim_start().starts_with("settings_accent_custom =")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+            .replace("accent = \"\"", "settings_accent = \"#6F7CFF\"")
+            .replace(
+                "accent_custom = \"\"",
+                "settings_accent_custom = \"#ABCDEF\"",
+            );
         fs::write(settings_path(&base), legacy).unwrap();
-        assert_eq!(read_settings(&base).appearance.settings_accent, "");
-        assert_eq!(read_settings(&base).appearance.settings_accent_custom, "");
+        let migrated = read_settings(&base);
+        assert_eq!(migrated.appearance.accent(), "#6f7cff");
+        assert_eq!(migrated.appearance.accent_custom(), "#abcdef");
 
-        // Valid values round-trip; an invalid patch does not fail the document
-        // and only clears the accent field.
-        let mut next = read_settings(&base);
-        next.appearance.settings_accent = "#6F7CFF".into();
-        next.appearance.settings_accent_custom = "#ABCDEF".into();
-        next.appearance.settings_skin = "chromatic".into();
+        // A present empty new accent wins over a legacy non-empty value.
+        let explicit_empty = full
+            .replace("accent = \"\"", "accent = \"\"\nsettings_accent = \"#123456\"")
+            .replace(
+                "accent_custom = \"\"",
+                "accent_custom = \"\"\nsettings_accent_custom = \"#abcdef\"",
+            );
+        fs::write(settings_path(&base), explicit_empty).unwrap();
+        let empty = read_settings(&base);
+        assert_eq!(empty.appearance.accent(), "");
+        assert_eq!(empty.appearance.accent_custom(), "");
+
+        let mut next = migrated;
+        next.appearance.accent = Some("#6F7CFF".into());
+        next.appearance.accent_custom = Some("#ABCDEF".into());
+        next.appearance.skin = Some("chromatic".into());
         next.appearance.color_mode = "light".into();
         write_settings_light(&base, &next).unwrap();
-        assert_eq!(read_settings(&base).appearance.settings_accent, "#6f7cff");
-        assert_eq!(
-            read_settings(&base).appearance.settings_accent_custom,
-            "#abcdef"
-        );
+        let round_trip = read_settings(&base);
+        assert_eq!(round_trip.appearance.accent(), "#6f7cff");
+        assert_eq!(round_trip.appearance.accent_custom(), "#abcdef");
+
         let merged = merge_settings_patch(
             &next,
-            serde_json::json!({ "appearance": { "settings_accent": "rgb(0 0 0)" } }),
+            serde_json::json!({ "appearance": { "accent": "rgb(0 0 0)" } }),
         )
         .unwrap();
-        assert_eq!(merged.appearance.settings_accent, "");
-        // Picking a preset rewrites only the applied accent — the remembered
-        // custom color survives the patch.
-        assert_eq!(merged.appearance.settings_accent_custom, "#abcdef");
-        assert_eq!(merged.appearance.settings_skin, "chromatic");
+        assert_eq!(merged.appearance.accent(), "");
+        assert_eq!(merged.appearance.accent_custom(), "#abcdef");
+        assert_eq!(merged.appearance.skin(), "chromatic");
         assert_eq!(merged.appearance.color_mode, "light");
         let cleared = merge_settings_patch(
             &next,
-            serde_json::json!({ "appearance": { "settings_accent_custom": "nope" } }),
+            serde_json::json!({ "appearance": { "accent_custom": "nope" } }),
         )
         .unwrap();
-        assert_eq!(cleared.appearance.settings_accent_custom, "");
-        assert_eq!(cleared.appearance.settings_accent, "#6f7cff");
+        assert_eq!(cleared.appearance.accent_custom(), "");
+        assert_eq!(cleared.appearance.accent(), "#6f7cff");
         fs::remove_dir_all(&base).ok();
     }
 

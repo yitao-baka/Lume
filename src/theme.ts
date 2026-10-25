@@ -23,6 +23,7 @@ let systemMedia: MediaQueryList | null = null;
 /** Reactive color-mode accessor; reads track flips. Outside a Solid tracking
  * scope (Rust-facing pushes, rasterizers) it is simply the current value. */
 const [themeModeSignal, setThemeModeSignal] = createSignal<"light" | "dark">("dark");
+const modeListeners = new Set<(mode: "light" | "dark") => void>();
 
 /** The document's current color mode, reactive. */
 export function themeMode(): "light" | "dark" {
@@ -33,6 +34,17 @@ export function themeMode(): "light" | "dark" {
 function writeColorMode(mode: "light" | "dark"): void {
   document.documentElement.dataset.theme = mode;
   setThemeModeSignal(mode);
+  for (const listener of modeListeners) listener(mode);
+}
+
+/** Subscribe to resolved light/dark changes. Skin surfaces and custom accent
+ * contrast both derive from the mode, so they refresh through this hook even
+ * when `"system"` follows the OS without a settings write. */
+export function onThemeModeChange(
+  listener: (mode: "light" | "dark") => void,
+): () => void {
+  modeListeners.add(listener);
+  return () => modeListeners.delete(listener);
 }
 
 /**

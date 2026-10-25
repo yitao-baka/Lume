@@ -191,7 +191,11 @@ pub async fn plugin_window_open(
     // dark background (#121212) instead of anything the host page paints. The
     // color is the PLUGIN's effective surface, so a dark-pinned plugin on a
     // light launcher does not open on a light canvas for a frame.
-    let (r, g, b) = crate::window::panel_surface_rgb_for(&app, plugin_mode);
+    let (r, g, b) = crate::window::panel_surface_rgb_for(
+        &app,
+        snapshot.appearance.skin(),
+        plugin_mode,
+    );
     let mut builder = WebviewWindowBuilder::new(
         &app,
         &label,
@@ -332,7 +336,11 @@ pub fn set_plugin_color_mode(
     if let Some(win) = app.get_webview_window(&window_label(&id)) {
         let snapshot = app.state::<SettingsState>().current();
         let effective = snapshot.plugins.color_mode_for(&id, &snapshot.appearance.color_mode);
-        let (r, g, b) = crate::window::panel_surface_rgb(&win, effective);
+        let (r, g, b) = crate::window::panel_surface_rgb(
+            &win,
+            snapshot.appearance.skin(),
+            effective,
+        );
         let _ = win.set_background_color(Some(tauri::window::Color(r, g, b, 255)));
         let icons = app.state::<PluginIcons>();
         if !appicon::apply_plugin_window(&win, &icons, &id, effective) {

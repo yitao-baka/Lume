@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "default": "quiet",
+  "skins": {
+    "quiet": {
+      "surfaces": {
+        "dark": "#1e1e20",
+        "light": "#fbfbfd"
+      },
+      "accentAnchors": {
+        "dark": "#574e52",
+        "light": "#d1ded4"
+      },
+      "accents": {
+        "dark": "#5ac8fa",
+        "light": "#0969da"
+      }
+    },
+    "chromatic": {
+      "surfaces": {
+        "dark": "#1e1e20",
+        "light": "#f3efe6"
+      },
+      "accentAnchors": {
+        "dark": "#574e52",
+        "light": "#d1ded4"
+      },
+      "accents": {
+        "dark": "#5ac8fa",
+        "light": "#64796d"
+      }
+    }
+  }
+}

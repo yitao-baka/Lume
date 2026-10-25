@@ -164,7 +164,11 @@ pub fn run() {
             // window::apply_settings; the shadow and the Win11 rounded corners
             // stay.
             if let Some(mw) = app.get_webview_window("main") {
-                window::set_panel_frame_border(&mw, &current.appearance.color_mode);
+                window::set_panel_frame_border(
+                    &mw,
+                    current.appearance.skin(),
+                    &current.appearance.color_mode,
+                );
             }
 
             // Settings window (replaces tauri.conf.json windows[1]). Frameless
@@ -328,11 +332,17 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 win.on_window_event(move |event| {
                     if let WindowEvent::ThemeChanged(_) = event {
-                        let mode = app_handle
+                        let (skin, mode) = app_handle
                             .try_state::<settings::SettingsState>()
-                            .map(|s| s.current().appearance.color_mode.clone())
-                            .unwrap_or_else(|| "system".into());
-                        window::set_panel_frame_border(&themed, &mode);
+                            .map(|s| {
+                                let current = s.current();
+                                (
+                                    current.appearance.skin().to_string(),
+                                    current.appearance.color_mode.clone(),
+                                )
+                            })
+                            .unwrap_or_else(|| ("quiet".into(), "system".into()));
+                        window::set_panel_frame_border(&themed, &skin, &mode);
                         appicon::apply(&app_handle, &mode);
                     }
                 });

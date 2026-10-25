@@ -2,6 +2,7 @@
 //! (src-tauri/src/settings.rs) for the frontend.
 
 import type { JSX } from "solid-js";
+import type { SkinId } from "../skins/registry";
 
 /** A confirm-dialog request — the settings window's shared modal contract:
  * `Settings.tsx` renders the dialog, panes open it through `requestConfirm`.
@@ -18,9 +19,6 @@ export interface ConfirmState {
   action: () => Promise<void>;
 }
 
-/** Settings-window-only visual language (docs/SETTINGS_SKIN_SWITCH.md). */
-export type SettingsSkin = "quiet" | "chromatic";
-
 /** The full settings surface, matching the schema in `docs/SETTINGS.md`. */
 export interface SettingsData {
   meta: { version: number };
@@ -29,13 +27,13 @@ export interface SettingsData {
     language: string;
     /** `"system"` | `"dark"` | `"light"` — launcher + settings theme. */
     color_mode: string;
-    /** `"quiet"` | `"chromatic"` — settings window only. */
-    settings_skin: SettingsSkin;
-    /** Settings-window accent: empty follows the skin, otherwise #rrggbb. */
-    settings_accent: string;
+    /** `"quiet"` | `"chromatic"` — application-wide visual language. */
+    skin: SkinId;
+    /** Application-wide accent: empty follows the skin, otherwise #rrggbb. */
+    accent: string;
     /** The color the custom picker last stored — remembered independently of
-     * `settings_accent`. Empty = the picker shows pure white. */
-    settings_accent_custom: string;
+     * `accent`. Empty = the picker shows pure white. */
+    accent_custom: string;
     /** Entry-box edge length in px — the box wrapping each main-menu entry. */
     entry_size: number;
     /** Crop Navigation result icons to a circle (default off — show the
@@ -180,9 +178,9 @@ export const DEFAULT_SETTINGS: SettingsData = {
   appearance: {
     language: "system",
     color_mode: "system",
-    settings_skin: "quiet",
-    settings_accent: "",
-    settings_accent_custom: "",
+    skin: "quiet",
+    accent: "",
+    accent_custom: "",
     entry_size: 110,
     round_app_icons: false,
     window_width: 720,

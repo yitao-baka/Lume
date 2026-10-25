@@ -57,14 +57,11 @@ import {
   type SectionId,
   type SettingDescriptor,
 } from "./catalog";
-import { applySettingsSkin } from "./skin";
-import { applySettingsAccent, normalizeSettingsAccent } from "./accent";
+import { applySkin } from "../skins/runtime";
+import { applyAccent, normalizeAccent } from "../skins/accent";
 import type { PluginManifest } from "../plugins/types";
 import { settingsError } from "./errors";
 import "./skins/base.css";
-import "./skins/quiet.css";
-import "./skins/chromatic.css";
-import "./skins/accent.css";
 
 const SECTION_ICONS: Record<SectionId, string> = {
   appearance: appearanceIcon,
@@ -125,7 +122,7 @@ function patchKeys(patch: SettingsPatch): string[] {
 
 function saveDelayFor(patch: SettingsPatch): number {
   const keys = patchKeys(patch);
-  if (keys.some((key) => key.endsWith("settings_accent"))) {
+  if (keys.some((key) => key.endsWith("accent"))) {
     return 250;
   }
   if (
@@ -254,11 +251,11 @@ export default function Settings() {
       .then((loaded) => {
         if (sequence !== loadSeq) return;
         const normalized = clone(loaded);
-        normalized.appearance.settings_accent = normalizeSettingsAccent(
-          normalized.appearance.settings_accent,
+        normalized.appearance.accent = normalizeAccent(
+          normalized.appearance.accent,
         );
-        normalized.appearance.settings_accent_custom = normalizeSettingsAccent(
-          normalized.appearance.settings_accent_custom,
+        normalized.appearance.accent_custom = normalizeAccent(
+          normalized.appearance.accent_custom,
         );
         batch(() => {
           setSettings(normalized);
@@ -269,8 +266,8 @@ export default function Settings() {
           setAccentError(null);
           setLastUndo(null);
           failedSnapshot = null;
-          applySettingsSkin(normalized.appearance.settings_skin);
-          applySettingsAccent(normalized.appearance.settings_accent);
+          applySkin(normalized.appearance.skin);
+          applyAccent(normalized.appearance.accent);
         });
       })
       .catch((error) => {
@@ -329,15 +326,15 @@ export default function Settings() {
       batch(() => {
         setSaveState("error");
         setSaveError(message);
-        if (keys.includes("appearance.settings_skin")) {
-          setSkinError(t("settingsSkinSaveFailed"));
+        if (keys.includes("appearance.skin")) {
+          setSkinError(t("appearanceSkinSaveFailed"));
         }
-        if (keys.includes("appearance.settings_accent")) {
-          setAccentError(t("settingsAccentSaveFailed"));
+        if (keys.includes("appearance.accent")) {
+          setAccentError(t("appearanceAccentSaveFailed"));
         }
         setSettings(clone(base));
-        applySettingsSkin(base.appearance.settings_skin);
-        applySettingsAccent(base.appearance.settings_accent);
+        applySkin(base.appearance.skin);
+        applyAccent(base.appearance.accent);
       });
       return false;
     }
@@ -362,8 +359,8 @@ export default function Settings() {
     failedSnapshot = null;
     setAccentError(null);
     setSettings(clone(snapshot));
-    applySettingsSkin(snapshot.appearance.settings_skin);
-    applySettingsAccent(snapshot.appearance.settings_accent);
+    applySkin(snapshot.appearance.skin);
+    applyAccent(snapshot.appearance.accent);
     setSaveState("saving");
     await saveNow();
   }
@@ -372,14 +369,14 @@ export default function Settings() {
     const current = settings();
     if (!current) return;
     const normalized: Partial<SettingsData["appearance"]> = { ...patch };
-    if ("settings_accent" in normalized) {
-      normalized.settings_accent = normalizeSettingsAccent(normalized.settings_accent);
+    if ("accent" in normalized) {
+      normalized.accent = normalizeAccent(normalized.accent);
     }
     const focusBefore = document.activeElement as HTMLElement | null;
     const scrollBefore = bodyEl?.scrollTop ?? 0;
-    if (normalized.settings_skin) applySettingsSkin(normalized.settings_skin);
-    if ("settings_accent" in normalized) {
-      applySettingsAccent(normalized.settings_accent);
+    if (normalized.skin) applySkin(normalized.skin);
+    if ("accent" in normalized) {
+      applyAccent(normalized.accent);
     }
     const accentFocusValue = focusBefore?.matches(".settings-accent-option")
       ? (focusBefore as HTMLElement).dataset.accentValue
@@ -387,20 +384,20 @@ export default function Settings() {
     const accentFocusInput = focusBefore?.classList.contains("settings-accent-input") ?? false;
     setSettings({ ...current, appearance: { ...current.appearance, ...normalized } });
     queueSave({ appearance: normalized } as SettingsPatch);
-    if ("settings_accent" in normalized && (accentFocusValue || accentFocusInput)) {
+    if ("accent" in normalized && (accentFocusValue || accentFocusInput)) {
       const restoreAccentFocus = () => {
         const active = document.activeElement as HTMLElement | null;
         if (active && active !== document.body && active.isConnected) return;
         let target: HTMLElement | null = null;
         if (accentFocusInput) {
           target = document.querySelector<HTMLElement>(
-            '[data-setting-id="appearance.settings_accent"] .settings-accent-input',
+            '[data-setting-id="appearance.accent"] .settings-accent-input',
           );
         } else if (accentFocusValue) {
           target =
             Array.from(
               document.querySelectorAll<HTMLElement>(
-                '[data-setting-id="appearance.settings_accent"] .settings-accent-option',
+                '[data-setting-id="appearance.accent"] .settings-accent-option',
               ),
             ).find((button) => button.dataset.accentValue === accentFocusValue) ?? null;
         }
@@ -410,11 +407,11 @@ export default function Settings() {
       setTimeout(restoreAccentFocus, 150);
       setTimeout(restoreAccentFocus, 420);
     }
-    if (normalized.settings_skin) {
+    if (normalized.skin) {
       const restoreSkinFocus = () => {
         if (bodyEl) bodyEl.scrollTop = scrollBefore;
         const currentSelected = document.querySelector<HTMLElement>(
-          '[data-setting-id="appearance.settings_skin"] [role="radio"][aria-checked="true"]',
+          '[data-setting-id="appearance.skin"] [role="radio"][aria-checked="true"]',
         );
         const target = focusBefore?.isConnected ? focusBefore : currentSelected;
         target?.focus({ preventScroll: true });
@@ -471,8 +468,8 @@ export default function Settings() {
     setLastUndo(null);
     if (undoTimer) clearTimeout(undoTimer);
     setSettings(next);
-    applySettingsSkin(next.appearance.settings_skin);
-    applySettingsAccent(next.appearance.settings_accent);
+    applySkin(next.appearance.skin);
+    applyAccent(next.appearance.accent);
     queueSave(inverse);
   }
 
@@ -595,11 +592,11 @@ export default function Settings() {
           await invoke("restore_default");
           const loaded = await invoke<SettingsData>("get_settings");
           const normalized = clone(loaded);
-          normalized.appearance.settings_accent = normalizeSettingsAccent(
-            normalized.appearance.settings_accent,
+          normalized.appearance.accent = normalizeAccent(
+            normalized.appearance.accent,
           );
-          normalized.appearance.settings_accent_custom = normalizeSettingsAccent(
-            normalized.appearance.settings_accent_custom,
+          normalized.appearance.accent_custom = normalizeAccent(
+            normalized.appearance.accent_custom,
           );
           batch(() => {
             setSettings(normalized);
@@ -609,8 +606,8 @@ export default function Settings() {
             setSkinError(null);
             setAccentError(null);
             setLastUndo(null);
-            applySettingsSkin(normalized.appearance.settings_skin);
-            applySettingsAccent(normalized.appearance.settings_accent);
+            applySkin(normalized.appearance.skin);
+            applyAccent(normalized.appearance.accent);
           });
         },
       },
@@ -693,7 +690,7 @@ export default function Settings() {
     if (!value) return;
     setLocale(resolveLocale(value.appearance.language));
     applyColorMode(value.appearance.color_mode);
-    applySettingsSkin(value.appearance.settings_skin);
+    applySkin(value.appearance.skin);
     document.documentElement.dataset.settingsSaveState = saveState();
   });
 
@@ -703,7 +700,7 @@ export default function Settings() {
     const value = settings();
     if (!value) return;
     themeMode();
-    applySettingsAccent(value.appearance.settings_accent);
+    applyAccent(value.appearance.accent);
   });
 
   createEffect(() => {
@@ -975,7 +972,7 @@ export default function Settings() {
                   pluginSearchQuery={pluginDeepQuery()}
                   skinError={skinError()}
                   accentError={accentError()}
-                  onAccentPreview={(value) => applySettingsAccent(value)}
+                  onAccentPreview={(value) => applyAccent(value)}
                   onNavigate={navigateTo}
                   requestConfirm={openConfirm}
                   clipboardPluginEnabled={

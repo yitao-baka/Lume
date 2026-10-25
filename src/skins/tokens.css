@@ -1,0 +1,10 @@
+/* Shared semantic surface and geometry tokens. Skin token files override the
+   app-level values; custom accent variables are written inline at runtime. */
+:root {
+  --ui-line: var(--border, rgba(255, 255, 255, 0.08));
+  --ui-line-strong: var(--border-strong, rgba(255, 255, 255, 0.16));
+  --ui-control-radius: 8px;
+  --ui-panel-radius: 10px;
+  --ui-line-width: 1px;
+  --ui-accent-raw: var(--ui-accent);
+}

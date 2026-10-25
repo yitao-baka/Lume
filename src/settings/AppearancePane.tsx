@@ -6,11 +6,13 @@ import { createEffect, createMemo, createSignal, For, Show, type JSX } from "sol
 import { t } from "../i18n";
 import { themeMode } from "../theme";
 import {
-  normalizeSettingsAccent,
-  SETTINGS_ACCENT_CUSTOM_FALLBACK,
-  settingsAccentPresets,
-} from "./accent";
-import type { SettingsData, SettingsSkin } from "./types";
+  accentPresets,
+  ACCENT_CUSTOM_FALLBACK,
+  nativeAccent,
+  normalizeAccent,
+} from "../skins/accent";
+import type { SkinId } from "../skins/registry";
+import type { SettingsData } from "./types";
 import { SegmentedControl, SettingGroup, SettingRow } from "./controls";
 
 const LANGUAGES = [
@@ -88,37 +90,6 @@ function RadioCards(props: {
   );
 }
 
-function rgbStringToHex(value: string): string {
-  const match = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(value.trim());
-  if (!match) return "";
-  const channels = match.slice(1, 4).map((part) => Math.min(255, Number(part)));
-  return normalizeSettingsAccent(
-    `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`,
-  );
-}
-
-/**
- * The current skin + mode's own accent color. Read from `<html>`: the
- * `data-settings-accent` override is scoped to `body.settings-window` and
- * `.settings`, so this stays the skin default even while another color is
- * applied — the 默认 swatch must not follow the color in use.
- */
-function skinDefaultAccent(): string {
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue("--settings-structure")
-    .trim();
-  if (!raw) return "#5ac8fa";
-  const direct = normalizeSettingsAccent(raw);
-  if (direct) return direct;
-  const probe = document.createElement("span");
-  probe.style.color = raw;
-  probe.style.display = "none";
-  document.body.appendChild(probe);
-  const resolved = getComputedStyle(probe).color;
-  probe.remove();
-  return rgbStringToHex(resolved) || "#5ac8fa";
-}
-
 function AccentPreview() {
   return (
     <div class="settings-accent-preview" aria-hidden="true">
@@ -128,7 +99,7 @@ function AccentPreview() {
         <span class="settings-accent-preview-copy">Lume</span>
       </span>
       <span class="settings-accent-preview-switch"><span /></span>
-      <span class="settings-accent-preview-text">{t("settingsAccentPreviewLabel")}</span>
+      <span class="settings-accent-preview-text">{t("appearanceAccentPreviewLabel")}</span>
     </div>
   );
 }
@@ -137,21 +108,21 @@ function AccentPalette(props: {
   value: string;
   /** The color the custom picker stored ("" = never picked one). */
   custom: string;
-  skin: SettingsSkin;
+  skin: SkinId;
   onPreview: (value: string) => void;
   onChange: (value: string) => void;
   onCustomChange: (value: string) => void;
 }) {
   let buttons: HTMLButtonElement[] = [];
   const [preview, setPreview] = createSignal("");
-  const accent = () => normalizeSettingsAccent(props.value);
-  const presets = () => settingsAccentPresets(props.skin);
+  const accent = () => normalizeAccent(props.value);
+  const presets = () => accentPresets(props.skin);
   const options = createMemo(() => {
     // The 默认 swatch shows the skin's own accent, which is mode-specific:
     // reading themeMode() here keeps it in step with a light/dark flip.
     themeMode();
     return [
-      { value: "", label: t("settingsAccentDefault"), swatch: skinDefaultAccent() },
+      { value: "", label: t("appearanceAccentDefault"), swatch: nativeAccent(props.skin) },
       ...presets().map((preset) => ({
         value: preset.value,
         label: t(preset.labelKey),
@@ -172,8 +143,8 @@ function AccentPalette(props: {
   // The picker owns its own value: the remembered custom color, or — until
   // the user picks one — pure white. It never mirrors the preset in use.
   const customColor = () =>
-    normalizeSettingsAccent(props.custom) || SETTINGS_ACCENT_CUSTOM_FALLBACK;
-  const shownCustomColor = () => normalizeSettingsAccent(preview()) || customColor();
+    normalizeAccent(props.custom) || ACCENT_CUSTOM_FALLBACK;
+  const shownCustomColor = () => normalizeAccent(preview()) || customColor();
   createEffect(() => {
     props.value;
     setPreview("");
@@ -187,7 +158,7 @@ function AccentPalette(props: {
   return (
     <div class="settings-accent-control">
       <AccentPreview />
-      <div class="settings-accent-options" role="radiogroup" aria-label={t("settingsAccent")}>
+      <div class="settings-accent-options" role="radiogroup" aria-label={t("appearanceAccent")}>
         <For each={options()}>
           {(option, index) => (
             <button
@@ -204,7 +175,7 @@ function AccentPalette(props: {
                 requestAnimationFrame(() => {
                   document
                     .querySelector<HTMLElement>(
-                      `[data-setting-id="appearance.settings_accent"] [data-accent-value="${option.value || "default"}"]`,
+                      `[data-setting-id="appearance.accent"] [data-accent-value="${option.value || "default"}"]`,
                     )
                     ?.focus();
                 });
@@ -240,20 +211,20 @@ function AccentPalette(props: {
       <div
         class="settings-accent-custom"
         classList={{ active: customActive() }}
-        title={`${t("settingsAccentCustom")}: ${shownCustomColor()}`}
+        title={`${t("appearanceAccentCustom")}: ${shownCustomColor()}`}
       >
         <input
           class="settings-accent-input"
           type="color"
           value={shownCustomColor()}
-          aria-label={t("settingsAccentCustom")}
+          aria-label={t("appearanceAccentCustom")}
           onInput={(event) => {
-            const value = normalizeSettingsAccent(event.currentTarget.value);
+            const value = normalizeAccent(event.currentTarget.value);
             setPreview(value);
             props.onPreview(value);
           }}
           onChange={(event) => {
-            const value = normalizeSettingsAccent(event.currentTarget.value);
+            const value = normalizeAccent(event.currentTarget.value);
             setPreview("");
             if (value) props.onCustomChange(value);
           }}
@@ -266,7 +237,7 @@ function AccentPalette(props: {
           aria-pressed={customActive()}
           onClick={() => props.onCustomChange(customColor())}
         >
-          <span class="settings-accent-custom-label">{t("settingsAccentCustom")}</span>
+          <span class="settings-accent-custom-label">{t("appearanceAccentCustom")}</span>
           <code>{shownCustomColor()}</code>
         </button>
       </div>
@@ -325,29 +296,29 @@ export default function AppearancePane(props: {
 
       <SettingGroup title={t("groupAppearanceSkin")} number="01.3">
         <SettingRow
-          id="appearance.settings_skin"
-          label={t("settingsSkin")}
-          summary={t("settingsSkinHint")}
-          details={[t("settingsSkinDetail")]}
+          id="appearance.skin"
+          label={t("appearanceSkin")}
+          summary={t("appearanceSkinHint")}
+          details={[t("appearanceSkinDetail")]}
           class="settings-skin-row"
         >
           <RadioCards
-            label={t("settingsSkin")}
-            value={a().settings_skin}
+            label={t("appearanceSkin")}
+            value={a().skin}
             className="settings-skin-options"
             options={[
               {
                 value: "quiet",
-                label: t("settingsSkinQuiet"),
-                description: t("settingsSkinQuietHint"),
+                label: t("appearanceSkinQuiet"),
+                description: t("appearanceSkinQuietHint"),
               },
               {
                 value: "chromatic",
-                label: t("settingsSkinChromatic"),
-                description: t("settingsSkinChromaticHint"),
+                label: t("appearanceSkinChromatic"),
+                description: t("appearanceSkinChromaticHint"),
               },
             ]}
-            onChange={(value) => props.onChange({ settings_skin: value as SettingsSkin })}
+            onChange={(value) => props.onChange({ skin: value as SkinId })}
           />
           <Show when={props.skinError}>
             <span class="settings-inline-error" role="alert">
@@ -359,20 +330,20 @@ export default function AppearancePane(props: {
 
       <SettingGroup title={t("groupAppearanceAccent")} number="01.4">
         <SettingRow
-          id="appearance.settings_accent"
-          label={t("settingsAccent")}
-          summary={t("settingsAccentHint")}
-          details={[t("settingsAccentDetail")]}
+          id="appearance.accent"
+          label={t("appearanceAccent")}
+          summary={t("appearanceAccentHint")}
+          details={[t("appearanceAccentDetail")]}
           class="settings-accent-row"
         >
           <AccentPalette
-            value={a().settings_accent}
-            custom={a().settings_accent_custom}
-            skin={a().settings_skin}
+            value={a().accent}
+            custom={a().accent_custom}
+            skin={a().skin}
             onPreview={props.onAccentPreview}
-            onChange={(value) => props.onChange({ settings_accent: value })}
+            onChange={(value) => props.onChange({ accent: value })}
             onCustomChange={(value) =>
-              props.onChange({ settings_accent: value, settings_accent_custom: value })
+              props.onChange({ accent: value, accent_custom: value })
             }
           />
           <Show when={props.accentError}>

@@ -7,7 +7,10 @@
 //! The commands below are the window API for the rest of the core: the
 //! Global hotkey module (v0.1) and the frontend Esc key both call them.
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+use serde::Deserialize;
 
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, State,
@@ -588,7 +591,11 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
     // 颜色模式 selects the panel's solid color — the DWM frame border strip
     // shows it, so a mode switch must repaint it (system mode also lands here:
     // save/apply is the only path that re-reads the mode).
-    set_panel_frame_border(&window, &settings.appearance.color_mode);
+    set_panel_frame_border(
+        &window,
+        settings.appearance.skin(),
+        &settings.appearance.color_mode,
+    );
     // Same mode drives the theme-matched app icon (taskbar + tray).
     crate::appicon::apply(app, &settings.appearance.color_mode);
     let state = app.state::<PlacementState>();
@@ -983,34 +990,94 @@ pub fn clear_dwm_border(win: &WebviewWindow) {
 /// included, since DWM rounds them. Do not give the strip its own color or
 /// make the panel translucent: the two can never match over an arbitrary
 /// wallpaper (docs/ROADMAP_HISTORY.md #30.5).
-pub fn set_panel_frame_border(win: &WebviewWindow, color_mode: &str) {
-    set_dwm_border(win, Some(panel_surface_rgb(win, color_mode)))
+pub fn set_panel_frame_border(win: &WebviewWindow, skin: &str, color_mode: &str) {
+    set_dwm_border(win, Some(panel_surface_rgb(win, skin, color_mode)))
 }
 
-/// The two solid panel surfaces — `PANEL_SURFACE_BG` in src/theme.ts, the same
-/// pair `theme.css` uses for `--surface`.
+/// Fallback values if the generated registry is unreadable. Keep these equal
+/// to the Quiet entries in `src/skins/skins.json`; the registry remains the
+/// authority whenever parsing succeeds.
 pub(crate) const PANEL_SURFACE_DARK: (u8, u8, u8) = (30, 30, 32);
 pub(crate) const PANEL_SURFACE_LIGHT: (u8, u8, u8) = (251, 251, 253);
 
-/// The theme's solid panel surface (`src/theme.css` `--surface`) for a color
-/// mode setting — the one value shared by the launcher panel, the DWM frame
-/// strip, the default plugin-page canvas and `PANEL_SURFACE_BG`
-/// (src/theme.ts); `"system"` follows the OS app theme (the same source the
-/// frontend's `prefers-color-scheme` resolves against).
+#[derive(Debug, Deserialize)]
+struct SkinDefinition {
+    surfaces: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkinRegistryFile {
+    default: String,
+    skins: HashMap<String, SkinDefinition>,
+}
+
+static SKIN_REGISTRY: OnceLock<Option<SkinRegistryFile>> = OnceLock::new();
+
+fn skin_registry() -> Option<&'static SkinRegistryFile> {
+    SKIN_REGISTRY
+        .get_or_init(|| serde_json::from_str(include_str!("../../src/skins/skins.json")).ok())
+        .as_ref()
+}
+
+fn parse_hex_rgb(value: &str) -> Option<(u8, u8, u8)> {
+    let raw = value.trim().strip_prefix('#')?;
+    if raw.len() != 6 || !raw.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some((
+        u8::from_str_radix(&raw[0..2], 16).ok()?,
+        u8::from_str_radix(&raw[2..4], 16).ok()?,
+        u8::from_str_radix(&raw[4..6], 16).ok()?,
+    ))
+}
+
+/// Shared surface lookup for one already-resolved light/dark mode. Unknown
+/// skins fall back to the registry default, then to the Quiet fallback values.
+fn skin_surface_rgb(skin: &str, dark: bool) -> (u8, u8, u8) {
+    let fallback = if dark {
+        PANEL_SURFACE_DARK
+    } else {
+        PANEL_SURFACE_LIGHT
+    };
+    let Some(registry) = skin_registry() else {
+        return fallback;
+    };
+    let key = if registry.skins.contains_key(skin) && !skin.is_empty() {
+        skin
+    } else {
+        registry.default.as_str()
+    };
+    registry
+        .skins
+        .get(key)
+        .and_then(|definition| {
+            definition
+                .surfaces
+                .get(if dark { "dark" } else { "light" })
+        })
+        .and_then(|value| parse_hex_rgb(value))
+        .unwrap_or(fallback)
+}
+
+/// The skin's solid panel surface for a color-mode setting — the one value
+/// shared by the launcher panel, the DWM frame strip, the default
+/// plugin-page canvas and `skins.json` consumers. `"system"` follows the OS
+/// app theme (the same source the frontend's `prefers-color-scheme` resolves
+/// against).
 ///
 /// `pub(crate)`: a detached plugin window paints the same value as its own
 /// opaque canvas, in the PLUGIN's effective mode (plugin_window.rs).
-pub(crate) fn panel_surface_rgb(win: &WebviewWindow, color_mode: &str) -> (u8, u8, u8) {
+pub(crate) fn panel_surface_rgb(
+    win: &WebviewWindow,
+    skin: &str,
+    color_mode: &str,
+) -> (u8, u8, u8) {
     let dark = match color_mode {
         "light" => false,
         "dark" => true,
         _ => win.theme().map(|t| t == tauri::Theme::Dark).unwrap_or(true),
     };
-    if dark {
-        PANEL_SURFACE_DARK
-    } else {
-        PANEL_SURFACE_LIGHT
-    }
+    skin_surface_rgb(skin, dark)
 }
 
 /// `panel_surface_rgb` for a window that does not exist yet (the detached
@@ -1018,13 +1085,14 @@ pub(crate) fn panel_surface_rgb(win: &WebviewWindow, color_mode: &str) -> (u8, u
 /// window's OS app theme, exactly as it does for a live window. A missing main
 /// window can only mean the launcher is between windows — dark is the same
 /// fallback `panel_surface_rgb` uses.
-pub(crate) fn panel_surface_rgb_for(app: &AppHandle, color_mode: &str) -> (u8, u8, u8) {
+pub(crate) fn panel_surface_rgb_for(
+    app: &AppHandle,
+    skin: &str,
+    color_mode: &str,
+) -> (u8, u8, u8) {
     match app.get_webview_window("main") {
-        Some(win) => panel_surface_rgb(&win, color_mode),
-        None => match color_mode {
-            "light" => PANEL_SURFACE_LIGHT,
-            _ => PANEL_SURFACE_DARK,
-        },
+        Some(win) => panel_surface_rgb(&win, skin, color_mode),
+        None => skin_surface_rgb(skin, color_mode != "light"),
     }
 }
 
@@ -1206,5 +1274,31 @@ mod tests {
             (-1920, -1080),
             (1920, 1080)
         ));
+    }
+
+    #[test]
+    fn shared_skin_registry_drives_surfaces_and_unknown_falls_back() {
+        assert_eq!(skin_surface_rgb("quiet", true), (30, 30, 32));
+        assert_eq!(skin_surface_rgb("quiet", false), (251, 251, 253));
+        assert_eq!(skin_surface_rgb("chromatic", true), (30, 30, 32));
+        assert_eq!(skin_surface_rgb("chromatic", false), (243, 239, 230));
+        assert_eq!(
+            skin_surface_rgb("neon-from-the-future", false),
+            (251, 251, 253)
+        );
+    }
+
+    #[test]
+    fn shared_skin_json_is_machine_readable() {
+        let registry = skin_registry().expect("skins.json parses");
+        assert_eq!(registry.default, "quiet");
+        assert!(registry.skins.contains_key("quiet"));
+        assert!(registry.skins.contains_key("chromatic"));
+        for id in ["quiet", "chromatic"] {
+            for mode in ["dark", "light"] {
+                let value = &registry.skins[id].surfaces[mode];
+                assert!(parse_hex_rgb(value).is_some(), "{id}/{mode}: {value}");
+            }
+        }
     }
 }

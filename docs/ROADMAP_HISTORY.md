@@ -5221,3 +5221,39 @@ Presenter 名称，值没有持久化或下发路径。
   结构、规则编辑、程序选择器、快捷键录制与代理状态并存）。
 - 截屏：`test/settings-smoke/clipboard-ignore.png`、`plugins.png` 与
   `test/settings-accent-verify/quiet-dark-indigo.png`。
+
+## 84. 忽略应用图标与模式栏三项视口（2026-10-25）
+
+### 84.1 忽略应用图标
+
+- 新增 `clipboard_ignore_app_icons`：按忽略名称依次匹配运行中窗口、App Paths、
+  开始菜单快捷方式和 PATH；路径解析与 shell 图标提取在阻塞线程执行，并复用
+  `get_app_icons` 的 SQLite 图标缓存。
+- 设置页列表改为「程序图标 + 归一化名称」。真实程序图标加载前或解析失败时显示
+  共享未知程序图标；删除按钮绝对定位在行尾，仅 `:hover` / `:focus-within`
+  时显示，保留键盘可访问性。
+- 图标请求使用序号门控；列表快速增删时旧响应不能覆盖新列表。
+
+### 84.2 模式栏三项视口
+
+- `SearchBox` 先测量最多前三个模式的自然宽度，并把该宽度作为可见视口；当前
+  `min(44%, 320px)`（仅图标为 `104px`）只作为最大值。三项总宽度未超限时保持
+  自然宽度，不铺满上限。
+- 只有三项总宽度超过上限时才加 `is-truncated`，让主三组收缩并为名称显示
+  ellipsis；第四项之后放在独立的 overflow 组中，不参与主三组的收缩计算。
+- 溢出组仍保留在无可见滚动条的横向条中。滚轮/触控板可横向滚动，键盘切换与
+  `scrollIntoView` 继续保证活动模式可见。
+
+### 84.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  **252 passed / 9 ignored**、`check_i18n` **580 键 × 3 语言**、debug
+  `--no-bundle` 构建通过。
+- `cdp_settings_smoke` ALL PASS：非窗口程序 `Notepad` 图标解析、运行中程序图标、
+  删除按钮默认隐藏、真实鼠标悬浮后显示、删除后恢复原列表。
+- `cdp_mode_bar_icons_verify` **25/25 PASS**：自然宽度、超限后缩到最大值、
+  超长名称省略、恢复自然宽度、仅图标三项、活动项滚动与键盘循环。
+- `cdp_settings_skin_verify` **62/62**、`cdp_skin_system_verify` **39/39**、
+  `cdp_visual_audit_verify` **28/28**。截屏：
+  `test/settings-smoke/clipboard-ignore-hover.png`、
+  `test/mode_bar_icons_labels.png`。

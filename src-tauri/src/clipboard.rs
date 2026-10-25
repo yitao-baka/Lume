@@ -20,7 +20,7 @@
 //! sort to the top and are exempt from pruning.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -1300,6 +1300,235 @@ pub fn normalize_clipboard_ignore_app(app_name: String) -> Result<String, String
     } else {
         Ok(name)
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IgnoredAppIcon {
+    pub name: String,
+    pub icon: Option<String>,
+}
+
+fn find_running_app_path(
+    app: &str,
+    programs: &[crate::automation::WindowProgram],
+) -> Option<String> {
+    let app = process_display_name(app);
+    programs
+        .iter()
+        .find(|program| process_display_name(&program.name).eq_ignore_ascii_case(&app))
+        .map(|program| program.path.clone())
+}
+
+fn expand_environment(value: &str) -> String {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+
+    let source: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+    let needed = unsafe { ExpandEnvironmentStringsW(PCWSTR(source.as_ptr()), None) };
+    if needed == 0 || needed > 32_768 {
+        return value.to_string();
+    }
+    let mut expanded = vec![0u16; needed as usize];
+    let written = unsafe {
+        ExpandEnvironmentStringsW(PCWSTR(source.as_ptr()), Some(&mut expanded))
+    };
+    if written == 0 || written > expanded.len() as u32 {
+        return value.to_string();
+    }
+    String::from_utf16_lossy(&expanded[..written.saturating_sub(1) as usize])
+}
+
+fn executable_from_registry_value(value: &str) -> Option<String> {
+    let expanded = expand_environment(value);
+    let value = expanded.trim();
+    let path = value
+        .strip_prefix('"')
+        .and_then(|rest| rest.split_once('"').map(|(path, _)| path))
+        .unwrap_or(value)
+        .trim();
+    Path::new(path).is_file().then(|| path.to_string())
+}
+
+fn registry_app_path(app: &str) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE,
+        KEY_READ, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE,
+    };
+
+    fn read_default(root: HKEY, subkey: &str) -> Option<String> {
+        use windows::Win32::Foundation::WIN32_ERROR;
+        let wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut key = HKEY(std::ptr::null_mut());
+        let rc = unsafe {
+            RegOpenKeyExW(root, PCWSTR(wide.as_ptr()), None, KEY_READ, &mut key)
+        };
+        if rc != WIN32_ERROR(0) {
+            return None;
+        }
+        let mut buf = vec![0u16; 4096];
+        let mut len = (buf.len() * 2) as u32;
+        let mut ty = REG_VALUE_TYPE(0);
+        let rc = unsafe {
+            RegQueryValueExW(
+                key,
+                PCWSTR::null(),
+                None,
+                Some(&mut ty),
+                Some(buf.as_mut_ptr() as *mut u8),
+                Some(&mut len),
+            )
+        };
+        let _ = unsafe { RegCloseKey(key) };
+        if rc != WIN32_ERROR(0) || (ty.0 != REG_SZ.0 && ty.0 != REG_EXPAND_SZ.0) {
+            return None;
+        }
+        let n = (len as usize / 2).saturating_sub(1);
+        String::from_utf16(&buf[..n]).ok()
+    }
+
+    let file_name = if app.to_ascii_lowercase().ends_with(".exe") {
+        app.to_string()
+    } else {
+        format!("{app}.exe")
+    };
+    let subkey = format!(
+        r"Software\Microsoft\Windows\CurrentVersion\App Paths\{file_name}"
+    );
+    [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE]
+        .into_iter()
+        .find_map(|root| read_default(root, &subkey).and_then(|v| executable_from_registry_value(&v)))
+}
+
+fn start_menu_app_path(app: &str) -> Option<String> {
+    let needle = app.to_ascii_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+    let mut partial: Option<(usize, String)> = None;
+    for root in crate::cache::start_menu_dirs() {
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_none_or(|ext| !ext.eq_ignore_ascii_case("lnk"))
+                {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                    continue;
+                };
+                if stem.eq_ignore_ascii_case(app) {
+                    return Some(path.to_string_lossy().into_owned());
+                }
+                if stem.to_ascii_lowercase().contains(&needle)
+                    && partial
+                        .as_ref()
+                        .is_none_or(|(best_len, _)| stem.len() < *best_len)
+                {
+                    partial = Some((stem.len(), path.to_string_lossy().into_owned()));
+                }
+            }
+        }
+    }
+    partial.map(|(_, path)| path)
+}
+
+fn path_search_app(app: &str) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::SearchPathW;
+
+    let file_name = if app.to_ascii_lowercase().ends_with(".exe") {
+        app.to_string()
+    } else {
+        format!("{app}.exe")
+    };
+    let wide: Vec<u16> = file_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut buf = vec![0u16; 32768];
+    let len = unsafe {
+        SearchPathW(
+            PCWSTR::null(),
+            PCWSTR(wide.as_ptr()),
+            PCWSTR::null(),
+            Some(&mut buf),
+            None,
+        )
+    };
+    if len == 0 || len as usize >= buf.len() {
+        return None;
+    }
+    String::from_utf16(&buf[..len as usize]).ok()
+}
+
+fn resolve_ignored_app_path(
+    app: &str,
+    programs: &[crate::automation::WindowProgram],
+) -> Option<String> {
+    let name = process_display_name(app);
+    if name.is_empty() {
+        return None;
+    }
+    find_running_app_path(&name, programs)
+        .or_else(|| registry_app_path(&name))
+        .or_else(|| start_menu_app_path(&name))
+        .or_else(|| path_search_app(&name))
+}
+
+/// Resolve icons for the ignored-app list. Path resolution and shell
+/// extraction are expensive, so the whole batch runs off the IPC thread and
+/// reuses the shared icon cache. Unresolved entries return `None`; the
+/// settings pane presents the standard unknown-app glyph for those.
+#[tauri::command]
+pub async fn clipboard_ignore_app_icons(apps: Vec<String>) -> Vec<IgnoredAppIcon> {
+    let mut names: Vec<String> = Vec::new();
+    for app in apps {
+        let name = process_display_name(app.trim());
+        if !name.is_empty() && !names.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
+            names.push(name);
+        }
+    }
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let requested = names.clone();
+    let resolved = tauri::async_runtime::spawn_blocking(move || {
+        let programs = crate::automation::collect_window_programs();
+        requested
+            .into_iter()
+            .filter_map(|name| {
+                resolve_ignored_app_path(&name, &programs).map(|path| (name, path))
+            })
+            .collect::<HashMap<String, String>>()
+    })
+    .await
+    .unwrap_or_default();
+
+    let paths: Vec<String> = resolved.values().cloned().collect();
+    let icons = crate::icons::get_app_icons(paths).await.unwrap_or_default();
+    let icon_by_path: HashMap<String, String> = icons
+        .into_iter()
+        .filter_map(|entry| entry.icon.map(|icon| (entry.path, icon)))
+        .collect();
+    names
+        .into_iter()
+        .map(|name| IgnoredAppIcon {
+            icon: resolved
+                .get(&name)
+                .and_then(|path| icon_by_path.get(path))
+                .cloned(),
+            name,
+        })
+        .collect()
 }
 
 // ── Plugin host clipboard surface (docs/PLUGIN_API.md §8.1) ──
@@ -2853,6 +3082,22 @@ mod tests {
         assert_eq!(process_display_name(""), "");
         assert_eq!(normalize_clipboard_ignore_app("chrome.exe".into()).unwrap(), "Chrome");
         assert!(normalize_clipboard_ignore_app("   ".into()).is_err());
+    }
+
+    #[test]
+    fn ignored_app_matches_running_program_by_display_name() {
+        let programs = vec![crate::automation::WindowProgram {
+            path: r"C:\Program Files\Google\Chrome\Application\chrome.exe".into(),
+            name: "chrome.exe".into(),
+            title: "Chrome".into(),
+            windows: 1,
+        }];
+        assert_eq!(
+            find_running_app_path("Chrome", &programs).as_deref(),
+            Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        );
+        assert_eq!(find_running_app_path("chrome.exe", &programs), find_running_app_path("Chrome", &programs));
+        assert_eq!(find_running_app_path("Firefox", &programs), None);
     }
 
     #[test]

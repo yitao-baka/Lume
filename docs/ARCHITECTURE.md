@@ -32,7 +32,8 @@ Rust Core (src-tauri/src/)
   ├─ apps.rs     — file search from the index caches, fuzzy + pinyin scoring,
   │                ShellExecuteW launch (+ records recent-opens)
   ├─ cache.rs    — System32 / user / icons SQLite index caches
-  ├─ clipboard.rs— clipboard capture → SQLite, search, copy back, pin/delete
+  ├─ clipboard.rs— clipboard capture → SQLite, search, copy back, pin/delete,
+  │                ignored-app name + icon resolution
   ├─ icons.rs    — IShellItemImageFactory icon extraction + in-memory cache
   ├─ pins.rs     — 已固定 bar (SQLite `pinned_apps`, WAL connection)
   ├─ recent.rs   — 最近使用 bar (SQLite `recent_apps`, WAL connection)
@@ -287,6 +288,11 @@ environment.
   big table belongs off the main thread (see docs/ROADMAP_HISTORY.md).
 - **Copy back**: `copy_clipboard(id)` looks up the row — text via
   `arboard::set_text`, images via PNG-decode → `set_image`.
+- **Ignored apps**: names use the same process-stem normalization as capture;
+  `clipboard_ignore_app_icons` resolves icon paths from running windows, App
+  Paths, Start Menu shortcuts and PATH off the IPC thread, then reuses the
+  shared `get_app_icons` cache. Unresolved names fall back to the standard
+  unknown-app glyph in the settings UI.
 - DB helpers take `&Connection`, which lets tests run against an in-memory DB.
 
 ### `recent.rs`
@@ -458,13 +464,15 @@ before adding a field:
   queries. Pill presentation is setting-driven: icon +
   name by default, icons-only with `appearance.mode_switch_icons_only` on
   (`title`/`aria-label` carry the name; a mode without an icon falls back to
-  `res/icons/unknow_universal.svg`). The strip is capped at about three named
-  pills (`320px`), or about three icons (`104px`) in the icon-only
-  presentation. Below 640px it also falls back to icons-only so labels cannot
-  consume the search input; if the icons still overflow, the strip clips
-  without edge controls, wheel/trackpad scrolling remains available, and the
-  active pill is scrolled into view on mode changes; the input swaps to the
-  short localized placeholder below 160px.
+  `res/icons/unknow_universal.svg`). The visible viewport is measured from the
+  natural width of the first three pills and capped at `min(44%, 320px)` for
+  named pills or `104px` for icons-only. A fitting trio keeps its content width;
+  only overflow shrinks the three pills and ellipsizes names. Later pills remain
+  in the hidden-scrollbar strip, and the active pill scrolls into view on mode
+  changes. Below 640px it also falls back to icons-only so labels cannot consume
+  the search input; wheel/trackpad scrolling remains available without edge
+  controls, and the input swaps to the short localized placeholder below
+  160px.
 - **Navigate result artwork** — `NavigateView` renders extracted icons without
   a mask by default and uses `unknow_universal.svg` when no icon exists.
   `appearance.round_app_icons` (default off) toggles the launcher's

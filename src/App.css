@@ -1404,6 +1404,19 @@ body.reorder-dragging {
   display: none;
 }
 
+.mode-switch-primary {
+  min-width: 0;
+  flex: 0 0 100%;
+  display: flex;
+  gap: 2px;
+}
+
+.mode-switch-overflow {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+
 .mode-switch-item {
   display: inline-flex;
   align-items: center;
@@ -1419,11 +1432,20 @@ body.reorder-dragging {
   border-radius: 6px;
   cursor: pointer;
   flex: none;
+  min-width: 0;
   max-width: 180px;
   white-space: nowrap;
 }
 
+/* The measured shell is content-width until its three-pill budget is
+   exceeded. Only then may the primary trio shrink and ellipsize; the overflow
+   group never participates in that shrink calculation. */
+.mode-switch-shell.is-truncated .mode-switch-primary .mode-switch-item {
+  flex-shrink: 1;
+}
+
 .mode-switch-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }

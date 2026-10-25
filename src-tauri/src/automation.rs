@@ -689,7 +689,7 @@ pub async fn list_window_programs() -> Vec<WindowProgram> {
         .unwrap_or_default()
 }
 
-fn collect_window_programs() -> Vec<WindowProgram> {
+pub(crate) fn collect_window_programs() -> Vec<WindowProgram> {
     use windows::Win32::Foundation::LPARAM;
     use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 

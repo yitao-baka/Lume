@@ -133,8 +133,9 @@ its own surface, and a full process restart. It also checks that a clean load
 shows no autosave confirmation, a real write briefly shows it, and it clears
 after settling. The lighter `node scripts/cdp_settings_smoke.mjs` covers the
 grouped navigation, command search, clean-load footer, restore confirmation,
-clipboard disabled-slider
-dependency, keycap shortcuts, and page screenshots. The former
+clipboard disabled-slider dependency, ignored-app icon resolution for both
+running and non-window programs, hidden-until-hover delete actions, keycap
+shortcuts, and page screenshots. The former
 `cdp_settings_ux_audit_verify.mjs` filename forwards to the skin verifier.
 
 The dual-window skin system uses `node scripts/cdp_skin_system_verify.mjs`. It
@@ -560,7 +561,9 @@ dev URL instead.
    `icon` default to the plugin's manifest icon, and provider icons given as
    plugin-relative paths resolve through the asset protocol. The 仅图标
    setting (#47) is `node scripts/cdp_mode_bar_icons_verify.mjs`: default
-   icon + name, icons-only toggled through the real settings pane (live
+   icon + name, natural content width for a fitting trio, max-width shrinking
+   and ellipsis only when that trio overflows, later modes clipped, icons-only
+   toggled through the real settings pane (live
    apply + persistence), constant pill height with a narrower bar, the
    `unknow_universal.svg` fallback for icon-less modes, click + switch-key
    still working, and the first frame after a restart already icons-only

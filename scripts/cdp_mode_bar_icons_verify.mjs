@@ -196,24 +196,37 @@ async function restore() {
 
 const pillInfo = () => m.evalJs(`(() => {
   const bar = document.querySelector(".mode-switch");
-  if (!bar) return null;
+  const shell = document.querySelector(".mode-switch-shell");
+  if (!bar || !shell) return null;
+  const barRect = bar.getBoundingClientRect();
   const items = [...document.querySelectorAll(".mode-switch-item")];
+  const mapped = items.map((b) => {
+    const label = b.querySelector(".mode-switch-label");
+    const img = b.querySelector(".mode-switch-icon");
+    const rect = b.getBoundingClientRect();
+    return {
+      title: b.getAttribute("title"),
+      aria: b.getAttribute("aria-label"),
+      active: b.classList.contains("active"),
+      labelShown: !!label && getComputedStyle(label).display !== "none",
+      labelOverflow: label ? getComputedStyle(label).overflow : null,
+      labelTextOverflow: label ? getComputedStyle(label).textOverflow : null,
+      labelTruncated: !!label && label.scrollWidth > label.clientWidth + 1,
+      w: Math.round(rect.width),
+      h: Math.round(rect.height),
+      left: rect.left,
+      right: rect.right,
+      src: img ? img.getAttribute("src") : null,
+    };
+  });
   return {
     iconsOnly: bar.classList.contains("icons-only"),
-    barW: Math.round(bar.getBoundingClientRect().width),
-    items: items.map((b) => {
-      const label = b.querySelector(".mode-switch-label");
-      const img = b.querySelector(".mode-switch-icon");
-      return {
-        title: b.getAttribute("title"),
-        aria: b.getAttribute("aria-label"),
-        active: b.classList.contains("active"),
-        labelShown: !!label && getComputedStyle(label).display !== "none",
-        w: Math.round(b.getBoundingClientRect().width),
-        h: Math.round(b.getBoundingClientRect().height),
-        src: img ? img.getAttribute("src") : null,
-      };
-    }),
+    isTruncated: shell.classList.contains("is-truncated"),
+    barW: Math.round(barRect.width),
+    maxW: Math.round(Number.parseFloat(getComputedStyle(shell).maxWidth) || 0),
+    visibleCount: mapped.filter((item) => item.left >= barRect.left - 1 && item.right <= barRect.right + 1).length,
+    hasClipped: mapped.some((item) => item.right > barRect.right + 1),
+    items: mapped,
   };
 })()`);
 const waitPill = async (title, tries = 30) => {
@@ -250,11 +263,47 @@ try {
   await invoke("toggle_launcher");
   await sleep(1500);
 
-  // ── A. 默认关：图标 + 名称 ────────────────────────────────────────────
+  // ── A. 默认关：图标 + 名称，三项视口 ─────────────────────────────────
+  await m.evalJs(`(() => {
+    const names = ["导航", "導航", "Navigate"];
+    [...document.querySelectorAll(".mode-switch-item")].find((b) => names.includes(b.getAttribute("title")))?.click();
+    return true;
+  })()`);
+  await sleep(500);
   const a = await waitPill("No Icon Mode");
-  check("A1 默认关：栏存在且 3 颗胶囊在位", !!a && !a.iconsOnly && a.items.length >= 3, JSON.stringify(a?.items?.map((i) => i.title)));
+  check("A1 默认关：栏存在且至少三颗胶囊", !!a && !a.iconsOnly && a.items.length >= 3, JSON.stringify(a?.items?.map((i) => i.title)));
   check("A2 默认呈现图标 + 名称", !!a && a.items.every((i) => i.labelShown), JSON.stringify(a?.items?.filter((i) => !i.labelShown).map((i) => i.title)));
   check("A3 每颗胶囊都有 title + aria-label", !!a && a.items.every((i) => i.title && i.aria && i.title === i.aria));
+  check(
+    "A4 三项自然宽度在上限内时保持内容宽度，只裁切后续模式",
+    !!a && !a.isTruncated && a.visibleCount === 3 && a.hasClipped && a.barW < a.maxW - 1,
+    JSON.stringify({ isTruncated: a?.isTruncated, barW: a?.barW, maxW: a?.maxW, visibleCount: a?.visibleCount, hasClipped: a?.hasClipped, widths: a?.items?.slice(0, 4).map((i) => i.w) })
+  );
+  const originalLabels = await m.evalJs(`Array.from(document.querySelectorAll(".mode-switch-item .mode-switch-label")).slice(0, 3).map((label) => label.textContent)`);
+  await m.evalJs(`(() => {
+    const labels = Array.from(document.querySelectorAll(".mode-switch-item .mode-switch-label")).slice(0, 3);
+    labels.forEach((label, index) => {
+      label.textContent = "A deliberately long synthetic mode name " + (index + 1) + " that cannot fit";
+    });
+    window.dispatchEvent(new Event("resize"));
+    return true;
+  })()`);
+  await sleep(350);
+  const truncated = await pillInfo();
+  check(
+    "A5 三项总宽度超过上限时才缩到最大宽度并省略名称",
+    !!truncated && truncated.isTruncated && truncated.visibleCount === 3 && Math.abs(truncated.barW - truncated.maxW) <= 1 && truncated.items.slice(0, 3).every((item) => item.labelTruncated && item.labelOverflow === "hidden" && item.labelTextOverflow === "ellipsis"),
+    JSON.stringify({ isTruncated: truncated?.isTruncated, barW: truncated?.barW, maxW: truncated?.maxW, visibleCount: truncated?.visibleCount, labels: truncated?.items?.slice(0, 3).map((i) => ({ w: i.w, truncated: i.labelTruncated })) })
+  );
+  await m.evalJs(`(() => {
+    const labels = Array.from(document.querySelectorAll(".mode-switch-item .mode-switch-label")).slice(0, 3);
+    labels.forEach((label, index) => { label.textContent = ${JSON.stringify(originalLabels)}[index]; });
+    window.dispatchEvent(new Event("resize"));
+    return true;
+  })()`);
+  await sleep(350);
+  const restoredWidth = await pillInfo();
+  check("A6 名称恢复后栏回到自然宽度", !!restoredWidth && !restoredWidth.isTruncated && restoredWidth.barW < restoredWidth.maxW - 1, JSON.stringify({ isTruncated: restoredWidth?.isTruncated, barW: restoredWidth?.barW, maxW: restoredWidth?.maxW }));
   await shot("test/mode_bar_icons_labels.png");
 
   // ── B. 无图标回退 unknow_universal.svg ───────────────────────────────

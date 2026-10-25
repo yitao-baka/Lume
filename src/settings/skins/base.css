@@ -941,17 +941,46 @@ html[data-skin] body.settings-window #root {
 }
 
 .settings-ignore-item {
-  min-height: 44px;
-  padding: 0 8px 0 12px;
+  position: relative;
+  min-height: 48px;
+  gap: 10px;
+  padding: 5px 8px 5px 10px;
 }
 
 .settings-ignore-item:last-child {
   border-bottom: 0;
 }
 
+.settings-ignore-item:hover {
+  background: var(--settings-hover);
+}
+
+.settings-ignore-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--settings-line);
+  border-radius: calc(var(--settings-control-radius) * 0.65);
+  background: var(--settings-panel);
+}
+
+.settings-ignore-icon img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.settings-ignore-icon img.icon-unknown {
+  filter: var(--icon-filter);
+  opacity: 0.72;
+}
+
 .settings-ignore-app {
   min-width: 0;
   flex: 1;
+  padding-right: 30px;
   overflow: hidden;
   color: var(--settings-text);
   font-size: 12px;
@@ -960,6 +989,31 @@ html[data-skin] body.settings-window #root {
   text-overflow: ellipsis;
   white-space: nowrap;
   user-select: text;
+}
+
+.settings-ignore-delete {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  transform: translateY(-50%) translateX(4px);
+  border-color: var(--settings-line);
+  background: var(--settings-panel);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease-out, transform 100ms ease-out;
+}
+
+.settings-ignore-item:hover .settings-ignore-delete,
+.settings-ignore-item:focus-within .settings-ignore-delete {
+  transform: translateY(-50%);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-ignore-delete {
+    transition: none;
+  }
 }
 
 .settings-ignore-empty {

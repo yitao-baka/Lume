@@ -87,11 +87,14 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
   导航页 → `mode_switch_icons_only` switches them to icon-only (the tooltip
   carries the name). Pill height is identical in both presentations — the
   search row must not resize on the toggle. The strip owns only the width left
-  after the input and gear: when modes overflow it scrolls horizontally (no
-  visible scrollbar), long labels ellipsize, and the active pill is kept in
-  view. Its cap is about three named pills (`320px`); icon-only presentation
-  uses about three icons (`104px`), leaving the rest of the row to the search
-  input. The input never drops below its 120px usable floor.
+  after the input and gear. Its viewport is sized to the natural width of at
+  most the first three pills, capped at `min(44%, 320px)`. If those three fit,
+  they keep their natural widths; only when their combined width exceeds the cap
+  do they shrink and ellipsize. Later pills stay in the hidden-scrollbar strip:
+  wheel/trackpad scrolls them, and keyboard mode changes scroll the active pill
+  into view. Icon-only presentation follows the same natural-first rule inside
+  its `104px` cap, leaving the rest of the row to the search input. The input
+  never drops below its 120px usable floor.
 - At narrow launcher widths (`<=640px`) the strip automatically falls back to
   the same icon-only presentation even when the persistent setting is off;
   `title` / `aria-label` still carry every name. If the icon strip itself

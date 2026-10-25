@@ -66,10 +66,22 @@ const contrastOn = (fgValue, bgArray) => {
 };
 
 const psQuote = (s) => `'${String(s).replace(/'/g, "''")}'`;
-const ps = (command) =>
-  execFileSync("powershell", ["-NoProfile", "-Command", command], {
-    encoding: "utf8",
-  }).trimEnd();
+const ps = (command) => {
+  // The launcher samples the clipboard in the background; retry the transient
+  // CLIPBRD_E_CANT_OPEN race instead of treating it as a product failure.
+  let lastError;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      return execFileSync("powershell", ["-NoProfile", "-Command", command], {
+        encoding: "utf8",
+      }).trimEnd();
+    } catch (error) {
+      lastError = error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80);
+    }
+  }
+  throw lastError;
+};
 
 try {
   execSync("taskkill /F /T /IM lume.exe 2>NUL", { stdio: "ignore" });

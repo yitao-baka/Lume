@@ -535,6 +535,7 @@ pub fn run() {
             clipboard::get_clipboard_text,
             clipboard::set_clipboard_text,
             clipboard::normalize_clipboard_ignore_app,
+            clipboard::clipboard_ignore_app_icons,
             svc::svc_status,
             svc::svc_install,
             svc::svc_uninstall,

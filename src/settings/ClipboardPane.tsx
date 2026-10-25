@@ -1,7 +1,7 @@
 //! 「剪贴板」页 — capture/history limits, merge copies, ignored apps,
 //! display & paste behavior, and satellite preview.
 
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import type { SettingsData } from "./types";
@@ -14,6 +14,7 @@ import {
 } from "./controls";
 import { ProgramPicker } from "./ProgramPicker";
 import deleteIcon from "../../res/icons/delete.svg";
+import unknownIcon from "../../res/icons/unknow_universal.svg";
 
 const CAPS = [100, 200, 500, 1000];
 
@@ -33,7 +34,34 @@ export default function ClipboardPane(props: {
   const [ignoreError, setIgnoreError] = createSignal<string | null>(null);
   const [ignoreBusy, setIgnoreBusy] = createSignal(false);
   const [picking, setPicking] = createSignal(false);
+  const [ignoreIcons, setIgnoreIcons] = createSignal<Record<string, string>>({});
+  let ignoreIconSeq = 0;
   let pickTrigger: HTMLButtonElement | undefined;
+
+  createEffect(() => {
+    const apps = [...(props.settings.clipboard.ignore_apps ?? [])];
+    const seq = ++ignoreIconSeq;
+    if (apps.length === 0) {
+      setIgnoreIcons({});
+      return;
+    }
+    void invoke<{ name: string; icon: string | null }[]>("clipboard_ignore_app_icons", { apps })
+      .then((entries) => {
+        if (seq !== ignoreIconSeq) return;
+        setIgnoreIcons(
+          Object.fromEntries(
+            entries
+              .filter((entry): entry is { name: string; icon: string } => !!entry.icon)
+              .map((entry) => [entry.name, entry.icon]),
+          ),
+        );
+      })
+      .catch((err) => {
+        if (seq === ignoreIconSeq) console.error("[settings] clipboard_ignore_app_icons", err);
+      });
+  });
+
+  const ignoreIcon = (app: string) => ignoreIcons()[app];
 
   async function addIgnoreApp(rawName?: string) {
     const raw = (rawName ?? ignore()).trim();
@@ -184,9 +212,17 @@ export default function ClipboardPane(props: {
                 <For each={c().ignore_apps ?? []}>
                   {(app) => (
                     <div class="settings-compact-item settings-ignore-item">
+                      <span class="settings-ignore-icon" aria-hidden="true">
+                        <img
+                          classList={{ "icon-unknown": !ignoreIcon(app) }}
+                          src={ignoreIcon(app) ?? unknownIcon}
+                          alt=""
+                          draggable={false}
+                        />
+                      </span>
                       <span class="settings-ignore-app" title={app}>{app}</span>
                       <button
-                        class="settings-icon-btn"
+                        class="settings-icon-btn settings-ignore-delete"
                         type="button"
                         title={t("delete")}
                         aria-label={`${t("delete")}: ${app}`}

@@ -360,6 +360,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **忽略应用图标与模式栏三项视口** — 忽略应用列表现在显示程序图标与归一化名称，
+  删除按钮只在整行悬停或键盘焦点进入时叠加显示；图标路径按运行中窗口、App
+  Paths、开始菜单快捷方式和 PATH 顺序解析，并复用共享图标缓存，无法解析时回退
+  未知程序图标。主窗口模式栏以最多前三个模式的自然宽度为视口，只有总宽度超过
+  `min(44%, 320px)` / `104px` 上限时才收缩并省略名称；未超限时不会铺满上限。
+  后续模式保留在隐藏滚动条区域，切换时自动滚入视野。验证：`pnpm exec tsc --noEmit`、`pnpm run build`、
+  `cargo check`、`cargo test` **252 passed / 9 ignored**、`check_i18n`
+  **580 键 × 3 语言**、debug `--no-bundle` 构建通过；
+  `cdp_settings_smoke` ALL PASS（非窗口程序图标、运行程序图标、悬浮删除）、
+  `cdp_mode_bar_icons_verify` **25/25 PASS**（自然宽度、超限裁切与恢复）、
+  `cdp_settings_skin_verify` **62/62 PASS**、`cdp_skin_system_verify`
+  **39/39 PASS**、`cdp_visual_audit_verify` **28/28 PASS**。截屏：
+  `test/settings-smoke/clipboard-ignore-hover.png`、
+  `test/mode_bar_icons_labels.png`。
 - **设置页反馈、表面与默认值收口** — 保存状态只在真实写入时短暂显示，首次载入
   和外部刷新不再常驻「已自动保存」；自定义主题色只染交互选中态，设置窗的
   canvas / rail / panel / control 表面保持皮肤原色。启动器网格尺寸默认改为小

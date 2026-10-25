@@ -212,6 +212,8 @@ const ignoreEditor = await settings.evalJs(`(() => {
   };
 })()`);
 check("ignore-app editor separates the list from a labeled add composer", ignoreEditor.hasListSurface && /添加|Add/.test(ignoreEditor.addText) && ignoreEditor.pickerText.length > 0 && ignoreEditor.aligned && ignoreEditor.pickerBelow && ignoreEditor.noOverflow, JSON.stringify(ignoreEditor));
+const systemAppIcon = await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('clipboard_ignore_app_icons', { apps: ['Notepad'] })`);
+check("ignore-app icon resolver covers non-window programs", systemAppIcon?.[0]?.name === "Notepad" && systemAppIcon?.[0]?.icon?.startsWith("data:image/png;base64,"), JSON.stringify({ name: systemAppIcon?.[0]?.name, icon: systemAppIcon?.[0]?.icon?.slice(0, 32) }));
 await settings.evalJs(`document.querySelector('[data-setting-id="clipboard.ignore_apps"]')?.scrollIntoView({ block: "center" }); true`);
 await sleep(150);
 await settings.shot("clipboard-ignore");
@@ -221,10 +223,11 @@ await settings.evalJs(`document.querySelector('.settings-ignore-picker')?.click(
 await sleep(600);
 const pickedIgnore = await settings.evalJs(`(() => {
   const ignored = new Set(${JSON.stringify(ignoreBefore.map((name) => name.toLowerCase()))});
-  const row = Array.from(document.querySelectorAll('.picker-row')).find((item) => {
+  const rows = Array.from(document.querySelectorAll('.picker-row')).filter((item) => {
     const name = item.querySelector('.picker-name')?.textContent.trim() ?? "";
     return name && !ignored.has(name.toLowerCase());
   });
+  const row = rows.find((item) => /notepad/i.test(item.querySelector('.picker-name')?.textContent ?? "")) ?? rows[0];
   const name = row?.querySelector('.picker-name')?.textContent.trim() ?? null;
   row?.click();
   return name;
@@ -242,10 +245,49 @@ const ignoreAfterPick = await settings.evalJs(`(async () => {
 })()`);
 check("choosing a running app adds it directly", !!pickedIgnore && ignoreAfterPick.pickerOpen === false && !ignoreAfterPick.error && ignoreAfterPick.saved.includes(ignoreAfterPick.normalized), JSON.stringify({ pickedIgnore, ...ignoreAfterPick }));
 if (ignoreAfterPick.normalized && ignoreAfterPick.saved.includes(ignoreAfterPick.normalized)) {
+  let ignoreVisual = null;
+  for (let attempt = 0; attempt < 16; attempt++) {
+    ignoreVisual = await settings.evalJs(`(() => {
+      const row = Array.from(document.querySelectorAll('.settings-ignore-item')).find(
+        (item) => item.querySelector('.settings-ignore-app')?.textContent === ${JSON.stringify(ignoreAfterPick.normalized)}
+      );
+      if (!row) return null;
+      const img = row.querySelector('.settings-ignore-icon img');
+      const del = row.querySelector('.settings-ignore-delete');
+      const rect = row.getBoundingClientRect();
+      return {
+        src: img?.getAttribute('src') ?? "",
+        unknown: img?.classList.contains('icon-unknown') ?? true,
+        deleteOpacity: del ? getComputedStyle(del).opacity : null,
+        deletePointerEvents: del ? getComputedStyle(del).pointerEvents : null,
+        rect: { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 },
+      };
+    })()`);
+    if (ignoreVisual?.src?.startsWith("data:image/") && !ignoreVisual.unknown) break;
+    await sleep(250);
+  }
+  check("ignored app row shows the resolved program icon", !!ignoreVisual?.src?.startsWith("data:image/") && ignoreVisual.unknown === false, JSON.stringify({ src: ignoreVisual?.src?.slice(0, 48), unknown: ignoreVisual?.unknown }));
+  check("delete action is hidden until the row is hovered", ignoreVisual?.deleteOpacity === "0" && ignoreVisual?.deletePointerEvents === "none", JSON.stringify({ opacity: ignoreVisual?.deleteOpacity, pointerEvents: ignoreVisual?.deletePointerEvents }));
+  if (ignoreVisual?.rect) {
+    await settings.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: ignoreVisual.rect.x, y: ignoreVisual.rect.y });
+    await sleep(160);
+    const hoveredDelete = await settings.evalJs(`(() => {
+      const row = Array.from(document.querySelectorAll('.settings-ignore-item')).find(
+        (item) => item.querySelector('.settings-ignore-app')?.textContent === ${JSON.stringify(ignoreAfterPick.normalized)}
+      );
+      const del = row?.querySelector('.settings-ignore-delete');
+      return {
+        opacity: del ? getComputedStyle(del).opacity : null,
+        pointerEvents: del ? getComputedStyle(del).pointerEvents : null,
+      };
+    })()`);
+    check("hover reveals the overlaid delete action", hoveredDelete.opacity === "1" && hoveredDelete.pointerEvents === "auto", JSON.stringify(hoveredDelete));
+    await settings.shot("clipboard-ignore-hover");
+  }
   await settings.evalJs(`(() => {
     const rows = Array.from(document.querySelectorAll('.settings-ignore-item'));
     const row = rows.find((item) => item.querySelector('.settings-ignore-app')?.textContent === ${JSON.stringify(ignoreAfterPick.normalized)});
-    row?.querySelector('.settings-icon-btn')?.click();
+    row?.querySelector('.settings-ignore-delete')?.click();
     return !!row;
   })()`);
   await sleep(700);

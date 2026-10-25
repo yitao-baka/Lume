@@ -258,12 +258,14 @@ id，值为 Presenter id。缺省或未知值回落到页面清单声明的默�
 |---|---|
 | 历史与采集 | `history_cap`、`record_images`、`record_files`、`dedup` |
 | 合并复制 | `merge_copy`、`merge_window_ms`（500–5000ms，步进 100；关闭合并时滑块可见但禁用） |
-| 忽略应用 | `ignore_apps` 列表、手动输入、选择运行中程序、删除；名称由 Rust 归一化并去重 |
+| 忽略应用 | `ignore_apps` 列表、程序图标与名称、手动输入、选择运行中程序、悬浮删除；名称由 Rust 归一化并去重，图标按运行程序 / App Paths / 开始菜单 / PATH 解析 |
 | 显示 | `show_source_app`、`time_display`、`hover_select`、`favorites_top`、`paste_close` |
 | 预览 | `preview`、`remember_checks` |
 
 收藏记录不计入历史上限。图片以本地缓存保存；文件只保存引用。忽略应用区域使用
 风险色边界表达隐私含义；列表与新增操作分开，运行中程序一经选择即加入列表。
+每项显示程序图标和归一化名称，删除按钮只在鼠标悬浮或键盘焦点进入该行时叠加显示；
+图标解析不到时使用统一未知程序图标。
 
 ### 04 搜索（`search`）
 

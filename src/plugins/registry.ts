@@ -24,6 +24,9 @@ import { setPermissionSource } from "./permissions";
 import { resolveIconInput, resolveThemedIcon } from "../launcher/iconSpec";
 import type { HostIcon, PluginIconSpec } from "../launcher/types";
 import { currentThemeMode } from "../theme";
+import { currentSkin, onSkinChange } from "../skins/runtime";
+import { currentAccent, onAccentChange } from "../skins/accent";
+import { skinSurface } from "../skins/registry";
 import {
   pluginColorMode,
   pluginColorPref,
@@ -1124,6 +1127,12 @@ function registerPageRuntimeDetachedSupplier(id: string, runtime: PageRuntimeMod
           presenterSettings,
           theme: pluginColorMode(id, currentThemeMode()),
           themePref: pluginColorPref(id),
+          skin: currentSkin(),
+          accent: currentAccent(),
+          surface: skinSurface(
+            currentSkin(),
+            pluginColorMode(id, currentThemeMode()),
+          ),
           ...(model ? { model } : {}),
           ...(model?.data && typeof model.data === "object" && (model.data as Record<string, unknown>).enter != null
             ? { enter: (model.data as Record<string, unknown>).enter }
@@ -1133,9 +1142,17 @@ function registerPageRuntimeDetachedSupplier(id: string, runtime: PageRuntimeMod
       }).catch((err) => plog.error(id, "detached Page Runtime state push failed:", err));
     },
     pushTheme: (theme, pref) => {
+      const mode = theme === "light" ? "light" : "dark";
       void invoke("plugin_window_push_state", {
         id,
-        state: { pageRuntime: true, theme, themePref: pref },
+        state: {
+          pageRuntime: true,
+          theme,
+          themePref: pref,
+          skin: currentSkin(),
+          accent: currentAccent(),
+          surface: skinSurface(currentSkin(), mode),
+        },
       }).catch((err) => plog.error(id, "detached Page Runtime theme push failed:", err));
     },
     onShow: () => {
@@ -1169,6 +1186,7 @@ function postThemeEverywhere() {
   // Per plugin: the effective (override-aware) value, so a pinned plugin does
   // not even receive a flip when the launcher's own mode changes.
   for (const [id, post] of themePosters) post(pluginColorMode(id, host));
+  for (const [id, runtime] of pageRuntimeModes) runtime.postTheme(pluginColorMode(id, host));
   for (const [id, s] of detachedSuppliers) s.pushTheme(pluginColorMode(id, host), pluginColorPref(id));
 }
 
@@ -1201,11 +1219,15 @@ export function applyPluginColorMode(
 }
 
 // applyColorMode writes `data-theme` (and system mode rewrites it on OS
-// flips) — one observer covers every path.
+// flips) — one observer covers every path. Skin/accent runtimes also have
+// explicit subscriptions because custom accent changes do not always mutate
+// an attribute value (it may already be `data-accent="custom"`).
 new MutationObserver(postThemeEverywhere).observe(document.documentElement, {
   attributes: true,
   attributeFilter: ["data-theme"],
 });
+onSkinChange(postThemeEverywhere);
+onAccentChange(postThemeEverywhere);
 
 /** True when the mode page currently lives in its own window. */
 export function isPluginDetached(id: string): boolean {

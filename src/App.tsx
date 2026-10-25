@@ -16,6 +16,8 @@ import { LogicalSize } from "@tauri-apps/api/dpi";
 import { Dynamic } from "solid-js/web";
 import { resolveLocale, setLocale, t, type Messages } from "./i18n";
 import { applyColorMode, currentThemeMode, normalizePluginColorMode } from "./theme";
+import { applySkin, currentSkin } from "./skins/runtime";
+import { applyAccent, currentAccent } from "./skins/accent";
 import { pluginColorMode, pluginColorPref } from "./plugins/themePrefs";
 import type { SettingsData } from "./settings/types";
 import "./App.css";
@@ -128,6 +130,8 @@ function App() {
   // Apply imperative config immediately (locale + theme are not signal-driven).
   setLocale(resolveLocale(_a?.language ?? "system"));
   applyColorMode(_a?.color_mode ?? "system");
+  applySkin(_a?.skin);
+  applyAccent(_a?.accent);
   // Per-plugin color-mode overrides (docs/ROADMAP_HISTORY.md #36) before any page renders —
   // the first push into a plugin page's iframe must already be its effective
   // mode, not the launcher's.
@@ -470,7 +474,13 @@ function App() {
     },
     pluginColorState: (pluginId) => {
       const host = currentThemeMode();
-      return { pref: pluginColorPref(pluginId), mode: pluginColorMode(pluginId, host), host };
+      return {
+        pref: pluginColorPref(pluginId),
+        mode: pluginColorMode(pluginId, host),
+        host,
+        skin: currentSkin(),
+        accent: currentAccent(),
+      };
     },
     persistLastPage,
     scheduleResize: () => sizer.scheduleResize(),
@@ -776,6 +786,8 @@ function App() {
       const s = await invoke<SettingsData>("get_settings");
       setLocale(resolveLocale(s.appearance.language));
       applyColorMode(s.appearance.color_mode);
+      applySkin(s.appearance.skin);
+      applyAccent(s.appearance.accent);
       // Per-plugin color modes ride every settings refresh: the settings
       // window's 「恢复默认设置」, a hand-edited settings.toml and our own
       // `theme.set` writes all land here, and a changed entry re-pushes the
@@ -1219,6 +1231,18 @@ function App() {
     void windowWidth();
     void entrySize();
     requestAnimationFrame(sizer.measureBarCols);
+  });
+
+  // Skin geometry can change row/grid rhythm without rebuilding the page.
+  // Re-measure the bar columns and force one fit pass while the Page Service,
+  // Presenter selection, query and selection stay intact.
+  createEffect(() => {
+    currentSkin();
+    requestAnimationFrame(() => {
+      sizer.invalidate();
+      sizer.measureBarCols();
+      sizer.scheduleResize();
+    });
   });
 
   return (

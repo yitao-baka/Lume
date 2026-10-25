@@ -1,7 +1,7 @@
 // Settings redesign + skin-switch regression. Build first:
 //   pnpm run build && pnpm run tauri build --debug --no-bundle
 // Run:
-//   node scripts/cdp_settings_skin_verify.mjs
+//   node scripts/cdp_skin_verify.mjs
 import { spawn, execSync } from "node:child_process";
 import { cpSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -123,13 +123,13 @@ const reloadSettings = async () => {
 };
 const setAppearance = async (skin, colorMode) => {
   await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', { patch: {
-    appearance: { settings_skin: '${skin}', color_mode: '${colorMode}', settings_accent: '' }
+    appearance: { skin: '${skin}', color_mode: '${colorMode}', accent: '' }
   }}).then(() => true)`);
   await reloadSettings();
 };
 const clickSkin = async (skin) => {
   await settings.evalJs(`(() => {
-    const row = document.querySelector('[data-setting-id="appearance.settings_skin"]');
+    const row = document.querySelector('[data-setting-id="appearance.skin"]');
     const radio = row?.querySelector('[role="radio"][data-skin="${skin}"], [role="radio"][aria-checked]');
     const choices = row ? Array.from(row.querySelectorAll('[role="radio"]')) : [];
     const target = choices.find((el) => el.textContent.toLowerCase().includes('${skin}'));
@@ -157,7 +157,7 @@ const typeSearch = async (text) => {
 await setAppearance("quiet", "dark");
 await go("appearance");
 const initial = await settings.evalJs(`({
-  skin: document.documentElement.dataset.settingsSkin,
+  skin: document.documentElement.dataset.skin,
   theme: document.documentElement.dataset.theme,
   nav: Array.from(document.querySelectorAll('.settings-nav')).map((el) => el.dataset.section),
   saveButtons: Array.from(document.querySelectorAll('.settings-footer button')).filter((el) => el.textContent.includes('保存并应用')).length,
@@ -171,9 +171,9 @@ check("global Save & Apply is gone", initial.saveButtons === 0);
 check("status starts at All changes saved", initial.status?.includes("所有更改已自动保存"), initial.status);
 check("Quiet has rounded panels and no page number", initial.pageRadius !== "0px" && initial.pageNumber === "none", JSON.stringify(initial));
 const initialAccent = await settings.evalJs(`(async () => ({
-  attr: document.documentElement.dataset.settingsAccent ?? null,
-  accent: getComputedStyle(document.querySelector('.settings')).getPropertyValue('--settings-user-accent').trim(),
-  saved: (await window.__TAURI_INTERNALS__.invoke('get_settings')).appearance.settings_accent,
+  attr: document.documentElement.dataset.accent ?? null,
+  accent: document.documentElement.style.getPropertyValue('--ui-accent-raw').trim(),
+  saved: (await window.__TAURI_INTERNALS__.invoke('get_settings')).appearance.accent,
 }))()`);
 check("empty settings accent preserves native skin tokens", initialAccent.attr === null && initialAccent.accent === "" && initialAccent.saved === "", JSON.stringify(initialAccent));
 const a11y = await settings.evalJs(`({
@@ -225,20 +225,20 @@ await settings.shot("help-dialog");
 await settings.evalJs(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`);
 await sleep(120);
 
-await settings.evalJs(`document.querySelector('[data-setting-id="appearance.settings_skin"]').__stable = 42; document.querySelector('.settings-body').scrollTop = 24; true`);
+await settings.evalJs(`document.querySelector('[data-setting-id="appearance.skin"]').__stable = 42; document.querySelector('.settings-body').scrollTop = 24; true`);
 await clickSkin("chromatic");
 const switched = await settings.evalJs(`(async () => ({
-  skin: document.documentElement.dataset.settingsSkin,
-  focused: document.activeElement?.closest('[data-setting-id="appearance.settings_skin"]') !== null,
-  stable: document.querySelector('[data-setting-id="appearance.settings_skin"]').__stable,
+  skin: document.documentElement.dataset.skin,
+  focused: document.activeElement?.closest('[data-setting-id="appearance.skin"]') !== null,
+  stable: document.querySelector('[data-setting-id="appearance.skin"]').__stable,
   scroll: document.querySelector('.settings-body').scrollTop,
-  saved: (await window.__TAURI_INTERNALS__.invoke('get_settings')).appearance.settings_skin,
+  saved: (await window.__TAURI_INTERNALS__.invoke('get_settings')).appearance.skin,
   radius: getComputedStyle(document.querySelector('.settings-group-panel')).borderRadius,
   pageNumber: getComputedStyle(document.querySelector('.settings-page-number')).display,
   border: getComputedStyle(document.querySelector('.settings-group-panel')).borderLeftWidth,
   lineWidth: getComputedStyle(document.querySelector('.settings')).getPropertyValue('--settings-line-width').trim(),
 }))()`);
-check("skin switch updates data-settings-skin immediately", switched.skin === "chromatic");
+check("skin switch updates data-skin immediately", switched.skin === "chromatic");
 check("skin switch keeps focus on the same control", switched.focused === true);
 check("skin switch does not rebuild the pane", switched.stable === 42);
 check("skin switch preserves scroll position", switched.scroll === 24, String(switched.scroll));
@@ -249,7 +249,7 @@ await settings.shot("chromatic-appearance");
 const combo = async (skin, mode, expectedBg) => {
   await setAppearance(skin, mode);
   const state = await settings.evalJs(`({
-    skin: document.documentElement.dataset.settingsSkin,
+    skin: document.documentElement.dataset.skin,
     theme: document.documentElement.dataset.theme,
     bg: getComputedStyle(document.querySelector('.settings')).backgroundColor,
   })`);
@@ -262,7 +262,7 @@ await combo("chromatic", "light", "rgb(243, 239, 230)");
 const systemCombo = async (skin, darkBg, lightBg) => {
   await setAppearance(skin, "system");
   const state = await settings.evalJs(`({
-    skin: document.documentElement.dataset.settingsSkin,
+    skin: document.documentElement.dataset.skin,
     theme: document.documentElement.dataset.theme,
     bg: getComputedStyle(document.querySelector('.settings')).backgroundColor,
   })`);
@@ -340,22 +340,22 @@ check("plugin list and detail scroll independently inside the master-detail fram
 await settings.shot("plugins-master-detail");
 
 await go("appearance");
-await typeSearch("设置窗皮肤");
+await typeSearch("应用皮肤");
 const search = await settings.evalJs(`({
   count: document.querySelectorAll('.settings-search-result').length,
   labels: Array.from(document.querySelectorAll('.settings-result-label')).map((el) => el.textContent),
   expanded: document.querySelector('.settings-search-input').getAttribute('aria-expanded'),
 })`);
-check("catalog search finds the skin setting once", search.count === 1 && search.labels.some((label) => label.includes("设置窗皮肤")), JSON.stringify(search));
+check("catalog search finds the skin setting once", search.count === 1 && search.labels.some((label) => label.includes("应用皮肤")), JSON.stringify(search));
 await settings.evalJs(`document.querySelector('.settings-search-result').click(); true`);
 await sleep(300);
 const jumped = await settings.evalJs(`({
   query: document.querySelector('.settings-search-input').value,
   active: document.querySelector('.settings-nav.active')?.dataset.section,
   focused: document.activeElement?.getAttribute('data-setting-id'),
-  highlighted: document.querySelector('[data-setting-id="appearance.settings_skin"]')?.classList.contains('settings-jump-highlight'),
+  highlighted: document.querySelector('[data-setting-id="appearance.skin"]')?.classList.contains('settings-jump-highlight'),
 })`);
-check("search result jumps to the exact row and focuses it", jumped.query === "" && jumped.active === "appearance" && jumped.focused === "appearance.settings_skin" && jumped.highlighted === true, JSON.stringify(jumped));
+check("search result jumps to the exact row and focuses it", jumped.query === "" && jumped.active === "appearance" && jumped.focused === "appearance.skin" && jumped.highlighted === true, JSON.stringify(jumped));
 
 await go("plugins");
 await sleep(500);
@@ -381,9 +381,9 @@ try {
 check("settings.toml can be made read-only for failure simulation", readOnlySet, SETTINGS_TOML);
 await clickSkin("quiet");
 const failed = await settings.evalJs(`({
-  skin: document.documentElement.dataset.settingsSkin,
+  skin: document.documentElement.dataset.skin,
   state: document.documentElement.dataset.settingsSaveState,
-  inline: document.querySelector('[data-setting-id="appearance.settings_skin"] .settings-inline-error')?.textContent,
+  inline: document.querySelector('[data-setting-id="appearance.skin"] .settings-inline-error')?.textContent,
   retry: document.querySelector('.settings-retry-status')?.textContent,
 })`);
 check("failed save rolls the skin and DOM back together", failed.skin === "chromatic" && failed.state === "error", JSON.stringify(failed));
@@ -391,12 +391,12 @@ check("failed skin save is shown inline and in the status bar", !!failed.inline 
 execSync(`attrib -R "${SETTINGS_TOML}"`, { stdio: "ignore" });
 await settings.evalJs(`document.querySelector('.settings-retry-status')?.click(); true`);
 await sleep(700);
-const retried = await settings.evalJs(`({ skin: document.documentElement.dataset.settingsSkin, state: document.documentElement.dataset.settingsSaveState })`);
+const retried = await settings.evalJs(`({ skin: document.documentElement.dataset.skin, state: document.documentElement.dataset.settingsSaveState })`);
 check("retry re-applies and saves the failed skin", retried.skin === "quiet" && retried.state === "saved", JSON.stringify(retried));
 const undoBefore = await settings.evalJs(`Array.from(document.querySelectorAll('.settings-footer-action')).find((el) => el.textContent.includes('撤销'))?.textContent ?? ''`);
 await settings.evalJs(`Array.from(document.querySelectorAll('.settings-footer-action')).find((el) => el.textContent.includes('撤销'))?.click(); true`);
 await sleep(500);
-const undone = await settings.evalJs(`({ skin: document.documentElement.dataset.settingsSkin, state: document.documentElement.dataset.settingsSaveState })`);
+const undone = await settings.evalJs(`({ skin: document.documentElement.dataset.skin, state: document.documentElement.dataset.settingsSaveState })`);
 check("successful autosave exposes a six-second undo", undoBefore.includes("撤销"), undoBefore);
 check("undo submits the inverse skin through autosave", undone.skin === "chromatic" && undone.state === "saved", JSON.stringify(undone));
 

@@ -1,7 +1,7 @@
 // Settings-window accent/palette regression. Build first:
 //   pnpm run build && pnpm run tauri build --debug --no-bundle
 // Run:
-//   node scripts/cdp_settings_accent_verify.mjs
+//   node scripts/cdp_accent_verify.mjs
 import { spawn, execSync } from "node:child_process";
 import { mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -48,7 +48,7 @@ let originalDefault = null;
 try { originalDefault = readFileSync(DEFAULT_TOML); } catch {}
 if (originalDefault && (
   !originalDefault.toString("utf8").includes("[clipboard]") ||
-  !originalDefault.toString("utf8").includes("settings_accent")
+  !originalDefault.toString("utf8").includes("accent")
 )) {
   process.on("exit", () => {
     try { writeFileSync(DEFAULT_TOML, originalDefault); } catch {}
@@ -146,9 +146,9 @@ const reloadSettings = async () => {
   await waitReady();
 };
 const setAppearance = async (skin, colorMode, accent, custom) => {
-  const appearance = { settings_skin: skin, color_mode: colorMode };
-  if (accent !== undefined) appearance.settings_accent = accent;
-  if (custom !== undefined) appearance.settings_accent_custom = custom;
+  const appearance = { skin: skin, color_mode: colorMode };
+  if (accent !== undefined) appearance.accent = accent;
+  if (custom !== undefined) appearance.accent_custom = custom;
   await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', { patch: {
     appearance: ${JSON.stringify(appearance)}
   }}).then(() => true)`);
@@ -160,7 +160,7 @@ const go = async (section) => {
   await sleep(180);
 };
 const showAccent = async () => {
-  await settings.evalJs(`document.querySelector('[data-setting-id="appearance.settings_accent"]')?.scrollIntoView({ block: 'center' }); true`);
+  await settings.evalJs(`document.querySelector('[data-setting-id="appearance.accent"]')?.scrollIntoView({ block: 'center' }); true`);
   await sleep(160);
 };
 const typeSearch = async (text) => {
@@ -189,12 +189,12 @@ const collect = () => settings.evalJs(`(() => {
   };
   const checked = document.querySelector('.settings-accent-option[aria-checked="true"]');
   return {
-    accentAttr: root.dataset.settingsAccent,
-    userAccent: root.style.getPropertyValue('--settings-user-accent').trim(),
-    userStructure: root.style.getPropertyValue('--settings-user-structure').trim(),
-    userStructureText: root.style.getPropertyValue('--settings-user-structure-text').trim(),
+    accentAttr: root.dataset.accent,
+    userAccent: root.style.getPropertyValue('--ui-accent-raw').trim(),
+    userStructure: root.style.getPropertyValue('--ui-accent').trim(),
+    userStructureText: root.style.getPropertyValue('--ui-accent-text').trim(),
     theme: root.dataset.theme,
-    skin: root.dataset.settingsSkin,
+    skin: root.dataset.skin,
     canvas: sample('.settings'),
     rail: sample('.settings-topbar'),
     panel: sample('.settings-group-panel'),
@@ -214,7 +214,7 @@ const collect = () => settings.evalJs(`(() => {
     panelRadius: getComputedStyle(document.querySelector('.settings-group-panel')).borderRadius,
     docWidth: root.scrollWidth,
     viewport: innerWidth,
-    row: document.querySelector('[data-setting-id="appearance.settings_accent"]')?.getBoundingClientRect().toJSON(),
+    row: document.querySelector('[data-setting-id="appearance.accent"]')?.getBoundingClientRect().toJSON(),
     controlBox: document.querySelector('.settings-accent-control')?.getBoundingClientRect().toJSON(),
     options: Array.from(document.querySelectorAll('.settings-accent-option')).map((el) => el.getBoundingClientRect().toJSON()),
   };
@@ -350,7 +350,7 @@ await sleep(550);
 const preset = await collect();
 const presetSaved = await getSaved();
 const presetFocus = await settings.evalJs(`document.activeElement?.dataset?.accentValue ?? null`);
-check("preset click updates radio, DOM, and persisted value", preset.checked === "#6f7cff" && preset.accentAttr === "custom" && presetSaved.appearance.settings_accent === "#6f7cff" && presetFocus === "#6f7cff", JSON.stringify({ checked: preset.checked, saved: presetSaved.appearance.settings_accent, focus: presetFocus }));
+check("preset click updates radio, DOM, and persisted value", preset.checked === "#6f7cff" && preset.accentAttr === "custom" && presetSaved.appearance.accent === "#6f7cff" && presetFocus === "#6f7cff", JSON.stringify({ checked: preset.checked, saved: presetSaved.appearance.accent, focus: presetFocus }));
 
 await settings.evalJs(`(() => {
   const input = document.querySelector('.settings-accent-input');
@@ -365,15 +365,15 @@ await settings.evalJs(`document.querySelector('.settings-accent-input').dispatch
 await sleep(550);
 const custom = await collect();
 const customSaved = await getSaved();
-check("custom color commits as normalized lowercase hex", custom.customActive && custom.checked === null && custom.customValue === "#abcdef" && customSaved.appearance.settings_accent === "#abcdef", JSON.stringify({ custom: custom.customValue, checked: custom.checked, saved: customSaved.appearance.settings_accent }));
-check("custom commit also remembers the color for the picker", customSaved.appearance.settings_accent_custom === "#abcdef", JSON.stringify(customSaved.appearance));
+check("custom color commits as normalized lowercase hex", custom.customActive && custom.checked === null && custom.customValue === "#abcdef" && customSaved.appearance.accent === "#abcdef", JSON.stringify({ custom: custom.customValue, checked: custom.checked, saved: customSaved.appearance.accent }));
+check("custom commit also remembers the color for the picker", customSaved.appearance.accent_custom === "#abcdef", JSON.stringify(customSaved.appearance));
 check("custom state keeps one preset in the keyboard tab order", custom.accentTabStops === 1, String(custom.accentTabStops));
 
 await settings.evalJs(`Array.from(document.querySelectorAll('.settings-footer-action')).find((el) => el.textContent.includes('Undo') || el.textContent.includes('撤销') || el.textContent.includes('復原'))?.click(); true`);
 await sleep(450);
 const undone = await collect();
 const undoSaved = await getSaved();
-check("undo restores the previous accent in DOM and settings", undone.checked === "#6f7cff" && undoSaved.appearance.settings_accent === "#6f7cff", JSON.stringify({ checked: undone.checked, saved: undoSaved.appearance.settings_accent }));
+check("undo restores the previous accent in DOM and settings", undone.checked === "#6f7cff" && undoSaved.appearance.accent === "#6f7cff", JSON.stringify({ checked: undone.checked, saved: undoSaved.appearance.accent }));
 
 await settings.evalJs(`document.querySelector('.settings-footer button[data-setting-id="system.restore_default"]')?.click(); true`);
 await sleep(150);
@@ -381,7 +381,7 @@ await settings.evalJs(`document.querySelector('.settings-confirm-actions .settin
 await sleep(700);
 const restored = await collect();
 const restoredSaved = await getSaved();
-check("restore defaults clears the accent override", restored.accentAttr === undefined && restored.userAccent === "" && restoredSaved.appearance.settings_accent === "", JSON.stringify({ attr: restored.accentAttr, saved: restoredSaved.appearance.settings_accent }));
+check("restore defaults clears the accent override", restored.accentAttr === undefined && restored.userAccent === "" && restoredSaved.appearance.accent === "", JSON.stringify({ attr: restored.accentAttr, saved: restoredSaved.appearance.accent }));
 
 await setAppearance("quiet", "dark", "#3fb98b");
 await go("appearance");
@@ -395,7 +395,7 @@ await settings.evalJs(`document.querySelector('.settings-accent-option[data-acce
 await sleep(650);
 const failed = await collect();
 const failedInline = await settings.evalJs(`({
-  inline: document.querySelector('[data-setting-id="appearance.settings_accent"] .settings-inline-error')?.textContent ?? '',
+  inline: document.querySelector('[data-setting-id="appearance.accent"] .settings-inline-error')?.textContent ?? '',
   state: document.documentElement.dataset.settingsSaveState,
   retry: document.querySelector('.settings-retry-status')?.textContent ?? '',
 })`);
@@ -406,7 +406,7 @@ await settings.evalJs(`document.querySelector('.settings-retry-status')?.click()
 await sleep(700);
 const retried = await collect();
 const retriedSaved = await getSaved();
-check("retry re-applies and persists the failed accent", retried.checked === "#d96c95" && retriedSaved.appearance.settings_accent === "#d96c95" && (await settings.evalJs(`document.documentElement.dataset.settingsSaveState`)) === "saved", JSON.stringify({ checked: retried.checked, saved: retriedSaved.appearance.settings_accent }));
+check("retry re-applies and persists the failed accent", retried.checked === "#d96c95" && retriedSaved.appearance.accent === "#d96c95" && (await settings.evalJs(`document.documentElement.dataset.settingsSaveState`)) === "saved", JSON.stringify({ checked: retried.checked, saved: retriedSaved.appearance.accent }));
 
 await typeSearch("调色盘");
 const search = await settings.evalJs(`({
@@ -419,9 +419,9 @@ await sleep(300);
 const jumped = await settings.evalJs(`({
   active: document.querySelector('.settings-nav.active')?.dataset.section,
   focused: document.activeElement?.getAttribute('data-setting-id'),
-  highlighted: document.querySelector('[data-setting-id="appearance.settings_accent"]')?.classList.contains('settings-jump-highlight'),
+  highlighted: document.querySelector('[data-setting-id="appearance.accent"]')?.classList.contains('settings-jump-highlight'),
 })`);
-check("search jumps to and focuses the accent row", jumped.active === "appearance" && jumped.focused === "appearance.settings_accent" && jumped.highlighted, JSON.stringify(jumped));
+check("search jumps to and focuses the accent row", jumped.active === "appearance" && jumped.focused === "appearance.accent" && jumped.highlighted, JSON.stringify(jumped));
 await typeSearch("強調色");
 check("catalog keyword works for Traditional Chinese", await settings.evalJs(`document.querySelectorAll('.settings-search-result').length > 0`));
 
@@ -442,10 +442,11 @@ await setAppearance("quiet", "dark", "#d96c95");
 await sleep(450);
 const launcher = await main.evalJs(`({
   accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
-  attr: document.documentElement.dataset.settingsAccent ?? null,
-  userAccent: getComputedStyle(document.documentElement).getPropertyValue('--settings-user-accent').trim(),
+  attr: document.documentElement.dataset.accent ?? null,
+  userAccent: document.documentElement.style.getPropertyValue('--ui-accent-raw').trim(),
+  surface: document.documentElement.style.getPropertyValue('--surface').trim(),
 })`);
-check("launcher accent tokens remain independent from the settings accent", launcher.accent === "#5ac8fa" && launcher.attr === null && launcher.userAccent === "", JSON.stringify(launcher));
+check("launcher follows the global accent without tinting its surface", launcher.attr === "custom" && launcher.userAccent === "#d96c95" && launcher.accent !== "#5ac8fa" && launcher.surface === "#1e1e20", JSON.stringify(launcher));
 
 settings.ws.close();
 main.ws.close();
@@ -480,7 +481,7 @@ const palette = () => settings.evalJs(`(() => {
       : rgb;
   };
   return {
-    skin: root.dataset.settingsSkin,
+    skin: root.dataset.skin,
     theme: root.dataset.theme,
     structure: hex(read('--settings-structure')),
     options: Array.from(document.querySelectorAll('.settings-accent-option')).map((el) => el.dataset.accentValue),
@@ -502,7 +503,7 @@ await settings.evalJs(`document.querySelector('.settings-accent-option[data-acce
 await sleep(550);
 const afterPreset = await palette();
 const afterPresetSaved = await getSaved();
-check("picking a preset leaves the remembered custom color untouched", afterPreset.custom === "#abcdef" && afterPresetSaved.appearance.settings_accent === "#6f7cff" && afterPresetSaved.appearance.settings_accent_custom === "#abcdef", JSON.stringify({ custom: afterPreset.custom, saved: afterPresetSaved.appearance.settings_accent, savedCustom: afterPresetSaved.appearance.settings_accent_custom }));
+check("picking a preset leaves the remembered custom color untouched", afterPreset.custom === "#abcdef" && afterPresetSaved.appearance.accent === "#6f7cff" && afterPresetSaved.appearance.accent_custom === "#abcdef", JSON.stringify({ custom: afterPreset.custom, saved: afterPresetSaved.appearance.accent, savedCustom: afterPresetSaved.appearance.accent_custom }));
 
 await setAppearance("quiet", "dark", "", "");
 await go("appearance");
@@ -542,7 +543,7 @@ await settings.evalJs(`document.querySelector('.settings-accent-custom-apply')?.
 await sleep(550);
 const appliedCustom = await collect();
 const appliedCustomSaved = await getSaved();
-check("clicking the custom entry applies the remembered color", appliedCustom.accentAttr === "custom" && appliedCustom.userAccent === "#abcdef" && appliedCustomSaved.appearance.settings_accent === "#abcdef", JSON.stringify({ accent: appliedCustom.userAccent, saved: appliedCustomSaved.appearance.settings_accent }));
+check("clicking the custom entry applies the remembered color", appliedCustom.accentAttr === "custom" && appliedCustom.userAccent === "#abcdef" && appliedCustomSaved.appearance.accent === "#abcdef", JSON.stringify({ accent: appliedCustom.userAccent, saved: appliedCustomSaved.appearance.accent }));
 
 // …and pure white when nothing was stored yet.
 await setAppearance("quiet", "dark", "", "");
@@ -551,7 +552,7 @@ await settings.evalJs(`document.querySelector('.settings-accent-custom-apply')?.
 await sleep(550);
 const appliedWhite = await collect();
 const appliedWhiteSaved = await getSaved();
-check("clicking the custom entry with nothing stored applies pure white", appliedWhite.accentAttr === "custom" && appliedWhite.userAccent === "#ffffff" && appliedWhiteSaved.appearance.settings_accent === "#ffffff" && appliedWhiteSaved.appearance.settings_accent_custom === "#ffffff", JSON.stringify({ accent: appliedWhite.userAccent, saved: appliedWhiteSaved.appearance.settings_accent, savedCustom: appliedWhiteSaved.appearance.settings_accent_custom }));
+check("clicking the custom entry with nothing stored applies pure white", appliedWhite.accentAttr === "custom" && appliedWhite.userAccent === "#ffffff" && appliedWhiteSaved.appearance.accent === "#ffffff" && appliedWhiteSaved.appearance.accent_custom === "#ffffff", JSON.stringify({ accent: appliedWhite.userAccent, saved: appliedWhiteSaved.appearance.accent, savedCustom: appliedWhiteSaved.appearance.accent_custom }));
 
 console.log(`\n[settings-accent] ${pass} passed, ${fail} failed`);
 killApp();

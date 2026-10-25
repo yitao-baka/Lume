@@ -52,10 +52,10 @@ body {
 .plugin-window-root .presenter-error-retry {
   min-height: 32px;
   padding: 0 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--surface-raised);
-  color: var(--text);
+  border: var(--ui-line-width) solid var(--ui-accent-border);
+  border-radius: var(--ui-control-radius);
+  background: var(--accent-tint);
+  color: var(--ui-accent-text);
   font: inherit;
   cursor: pointer;
 }

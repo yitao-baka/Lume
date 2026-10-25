@@ -1,0 +1,90 @@
+/* Chromatic Edge — square editorial settings skin. */
+
+html[data-skin="chromatic"] {
+  --settings-canvas-base: #1e1e20;
+  --settings-rail-base: #18181b;
+  --settings-panel-base: #262629;
+  --settings-control-base: #262629;
+  --settings-canvas: var(--settings-canvas-base);
+  --settings-rail: var(--settings-rail-base);
+  --settings-panel: var(--settings-panel-base);
+  --settings-control: var(--settings-control-base);
+  --settings-line: rgba(220, 216, 209, 0.14);
+  --settings-line-strong: rgba(220, 216, 209, 0.28);
+  --settings-text: #dcd8d1;
+  --settings-secondary: #bbb8b2;
+  --settings-muted: #96949b;
+  /* Default accent = 湖蓝 (Aqua): the skin's original mauve moved into the
+     palette's first slot (src/settings/accent.ts). The selection tint is the
+     same 16% oklab mix an explicit Aqua accent produces (skins/accent.css),
+     so "follow skin" and a picked Aqua stay visually identical. */
+  --ui-accent: #5ac8fa;
+  --ui-accent-text: #5ac8fa;
+  --ui-accent-border: rgba(90, 200, 250, 0.62);
+  --ui-accent-on: #06131a;
+  --ui-focus-ring: #5ac8fa;
+  --settings-structure: var(--ui-accent);
+  --settings-structure-text: var(--ui-accent-text);
+  --settings-selected: color-mix(in oklab, var(--ui-accent-raw) 16%, var(--settings-panel-base));
+  --settings-selected-text: #dcd8d1;
+  --settings-hover: rgba(220, 216, 209, 0.055);
+  --settings-signal: #c09682;
+  --settings-signal-text: #d0a68f;
+  --settings-signal-tint: rgba(192, 150, 130, 0.09);
+  --settings-success: #8dae99;
+  --settings-overlay-shadow: 6px 6px 0 rgba(0, 0, 0, 0.58);
+}
+
+html[data-skin="chromatic"][data-theme="light"] {
+  --settings-canvas-base: #f3efe6;
+  --settings-rail-base: #dde5de;
+  --settings-panel-base: #fbf8f1;
+  --settings-control-base: #fbf8f1;
+  --settings-canvas: var(--settings-canvas-base);
+  --settings-rail: var(--settings-rail-base);
+  --settings-panel: var(--settings-panel-base);
+  --settings-control: var(--settings-control-base);
+  --settings-line: rgba(52, 56, 50, 0.16);
+  --settings-line-strong: rgba(52, 56, 50, 0.34);
+  --settings-text: #343832;
+  --settings-secondary: #4e554f;
+  --settings-muted: #626862;
+  --ui-accent: #64796d;
+  --ui-accent-text: #52675b;
+  --ui-accent-border: rgba(82, 103, 91, 0.72);
+  --ui-accent-on: #ffffff;
+  --ui-focus-ring: #64796d;
+  --settings-structure: var(--ui-accent);
+  --settings-structure-text: var(--ui-accent-text);
+  --settings-selected: #d1ded4;
+  --settings-selected-text: #303a33;
+  --settings-hover: rgba(52, 56, 50, 0.05);
+  --settings-signal: #b88374;
+  --settings-signal-text: #86594d;
+  --settings-signal-tint: rgba(184, 131, 116, 0.09);
+  --settings-success: #4d6d58;
+  --settings-overlay-shadow: 6px 6px 0 rgba(52, 56, 50, 0.2);
+}
+
+html[data-skin="chromatic"] {
+  --settings-topbar-height: 52px;
+  --settings-rail-width: 224px;
+  --settings-rail-medium: 196px;
+  --settings-page-gutter: 30px;
+  --settings-header-top: 26px;
+  --settings-group-gap: 20px;
+  --settings-row-gap: 18px;
+  --settings-panel-radius: 0px;
+  --settings-control-radius: 0px;
+  --settings-nav-radius: 0px;
+  --settings-toggle-radius: 0px;
+  --settings-knob-radius: 0px;
+  --settings-line-width: 1.5px;
+  --settings-overlay-border-width: 2px;
+  --settings-focus-width: 3px;
+  --settings-control-height: 30px;
+  --settings-page-title-size: 40px;
+  --settings-page-title-size-narrow: 30px;
+  --settings-page-title-tracking: -0.045em;
+  --settings-page-number-medium: 72px;
+}

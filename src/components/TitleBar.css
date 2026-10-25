@@ -88,8 +88,14 @@
 }
 
 .titlebar-btn.active {
-  color: var(--text);
-  background: var(--selected);
+  color: var(--ui-accent-text);
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 var(--ui-line-width) var(--ui-accent-border);
+}
+
+.titlebar-btn:focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: -2px;
 }
 
 /* Windows convention: close stands out on hover. */

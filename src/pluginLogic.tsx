@@ -24,6 +24,8 @@ import { setPermissionSource } from "./plugins/permissions";
 import { execHostRpc } from "./plugins/rpc";
 import { plog } from "./plugins/log";
 import { resolveColorMode } from "./theme";
+import { normalizeSkin } from "./skins/registry";
+import { normalizeAccent } from "./skins/accent";
 import { pluginColorMode, pluginColorPref, seedPluginColorPrefs, setPluginColorPref } from "./plugins/themePrefs";
 import type { SettingsData } from "./settings/types";
 
@@ -35,9 +37,10 @@ import type { SettingsData } from "./settings/types";
  * elsewhere *after* this window was created is therefore up to one window
  * lifetime stale here (the launcher's own mirror, not this one, drives every
  * `theme` push). */
-const cfgHostColorSetting =
-  (window as unknown as { __LUME_CONFIG__?: SettingsData }).__LUME_CONFIG__?.appearance?.color_mode ??
-  "system";
+const cfgAppearance = (window as unknown as { __LUME_CONFIG__?: SettingsData }).__LUME_CONFIG__?.appearance;
+let hostColorSetting = cfgAppearance?.color_mode ?? "system";
+let hostSkin = normalizeSkin(cfgAppearance?.skin);
+let hostAccent = normalizeAccent(cfgAppearance?.accent);
 seedPluginColorPrefs(
   (window as unknown as { __LUME_CONFIG__?: SettingsData }).__LUME_CONFIG__?.plugins?.color_modes
 );
@@ -123,8 +126,14 @@ function makeServices(id: string, token: string): PluginServices {
       setPluginColorPref(pluginId, mode, "window");
     },
     pluginColorState: (pluginId) => {
-      const host = resolveColorMode(cfgHostColorSetting);
-      return { pref: pluginColorPref(pluginId), mode: pluginColorMode(pluginId, host), host };
+      const host = resolveColorMode(hostColorSetting);
+      return {
+        pref: pluginColorPref(pluginId),
+        mode: pluginColorMode(pluginId, host),
+        host,
+        skin: hostSkin,
+        accent: hostAccent,
+      };
     },
   };
 }
@@ -386,6 +395,18 @@ async function start() {
     .catch((err) => plog.error(null, "logic host: permission source wire failed:", err));
 
   const unlisteners: UnlistenFn[] = [];
+  unlisteners.push(
+    await listen("settings-applied", () => {
+      void invoke<SettingsData>("get_settings")
+        .then((settings) => {
+          hostColorSetting = settings.appearance?.color_mode ?? "system";
+          hostSkin = normalizeSkin(settings.appearance?.skin);
+          hostAccent = normalizeAccent(settings.appearance?.accent);
+          seedPluginColorPrefs(settings.plugins?.color_modes);
+        })
+        .catch((err) => plog.error(null, "logic host: settings refresh failed:", err));
+    })
+  );
   unlisteners.push(
     await listen<{ id: string; kind: string; payload: Record<string, unknown> }>(
       "plugin-logic-event",

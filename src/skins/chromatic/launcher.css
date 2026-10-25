@@ -1,0 +1,100 @@
+/* Chromatic launcher rhythm: near-square editorial controls and stronger
+   structure, while the outer window keeps the DWM-owned geometry. */
+html[data-skin="chromatic"] .launcher {
+  --launcher-row-radius: 2px;
+  --launcher-tile-radius: 2px;
+  --launcher-control-radius: 1px;
+  --launcher-line-width: 1.5px;
+  --launcher-line: var(--border-strong);
+}
+
+html[data-skin="chromatic"] .launcher .search {
+  padding: 17px 18px 12px;
+}
+
+html[data-skin="chromatic"] .launcher .search-input {
+  font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+html[data-skin="chromatic"] .launcher .icon-btn,
+html[data-skin="chromatic"] .launcher .detach-btn,
+html[data-skin="chromatic"] .launcher .bar-expand,
+html[data-skin="chromatic"] .launcher .mode-switch,
+html[data-skin="chromatic"] .launcher .mode-switch-item,
+html[data-skin="chromatic"] .launcher .clip-cat,
+html[data-skin="chromatic"] .launcher .ctx-menu,
+html[data-skin="chromatic"] .launcher .ctx-item,
+html[data-skin="chromatic"] .launcher .toast,
+html[data-skin="chromatic"] .launcher .clip-confirm {
+  border-radius: var(--launcher-control-radius);
+}
+
+html[data-skin="chromatic"] .launcher .mode-switch-item.active,
+html[data-skin="chromatic"] .launcher .clip-cat.active {
+  box-shadow: inset 0 -2px 0 var(--ui-accent);
+}
+
+html[data-skin="chromatic"] .launcher .bar-section,
+html[data-skin="chromatic"] .launcher .nav-list-section + .nav-list-section {
+  border-bottom-width: var(--launcher-line-width);
+  border-color: var(--launcher-line);
+}
+
+html[data-skin="chromatic"] .launcher .bar-title,
+html[data-skin="chromatic"] .launcher .nav-list-heading-title,
+html[data-skin="chromatic"] .launcher .result-split .bar-title {
+  padding-left: 8px;
+  border-left: 3px solid var(--ui-accent);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+html[data-skin="chromatic"] .launcher .result-grid,
+html[data-skin="chromatic"] .launcher .bar-grid {
+  gap: 6px;
+}
+
+html[data-skin="chromatic"] .launcher .result-box,
+html[data-skin="chromatic"] .launcher .result-item,
+html[data-skin="chromatic"] .launcher .clip-row,
+html[data-skin="chromatic"] .launcher .clip-compact-row,
+html[data-skin="chromatic"] .launcher .nav-list-row,
+html[data-skin="chromatic"] .launcher .nav-list-heading {
+  border-radius: var(--launcher-row-radius);
+}
+
+html[data-skin="chromatic"] .launcher .result-box {
+  border-width: var(--launcher-line-width);
+  border-color: var(--launcher-line);
+}
+
+html[data-skin="chromatic"] .launcher .result-box.result-selected,
+html[data-skin="chromatic"] .launcher .clip-row.result-selected,
+html[data-skin="chromatic"] .launcher .nav-list-row.active {
+  box-shadow: inset 2px 0 0 var(--ui-accent), inset 0 0 0 var(--launcher-line-width) var(--ui-accent-border);
+}
+
+html[data-skin="chromatic"] .launcher .clip-cat {
+  border: var(--launcher-line-width) solid transparent;
+}
+
+html[data-skin="chromatic"] .launcher .clip-cat.active {
+  border-color: var(--ui-accent-border);
+  background: var(--accent-tint);
+}
+
+html[data-skin="chromatic"] .launcher .clip-row-tile,
+html[data-skin="chromatic"] .launcher .clip-compact-tile,
+html[data-skin="chromatic"] .launcher .result-box-tile {
+  border-radius: var(--launcher-tile-radius);
+}
+
+html[data-skin="chromatic"] .launcher .clip-cats {
+  gap: 4px;
+  padding-inline: 14px;
+}

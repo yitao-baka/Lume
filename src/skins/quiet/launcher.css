@@ -1,0 +1,8 @@
+/* Quiet launcher rhythm: rounded controls on the continuous panel surface. */
+html[data-skin="quiet"] .launcher {
+  --launcher-row-radius: 8px;
+  --launcher-tile-radius: 9px;
+  --launcher-control-radius: 8px;
+  --launcher-line-width: 1px;
+  --launcher-line: var(--ui-line);
+}

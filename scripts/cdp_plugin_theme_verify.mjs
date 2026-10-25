@@ -212,6 +212,10 @@ check("②c page canvas follows the launcher (light surface)",
 // "settings"），那是持久化生效的证据，不是本轮插件行为。
 check("②d plugin has not pinned anything yet",
   !(await themeTap()).some((e) => e.source === "main" || e.source === "window"), JSON.stringify(await themeTap()));
+const skinTap = await m.evalJs(`((window).__presenterSkins ?? []).filter((e) => e.pageId === "hello-mode")`);
+check("②e embedded Presenter received the global skin visual event",
+  skinTap.some((e) => e.id === "quiet" && e.accent === "" && e.surface === "#fbfbfd"),
+  JSON.stringify(skinTap));
 
 // ③ theme.set("dark") —— 页面画布转深，启动器不动
 await driveTheme("dark");
@@ -259,6 +263,10 @@ check("⑤d detached page canvas is the plugin mode (light)", !!wPage && near(wP
 const pushed = await w.evalJs(`((window).__pluginStates ?? []).filter((s) => s.theme).map((s) => s.theme)`);
 check("⑤e launcher pushed the plugin's effective mode across windows",
   pushed.includes("light") && !pushed.includes("dark"), JSON.stringify(pushed));
+const pushedVisual = await w.evalJs(`((window).__pluginStates ?? []).filter((s) => s.skin).map((s) => ({ skin: s.skin, accent: s.accent, surface: s.surface, theme: s.theme }))`);
+check("⑤f detached window received skin, accent, and surface with the theme",
+  pushedVisual.some((s) => s.skin === "quiet" && s.accent === "" && s.surface === "#fbfbfd" && s.theme === "light"),
+  JSON.stringify(pushedVisual));
 await w.shot("plugin_theme_window.png");
 
 // ⑥ 独立窗口内改偏好 → 回传启动器镜像

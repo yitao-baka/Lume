@@ -2,7 +2,10 @@
 //! the only RPCs this iframe can reach; there is no http/storage/db/fs/
 //! clipboard/dialog/screen/search/secrets or arbitrary Tauri command surface.
 
-import { currentThemeMode, PANEL_SURFACE_BG } from "../theme";
+import { currentThemeMode } from "../theme";
+import { currentSkin } from "../skins/runtime";
+import { currentAccent, normalizeAccent } from "../skins/accent";
+import { normalizeSkin, skinSurface } from "../skins/registry";
 import { createIframeView } from "../plugins/iframeBridge";
 import type { PageModel, PresenterDescriptor } from "./contracts";
 import { normalizeLayoutReport, normalizeResizeRequest } from "./layout";
@@ -221,8 +224,10 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
     if (d.__lumeEvent) {
       var ev = d.__lumeEvent;
       if (ev.type === "restore") restoreSnapshot(ev.payload);
-      if (ev.type === "theme") {
-        document.documentElement.style.setProperty("--lume-page-bg", ev.payload === "light" ? "${PANEL_SURFACE_BG.light}" : "${PANEL_SURFACE_BG.dark}");
+      if (ev.type === "skin" && ev.payload) {
+        if (ev.payload.surface) document.documentElement.style.setProperty("--lume-page-bg", ev.payload.surface);
+        document.documentElement.style.setProperty("--lume-page-accent", ev.payload.accent || "");
+        if (ev.payload.id) document.documentElement.dataset.lumeSkin = ev.payload.id;
       }
       var h = handlers[ev.type];
       if (typeof h === "function") h(ev.payload);
@@ -286,13 +291,16 @@ const PRESENTER_CSP = [
 export function injectPresenterBridge(
   html: string,
   form: "launcher" | "window",
-  titlebar = false
+  titlebar = false,
+  skin = currentSkin(),
+  surface = skinSurface(skin, currentThemeMode()),
+  accent = currentAccent()
 ): string {
   const injection =
     '<meta http-equiv="Content-Security-Policy" content="' + PRESENTER_CSP + '">' +
     '<base target="_blank">' +
-    '<style>html{background:var(--lume-page-bg,' + PANEL_SURFACE_BG[currentThemeMode()] + ')}</style>' +
-    '<script>window.__LUME_HOST_FORM__=' + JSON.stringify(form) + ';</script>' +
+    '<style>html{--lume-page-bg:' + surface + ';--lume-page-accent:' + accent + ';background:var(--lume-page-bg)}</style>' +
+    '<script>document.documentElement.dataset.lumeSkin=' + JSON.stringify(normalizeSkin(skin)) + ';window.__LUME_HOST_FORM__=' + JSON.stringify(form) + ';</script>' +
     (titlebar ? '<script>window.__LUME_TITLEBAR__=true;/* lume-titlebar-drag-default */</script>' : '') +
     '<script>' + PRESENTER_BRIDGE_SCRIPT + '</script>';
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + injection);
@@ -385,9 +393,17 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
     () => {
       post("model", opts.session.store.get());
       post("settings", opts.settings?.() ?? {});
-      const themeState = opts.themeGet() as { mode?: unknown } | null | undefined;
-      const mode = typeof themeState?.mode === "string" ? themeState.mode : currentThemeMode();
+      const state = opts.themeGet() as
+        | { mode?: unknown; skin?: unknown; accent?: unknown }
+        | null
+        | undefined;
+      const mode = state?.mode === "light" || state?.mode === "dark"
+        ? state.mode
+        : currentThemeMode();
+      const skin = normalizeSkin(state?.skin ?? currentSkin());
+      const accent = normalizeAccent(state?.accent ?? currentAccent());
       post("theme", mode);
+      post("skin", { id: skin, accent, surface: skinSurface(skin, mode) });
       const snapshot = opts.takeSnapshot?.();
       if (snapshot != null) post("restore", snapshot);
     },
@@ -397,7 +413,20 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
       id: opts.pageId,
     }
   );
-  View.setHtml(injectPresenterBridge(opts.html, opts.form, opts.titlebar === true));
+  const state = opts.themeGet() as { mode?: unknown; skin?: unknown; accent?: unknown } | null | undefined;
+  const mode = state?.mode === "light" || state?.mode === "dark" ? state.mode : currentThemeMode();
+  const skin = normalizeSkin(state?.skin ?? currentSkin());
+  const accent = normalizeAccent(state?.accent ?? currentAccent());
+  View.setHtml(
+    injectPresenterBridge(
+      opts.html,
+      opts.form,
+      opts.titlebar === true,
+      skin,
+      skinSurface(skin, mode),
+      accent,
+    ),
+  );
   return {
     View,
     post,

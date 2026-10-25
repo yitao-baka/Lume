@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <style>
   :root { color-scheme: light dark; }
+  :root[data-theme="light"] { color-scheme: light; color: #1f2328; }
+  :root[data-theme="dark"] { color-scheme: dark; color: #f2f2f2; }
   body { font: 14px "Segoe UI", sans-serif; margin: 0; padding: 18px 22px; background: transparent; color: inherit; }
   h1 { margin: 0 0 4px; font-size: 18px; }
   .dim { opacity: .6; font-size: 12px; margin-bottom: 14px; }
@@ -64,6 +66,10 @@
     lume.on.theme = function (mode) {
       (window.__themeLog || (window.__themeLog = [])).push({ id: "hello-mode", mode: mode });
       document.documentElement.dataset.theme = mode === "light" ? "light" : "dark";
+    };
+    lume.on.skin = function (visual) {
+      (window.__skinLog || (window.__skinLog = [])).push(visual);
+      document.documentElement.dataset.skin = visual.id;
     };
     lume.page.subscribe(render);
     render(model);

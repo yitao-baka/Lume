@@ -23,6 +23,7 @@ import type {
   PluginIconSpec,
 } from "../launcher/types";
 import type { ColorMode, PluginColorMode } from "../theme";
+import type { SkinId } from "../skins/registry";
 
 export type { FileSearchOut, FileSearchStatus, PluginColorMode, ColorMode, PluginIconSpec };
 
@@ -35,6 +36,10 @@ export interface PluginColorState {
   mode: ColorMode;
   /** The launcher's effective mode, which a `"system"` pref follows. */
   host: ColorMode;
+  /** Application-wide skin id. */
+  skin: SkinId;
+  /** Custom accent (`""` = follow the skin). */
+  accent: string;
 }
 
 /** One row of a page's current results — a navigate-grid entry or a clipboard

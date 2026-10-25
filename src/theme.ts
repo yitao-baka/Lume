@@ -87,12 +87,6 @@ export function currentThemeMode(): "light" | "dark" {
   return themeMode();
 }
 
-/** The theme's solid panel surface per color mode (`--surface` in theme.css).
- * One value shared by the launcher panel, the DWM frame strip (window.rs), the
- * default plugin-page canvas (`presenterBridge`) and the settings window — the
- * seam/corner uniformity contract. */
-export const PANEL_SURFACE_BG = { dark: "#1e1e20", light: "#fbfbfd" } as const;
-
 /** One plugin's color-mode preference (`lume.theme.set`): `"system"` follows
  * the launcher's effective mode, `"light"` / `"dark"` pin the plugin's own
  * surfaces regardless of the launcher. */

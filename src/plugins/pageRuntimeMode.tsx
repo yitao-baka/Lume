@@ -11,6 +11,9 @@ import { createPresenterBridge, type PresenterBridge } from "../page-runtime/pre
 import type { PageLayoutReport } from "../page-runtime/contracts";
 import { dropSessionFrames, takeSessionFrames } from "../launcher/session";
 import { normalizePluginColorMode } from "../theme";
+import { currentSkin } from "../skins/runtime";
+import { currentAccent } from "../skins/accent";
+import { skinSurface } from "../skins/registry";
 import { t } from "../i18n";
 import type {
   ModeInstance,
@@ -560,8 +563,19 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     postEvent: (type, payload) => postBoth(type, payload),
     postTheme: (mode) => {
       postBoth("theme", mode);
-      const probe = window as unknown as { __presenterThemes?: unknown[] };
+      const skin = currentSkin();
+      const visual = {
+        id: skin,
+        accent: currentAccent(),
+        surface: skinSurface(skin, mode === "light" ? "light" : "dark"),
+      };
+      postBoth("skin", visual);
+      const probe = window as unknown as {
+        __presenterThemes?: unknown[];
+        __presenterSkins?: unknown[];
+      };
       (probe.__presenterThemes ??= []).push({ pageId: m.id, mode });
+      (probe.__presenterSkins ??= []).push({ pageId: m.id, ...visual });
     },
     switchPresenter: async (presenterId) => {
       if (!m.presenters.some((presenter) => presenter.id === presenterId)) {

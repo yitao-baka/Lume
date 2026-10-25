@@ -6,12 +6,12 @@ import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
 import { t } from "../../i18n";
 import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "../../launcher/clipData";
 import type { ClipboardItem } from "../../launcher/types";
+import { currentSkin } from "../../skins/runtime";
+import { clipboardRowHeight } from "../../skins/registry";
 import type { ClipboardRowModel } from "../../page-runtime/schemas";
 import type { ClipboardListProps } from "../clipboard-list/ClipboardListPresenter";
 import clipboardIcon from "../../../res/icons/clipboard.svg";
 import multifilesIcon from "../../../res/icons/multifiles.svg";
-
-const COMPACT_ROW_H = 44;
 
 function asItem(row: ClipboardRowModel): ClipboardItem {
   return {
@@ -77,6 +77,7 @@ function CompactTile(props: { row: ClipboardRowModel }) {
 export function ClipboardCompactPresenter(props: ClipboardListProps) {
   const data = () => props.data();
   const rows = () => data()?.items ?? [];
+  const rowHeight = () => clipboardRowHeight(currentSkin(), "clipboard-compact");
   const selected = (row: ClipboardRowModel) => props.selectedId() === row.id;
   const checked = (row: ClipboardRowModel) =>
     (data()?.status.selected ?? 0) > 0 && (data()?.selectedIds ?? []).includes(row.id);
@@ -103,7 +104,7 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
     if (!list) return;
     void props.dispatch({
       type: "viewport.request",
-      payload: { scrollTop: list.scrollTop, viewportHeight: list.clientHeight, rowHeight: COMPACT_ROW_H },
+      payload: { scrollTop: list.scrollTop, viewportHeight: list.clientHeight, rowHeight: rowHeight() },
     });
   };
   const bindList = (el: HTMLDivElement) => {
@@ -115,6 +116,23 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
   };
   onMount(() => queueMicrotask(measureViewport));
   onCleanup(() => resizeObserver?.disconnect());
+
+  // A skin change can alter the row rhythm without rebuilding the Presenter.
+  // Keep the selected item visible and immediately publish the new height to
+  // the Page Service so spacer/windowing math stays in sync.
+  createEffect(() => {
+    const height = rowHeight();
+    const index = data()?.selectedIndex ?? -1;
+    if (index >= 0 && list) {
+      const top = index * height;
+      const bottom = top + height;
+      if (top < list.scrollTop) list.scrollTop = top;
+      else if (bottom > list.scrollTop + list.clientHeight) {
+        list.scrollTop = bottom - list.clientHeight + 8;
+      }
+    }
+    queueMicrotask(measureViewport);
+  });
 
   createEffect(() => {
     const open = !!data()?.clearState?.open;
@@ -128,8 +146,8 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
   createEffect(() => {
     const index = data()?.selectedIndex ?? -1;
     if (index < 0 || !list || props.selectionSource() !== "keyboard") return;
-    const top = index * COMPACT_ROW_H;
-    const bottom = top + COMPACT_ROW_H;
+    const top = index * rowHeight();
+    const bottom = top + rowHeight();
     if (top < list.scrollTop) list.scrollTop = top;
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + 8;
   });
@@ -151,7 +169,10 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
   };
 
   return (
-    <div class="clip-page clip-compact-presenter">
+    <div
+      class="clip-page clip-compact-presenter"
+      style={{ "--clip-row-height": rowHeight() + "px" }}
+    >
       <div class="clip-cats" role="tablist" aria-label={t("clipboardCategory")}>
         <For each={data()?.categories ?? []}>
           {(category) => (
@@ -190,12 +211,12 @@ export function ClipboardCompactPresenter(props: ClipboardListProps) {
               payload: {
                 scrollTop: event.currentTarget.scrollTop,
                 viewportHeight: event.currentTarget.clientHeight,
-                rowHeight: COMPACT_ROW_H,
+                rowHeight: rowHeight(),
               },
             })}
           >
-            <div class="clip-compact-spacer" style={{ height: (data()?.total ?? 0) * COMPACT_ROW_H + "px" }}>
-              <div class="clip-compact-window" style={{ top: (data()?.window.offset ?? 0) * COMPACT_ROW_H + "px" }}>
+            <div class="clip-compact-spacer" style={{ height: (data()?.total ?? 0) * rowHeight() + "px" }}>
+              <div class="clip-compact-window" style={{ top: (data()?.window.offset ?? 0) * rowHeight() + "px" }}>
                 <For each={rows()}>
                   {(row) => {
                     const item = asItem(row);

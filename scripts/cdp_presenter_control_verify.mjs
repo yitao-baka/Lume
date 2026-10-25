@@ -132,7 +132,7 @@ try {
   check("default Presenter receives its initial setting", state?.presenterId === "default" && state?.layout?.height === 560, JSON.stringify(state));
 
   await invoke("open_settings");
-  settings = await findPage('!!document.querySelector("[data-settings-skin]")');
+  settings = await findPage('document.body.classList.contains("settings-window")');
   await settings.evalJs('document.querySelector("#settings-tab-plugins")?.click(); "ok"');
   await sleep(500);
   await settings.evalJs('(() => { const input=document.querySelector(".plg-filter-input"); if(!input) return false; input.value="translation-demo"; input.dispatchEvent(new Event("input",{bubbles:true})); return true; })()');

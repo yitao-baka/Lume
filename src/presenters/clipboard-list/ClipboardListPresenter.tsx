@@ -4,7 +4,9 @@
 import { For, Show, createEffect, onCleanup, onMount } from "solid-js";
 import { t } from "../../i18n";
 import { basename, clipMeta, clipTitle, detectColor, fileContent, isUrl } from "../../launcher/clipData";
-import { CLIP_ROW_H, type ClipboardItem } from "../../launcher/types";
+import type { ClipboardItem } from "../../launcher/types";
+import { currentSkin } from "../../skins/runtime";
+import { clipboardRowHeight } from "../../skins/registry";
 import type { ClipboardModel, ClipboardRowModel } from "../../page-runtime/schemas";
 import clipboardIcon from "../../../res/icons/clipboard.svg";
 import multifilesIcon from "../../../res/icons/multifiles.svg";
@@ -58,6 +60,7 @@ function tile(row: ClipboardRowModel) {
 export function ClipboardListPresenter(props: ClipboardListProps) {
   const data = () => props.data();
   const rows = () => data()?.items ?? [];
+  const rowHeight = () => clipboardRowHeight(currentSkin(), "clipboard-list");
   const selected = (row: ClipboardRowModel) => props.selectedId() === row.id;
   const checked = (row: ClipboardRowModel) =>
     (data()?.status.selected ?? 0) > 0 && (data()?.selectedIds ?? []).includes(row.id);
@@ -83,10 +86,23 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
     if (!list) return;
     void props.dispatch({
       type: "viewport.request",
-      payload: { scrollTop: list.scrollTop, viewportHeight: list.clientHeight, rowHeight: CLIP_ROW_H },
+      payload: { scrollTop: list.scrollTop, viewportHeight: list.clientHeight, rowHeight: rowHeight() },
     });
   };
   onMount(() => {
+    queueMicrotask(measureViewport);
+  });
+  createEffect(() => {
+    const height = rowHeight();
+    const index = data()?.selectedIndex ?? -1;
+    if (index >= 0 && list) {
+      const top = index * height;
+      const bottom = top + height;
+      if (top < list.scrollTop) list.scrollTop = top;
+      else if (bottom > list.scrollTop + list.clientHeight) {
+        list.scrollTop = bottom - list.clientHeight + 8;
+      }
+    }
     queueMicrotask(measureViewport);
   });
   createEffect(() => {
@@ -101,8 +117,8 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
   createEffect(() => {
     const index = data()?.selectedIndex ?? -1;
     if (index < 0 || !list || props.selectionSource() !== "keyboard") return;
-    const top = index * CLIP_ROW_H;
-    const bottom = top + CLIP_ROW_H;
+    const top = index * rowHeight();
+    const bottom = top + rowHeight();
     if (top < list.scrollTop) list.scrollTop = top;
     else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + 8;
   });
@@ -124,7 +140,7 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
   };
   return (
-    <div class="clip-page">
+    <div class="clip-page" style={{ "--clip-row-height": rowHeight() + "px" }}>
       <div class="clip-cats" role="tablist" aria-label={t("clipboardCategory")}>
         <For each={data()?.categories ?? []}>
           {(category) => (
@@ -160,12 +176,12 @@ export function ClipboardListPresenter(props: ClipboardListProps) {
               if (!list) return;
               void props.dispatch({
                 type: "viewport.request",
-                payload: { scrollTop: event.currentTarget.scrollTop, viewportHeight: list.clientHeight, rowHeight: CLIP_ROW_H },
+                payload: { scrollTop: event.currentTarget.scrollTop, viewportHeight: list.clientHeight, rowHeight: rowHeight() },
               });
             }}
           >
-            <div class="clip-spacer" style={{ height: (data()?.total ?? 0) * CLIP_ROW_H + "px", position: "relative" }}>
-              <div class="clip-window" style={{ position: "absolute", top: (data()?.window.offset ?? 0) * CLIP_ROW_H + "px", left: 0, right: 0 }}>
+            <div class="clip-spacer" style={{ height: (data()?.total ?? 0) * rowHeight() + "px", position: "relative" }}>
+              <div class="clip-window" style={{ position: "absolute", top: (data()?.window.offset ?? 0) * rowHeight() + "px", left: 0, right: 0 }}>
                 <For each={rows()}>
                   {(row) => {
                     const item = asItem(row);

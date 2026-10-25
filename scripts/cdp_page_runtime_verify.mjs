@@ -21,7 +21,7 @@ async function findSettings() {
     for (const t of (await targets()).filter((x) => x.type === "page")) {
       try {
         const c = await connect(t.webSocketDebuggerUrl);
-        if (await c.ev("!!document.querySelector('[data-settings-skin]')")) return c;
+        if (await c.ev("document.body.classList.contains('settings-window')")) return c;
         c.ws.close();
       } catch {}
     }

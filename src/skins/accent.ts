@@ -38,6 +38,7 @@ export type AccentTokens = {
 };
 
 let activeAccent = "";
+const listeners = new Set<(accent: string) => void>();
 
 export function accentPresets(skin: SkinId) {
   return skin === "chromatic"
@@ -179,7 +180,13 @@ function writeAccent(): void {
 export function applyAccent(value: unknown): string {
   activeAccent = normalizeAccent(value);
   writeAccent();
+  for (const listener of listeners) listener(activeAccent);
   return activeAccent;
+}
+
+export function onAccentChange(listener: (accent: string) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 }
 
 export function currentAccent(): string {

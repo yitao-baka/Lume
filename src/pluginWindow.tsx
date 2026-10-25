@@ -20,7 +20,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import { applyPluginColorMode, normalizePluginColorMode, resolveColorMode } from "./theme";
+import { applyPluginColorMode, normalizePluginColorMode, onThemeModeChange, resolveColorMode } from "./theme";
+import { applySkin, currentSkin } from "./skins/runtime";
+import { applyAccent, currentAccent } from "./skins/accent";
 import { pluginColorMode, pluginColorPref, seedPluginColorPrefs, setPluginColorPref } from "./plugins/themePrefs";
 import { TitleBar } from "./components/TitleBar";
 import type {
@@ -37,6 +39,7 @@ import { setPermissionSource } from "./plugins/permissions";
 import { fetchDiskFile, pluginFilePath } from "./plugins/disk";
 import { plog } from "./plugins/log";
 import { resolveLocale, setLocale, t } from "./i18n";
+import "./skins/index.css";
 import "./pluginWindow.css";
 
 const id = new URLSearchParams(location.search).get("plugin") ?? "";
@@ -84,6 +87,8 @@ function App() {
   // configured language (the injected config already carries it).
   setLocale(resolveLocale(cfg?.appearance?.language ?? "system"));
   applyWindowTheme();
+  applySkin(cfg?.appearance?.skin);
+  applyAccent(cfg?.appearance?.accent);
 
   // Titlebar label — the manifest name once plugin_window_meta answers.
   const [pluginName, setPluginName] = createSignal(id);
@@ -141,6 +146,8 @@ function App() {
       pref: pluginColorPref(pluginId),
       mode: effectiveMode(),
       host: resolveColorMode(hostColorSetting),
+      skin: currentSkin(),
+      accent: currentAccent(),
     }),
     persistLastPage: () => {},
     runSearch: async () => {
@@ -409,6 +416,9 @@ function App() {
       settings?: Record<string, unknown> | null;
       theme?: string | null;
       themePref?: string | null;
+      skin?: string | null;
+      accent?: string | null;
+      surface?: string | null;
       snapshot?: unknown;
       pageRuntime?: boolean;
       model?: PageModel;
@@ -447,6 +457,8 @@ function App() {
       }
       if (s.enter) pageRuntime?.postEvent("enter", s.enter);
       if (s.settings) pageRuntime?.postEvent("settings", s.settings);
+      if (s.skin) applySkin(s.skin);
+      if (typeof s.accent === "string") applyAccent(s.accent);
       if (s.theme) {
         pageRuntime?.postTheme(s.theme);
       }
@@ -489,6 +501,14 @@ function App() {
       closeWithSnapshot();
     }, { target: WINDOW_LABEL }).then((u) => (unlisteners.push(u), undefined));
 
+    // A system light/dark flip updates this window's data-theme outside any
+    // settings write. Re-push the resolved mode so the sandboxed Presenter and
+    // its surface move with the chrome.
+    const unlistenMode = onThemeModeChange(() => {
+      pageRuntime?.postTheme(effectiveMode());
+    });
+    unlisteners.push(unlistenMode);
+
     // Theme follows the launcher's settings while the window is open — but
     // only through the plugin's own preference, so a pinned plugin keeps its
     // mode when the launcher's changes; the permission source rides along
@@ -501,6 +521,8 @@ function App() {
           // this window and the launcher cannot drift apart.
           seedPluginColorPrefs(s.plugins?.color_modes);
           applyWindowTheme();
+          applySkin(s.appearance?.skin);
+          applyAccent(s.appearance?.accent);
           pageRuntime?.postTheme(effectiveMode());
           pageRuntime?.instance.applySettings(s);
         })

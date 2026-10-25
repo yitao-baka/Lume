@@ -203,7 +203,7 @@ const ignoreEditor = await settings.evalJs(`(() => {
   const pickerRect = picker?.getBoundingClientRect();
   const inputRowRect = inputRow?.getBoundingClientRect();
   return {
-    hasListSurface: !!row?.querySelector('.settings-ignore-list, .settings-ignore-empty'),
+    hasGridSurface: !!row?.querySelector('.settings-ignore-grid, .settings-ignore-empty'),
     addText: add?.textContent.trim() ?? "",
     pickerText: picker?.textContent.trim() ?? "",
     aligned: !!inputRect && !!addRect && Math.abs(inputRect.height - addRect.height) <= 2,
@@ -211,7 +211,7 @@ const ignoreEditor = await settings.evalJs(`(() => {
     noOverflow: !!row && row.scrollWidth <= row.clientWidth,
   };
 })()`);
-check("ignore-app editor separates the list from a labeled add composer", ignoreEditor.hasListSurface && /添加|Add/.test(ignoreEditor.addText) && ignoreEditor.pickerText.length > 0 && ignoreEditor.aligned && ignoreEditor.pickerBelow && ignoreEditor.noOverflow, JSON.stringify(ignoreEditor));
+check("ignore-app editor separates the grid from a labeled add composer", ignoreEditor.hasGridSurface && /添加|Add/.test(ignoreEditor.addText) && ignoreEditor.pickerText.length > 0 && ignoreEditor.aligned && ignoreEditor.pickerBelow && ignoreEditor.noOverflow, JSON.stringify(ignoreEditor));
 const systemAppIcon = await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('clipboard_ignore_app_icons', { apps: ['Notepad'] })`);
 check("ignore-app icon resolver covers non-window programs", systemAppIcon?.[0]?.name === "Notepad" && systemAppIcon?.[0]?.icon?.startsWith("data:image/png;base64,"), JSON.stringify({ name: systemAppIcon?.[0]?.name, icon: systemAppIcon?.[0]?.icon?.slice(0, 32) }));
 await settings.evalJs(`document.querySelector('[data-setting-id="clipboard.ignore_apps"]')?.scrollIntoView({ block: "center" }); true`);
@@ -253,11 +253,17 @@ if (ignoreAfterPick.normalized && ignoreAfterPick.saved.includes(ignoreAfterPick
       );
       if (!row) return null;
       const img = row.querySelector('.settings-ignore-icon img');
+      const icon = row.querySelector('.settings-ignore-icon');
+      const label = row.querySelector('.settings-ignore-app');
       const del = row.querySelector('.settings-ignore-delete');
       const rect = row.getBoundingClientRect();
+      const iconRect = icon?.getBoundingClientRect();
+      const labelRect = label?.getBoundingClientRect();
       return {
         src: img?.getAttribute('src') ?? "",
         unknown: img?.classList.contains('icon-unknown') ?? true,
+        gridDisplay: getComputedStyle(row.parentElement).display,
+        iconAboveName: !!iconRect && !!labelRect && iconRect.bottom <= labelRect.top + 1,
         deleteOpacity: del ? getComputedStyle(del).opacity : null,
         deletePointerEvents: del ? getComputedStyle(del).pointerEvents : null,
         rect: { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 },
@@ -266,8 +272,8 @@ if (ignoreAfterPick.normalized && ignoreAfterPick.saved.includes(ignoreAfterPick
     if (ignoreVisual?.src?.startsWith("data:image/") && !ignoreVisual.unknown) break;
     await sleep(250);
   }
-  check("ignored app row shows the resolved program icon", !!ignoreVisual?.src?.startsWith("data:image/") && ignoreVisual.unknown === false, JSON.stringify({ src: ignoreVisual?.src?.slice(0, 48), unknown: ignoreVisual?.unknown }));
-  check("delete action is hidden until the row is hovered", ignoreVisual?.deleteOpacity === "0" && ignoreVisual?.deletePointerEvents === "none", JSON.stringify({ opacity: ignoreVisual?.deleteOpacity, pointerEvents: ignoreVisual?.deletePointerEvents }));
+  check("ignored app tile shows the resolved program icon above its name", !!ignoreVisual?.src?.startsWith("data:image/") && ignoreVisual.unknown === false && ignoreVisual.gridDisplay === "grid" && ignoreVisual.iconAboveName === true, JSON.stringify({ src: ignoreVisual?.src?.slice(0, 48), unknown: ignoreVisual?.unknown, grid: ignoreVisual?.gridDisplay, iconAboveName: ignoreVisual?.iconAboveName }));
+  check("delete action is hidden until the tile is hovered", ignoreVisual?.deleteOpacity === "0" && ignoreVisual?.deletePointerEvents === "none", JSON.stringify({ opacity: ignoreVisual?.deleteOpacity, pointerEvents: ignoreVisual?.deletePointerEvents }));
   if (ignoreVisual?.rect) {
     await settings.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: ignoreVisual.rect.x, y: ignoreVisual.rect.y });
     await sleep(160);

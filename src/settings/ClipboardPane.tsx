@@ -208,10 +208,10 @@ export default function ClipboardPane(props: {
               when={(c().ignore_apps ?? []).length > 0}
               fallback={<div class="settings-ignore-empty">{t("clipIgnoreEmpty")}</div>}
             >
-              <div class="settings-compact-list settings-ignore-list">
+              <div class="settings-ignore-grid">
                 <For each={c().ignore_apps ?? []}>
                   {(app) => (
-                    <div class="settings-compact-item settings-ignore-item">
+                    <div class="settings-ignore-item">
                       <span class="settings-ignore-icon" aria-hidden="true">
                         <img
                           classList={{ "icon-unknown": !ignoreIcon(app) }}

@@ -154,7 +154,7 @@ check("detail panel opens with permissions + meta, no per-plugin trust row",
   detail.open && detail.permChips.length > 0 && detail.perPluginTrust === 0 && detail.meta.length >= 1, JSON.stringify(detail));
 await s.shot("test/plg_dark_list.png");
 
-// Icon inversion (docs/SETTINGS_AUDIT_2026-10-20.md §2): legacy art follows the
+// Icon inversion (docs/History/SETTINGS_AUDIT_2026-10-20.md §2): legacy art follows the
 // surface `--icon-filter`, explicit icon_light / icon_dark stays as-is.
 const tileIcons = await s.evalJs(`(() => {
   const strip = (f) => {
@@ -178,7 +178,7 @@ check("legacy plugin tiles follow --icon-filter, explicit variants stay as-is",
   tileIcons.explicitFilters.every((f) => f === "none"),
   JSON.stringify(tileIcons));
 
-// Detail head is static (docs/SETTINGS_AUDIT_2026-10-20.md §7): clicking the
+// Detail head is static (docs/History/SETTINGS_AUDIT_2026-10-20.md §7): clicking the
 // card title must not drop the selection back to the empty prompt.
 const detailHead = await s.evalJs(`(async () => {
   const head = document.querySelector('.plg-detail-pane .plg-head');

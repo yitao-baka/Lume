@@ -18,7 +18,7 @@ Rust 命令能力为边界；重设计不得改变设置语义，也不扩大插
   Edge 可选皮肤、直角构图和最终色板。
 - [SETTINGS_SKIN_SWITCH.md](SETTINGS_SKIN_SWITCH.md)：皮肤字段、默认值
   `quiet`、首帧应用、保存回滚与切换验收。
-- [SETTINGS.md](SETTINGS.md)：当前功能契约；设计落地前仍以其字段语义为准。
+- [SETTINGS.md](../SETTINGS.md)：当前功能契约；设计落地前仍以其字段语义为准。
 
 ## 设计摘要
 
@@ -229,9 +229,9 @@ Rust 命令能力为边界；重设计不得改变设置语义，也不扩大插
 预览文件与截图位于 `docs/assets/settings-redesign/`；`preview.html` 可用于在浏览器
 中打开并检查布局，不是生产组件。
 
-![深色启动器设置页](assets/settings-redesign/dark-launcher.png)
+![深色启动器设置页](../assets/settings-redesign/dark-launcher.png)
 
-![浅色插件设置页](assets/settings-redesign/light-plugins.png)
+![浅色插件设置页](../assets/settings-redesign/light-plugins.png)
 
 ### 字体
 

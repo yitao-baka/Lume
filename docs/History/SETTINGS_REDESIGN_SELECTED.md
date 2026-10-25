@@ -12,7 +12,7 @@
 
 > 色彩现状：Chromatic 深色的原生强调色已改为湖蓝 `#5ac8fa`（选中背景为同一套
 > 16% oklab 混色），本稿原本的 `#AC8E97` 作为调色盘首格「浅粉」保留；浅色仍是
-> 本稿的 Mineral 灰绿。运行时契约与调色盘行为见 [SETTINGS.md](SETTINGS.md) 与
+> 本稿的 Mineral 灰绿。运行时契约与调色盘行为见 [SETTINGS.md](../SETTINGS.md) 与
 > [SETTINGS_ACCENT_COLOR.md](SETTINGS_ACCENT_COLOR.md)，下文色板论证、对比度表与
 > 截图保留设计探索时的原始数据。
 
@@ -23,7 +23,7 @@
 | [SETTINGS_SKIN_SWITCH.md](SETTINGS_SKIN_SWITCH.md) | 皮肤字段、首帧应用、默认值、保存回滚与切换验收；默认 `quiet` |
 | [SETTINGS_REDESIGN.md](SETTINGS_REDESIGN.md) | Quiet Control Deck 默认皮肤，以及两套皮肤共享的信息架构、字段映射、自动保存、搜索和帮助语义 |
 | 本文 | Chromatic Edge 可选皮肤；直角构图、编辑式页码、控件、页面与最终色板的完整视觉规范 |
-| [SETTINGS.md](SETTINGS.md) | 当前功能契约；设计落地前仍以此处的字段语义和保存行为为准 |
+| [SETTINGS.md](../SETTINGS.md) | 当前功能契约；设计落地前仍以此处的字段语义和保存行为为准 |
 
 实现时先读 `SETTINGS_REDESIGN.md` 的共享行为，再按本文实现 `chromatic` 皮肤，
 并用 `SETTINGS_SKIN_SWITCH.md` 连接两套皮肤。
@@ -32,9 +32,9 @@
 
 ## 视觉预览
 
-![Chromatic Edge 浅色启动器页](assets/settings-redesign/final-light-launcher.png)
+![Chromatic Edge 浅色启动器页](../assets/settings-redesign/final-light-launcher.png)
 
-![Chromatic Edge 深色插件页](assets/settings-redesign/final-dark-plugins.png)
+![Chromatic Edge 深色插件页](../assets/settings-redesign/final-dark-plugins.png)
 
 静态预览可打开：
 
@@ -596,5 +596,5 @@ src/settings/
 
 - [设置窗皮肤切换实现契约](SETTINGS_SKIN_SWITCH.md)
 - [Quiet Control Deck（默认皮肤与共享行为）](SETTINGS_REDESIGN.md)
-- [当前设置功能契约](SETTINGS.md)
+- [当前设置功能契约](../SETTINGS.md)
 

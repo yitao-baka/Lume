@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#78 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#80 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -3385,7 +3385,7 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 ## 51. 插件搜查剩余项与子进程 PATH 修复（已实现）
 
 **状态：已实现（2026-10-17）。** 来源：`docs/BUG_REPORT.md` 的 B5–B8 与
-`docs/BUG_REPORT_2.md` 的机器级 PATH 丢失报告。B5–B8 分别涉及规则缓存、
+`docs/History/BUG_REPORT_2.md` 的机器级 PATH 丢失报告。B5–B8 分别涉及规则缓存、
 按键回执、重复插件 id 与验证脚本漂移；PATH 问题的根因是注册表值名大小写。
 
 ### 51.1 实现
@@ -3440,7 +3440,7 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 
 ## 52. UI 独立审计第三轮：输入、浮层、刷新竞态与布局（已实现）
 
-**状态：已实现（2026-10-17）。** 来源：`docs/BUG_REPORT_3.md`（基线
+**状态：已实现（2026-10-17）。** 来源：`docs/History/BUG_REPORT_3.md`（基线
 `7dc0cb0`）的 12 项 UI/交互问题。修复按输入安全、状态一致性、布局与可访问性
 分组推进。
 
@@ -3508,7 +3508,7 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 
 ## 53. 交互逻辑专项审计第四轮（已实现）
 
-**状态：已实现（2026-10-17）。** 来源：`docs/BUG_REPORT_4.md`（基线
+**状态：已实现（2026-10-17）。** 来源：`docs/History/BUG_REPORT_4.md`（基线
 `13d7f7e`）的 9 项交互缺陷与 3 项待复核项。修复按「状态越界 → 设置一致性 →
 动作结果 → 焦点契约 → 空态与录制竞态」推进。
 
@@ -3596,7 +3596,7 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 
 ## 54. 视觉与可用性审查修复
 
-**来源：`docs/UI_VISUAL_AUDIT_2026-10-17.md`。** 修复主题对比度、键盘焦点、
+**来源：`docs/History/UI_VISUAL_AUDIT_2026-10-17.md`。** 修复主题对比度、键盘焦点、
 最小设置窗口、模式栏溢出、结果图标回退、预览出口与长列表滚动提示。
 
 ### 54.1 实现
@@ -3701,7 +3701,7 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 
 ## 56. 设置面板体验审计修复
 
-**来源：`docs/UX_SETTINGS_AUDIT_2026-10-18.md`。** 审计覆盖设置窗口的保存
+**来源：`docs/History/UX_SETTINGS_AUDIT_2026-10-18.md`。** 审计覆盖设置窗口的保存
 模型、键盘/读屏、快捷键、索引目录、搜索、自动化、系统服务、安全开关、错误
 呈现、剪贴板语义和点击目标。
 
@@ -4009,7 +4009,7 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
 
 ## 62. 设置面板审查遗留项收口
 
-[SETTINGS_AUDIT_2026-10-20.md](SETTINGS_AUDIT_2026-10-20.md) 的九条发现与两条观察
+[SETTINGS_AUDIT_2026-10-20.md](History/SETTINGS_AUDIT_2026-10-20.md) 的九条发现与两条观察
 全部修复，报告保留为证据归档，条目已从 `docs/ROADMAP.md` 的开放事项删除。
 
 ### 62.1 实现
@@ -4441,7 +4441,7 @@ Alt+Space）：被占用就如实写日志并保持无呼出键，冲突改由�
   `test/index-row/chromatic-rows.png`（Chromatic 皮肤）。
 ## 69. 用户可见文案审查收口（2026-10-22 语义走查）
 
-`docs/UX_TEXT_AUDIT_2026-10-22.md` 的 17 项发现逐条收口：文案语义、术语统一、
+`docs/History/UX_TEXT_AUDIT_2026-10-22.md` 的 17 项发现逐条收口：文案语义、术语统一、
 本地化缺口与死键清理。
 
 ### 69.1 实现
@@ -4998,7 +4998,7 @@ Presenter 名称，值没有持久化或下发路径。
 
 ## 79. 页面运行时审计修复与安全收口（2026-10-24）
 
-依据 `docs/REFACTOR_AUDIT_2026-10-24.md` 修复 12 项审计问题、3 项附加风险和
+依据 `docs/History/REFACTOR_AUDIT_2026-10-24.md` 修复 12 项审计问题、3 项附加风险和
 6 项测试可信度问题。
 
 ### 79.1 安全边界
@@ -5056,3 +5056,78 @@ Presenter 名称，值没有持久化或下发路径。
   `cdp_file_search_presenter_verify` **5/5**、
   `cdp_presenter_control_verify` **10/10**、`cdp_plugin_frame_load_verify`
   **5/5**、`cdp_plugin_blank_verify` **20/20（0 blank）**。
+
+## 80. 文档归档治理（2026-10-25）
+
+`docs/` 根目录中退出活跃集合的闭环报告、审计、被取代的设计稿与旧契约移入 `docs/History/`，保留证据与验证记录，同时建立统一索引和归档规范。`BUG_REPORT.md` 仍记录未实施的插件加固建议，继续留在活跃区；当前皮肤、设置、插件与 Page Runtime 契约继续留在根目录。
+
+### 80.1 实现
+
+- 新增 `docs/History/README.md`：说明归档边界、开放发现的转交方式、入链维护和索引要求。
+- 归档 `BUG_REPORT_2.md`、`BUG_REPORT_3.md`、`BUG_REPORT_4.md`、`UI_VISUAL_AUDIT_2026-10-17.md`、`UX_SETTINGS_AUDIT_2026-10-18.md`、`SETTINGS_AUDIT_2026-10-20.md`、`UX_TEXT_AUDIT_2026-10-22.md`、`REFACTOR_AUDIT_2026-10-24.md`、`PAGE_MODEL_PRESENTER.md`、`SETTINGS_ACCENT_COLOR.md`、`SETTINGS_REDESIGN.md`、`SETTINGS_REDESIGN_SELECTED.md` 与 `SETTINGS_SKIN_SWITCH.md`；设置面板审查的 11 张截图移到 `docs/History/assets/settings-audit-2026-10-20/`。
+- `AGENTS.md` 增加目录说明与硬性约定 9：失去现行作用后归档；仍有开放发现时先转入 `docs/ROADMAP.md` 或现行契约，归档时更新入链、图片与代码注释并登记索引。
+- 同步更新 `CHANGELOG.md`、本历史记录、审查文档互链、`scripts/cdp_plugins_pane_verify.mjs` 与 `scripts/cdp_visual_audit_verify.mjs` 的文档引用。
+
+### 80.2 验证
+
+- 全仓 Markdown 相对链接扫描 0 失效；设置面板审查的 11 张截图引用 0 缺失；`git diff --check` 通过。
+- `pnpm run build` 通过（126 modules）；`cargo check` 通过；`cargo test` **250 passed / 9 ignored**。cargo test 仍输出既有的 `explorer.rs` unused import warning。
+
+## 81. 统一皮肤系统（2026-10-25）
+
+### 81.1 数据与运行时
+
+- `appearance` 使用 `skin` / `accent` / `accent_custom`；旧 `settings_skin`、
+  `settings_accent`、`settings_accent_custom` 只在读取期迁移。新字段缺失时使用
+  旧值，新字段显式为空时保持空；未知皮肤回落 `quiet`，非法颜色回落 `""`。
+- 新增 `src/skins/skins.json`，保存 Quiet / Chromatic 的 dark/light surface、
+  accent anchor 与 native accent。TypeScript 直接导入；Rust 使用
+  `include_str!` 与 `OnceLock`，主窗 DWM、Presenter iframe、分离插件窗口背景和
+  启动器 CSS 共用该来源。
+- `src/skins/runtime.ts` 独占 `data-skin` / `--surface`；
+  `src/skins/accent.ts` 独占 `data-accent` 与五层 `--ui-accent*` token；
+  `src/theme.ts` 继续独占 `data-theme` 与系统明暗监听。两套运行时都在
+  `render()` 前应用，并在系统明暗切换时重算。
+- 样式拆到 `src/skins/{tokens,accent}.css` 与
+  `src/skins/{quiet,chromatic}/{tokens,settings,launcher}.css`；旧
+  `data-settings-skin` / `data-settings-accent` selector 删除。
+
+### 81.2 界面、插件与剪贴板
+
+- 皮肤切换覆盖设置窗、启动器外壳、导航、剪贴板、嵌入 Presenter 画布和分离
+  插件窗口。Chromatic 使用直角/近直角控件、1.5px 结构线和编辑式栏目标题，
+  Quiet 保持圆角与柔和结构；两者都不给 `.launcher` 增加 CSS 边框、圆角、
+  半透明填充或阴影。
+- 自定义 accent 在设置窗按低比例混入 canvas/rail/panel/control；启动器只改变
+  焦点、选中、链接与活动控件。`accent_custom` 只记忆取色器最后颜色，选预设、
+  切换皮肤和恢复默认不清除该记忆；恢复默认只清空正在使用的 accent。
+- Presenter 保留 `theme` 字符串事件，新增
+  `skin: {id, accent, surface}`；`lume.theme.get()` 增加 `skin` / `accent`。
+  bridge 注入 `--lume-page-bg`、`--lume-page-accent` 与 `data-lume-skin`，
+  并在主题、皮肤、accent 或系统明暗变化时更新。分离窗口的
+  `plugin-state` 同步携带 `{theme, themePref, skin, accent, surface}`。
+- 剪贴板行高由 `clipboardRowHeight(skin, presenterId)` 决定：
+  `clipboard-list` 为 Quiet 52px / Chromatic 56px，`clipboard-compact` 为
+  Quiet 44px / Chromatic 48px。Presenter 通过 `viewport.request` 重报，
+  spacer/窗口 offset/键盘滚动使用同一值；切换皮肤时保留 Presenter DOM、
+  选中的 item id 和可见位置。
+
+### 81.3 验证
+
+- `pnpm run test:skin-system` **11/11**；Page Runtime 单测 **13/13**；
+  `cargo test` **250 passed / 9 ignored**；`check_i18n` **576 键 × 3 语言**；
+  TypeScript、Vite 与 debug `--no-bundle` 构建通过。
+- `cdp_skin_system_verify.mjs` **29/29**：四个 skin/mode 的 CSS 与 1×1 像素、
+  首帧注入、嵌入/分离插件画布、插件颜色覆盖正交性、剪贴板双 Presenter 行高、
+  选择与 DOM 保持、自定义 accent 不改外层 surface。
+- `cdp_plugin_theme_verify.mjs` **30/30**：保留原颜色覆盖语义，并校验嵌入/分离
+  表面推送 `skin` / `accent` / `surface`。
+- `cdp_settings_skin_verify.mjs` **60/60**；
+  `cdp_settings_accent_verify.mjs` **47/47**：覆盖设置窗预览、保存回滚、系统
+  明暗重算、重启、窄窗与全应用 accent 边界。
+- `cdp_visual_audit_verify.mjs` **28/28**：浅色 accent/焦点对比度、剪贴板字号/
+  动作、窄模式栏、设置最小窗命中与卫星预览路径。
+- 新增 `scripts/skin_system_unit_test.mjs` / `pnpm run test:skin-system` 与
+  `scripts/cdp_skin_system_verify.mjs`；同步 `SETTINGS.md`、
+  `UI_GUIDELINES.md`、`ARCHITECTURE.md`、`PLUGIN_API.md`、`TESTING.md`、
+  `README.md` 与本文件。未新增插件权限、Tauri capability、数据库或网络依赖。

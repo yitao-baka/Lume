@@ -17,7 +17,7 @@
 | 本文 | 两套皮肤的字段、默认值、首帧应用、切换、保存回滚、共享组件与验收 |
 | [SETTINGS_REDESIGN.md](SETTINGS_REDESIGN.md) | Quiet Control Deck 默认皮肤，及两套皮肤共享的信息架构、字段映射和自动保存语义 |
 | [SETTINGS_REDESIGN_SELECTED.md](SETTINGS_REDESIGN_SELECTED.md) | Chromatic Edge 可选皮肤，及其直角构图、控件、页面和最终色板 |
-| [SETTINGS.md](SETTINGS.md) | 当前功能契约；设计落地后以其字段语义为运行时事实 |
+| [SETTINGS.md](../SETTINGS.md) | 当前功能契约；设计落地后以其字段语义为运行时事实 |
 
 ## 目标与边界
 

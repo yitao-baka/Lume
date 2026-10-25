@@ -1,4 +1,4 @@
-//! 「外观」页 — language, color mode, settings-window skin and accent. Visual
+//! 「外观」页 — language, color mode, application skin and accent. Visual
 //! previews are shared DOM nodes; switching skins only changes the root data
 //! attribute, so focus and scroll position stay put.
 

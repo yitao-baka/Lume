@@ -778,9 +778,9 @@ function App() {
     }
   }
 
-  /** Apply the persisted settings the launcher renders live: the UI language,
-   * the color mode (theme), the entry-box size (a CSS variable) and the max
-   * window height. Width/position are Rust-owned. */
+  /** Apply the persisted settings the launcher renders live: UI language,
+   * color mode, application skin/accent, entry-box size and max height.
+   * Width/position are Rust-owned. */
   async function applyRuntimeSettings() {
     try {
       const s = await invoke<SettingsData>("get_settings");

@@ -41,8 +41,11 @@ The goal is:
 - Auto-sizing window — height fits the results, stays centered (fixed
   height in clipboard mode)
 - Settings window — grouped personalization / efficiency / management
-  navigation, command-style search, autosave with undo, layered help, and
-  Quiet / Chromatic skins (settings-window only)
+  navigation, command-style search, autosave with undo, and layered help
+- Unified skin system — one Quiet / Chromatic skin plus a global accent across
+  settings, launcher, navigation, clipboard, embedded plugin canvases and
+  detached plugin windows; CSS, iframe, window background and DWM border share
+  the same surface metadata
 - Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows
 - Whole-drive file search — Everything IPC first, then the LumeSVC

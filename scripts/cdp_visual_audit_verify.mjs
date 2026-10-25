@@ -1,4 +1,4 @@
-// Visual-audit regression probe (docs/UI_VISUAL_AUDIT_2026-10-17.md).
+// Visual-audit regression probe (docs/History/UI_VISUAL_AUDIT_2026-10-17.md).
 //
 // Launches the embedded debug build and verifies the repaired contracts:
 //   V-01 light accent/focus tokens clear contrast thresholds
@@ -262,6 +262,9 @@ try {
     patch: {
       appearance: {
         color_mode: "light",
+        skin: "quiet",
+        accent: "",
+        accent_custom: "",
         window_width: 540,
         entry_size: 70,
         mode_switch_icons_only: false,

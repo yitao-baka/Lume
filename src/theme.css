@@ -1,9 +1,9 @@
 /* Shared theme tokens — the palette `--*` custom properties used by every
    themed window surface (launcher, settings, detached plugin windows).
-   `src/theme.ts` sets `data-theme` on <html> per the 颜色模式 setting, and the
-   theme-push pipeline (registry.ts → plugin-state / settings-applied) keeps
-   every open window in sync. Defaults = dark (the historical theme, no flash
-   before JS).
+   `src/theme.ts` sets `data-theme` on <html> per the 颜色模式 setting;
+   `src/skins/runtime.ts` writes the active skin's `--surface` and
+   `src/skins/accent.ts` derives the `--ui-accent*` tiers. Defaults = dark
+   Quiet (the historical theme, no flash before JS).
    Split out of App.css so the plugin window host page — which must not load
    the launcher's component styles — gets the same tokens. The preview window
    deliberately stays self-contained (always dark, no variables).

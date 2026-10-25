@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "test:page-runtime": "node scripts/page_runtime_unit_test.mjs",
+    "test:skin-system": "node scripts/skin_system_unit_test.mjs",
     "serve": "vite preview",
     "tauri": "tauri",
     "package:zip": "node scripts/package-portable.mjs"

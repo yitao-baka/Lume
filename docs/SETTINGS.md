@@ -1,11 +1,11 @@
 # 设置功能规范（Settings）
 
 本文是设置窗口的功能、字段与交互规范。设置窗口是独立于启动器的 SolidJS
-WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
-[Quiet Control Deck](SETTINGS_REDESIGN.md)、
-[Chromatic Edge](SETTINGS_REDESIGN_SELECTED.md) 和
-[设置窗皮肤切换](SETTINGS_SKIN_SWITCH.md) 为准。数据文件与路径规则见
-[ARCHITECTURE.md](ARCHITECTURE.md)。
+WebView2 窗口，无边框、自绘标题栏；应用级皮肤与主题色契约见
+[SKIN_SYSTEM.md](SKIN_SYSTEM.md)，视觉规则见
+[UI_GUIDELINES.md](UI_GUIDELINES.md)。数据文件与路径规则见
+[ARCHITECTURE.md](ARCHITECTURE.md)。设置窗双皮肤的历史设计记录见
+[docs/History/](History/README.md)。
 
 ## 概览
 
@@ -19,9 +19,10 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
   - 管理：插件、系统、关于
 - 可逆偏好自动保存，不提供全局「保存并应用」。服务、代理、导入、恢复和卸载等
   系统操作仍是显式命令，并使用确认对话框与真实结果。
-- 设置窗视觉由 `appearance.settings_skin` 与 `appearance.settings_accent` 控制。
-  皮肤默认 `quiet`；主题色默认空值，跟随当前皮肤。两者只改变设置窗视觉与版面，
-  不改变启动器、插件页、插件窗口、托盘或 DWM 边框。
+- 应用级皮肤由 `appearance.skin` 与 `appearance.accent` 控制。皮肤默认
+  `quiet`；主题色默认空值，跟随当前皮肤。同一偏好覆盖设置窗、启动器、导航、
+  剪贴板、嵌入插件画布、分离插件窗口与 DWM 边框；插件自绘 DOM 只保证跟随
+  画布及公开视觉变量。
 - 所有用户可见字符串走 `t()`，`languages/en.json`、`zh-CN.json`、`zh-TW.json`
   同步维护。
 
@@ -56,32 +57,37 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 - 页面头由一行说明、标题、可选页码和当前页动作组成。页面头随内容滚动，标题栏
   保持固定。
 
-## 设置窗视觉字段
+## 外观字段
 
 | 键 | 类型 | 值 | 默认值 | 作用域 |
 |---|---|---|---|---|
-| `appearance.settings_skin` | string | `quiet` / `chromatic` | `quiet` | 仅设置窗口 |
-| `appearance.settings_accent` | string | `""` / `#rrggbb` | `""` | 仅设置窗口 |
-| `appearance.settings_accent_custom` | string | `""` / `#rrggbb` | `""` | 仅设置窗口 |
+| `appearance.skin` | string | `quiet` / `chromatic` | `quiet` | 全应用 |
+| `appearance.accent` | string | `""` / `#rrggbb` | `""` | 全应用强调态 |
+| `appearance.accent_custom` | string | `""` / `#rrggbb` | `""` | 取色器记忆值 |
 
-- 首帧由 `src/index.tsx` 在 `render()` 前读取 `__LUME_CONFIG__`，依次应用皮肤、
-  明暗模式与主题色；缺少配置或未知皮肤回落 `quiet`，主题色缺失或非法时为空值。
-- `src/settings/skin.ts` 的 `applySettingsSkin` 是 `data-settings-skin` 的唯一
-  写入器；`src/settings/accent.ts` 的 `applySettingsAccent` 是
-  `data-settings-accent`、`--settings-user-accent`、
-  `--settings-user-structure`、`--settings-user-structure-text` 的唯一写入器。
+- 首帧由 `src/index.tsx` 在 `render()` 前读取 `__LUME_CONFIG__`，依次应用明暗
+  模式、皮肤与主题色；`src/pluginWindow.tsx` 对分离窗口使用插件生效的明暗模式。
+  缺少配置或未知皮肤回落 `quiet`，主题色缺失或非法时为空值。
+- `src/skins/runtime.ts` 是 `data-skin` 与 `--surface` 的唯一写入器；
+  `src/skins/accent.ts` 是 `data-accent`、`--ui-accent*` 与 `--ui-focus-ring`
+  的唯一写入器；`src/theme.ts` 继续独占 `data-theme` 与系统明暗监听。
+- `src/skins/skins.json` 是皮肤 id、四个 surface 与对比度锚点的共享来源。
+  TypeScript 直接导入；Rust 以 `include_str!` 编译并用 `OnceLock` 解析。主窗
+  CSS、iframe 画布、分离窗口背景和 DWM 边框均从该文件派生。
 - Rust 在读取、补丁合并、导入、恢复默认、恢复备份与整表保存后统一规范化皮肤和
   主题色。主题色只接受三位或六位十六进制，输出小写 `#rrggbb`；其他值回落为空。
-- 空主题色移除覆盖属性并清空内联变量，完全使用皮肤原生 token。非空主题色按固定
-  低比例染入画布、导航栏、面板、控件与选中背景，并从同一输入派生装饰色和小字色。
+- 空主题色移除覆盖属性和内联 token，完全使用皮肤原生强调色。非空主题色按当前
+  皮肤/mode 的最不利背景锚点修正对比度，派生 `--ui-accent`、
+  `--ui-accent-text`、`--ui-accent-border`、`--ui-accent-on` 与
+  `--ui-focus-ring`。设置窗可按低比例把该强调色混入自身表面；启动器外层
+  `--surface` 不参与混色。
 - 切换皮肤或主题色先更新 DOM，再更新工作副本并走自动保存。保存失败时 DOM、
   工作副本和控件一起回滚到最近确认值。
-- `appearance.settings_accent_custom` 只记录取色器最后一次提交的颜色，与正在使用
-  的主题色解耦：选预设 / 默认都不会改写它，取色器始终显示这份记忆值；从未选过时
-  统一显示纯白 `#ffffff`。它与 `settings_accent` 一起写入、一起被规范化，恢复
-  默认值会清空两者。
-- 系统明暗切换时重新派生主题色；撤销、重试、恢复默认、导入与恢复备份都走同一
-  应用路径，不直接改属性绕过队列。
+- `appearance.accent_custom` 只记录取色器最后一次提交的颜色，与正在使用的
+  主题色解耦：选预设 / 默认都不会改写它，取色器始终显示这份记忆值；从未选过时
+  统一显示纯白 `#ffffff`。恢复默认值会清空 `accent` 与 `accent_custom`。
+- 系统明暗切换时重新解析 surface 并派生主题色；撤销、重试、恢复默认、导入与
+  恢复备份都走同一应用路径，不直接改属性绕过队列。
 
 ## 自动保存
 
@@ -159,21 +165,22 @@ WebView2 窗口，无边框、自绘标题栏；视觉与共享行为同时以
 
 ### 01 外观（`appearance`）
 
-页面说明：选择界面语言、明暗主题、设置窗皮肤与主题色。
+页面说明：选择界面语言、明暗主题、应用皮肤与主题色。
 
 - **颜色模式** `appearance.color_mode`：跟随系统 / 月之暗面（深色）/ 日之耀面
   （浅色），使用三张主题预览卡。跟随系统响应 `prefers-color-scheme`。
 - **语言** `appearance.language`：跟随系统 / English / 简体中文 / 繁體中文；
   语言名称使用自身语言显示，切换后当前窗口与托盘立即更新。
-- **设置窗皮肤** `appearance.settings_skin`：Quiet / Chromatic。只改变当前设置
-  窗口，启动器和插件页面不受影响。
-- **设置窗主题色** `appearance.settings_accent`：默认 / 六个预设色 / 自定义。
-  预设行只在首格区分皮肤：Quiet 首格是湖蓝，Chromatic 首格是浅粉 `#ac8e97`
-  （Chromatic 深色默认色为湖蓝，原色因此留在首格）。首格「默认」的色块固定显示
-  当前皮肤、当前明暗下的默认色，不随正在使用的主题色变化。选择后即时预览，
-  250ms 后自动保存；文字与焦点对比度自动修正。自定义入口是「色块 + 名称」：
-  点击色块打开原生取色器，点击名称直接应用记忆值（尚未选过时为纯白 `#ffffff`），
-  新颜色单独记忆到 `appearance.settings_accent_custom`。
+- **应用皮肤** `appearance.skin`：Quiet / Chromatic。设置窗、启动器、导航、
+  剪贴板、嵌入插件画布与分离插件窗口同步切换；外层窗口仍由 DWM 负责圆角，
+  Chromatic 只在内部使用直角/近直角控件和更强结构线。
+- **主题色** `appearance.accent`：默认 / 六个预设色 / 自定义。预设行只在首格
+  区分皮肤：Quiet 首格是湖蓝，Chromatic 首格是浅粉 `#ac8e97`（Chromatic 深色
+  默认色为湖蓝）。首格「默认」的色块固定显示当前皮肤、当前明暗下的默认色。
+  选择后即时预览，250ms 后自动保存；设置窗、启动器、导航、剪贴板和插件外壳的
+  焦点、选中、链接、开关与进度态同步更新，文字与焦点对比度自动修正。自定义入口
+  是「色块 + 名称」：点击色块打开原生取色器，点击名称直接应用记忆值（尚未选过
+  时为纯白 `#ffffff`），新颜色单独记忆到 `appearance.accent_custom`。
 
 ### 02 启动器（`launcher`）
 
@@ -367,10 +374,11 @@ id，值为 Presenter id。缺省或未知值回落到页面清单声明的默�
 - 保存前快照：`<base>/settings/backup.toml`
 - dev / debug 运行的 `<base>` 为 `src-tauri/target/debug/`，release 为
   `src-tauri/target/release/`；安装布局下位于 `%LOCALAPPDATA%\Lume\`。
-- 旧配置缺少 `appearance.settings_skin` 时读取为 `quiet`；未知值同样回落
-  `quiet`。旧配置缺少 `appearance.settings_accent` 或
-  `appearance.settings_accent_custom` 时读取为空值；非法值同样回落为空值。
-  导入、恢复默认和恢复备份都经过同一 Rust 规范化路径。
+- 新字段缺失时从旧字段 `settings_skin` / `settings_accent` /
+  `settings_accent_custom` 迁移；新字段存在但非法时回落 `quiet` 或空主题色，
+  不会回读旧值。新字段显式为空主题色时保持“跟随皮肤”，不会复活旧颜色。
+  旧字段不参与运行逻辑，下一次写入时自然移除。导入、恢复默认和恢复备份都经过
+  同一 Rust 规范化路径。
 - 外部 TOML 替换、`backup.toml` 恢复和默认值恢复都通过 Rust 命令完成；前端不直接
   读写设置文件或 SQLite。
 
@@ -380,11 +388,15 @@ id，值为 Presenter id。缺省或未知值回落到页面清单声明的默�
 - Rust：`cargo check`、`cargo test`。
 - 文案自检：`node scripts/check_i18n.mjs`（三语键集合一致、键都有引用、设置搜索
   关键词简繁成对）。
+- 皮肤单测：`node scripts/skin_system_unit_test.mjs`（或
+  `pnpm run test:skin-system`），覆盖注册表、surface、行高和五层 accent token。
 - CDP：`node scripts/cdp_settings_smoke.mjs`、
-  `node scripts/cdp_settings_skin_verify.mjs` 与
-  `node scripts/cdp_settings_accent_verify.mjs`。主题色脚本覆盖首帧属性、四组合
+  `node scripts/cdp_settings_skin_verify.mjs`、
+  `node scripts/cdp_settings_accent_verify.mjs` 与
+  `node scripts/cdp_skin_system_verify.mjs`。主题色脚本覆盖首帧属性、四组合
   染色、WCAG 对比度、系统明暗重算、预设/自定义值、取色器记忆值与皮肤默认色、
-  持久化、撤销、恢复默认、只读文件回滚、搜索定位、窄窗口布局、进程重启与
-  启动器隔离。
+  持久化、撤销、恢复默认、只读文件回滚、搜索定位、窄窗口布局与进程重启；
+  统一皮肤脚本覆盖四组合的 CSS/像素/iframe/分离窗口 surface、插件覆盖正交性、
+  剪贴板行高与选择保持，以及主题色不染启动器外层表面。
 - 手工：按 [TESTING.md](TESTING.md) 的设置窗清单复核真实窗口、200% 缩放、
   快捷键录制、UAC、服务/代理注册与备份恢复。

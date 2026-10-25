@@ -7,13 +7,15 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
 ## Surface
 
 - **Opaque panel, one color**: `.launcher` fills the client area edge to edge
-  with solid `--surface` (dark `#1e1e20` / light `#fbfbfd`) — **no** border,
-  **no** `border-radius`, **no** translucent fill and no backdrop effect
-  (Acrylic was removed in `lib.rs`). The same value paints DWM's visible frame
-  border strip (`window::set_panel_frame_border` → `DWMWA_BORDER_COLOR` per
-  颜色模式) and is the default plugin-page canvas (`presenterBridge`), so panel /
-  strip / page / four corners are exactly one surface: no ring, no hairline,
-  no tint step. A CSS radius only exposes the window backdrop in the crescent
+  with the active skin's solid `--surface` — Quiet is `#1e1e20` dark /
+  `#fbfbfd` light, Chromatic is `#1e1e20` dark / `#f3efe6` light. There is
+  **no** border, **no** `border-radius`, **no** translucent fill and no
+  backdrop effect (Acrylic was removed in `lib.rs`). The same value comes from
+  `src/skins/skins.json` and paints the DWM visible-frame strip
+  (`window::set_panel_frame_border`), the default plugin-page canvas
+  (`presenterBridge`) and detached plugin-window background, so panel / strip /
+  page / four corners are exactly one surface: no ring, no hairline, no tint
+  step. A CSS radius only exposes the window backdrop in the crescent
   outside its arc, and a translucent panel can never be reproduced by the
   opaque strip over an arbitrary wallpaper. The other windows are opaque and
   clear their DWM border (`clear_dwm_border`).
@@ -29,6 +31,11 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   and runs to the panel border on the left/right/bottom; inner padding belongs
   to the page (see ARCHITECTURE 拼接几何). A frame or tint step at that seam
   is a bug, not a style.
+- **Plugin surfaces**: Presenter iframes receive `--lume-page-bg`,
+  `--lume-page-accent` and `data-lume-skin`; the legacy `theme` event remains a
+  `"light" | "dark"` string and the additive `skin` event carries
+  `{id, accent, surface}`. Detached plugin windows use the same `--surface` for
+  chrome and canvas. A plugin that paints its own background still wins.
 - **Nothing to show = the search row alone**: an empty home menu (no bar
   sections) collapses the window to the search row — no reserved empty strip.
   A "no results" hint renders in its own `.page-hint` row (the fit window
@@ -43,18 +50,23 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
 
 ## Colors
 
-Palette tokens live in `src/theme.css` and are shared by the launcher,
-settings and detached-plugin surfaces. The light theme does not reuse the
-dark theme's cyan as text: small text and focus indicators get their own
-contrast-safe tiers.
+Shared skin metadata lives in `src/skins/skins.json`; semantic accent and
+surface variables are applied by `src/skins/{runtime,accent}.ts`. The launcher
+palette remains in `src/theme.css` so launcher, settings and detached-plugin
+surfaces consume one set of `--surface`, text and control tokens. The light
+theme does not reuse the dark theme's cyan as text: small text and focus
+indicators get their own contrast-safe tiers.
 
-| Role | Dark | Light |
+| Role | Quiet dark / light | Chromatic dark / light |
 |---|---|---|
-| Surface / raised | `#1e1e20` / `rgba(38,38,40,.97)` | `#fbfbfd` / `#ffffff` |
-| Primary / secondary / muted text | `0.68` / `0.58` / `0.49` white | `0.72` / `0.66` / `0.64` ink |
-| Accent decoration / text | `#5ac8fa` / `#5ac8fa` | `#0969da` / `#0757b8` |
-| Focus ring | `#5ac8fa` | `#0969da` |
-| Danger / warning / success text | `#ff7b72` / `#ffb020` / `#4cc38a` | `#b42318` / `#9a6700` / `#1a7f37` |
+| Surface | `#1e1e20` / `#fbfbfd` | `#1e1e20` / `#f3efe6` |
+| Native accent decoration | `#5ac8fa` / `#0969da` | `#5ac8fa` / `#64796d` |
+| Native accent text | `#5ac8fa` / `#0757b8` | `#5ac8fa` / `#52675b` |
+| Focus ring | `#5ac8fa` / `#0969da` | `#5ac8fa` / `#64796d` |
+
+Primary/secondary/muted text, danger/warning/success tiers and raised surfaces
+follow the resolved light/dark palette. Custom accent overrides derive all five
+accent tiers from the current skin's `accentAnchors` in the shared metadata.
 
 - Every text token clears `4.5:1` on `--surface`. The focus ring and selected
   borders clear `3:1`; `--danger-fill` keeps white button text above `4.5:1`.
@@ -150,44 +162,47 @@ contrast-safe tiers.
 - At the settings window's `560×420` minimum, the navigation rail compacts its
   rows and remains independently scrollable. The footer never overlaps a
   navigation hit target; the last section stays fully visible and clickable.
-- The settings window opens at `1040×720` and uses one of two complete skins
-  from `appearance.settings_skin`: Quiet Control Deck (rounded cards, two quiet
-  planes) or Chromatic Edge (square 1.5px panels, numbered pages). Both share
-  the same semantic components and responsive geometry. Skin tokens are scoped
-  under `.settings` / `html[data-settings-skin]`; they must never change the
-  launcher surface, plugin canvases, detached windows, tray, or DWM border.
-  Switching skin preserves focus, DOM identity, and scroll position.
-- `appearance.settings_accent` overlays a user accent without changing skin
-  geometry. An empty value is pixel-identical to the selected skin — for dark
-  Chromatic that native accent is 湖蓝 (`#5ac8fa`), with `--settings-selected`
-  written as the same 16% mix an explicit Aqua accent produces, so the skin
-  default and a picked Aqua look identical. A custom value mixes into only
-  `--settings-canvas` (dark 5% / light 3%),
-  `--settings-rail` (7% / 5%), `--settings-panel` (4% / 2%),
-  `--settings-control` (6% / 3%), and `--settings-selected` (16% / 12%,
-  mixed with the panel base). Text, semantic, warning, danger, success and
-  overlay-shadow tokens stay unchanged. All mixed surfaces remain opaque and
-  the override adds no transitions. The derived variables are scoped to the
-  settings document's `body.settings-window` as well as `.settings`, so the
-  Portal-rendered help tooltip and modal inherit the same structure and panel
-  tint instead of falling back to the skin base.
-- Accent decoration and small text are derived separately: structure follows a
-  3:1 floor and structure text a 4.5:1 floor against the worst relevant tinted
-  surface in the current mode. Selected text keeps the skin's native text token
-  and must clear 4.5:1 on the tinted selected background. Selection also keeps
-  its border, underline or numbered-page cue so color never carries state alone.
+- `appearance.skin` is application-wide. Quiet uses rounded cards, soft
+  internal controls and quiet structure; Chromatic uses square editorial
+  controls, 1.5px structural rules and numbered settings pages. Both share the
+  same semantic components, DOM identity and responsive layout. Switching skins
+  preserves focus, selection and scroll position, and never adds a CSS border,
+  radius, translucent fill or shadow to the launcher's outer window.
+- The launcher inner rhythm is skin-owned: Quiet keeps rounded result/clipboard
+  rows; Chromatic uses near-square controls, stronger rules and editorial
+  section titles. Search row, page and iframe remain one `--surface`; no skin
+  may introduce a divider at that seam.
+- Clipboard row height is part of the skin contract:
+  `quiet/clipboard-list` = 52px, `chromatic/clipboard-list` = 56px,
+  `quiet/clipboard-compact` = 44px, `chromatic/clipboard-compact` = 48px.
+  Presenters publish the value through `viewport.request`; the Page Service
+  uses it for spacer/window math and keeps the selected item visible.
+- `appearance.accent` overlays a user accent without changing skin geometry.
+  Empty means the skin's native accent. For dark Chromatic that is 湖蓝
+  (`#5ac8fa`), with `--settings-selected` using the same 16% mix an explicit
+  Aqua accent produces. Custom values derive `--ui-accent`,
+  `--ui-accent-text`, `--ui-accent-border`, `--ui-accent-on` and
+  `--ui-focus-ring`; the outer launcher `--surface` is never tinted.
+- Settings surfaces may mix the custom accent into `--settings-canvas`
+  (dark 5% / light 3%), `--settings-rail` (7% / 5%),
+  `--settings-panel` (4% / 2%), `--settings-control` (6% / 3%) and
+  `--settings-selected` (16% / 12%). Text, semantic, warning, danger, success
+  and overlay-shadow tokens stay unchanged. All mixed surfaces remain opaque
+  and the override adds no transitions. This tint is scoped to the settings
+  document and its Portal help surfaces.
+- Accent decoration, small text and foreground-on-accent are derived separately
+  with 3:1, 4.5:1 and 4.5:1 floors. Selection also keeps its border, underline
+  or numbered-page cue so color never carries state alone.
 - The compact accent preview uses the same CSS tokens as real controls: a
   structure rule, selected navigation row, on-state switch and small accent
   text. Presets pair every swatch with a localized label; the first preset slot
-  is the one skin-dependent swatch (Quiet leads with Aqua, Chromatic with the
-  skin's original `#ac8e97`) and it stays pinned to the skin's default accent
-  while another color is applied, and the native color input keeps a hit area
-  of at least 32×32px.
-- The color input owns its value: it shows the remembered
-  `appearance.settings_accent_custom`, or — until the user picks one — pure
-  white. Picking a preset or switching skins never rewrites it, so the swatch
-  does not follow the color in use. The entry's name is a button that applies
-  that color immediately; only the swatch opens the native picker.
+  is skin-dependent (Quiet leads with Aqua, Chromatic with `#ac8e97`) and stays
+  pinned to the skin default while another color is applied. The native color
+  input keeps a hit area of at least 32×32px.
+- The color input shows the remembered `appearance.accent_custom`, or pure
+  white before one is stored. Picking a preset or switching skins never rewrites
+  it. The entry name applies that color immediately; only the swatch opens the
+  native picker.
 - The About brand block shows the product mark itself — the transparent app
   icon, inverted per `--icon-filter` like the topbar brand, at 104px (78px at
   narrow widths) with no plate, frame or letter monogram around it.

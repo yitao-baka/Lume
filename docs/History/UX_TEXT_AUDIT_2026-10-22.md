@@ -111,7 +111,7 @@ Favorite / pinned。
 - 设置 → 剪贴板 → 历史：`settingsHistoryCapHint`「固定记录不计入此上限」/ "Pinned
   entries do not count toward this limit"（zh-TW「固定記錄…」）。
 - 清空确认框：「保留固定记录」`keepPinned`（zh-TW 用「保留釘選記錄」）。
-- [ROADMAP_HISTORY.md](ROADMAP_HISTORY.md):770 记录过一次刻意的改名：右键菜单「固定 / 取消固定」
+- [ROADMAP_HISTORY.md](../ROADMAP_HISTORY.md):770 记录过一次刻意的改名：右键菜单「固定 / 取消固定」
   改成了「收藏 / 取消收藏」，只保留「已固定」栏标题。「保留固定记录」与
   「固定记录不计入此上限」是那次改名没有跟上的遗留（README 也沿用「保留固定记录」）。
 

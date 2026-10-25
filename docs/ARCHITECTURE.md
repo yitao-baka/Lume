@@ -2,6 +2,7 @@
 
 ```
 SolidJS UI (src/App.tsx, src/i18n.ts)
+  ├─ src/skins/ — shared skin metadata + data-skin / --surface / accent runtime
         │  invoke("search_apps" | "search_clipboard" | "get_app_icons"
         │        | "launch_app" | "copy_clipboard" | "delete_clipboard"
         │        | "pin_clipboard" | "hide_launcher" | "get_hotkey")
@@ -86,7 +87,7 @@ Window frame: the launcher panel is opaque (src/App.css `.launcher`, solid
 see docs/ROADMAP_HISTORY.md). DWM's visible frame border strip (the ~2px non-client ring
 around the client area) is **painted in that same panel color** —
 `set_panel_frame_border()` → `DWMWA_BORDER_COLOR` with the `--surface` value
-for the current 颜色模式 (re-painted from `apply_settings` and on
+for the current skin + 颜色模式 (re-painted from `apply_settings` and on
 `WindowEvent::ThemeChanged` in system mode); left at the default or
 `DWMWA_COLOR_NONE` the strip shows the desktop through the transparent window
 as a light-gray ring. Panel, strip and the default plugin-page canvas then
@@ -355,7 +356,7 @@ edits before the next patch. The Rust side merges that patch into the current
 `SettingsState` under its lock, so autosave cannot roll back plugin
 enable/disable, plugin geometry / theme preferences, last-page bookmarks or
 remember-checks writes made in the meantime. A failed write restores the
-affected controls plus the settings-window skin and accent DOM to the confirmed
+affected controls plus the skin and accent DOM to the confirmed
 snapshot, then exposes retry in the footer. Import,
 restore-default and restore-backup call the same runtime-apply helper as a
 normal save (window geometry, hotkey, dedup index, index refresh + watcher,
@@ -491,8 +492,9 @@ before adding a field:
   near-black page inside the panel. The host therefore injects the page's
   default canvas in the Presenter bridge — the same `--surface` the panel itself
   paints, so the page is literally the panel at the splice:
-  `html{background:var(--lume-page-bg,<the theme's --surface>)}`, and the
-  bridge keeps `--lume-page-bg` in step with theme flips (the `theme` event).
+  `html{background:var(--lume-page-bg,<the skin's --surface>)}`, and the
+  bridge keeps `--lume-page-bg` plus `data-lume-skin` in step with the
+  `theme`/`skin` events. The iframe also receives `--lume-page-accent`.
   A plugin that paints its own `html`/`body` background still wins (its rule
   comes later in the document).
   Both the default and the pushed value are the **plugin's effective** mode:
@@ -599,30 +601,27 @@ before adding a field:
     word navigation, …) inside text fields.
 - The settings window reuses the same build via the window label
   (`src/settings/` — grouped navigation, shared semantic rows, command search,
-  autosave, and the Quiet / Chromatic skin runtime; see `docs/SETTINGS.md`).
+  autosave, and the shared Quiet / Chromatic skin; see `docs/SETTINGS.md`).
   Its catalog indexes localized labels, summaries/details, keywords, current
   values, and live plugin manifest/setting metadata; result jumps focus the
   exact row. The confirm dialog owns a focus trap with inert background, all
   shared switches/radios expose accessible names and selected state, and
-  `setLocale()` synchronizes `documentElement.lang`. `src/settings/skin.ts` is
-  the single writer for `data-settings-skin`, while
-  `src/settings/accent.ts` is the single writer for `data-settings-accent` and
-  the three `--settings-user-*` variables. Both are applied from the injected
-  config before `render()`; the launcher never sets either property. The accent
-  module normalizes untrusted input, derives separate 3:1 structure and 4.5:1
-  text tokens from conservative mode anchors, and recomputes them when
-  `themeMode()` flips. `skins/accent.css` overrides the five tinted semantic
-  surfaces under `html[data-settings-accent]` for both `.settings` and the
-  settings document's `body.settings-window`, so Portal-rendered help surfaces
-  inherit the same tokens. An empty value removes the attribute and inline
-  variables so the skin's native tokens and geometry remain unchanged. The
-  palette's first preset is the only skin-dependent swatch
-  (`settingsAccentPresets`): Quiet leads with Aqua, Chromatic with its original
-  `#ac8e97` (whose dark default is Aqua). The picker shows
-  `appearance.settings_accent_custom` — the remembered color, written together
-  with the accent on commit — or pure white while it is empty; the 默认 swatch
-  reads the skin token from `<html>`, so it stays the skin default instead of
-  following the accent in use.
+  `setLocale()` synchronizes `documentElement.lang`.
+- `src/skins/` is the application visual runtime. `skins.json` is the single
+  machine-readable source for skin ids, launcher surfaces and accent contrast
+  anchors; Rust embeds it with `include_str!` and derives DWM/detached-window
+  colors from the same values. `runtime.ts` owns `data-skin` and `--surface`;
+  `accent.ts` owns `data-accent`, the five `--ui-accent*` tiers and
+  `--ui-focus-ring`. Both run before `render()` from `__LUME_CONFIG__` and
+  recompute on resolved light/dark changes. The settings surface may mix the
+  custom accent into its own canvas/rail/panel/control tokens; the launcher
+  outer surface never receives that tint.
+- The accent palette's first preset is the only skin-dependent swatch: Quiet
+  leads with Aqua, Chromatic with its original `#ac8e97` (whose dark default
+  is Aqua). The picker shows `appearance.accent_custom` — the remembered color,
+  written together with the accent on commit — or pure white while it is empty;
+  the 默认 swatch reads the skin's native accent metadata, so it stays the skin
+  default instead of following the accent in use.
   The
   satellite preview is its own entry (`src/preview.tsx`). Its compact header
   names the current file/content type and owns the in-window `close_preview`
@@ -639,8 +638,10 @@ before adding a field:
   the arrows walk the one linear grid across the divider; mouse hover
   selects, click launches. Context menus offer pin / launch / open location
   / (recent: remove-from-recent) / admin.
-- **Clipboard** renders a virtualized list (fixed row height, ~30 DOM rows)
-  with category tabs, multi-select merge paste and delete-with-undo.
+- **Clipboard** renders a virtualized list (~30 DOM rows) with category tabs,
+  multi-select merge paste and delete-with-undo. Row height comes from
+  `clipboardRowHeight(skin, presenterId)`; the Presenter reports it through
+  `viewport.request`, and spacer/windowing/scroll math follows that value.
 - All pages support hover-select and click-activate; the search input is
   re-focused every time the window is shown.
 - `Enter` launches an app or pastes a clipboard entry after the backend
@@ -699,5 +700,5 @@ surface are verified with the `scripts/cdp_*.mjs` probes.
 Planned work is tracked in `docs/ROADMAP.md`: plugin ecosystem follow-ups
 (market, drag-package install, browser/selection capture), file-search
 hardening, workflow/OCR/AI commands and cross-platform exploration.
-The page-model / replaceable-presenter refactor is specified in
-`docs/PAGE_MODEL_PRESENTER.md`.
+The page-model / replaceable-presenter design history is archived in
+`docs/History/PAGE_MODEL_PRESENTER.md`.

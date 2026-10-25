@@ -2,7 +2,7 @@
 
 > **完整 API 参考**见 `docs/PLUGIN_API.md`（清单字段表、Provider 契约、
 > Page Service / Presenter 时序、启停语义、安全模型、调试）。页面运行时
-> 架构见 `docs/PAGE_MODEL_PRESENTER.md`。
+> 架构见 `docs/History/PAGE_MODEL_PRESENTER.md`。
 > 本文是最小上手指南。
 
 Lume 的插件 = 一份**清单**（`plugin.toml`）+ 一份**入口 JS**（provider 类）。

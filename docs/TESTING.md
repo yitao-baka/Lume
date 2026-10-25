@@ -10,6 +10,7 @@ Rust unit tests and frontend compile checks are the baseline:
 pnpm install
 pnpm exec tsc --noEmit
 pnpm run test:page-runtime
+pnpm run test:skin-system
 pnpm run build
 cd src-tauri
 cargo check
@@ -22,6 +23,11 @@ revision monotonicity and frame coalescing, JSON/cycle/size rejection,
 resource-scheme validation, intent target/action checks, collection-window
 bounds, Presenter compatibility fallback, model/selection retention across
 Presenter switches, and remount after repeated Presenter failures.
+
+`pnpm run test:skin-system` loads the same modules through Vite SSR and checks
+skin normalization, the four shared surfaces, clipboard row heights, accent
+normalization, native skin accents, and the 3:1 / 4.5:1 contrast floors of all
+derived accent tiers.
 
 Static text invariants are covered by `node scripts/check_i18n.mjs`: the three
 `languages/*.json` bundles must carry the same key set, every key must be
@@ -102,7 +108,7 @@ the satellite preview title/close path.
 Settings interaction/accessibility regressions are covered by
 `node scripts/cdp_settings_skin_verify.mjs`. It opens the embedded debug settings
 window and checks Quiet / Chromatic across system-resolved light and dark modes,
-first-paint `data-settings-skin`, grouped tab semantics, focus and scroll
+`data-skin`, grouped tab semantics, focus and scroll
 preservation while switching skins, catalog search (including a disk plugin's
 declarative setting), autosave persistence, save failure/rollback with a
 read-only `settings.toml`, real confirmation dialogs, and all nine pages at
@@ -111,19 +117,28 @@ hover tooltip/click dialog help path without row reflow, switch knob geometry in
 both states, high-contrast position marks with the center preset at the grid
 center, distinct system-index hints, and
 independent list/detail scrolling in the plugin manager.
-`node scripts/cdp_settings_accent_verify.mjs` covers the settings-window accent:
-first-frame `data-settings-accent`, normalized inline tokens, Quiet /
-Chromatic × light / dark tinting, WCAG contrast floors, system-theme
+`node scripts/cdp_settings_accent_verify.mjs` covers the global accent:
+first-frame `data-accent`, normalized inline tokens, Quiet /
+Chromatic × light / dark settings tinting, WCAG contrast floors, system-theme
 re-derivation, preset/custom input persistence, the remembered custom color
 (the picker ignores the preset in use and falls back to the skin default),
 Chromatic's dark Aqua default with the skin's original color in the first
 preset slot, undo, restore defaults, read-only save rollback, catalog keywords,
 Portaled help-surface tinting, spinner-free numeric “More…” inputs,
-1040×720 / 560×420 overflow, launcher isolation and a full process restart. The lighter
+1040×720 / 560×420 overflow, the launcher sharing the same accent while keeping
+its own surface, and a full process restart. The lighter
 `node scripts/cdp_settings_smoke.mjs` covers the grouped navigation, command
 search, autosave status bar, restore confirmation, clipboard disabled-slider
 dependency, keycap shortcuts, and page screenshots. The former
 `cdp_settings_ux_audit_verify.mjs` filename forwards to the skin verifier.
+
+The unified skin system uses `node scripts/cdp_skin_system_verify.mjs`. It
+checks all four skin/mode combinations against the shared metadata in the
+launcher DOM and rendered pixels, the settings first frame after a fresh
+process, embedded Presenter canvases and their compatibility with plugin color
+overrides, the detached-window surface, both clipboard Presenter row heights,
+selection/DOM preservation across skin switches, and the rule that a custom
+accent never tints the launcher's outer surface.
 
 ## Manual verification
 
@@ -298,23 +313,24 @@ dev URL instead.
    未豁免插件页冷启动；清单 `keep_session = true` 或 设置 → 插件 打开豁免的
    插件应保留查询与页面状态（但落地仍是导航页）；总开关关闭后不重置。
    自动验证：`node scripts/cdp_idle_reset_verify.mjs`（需先构建 debug exe）。
-8. **Search** — `Ctrl+F`, then search 「设置窗皮肤」「闲置重置」 or a disk
+8. **Search** — `Ctrl+F`, then search 「应用皮肤」「闲置重置」 or a disk
    plugin's declarative label (e.g. 「列表前缀」): one row-level result appears;
    Enter jumps to the exact row and focuses its container. A nonsense query
    shows the localized no-match suggestions. Esc clears the overlay.
 9. **Skins and accent** — switch Quiet ↔ Chromatic in 外观. Focus stays on the
-   skin radio, scroll position is preserved, and the launcher/plugin pages do
-   not change. Repeat with light/dark mode: both skins must use their own
-   palette. Select each accent preset and a custom color with the native color
-   picker; structures, selected rows, switches and small accent text update
-   immediately, values survive reload/restart, **默认** restores the native skin
-   (its swatch stays on the skin default while another color is applied), and
-   clicking the custom entry's name applies the stored color (pure white before
-   one is stored) without opening the picker. With the system color mode active,
-   flip Windows app light/dark
-   mode and confirm the derived accent updates without reopening the window.
-   Repeat the picker at 200% scaling and check the 32×32px hit area, keyboard
-   traversal, and that the launcher and plugin pages keep their own accent.
+   skin radio and scroll position is preserved. The settings window, launcher,
+   navigation, clipboard, embedded plugin canvas and detached plugin window all
+   switch together; Chromatic must not add a CSS border/radius to the launcher's
+   outer window. Repeat with light/dark mode: both skins use their own palette,
+   and a plugin's own light/dark override remains orthogonal. Select each accent
+   preset and a custom color with the native color picker; focus, selected rows,
+   switches and small accent text update immediately, values survive restart,
+   **默认** restores the native skin, and clicking the custom entry's name
+   applies the stored color (pure white before one is stored) without opening
+   the picker. The launcher surface must remain its skin color. With system
+   color mode active, flip Windows app light/dark mode and confirm surfaces and
+   derived accent update without reopening the window. Repeat at 200% scaling
+   and check the 32×32px picker hit area plus keyboard traversal.
 10. **Minimum window** — resize to 560×420. The sidebar collapses to icons with
     tooltips; all nine pages remain reachable, rows stack label over control,
     plugin detail uses list → detail → back, and no page has horizontal overflow.

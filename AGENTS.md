@@ -26,6 +26,7 @@ Windows 轻量启动器（Spotlight / uTools 式）。前端 SolidJS + TypeScrip
   暴露给 webview 的还要进 `src-tauri/capabilities/*.json`。
 - `docs/`（见上）、`languages/*.json`（en / zh-CN / zh-TW）、`res/`（只读资源）、
   `examples/plugins/`（插件示例，其 `dist/` 是源码的一部分，勿 gitignore）。
+- `docs/History/`：退出活跃文档集合的报告、审计与被取代方案；索引与归档规则见 `docs/History/README.md`。
 - `scripts/`：`cdp_*.mjs` = CDP 冒烟/验证脚本；`package-portable.mjs`、`package-zip.sh` = 打包。
 - `test/` = 本机 scratch（截图/日志，已 gitignore），临时产物都丢这里。
 
@@ -66,6 +67,11 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
    分期编号**（P0/P1/P2/P3/P4/P5/P6、Phase 1、阶段名）与完成状态标志
    （✅、"已实现"、"已完成"）；文档只描述当前契约或开放事项，历史进度一律归
    `CHANGELOG.md` 与 `docs/ROADMAP_HISTORY.md`。
+
+9. **文档归档**：报告、审计或被取代方案不再承担现行约束后，移入 `docs/History/`；
+   仍有开放发现时先转入 `docs/ROADMAP.md` 或现行契约，不随报告静默丢失。归档时
+   更新所有入链、图片路径和代码注释，并在 `docs/History/README.md` 登记；历史档案
+   只供追溯，不反向定义现状。
 
 ## 插件系统（改动前必读 `docs/PLUGIN_API.md`）
 

@@ -1,7 +1,7 @@
 # Page Model / Presenter 运行时
 
 本文是 Lume 页面运行时的当前契约。公开插件清单、能力与生命周期以
-[PLUGIN_API.md](PLUGIN_API.md)、`src/plugins/types.ts` 和
+[PLUGIN_API.md](../PLUGIN_API.md)、`src/plugins/types.ts` 和
 `src-tauri/src/plugins.rs` 为准。
 
 ## 结论
@@ -376,7 +376,7 @@ cd src-tauri && cargo check && cargo test
 - `scripts/cdp_plugin_window_verify.mjs`
 
 回归范围还包括插件、安全沙箱、熔断、主题、图标、LRU、导航/剪贴板、设置窗和
-视觉审计。具体命令与手工项见 [TESTING.md](TESTING.md)。
+视觉审计。具体命令与手工项见 [TESTING.md](../TESTING.md)。
 
 ## 验收不变量
 

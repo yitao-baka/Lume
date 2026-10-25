@@ -11,6 +11,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **统一皮肤系统** — `appearance.skin` / `appearance.accent` 现在是应用级设置，
+  统一设置窗、启动器、导航、剪贴板、嵌入插件画布与分离插件窗口；新增
+  `src/skins/skins.json` 作为 CSS、Presenter iframe、插件窗口背景和 Rust DWM
+  边框共用的 surface/对比度元数据，Rust 以 `include_str!` 读取。旧
+  `settings_skin` / `settings_accent` / `settings_accent_custom` 在读取期迁移，
+  新字段显式空值不会复活旧主题色。主题色按当前皮肤和明暗派生五层 WCAG token，
+  但不染启动器外层 `--surface`；Presenter 新增 `skin` 事件与
+  `theme.get()` 的 `skin`/`accent` 字段，剪贴板行高改由皮肤接口驱动并同步虚拟
+  列表窗口。验证：`pnpm run test:skin-system` **11/11**、Page Runtime
+  **13/13**、`cdp_skin_system_verify` **29/29**、`cdp_plugin_theme_verify`
+  **30/30**、`cdp_settings_skin_verify` **60/60**、
+  `cdp_settings_accent_verify` **47/47**、`cdp_visual_audit_verify`
+  **28/28**、`cargo test` **250 passed / 9 ignored**、`check_i18n` **576 键 ×
+  3 语言**、TypeScript、Vite 与 debug `--no-bundle` 构建通过。
 - **页面运行时安全与故障恢复收口** — Presenter/逻辑帧加入严格 CSP，关闭原生
   `fetch`/XHR/WebSocket/EventSource/表单/信标等绕过宿主网络权限的出口；Presenter
   sandbox 移除 forms/popups。清单文件字段只接受插件目录内相对路径，Rust 同时做
@@ -226,7 +240,7 @@ All notable changes to Lume are documented here. Format based on
 
 ### Changed
 
-- **用户可见文案审查收口** — `docs/UX_TEXT_AUDIT_2026-10-22.md` 的 17 项发现逐条
+- **用户可见文案审查收口** — `docs/History/UX_TEXT_AUDIT_2026-10-22.md` 的 17 项发现逐条
   落地：内置插件名走三语键（`pluginNameClipboard` / `pluginNamePreview`，Rust 只留
   英文兜底）；「最近使用条数」「默认展开已固定」「呼出主界面」「切换模式」按实现改写
   （固定应用不豁免上限、每次呼出按设置重置、保存即重新注册、只在启动器窗口内生效）；
@@ -447,7 +461,7 @@ All notable changes to Lume are documented here. Format based on
   **60/60 PASS**、`node scripts/cdp_settings_accent_verify.mjs` **34/34 PASS**；
   1040×720 与 560×420 视觉截图检查通过。
 
-- **设置面板审查遗留项收口** — [SETTINGS_AUDIT_2026-10-20.md](docs/SETTINGS_AUDIT_2026-10-20.md)
+- **设置面板审查遗留项收口** — [SETTINGS_AUDIT_2026-10-20.md](docs/History/SETTINGS_AUDIT_2026-10-20.md)
   的九条发现与两条观察全部修复：设置搜索下拉与窄窗插件筛选条隐藏原生滚动条；插件
   列表图标块按 `--icon-filter` 反色、显式 `icon_light`/`icon_dark` 保持原图；快捷键
   录制态只在 keycap 卡内提示「按下新的组合键…」、按钮改「取消」；「更多」自定义数字
@@ -467,8 +481,10 @@ All notable changes to Lume are documented here. Format based on
 
 ### Documentation
 
+- **文档归档治理** — 建立 [docs/History/README.md](docs/History/README.md) 与归档规范；将 13 份退出活跃集合的报告、审计与被取代设计移入 `docs/History/`，设置面板审查截图随报告归档；`BUG_REPORT.md` 的未实施加固建议仍留在活跃区，现行契约继续留在根目录。同步更新 `AGENTS.md`、`CHANGELOG.md`、`ROADMAP_HISTORY.md`、归档文档互链与 CDP 注释。验证：全仓 Markdown 相对链接扫描 0 失效、11 张审查截图引用 0 缺失；`pnpm run build`（126 modules）、`cargo check`、`cargo test` **250 passed / 9 ignored**、`git diff --check` 通过（cargo test 保留既有 explorer unused import warning）。
+
 - **用户可见文案语义审查报告** — 新增
-  [UX_TEXT_AUDIT_2026-10-22.md](docs/UX_TEXT_AUDIT_2026-10-22.md)：对
+  [UX_TEXT_AUDIT_2026-10-22.md](docs/History/UX_TEXT_AUDIT_2026-10-22.md)：对
   `languages/*.json` 全部 567 键、设置窗九页、启动器 / 预览 / 独立插件窗口的可见
   文案，以及 Rust 侧用户可见字符串（托盘菜单、热键冲突通知、服务与计划任务描述、
   内置插件名）做一次语义走查，逐条给出文件行号与影响——内置插件名硬编码简体中文、
@@ -481,7 +497,7 @@ All notable changes to Lume are documented here. Format based on
   `src-tauri/src/{recent,pins,clipboard,hotkey,tray,svc,agent,plugins}.rs` 的实现
   逐条比对；`pnpm exec tsc --noEmit` 通过。
 
-- **设置面板审查报告** — 新增 `docs/SETTINGS_AUDIT_2026-10-20.md`：设置窗重构（双皮肤 + 调色盘）后的独立审查，逐条记录现象、证据、影响与建议——搜索下拉原生滚动条、插件列表图标深色下不可见、自定义数字输入清空后静默写入下限、关于页复制失败提示残留、系统页导入导出分组复用恢复范围文案、宽布局详情头误关、尺寸预览对比度、忽略应用条目图标语义。验证：`pnpm run build`、`pnpm run tauri build --debug --no-bundle`；`node scripts/cdp_settings_smoke.mjs` 9 项、`node scripts/cdp_settings_skin_verify.mjs` 60 项、`node scripts/cdp_settings_accent_verify.mjs` 34 项断言均无失败。
+- **设置面板审查报告** — 新增 `docs/History/SETTINGS_AUDIT_2026-10-20.md`：设置窗重构（双皮肤 + 调色盘）后的独立审查，逐条记录现象、证据、影响与建议——搜索下拉原生滚动条、插件列表图标深色下不可见、自定义数字输入清空后静默写入下限、关于页复制失败提示残留、系统页导入导出分组复用恢复范围文案、宽布局详情头误关、尺寸预览对比度、忽略应用条目图标语义。验证：`pnpm run build`、`pnpm run tauri build --debug --no-bundle`；`node scripts/cdp_settings_smoke.mjs` 9 项、`node scripts/cdp_settings_skin_verify.mjs` 60 项、`node scripts/cdp_settings_accent_verify.mjs` 34 项断言均无失败。
 
 - **设置窗主题色实现方案** — 新增 `docs/SETTINGS_ACCENT_COLOR.md`：定义
   `appearance.settings_accent`（空值跟随皮肤）、预设 / 自定义强调色、固定低比例

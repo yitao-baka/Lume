@@ -172,14 +172,14 @@ const initial = await settings.evalJs(`({
   theme: document.documentElement.dataset.theme,
   nav: Array.from(document.querySelectorAll('.settings-nav')).map((el) => el.dataset.section),
   saveButtons: Array.from(document.querySelectorAll('.settings-footer button')).filter((el) => el.textContent.includes('保存并应用')).length,
-  status: document.querySelector('.settings-save-status')?.textContent.trim(),
+  status: document.querySelector('.settings-save-status')?.textContent.trim() ?? null,
   pageRadius: getComputedStyle(document.querySelector('.settings-group-panel')).borderRadius,
   pageNumber: getComputedStyle(document.querySelector('.settings-page-number')).display,
 })`);
 check("settings opens with Quiet + dark theme", initial.skin === "quiet" && initial.theme === "dark");
 check("grouped nav keeps the nine-section order", JSON.stringify(initial.nav) === JSON.stringify(["appearance", "launcher", "clipboard", "search", "hotkeys", "automation", "plugins", "system", "about"]), JSON.stringify(initial.nav));
 check("global Save & Apply is gone", initial.saveButtons === 0);
-check("status starts at All changes saved", initial.status?.includes("所有更改已自动保存"), initial.status);
+check("save status stays hidden until a real write", initial.status === null, initial.status);
 check("Quiet has rounded panels and no page number", initial.pageRadius !== "0px" && initial.pageNumber === "none", JSON.stringify(initial));
 const initialAccent = await settings.evalJs(`(async () => ({
   attr: document.documentElement.dataset.accent ?? null,

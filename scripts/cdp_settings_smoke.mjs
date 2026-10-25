@@ -152,11 +152,11 @@ check(
   JSON.stringify({ topbar, brandAlpha }),
 );
 const footer = await settings.evalJs(`({
-  status: document.querySelector('.settings-save-status')?.textContent.trim(),
+  status: document.querySelector('.settings-save-status')?.textContent.trim() ?? null,
   save: Array.from(document.querySelectorAll('.settings-footer button')).some((el) => el.textContent.includes('保存并应用')),
   restore: Array.from(document.querySelectorAll('.settings-footer button')).some((el) => el.textContent.includes('恢复应用默认值')),
 })`);
-check("autosave status replaces the global save button", !!footer.status && footer.save === false && footer.restore, JSON.stringify(footer));
+check("clean load hides autosave confirmation and has no global save button", footer.status === null && footer.save === false && footer.restore, JSON.stringify(footer));
 check("appearance renders semantic groups", (await settings.evalJs(`document.querySelectorAll('.settings-setting-group').length`)) >= 3);
 await settings.shot("appearance");
 
@@ -192,19 +192,106 @@ const clipboard = await settings.evalJs(`({
   mergeDisabled: document.querySelector('.settings-slider-input')?.disabled === true,
 })`);
 check("clipboard keeps merge slider visible but disabled", clipboard.groups.includes('忽略应用') && clipboard.mergeSlider && clipboard.mergeDisabled, JSON.stringify(clipboard));
-await settings.shot("clipboard");
+const ignoreEditor = await settings.evalJs(`(() => {
+  const row = document.querySelector('[data-setting-id="clipboard.ignore_apps"]');
+  const inputRow = row?.querySelector('.settings-ignore-input-row');
+  const picker = row?.querySelector('.settings-ignore-picker');
+  const input = inputRow?.querySelector('.settings-text-input');
+  const add = inputRow?.querySelector('.settings-action');
+  const inputRect = input?.getBoundingClientRect();
+  const addRect = add?.getBoundingClientRect();
+  const pickerRect = picker?.getBoundingClientRect();
+  const inputRowRect = inputRow?.getBoundingClientRect();
+  return {
+    hasListSurface: !!row?.querySelector('.settings-ignore-list, .settings-ignore-empty'),
+    addText: add?.textContent.trim() ?? "",
+    pickerText: picker?.textContent.trim() ?? "",
+    aligned: !!inputRect && !!addRect && Math.abs(inputRect.height - addRect.height) <= 2,
+    pickerBelow: !!pickerRect && !!inputRowRect && pickerRect.top >= inputRowRect.bottom - 1,
+    noOverflow: !!row && row.scrollWidth <= row.clientWidth,
+  };
+})()`);
+check("ignore-app editor separates the list from a labeled add composer", ignoreEditor.hasListSurface && /添加|Add/.test(ignoreEditor.addText) && ignoreEditor.pickerText.length > 0 && ignoreEditor.aligned && ignoreEditor.pickerBelow && ignoreEditor.noOverflow, JSON.stringify(ignoreEditor));
+await settings.evalJs(`document.querySelector('[data-setting-id="clipboard.ignore_apps"]')?.scrollIntoView({ block: "center" }); true`);
+await sleep(150);
+await settings.shot("clipboard-ignore");
+
+const ignoreBefore = await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('get_settings').then((s) => s.clipboard.ignore_apps)`);
+await settings.evalJs(`document.querySelector('.settings-ignore-picker')?.click(); true`);
+await sleep(600);
+const pickedIgnore = await settings.evalJs(`(() => {
+  const ignored = new Set(${JSON.stringify(ignoreBefore.map((name) => name.toLowerCase()))});
+  const row = Array.from(document.querySelectorAll('.picker-row')).find((item) => {
+    const name = item.querySelector('.picker-name')?.textContent.trim() ?? "";
+    return name && !ignored.has(name.toLowerCase());
+  });
+  const name = row?.querySelector('.picker-name')?.textContent.trim() ?? null;
+  row?.click();
+  return name;
+})()`);
+await sleep(900);
+const ignoreAfterPick = await settings.evalJs(`(async () => {
+  const saved = await window.__TAURI_INTERNALS__.invoke('get_settings');
+  const normalized = ${JSON.stringify(pickedIgnore)} === null ? null : await window.__TAURI_INTERNALS__.invoke('normalize_clipboard_ignore_app', { appName: ${JSON.stringify(pickedIgnore)} });
+  return {
+    saved: saved.clipboard.ignore_apps,
+    normalized,
+    pickerOpen: !!document.querySelector('.picker'),
+    error: document.querySelector('[data-setting-id="clipboard.ignore_apps"] .settings-inline-error')?.textContent ?? null,
+  };
+})()`);
+check("choosing a running app adds it directly", !!pickedIgnore && ignoreAfterPick.pickerOpen === false && !ignoreAfterPick.error && ignoreAfterPick.saved.includes(ignoreAfterPick.normalized), JSON.stringify({ pickedIgnore, ...ignoreAfterPick }));
+if (ignoreAfterPick.normalized && ignoreAfterPick.saved.includes(ignoreAfterPick.normalized)) {
+  await settings.evalJs(`(() => {
+    const rows = Array.from(document.querySelectorAll('.settings-ignore-item'));
+    const row = rows.find((item) => item.querySelector('.settings-ignore-app')?.textContent === ${JSON.stringify(ignoreAfterPick.normalized)});
+    row?.querySelector('.settings-icon-btn')?.click();
+    return !!row;
+  })()`);
+  await sleep(700);
+  const ignoreRestored = await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('get_settings').then((s) => s.clipboard.ignore_apps)`);
+  check("removing the picked ignore app restores the prior list", JSON.stringify(ignoreRestored) === JSON.stringify(ignoreBefore), JSON.stringify({ before: ignoreBefore, after: ignoreRestored }));
+}
 
 for (const section of ["hotkeys", "automation", "plugins", "system", "about"]) {
   await settings.evalJs(`document.querySelector('.settings-nav[data-section="${section}"]')?.click(); true`);
   await sleep(200);
   await settings.shot(section);
 }
+
+// The agent switch is fail-closed when the scheduled task is absent. Force a
+// stored `true` only in the dev data directory, check the rendered switch, and
+// restore the prior preference.
+const agentStatus = await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('agent_status')`);
+const previousUseAgent = await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('get_settings').then((s) => s.automation.use_agent)`);
+if (!agentStatus.installed) {
+  if (previousUseAgent !== true) {
+    await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', { patch: { automation: { use_agent: true } } }).then(() => true)`);
+    await sleep(350);
+  }
+  await settings.evalJs(`document.querySelector('.settings-nav[data-section="automation"]')?.click(); true`);
+  await sleep(700);
+  const unregisteredAgent = await settings.evalJs(`(() => {
+    const toggle = document.querySelector('[data-setting-id="automation.use_agent"] [role="switch"]');
+    return {
+      checked: toggle?.getAttribute('aria-checked') ?? null,
+      knobOn: toggle?.classList.contains('on') ?? null,
+    };
+  })()`);
+  check("unregistered elevation agent forces the switch off", unregisteredAgent.checked === "false" && unregisteredAgent.knobOn === false, JSON.stringify(unregisteredAgent));
+  if (previousUseAgent !== true) {
+    await settings.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', { patch: { automation: { use_agent: false } } }).then(() => true)`);
+    await sleep(350);
+  }
+} else {
+  check("registered elevation agent leaves the switch state available", true, JSON.stringify({ installed: true, stored: previousUseAgent }));
+}
+
 await settings.evalJs(`document.querySelector('.settings-nav[data-section="hotkeys"]')?.click(); true`);
 await sleep(200);
 const keycaps = await settings.evalJs(`Array.from(document.querySelectorAll('.settings-keycap')).map((el) => el.textContent.trim())`);
 check("hotkey slots render as keycaps", keycaps.length >= 2, JSON.stringify(keycaps));
 const overflow = await settings.evalJs(`document.documentElement.scrollWidth <= innerWidth && document.querySelector('.settings-main').scrollWidth <= document.querySelector('.settings-main').clientWidth`);
 check("1040×720 settings has no horizontal overflow", overflow);
-
 console.log(failures === 0 ? "[settings-smoke] ALL PASS" : `[settings-smoke] ${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

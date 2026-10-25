@@ -240,6 +240,11 @@ await setAppearance("quiet", "dark", "");
 await go("appearance");
 const nativeQuietDark = await collect();
 check("empty accent keeps the native Quiet dark surface", nativeQuietDark.accentAttr === undefined && sameRgb(nativeQuietDark.canvas, [25, 26, 29]), JSON.stringify(nativeQuietDark.canvas));
+const initialSaveStatus = await settings.evalJs(`({
+  visible: !!document.querySelector('.settings-save-status'),
+  state: document.documentElement.dataset.settingsSaveState,
+})`);
+check("clean settings load shows no save confirmation", !initialSaveStatus.visible && initialSaveStatus.state === "saved", JSON.stringify(initialSaveStatus));
 
 await setAppearance("quiet", "dark", "#6F7CFF");
 await go("appearance");
@@ -247,7 +252,7 @@ const firstFrame = await collect();
 check("custom accent is present on the first frame after reload", firstFrame.accentAttr === "custom" && firstFrame.userAccent === "#6f7cff", JSON.stringify({ attr: firstFrame.accentAttr, accent: firstFrame.userAccent }));
 check("first frame exposes normalized derived accent tokens", /^#[0-9a-f]{6}$/.test(firstFrame.userStructure) && /^#[0-9a-f]{6}$/.test(firstFrame.userStructureText), JSON.stringify({ structure: firstFrame.userStructure, text: firstFrame.userStructureText }));
 check("native color input keeps a 32×32px hit area", firstFrame.inputBox.width >= 32 && firstFrame.inputBox.height >= 32, JSON.stringify(firstFrame.inputBox));
-check("all five tinted surfaces differ from native and stay opaque", opaque(firstFrame.canvas, firstFrame.rail, firstFrame.panel, firstFrame.control, firstFrame.selected) && [firstFrame.canvas, firstFrame.rail, firstFrame.panel, firstFrame.control, firstFrame.selected].every((surface, index) => !sameRgb(surface, [nativeQuietDark.canvas, nativeQuietDark.rail, nativeQuietDark.panel, nativeQuietDark.control, nativeQuietDark.selected][index])), JSON.stringify({ canvas: firstFrame.canvas, rail: firstFrame.rail, panel: firstFrame.panel, control: firstFrame.control, selected: firstFrame.selected }));
+check("custom accent keeps every settings surface native and opaque", opaque(firstFrame.canvas, firstFrame.rail, firstFrame.panel, firstFrame.control, firstFrame.selected) && [firstFrame.canvas, firstFrame.rail, firstFrame.panel, firstFrame.control].every((surface, index) => sameRgb(surface, [nativeQuietDark.canvas, nativeQuietDark.rail, nativeQuietDark.panel, nativeQuietDark.control][index])) && !sameRgb(firstFrame.selected, nativeQuietDark.selected), JSON.stringify({ canvas: firstFrame.canvas, rail: firstFrame.rail, panel: firstFrame.panel, control: firstFrame.control, selected: firstFrame.selected }));
 const surfaces = [firstFrame.canvas, firstFrame.rail, firstFrame.panel, firstFrame.selected, firstFrame.navActive];
 const textContrast = minContrast(firstFrame.structureText, surfaces);
 const structureContrast = minContrast(firstFrame.structure, surfaces);
@@ -285,7 +290,7 @@ const portalAccent = await settings.evalJs(`(async () => {
     dialogPanel,
   };
 })()`);
-check("Portal help surfaces inherit the accent structure and panel tint", sameRgb(portalAccent.tooltipBorder, portalAccent.structure) && sameRgb(portalAccent.dialogBorder, portalAccent.structure) && !sameRgb(portalAccent.tooltipPanel, nativeQuietDark.panel) && !sameRgb(portalAccent.dialogPanel, nativeQuietDark.panel) && opaque(portalAccent.tooltipPanel, portalAccent.dialogPanel), JSON.stringify(portalAccent));
+check("Portal help surfaces keep native panels and inherit accent structure", sameRgb(portalAccent.tooltipBorder, portalAccent.structure) && sameRgb(portalAccent.dialogBorder, portalAccent.structure) && sameRgb(portalAccent.tooltipPanel, nativeQuietDark.panel) && sameRgb(portalAccent.dialogPanel, nativeQuietDark.panel) && opaque(portalAccent.tooltipPanel, portalAccent.dialogPanel), JSON.stringify(portalAccent));
 
 await go("launcher");
 const spinner = await settings.evalJs(`(async () => {
@@ -310,11 +315,15 @@ await showAccent();
 await settings.shot("quiet-dark-indigo");
 
 for (const [skin, mode] of [["quiet", "light"], ["chromatic", "dark"], ["chromatic", "light"]]) {
+  await setAppearance(skin, mode, "");
+  await go("appearance");
+  const nativeState = await collect();
+
   await setAppearance(skin, mode, "#6f7cff");
   await go("appearance");
   const state = await collect();
   const stateContrast = minContrast(state.structureText, [state.canvas, state.rail, state.panel, state.selected, state.navActive]);
-  check(`${skin} × ${mode} applies the same accent`, state.accentAttr === "custom" && state.skin === skin && state.theme === mode && !sameRgb(state.canvas, nativeQuietDark.canvas), JSON.stringify({ skin: state.skin, theme: state.theme, canvas: state.canvas }));
+  check(`${skin} × ${mode} applies the same accent without shifting settings surfaces`, state.accentAttr === "custom" && state.skin === skin && state.theme === mode && sameRgb(state.canvas, nativeState.canvas) && sameRgb(state.rail, nativeState.rail) && sameRgb(state.panel, nativeState.panel) && sameRgb(state.control, nativeState.control) && !sameRgb(state.selected, nativeState.selected), JSON.stringify({ skin: state.skin, theme: state.theme, canvas: state.canvas, selected: state.selected }));
   check(`${skin} × ${mode} keeps derived text readable`, stateContrast >= 4.5, stateContrast.toFixed(2));
   await showAccent();
   if (skin === "quiet" && mode === "light") await settings.shot("quiet-light-indigo");
@@ -351,6 +360,14 @@ const preset = await collect();
 const presetSaved = await getSaved();
 const presetFocus = await settings.evalJs(`document.activeElement?.dataset?.accentValue ?? null`);
 check("preset click updates radio, DOM, and persisted value", preset.checked === "#6f7cff" && preset.accentAttr === "custom" && presetSaved.appearance.accent === "#6f7cff" && presetFocus === "#6f7cff", JSON.stringify({ checked: preset.checked, saved: presetSaved.appearance.accent, focus: presetFocus }));
+const savedFeedback = await settings.evalJs(`({
+  visible: !!document.querySelector('.settings-save-status'),
+  text: document.querySelector('.settings-save-status')?.textContent ?? '',
+})`);
+check("a real write shows the autosave confirmation", savedFeedback.visible && savedFeedback.text.trim().length > 0, JSON.stringify(savedFeedback));
+await sleep(2650);
+const settledFeedback = await settings.evalJs(`!!document.querySelector('.settings-save-status')`);
+check("autosave confirmation clears after the write settles", !settledFeedback, String(settledFeedback));
 
 await settings.evalJs(`(() => {
   const input = document.querySelector('.settings-accent-input');
@@ -360,7 +377,7 @@ await settings.evalJs(`(() => {
 })()`);
 await sleep(80);
 const previewOnly = await collect();
-check("color input preview updates the DOM without waiting for disk", previewOnly.accentAttr === "custom" && previewOnly.userAccent === "#abcdef" && previewOnly.customLabel === "#abcdef" && !sameRgb(previewOnly.panel, nativeQuietDark.panel), JSON.stringify({ accent: previewOnly.userAccent, label: previewOnly.customLabel, panel: previewOnly.panel }));
+check("color input preview updates the DOM without shifting the settings surface", previewOnly.accentAttr === "custom" && previewOnly.userAccent === "#abcdef" && previewOnly.customLabel === "#abcdef" && sameRgb(previewOnly.panel, nativeQuietDark.panel), JSON.stringify({ accent: previewOnly.userAccent, label: previewOnly.customLabel, panel: previewOnly.panel }));
 await settings.evalJs(`document.querySelector('.settings-accent-input').dispatchEvent(new Event('change', { bubbles: true })); true`);
 await sleep(550);
 const custom = await collect();

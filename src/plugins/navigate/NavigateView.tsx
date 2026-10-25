@@ -101,7 +101,7 @@ function itemBox(
  * when an expandable bar's content exceeds one row. */
 function SectionView(props: NavigateViewProps, section: NavSection) {
   const nav = props.nav;
-  // Reactive: 条目框大小 / 窗口宽度变化会重测列数，切片与展开按钮随之更新。
+  // Reactive: 网格大小 / 窗口宽度变化会重测列数，切片与展开按钮随之更新。
   const cols = () => Math.max(props.barCols(), 1);
   const zoneActive = () => nav.zone() === section.id;
   const shown = () =>

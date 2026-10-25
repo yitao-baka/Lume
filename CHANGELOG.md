@@ -13,7 +13,8 @@ All notable changes to Lume are documented here. Format based on
 
 - **主窗口与设置窗口独立皮肤** — `appearance.skin` 继续控制启动器、导航、
   剪贴板、嵌入插件画布与分离插件窗口，新增 `appearance.settings_skin` 只控制
-  设置窗口；两者都默认 `quiet`，可分别选择 Quiet / Chromatic。主题色和明暗模式
+  设置窗口；主窗口默认 `quiet`，设置窗口默认 `chromatic`，可分别选择 Quiet /
+  Chromatic。主题色和明暗模式
   继续全局共享，空主题色按各窗口自身皮肤取默认强调色；旧配置只有任一皮肤字段时
   两窗继承同一值，统一皮肤时代的既有外观不变。外观页新增独立设置行，主窗与设置窗切换
   互不影响，首帧、失败回滚、撤销、恢复默认、导入和备份恢复都走同一 Rust
@@ -23,7 +24,7 @@ All notable changes to Lume are documented here. Format based on
   `--no-bundle` 构建通过；`cdp_settings_skin_verify` **62/62 PASS**、
   `cdp_skin_system_verify` **39/39 PASS**（含主窗/设置窗双向独立皮肤、
   四组 skin/mode surface、iframe/分离窗口与 fresh-process 首帧）、
-  `cdp_settings_accent_verify` **47/47 PASS**、`cdp_settings_smoke` ALL PASS。
+  `cdp_settings_accent_verify` **50/50 PASS**、`cdp_settings_smoke` ALL PASS。
 - **统一皮肤系统（历史基线，现由上方双窗口皮肤扩展）** — 最初将 `appearance.skin` / `appearance.accent` 作为共享设置，
   统一设置窗、启动器、导航、剪贴板、嵌入插件画布与分离插件窗口；新增
   `src/skins/skins.json` 作为 CSS、Presenter iframe、插件窗口背景和 Rust DWM
@@ -359,6 +360,30 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **设置页反馈、表面与默认值收口** — 保存状态只在真实写入时短暂显示，首次载入
+  和外部刷新不再常驻「已自动保存」；自定义主题色只染交互选中态，设置窗的
+  canvas / rail / panel / control 表面保持皮肤原色。启动器网格尺寸默认改为小
+  （70px），设置窗皮肤默认改为 Chromatic；用户可见术语由「条目框」统一为
+  「网格」。验证：`pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、
+  `cargo test` **251 passed / 9 ignored**、`pnpm run test:skin-system` **11/11**、
+  `check_i18n` **580 键 × 3 语言**、debug `--no-bundle` 构建通过；
+  `cdp_settings_accent_verify` **50/50 PASS**（含首次载入隐藏、写入后显示/消失、
+  四组合设置表面不随 accent 漂移）、`cdp_settings_skin_verify` **62/62 PASS**、
+  `cdp_skin_system_verify` **39/39 PASS**、`cdp_visual_audit_verify`
+  **28/28 PASS**、`cdp_settings_smoke` ALL PASS。
+- **插件与忽略应用操作层级修正** — 插件页删除所有 API 版本徽标，名称、版本与
+  类型/内置/可分离等标签分成两行；忽略应用改为独立列表与新增区，手动添加使用
+  带文字的「添加」按钮，运行中程序一旦选中即直接加入列表。验证：
+  `cdp_plugins_pane_verify` ALL PASS（新增无 API 徽标与标签下移断言）、
+  `cdp_settings_smoke` ALL PASS（新增列表/新增区对齐、无溢出、标签化按钮，
+  以及“选择运行中程序即加入、删除后恢复原列表”断言）、
+  截屏 `test/settings-smoke/clipboard-ignore.png`。
+- **提权代理开关 fail-closed** — 「使用提权代理」的显示状态现在由保存值与
+  `agent_status.installed` 共同决定；代理未注册或状态未知时开关始终为关闭，
+  常驻开关也同步不可用。验证：`cdp_settings_smoke` ALL PASS（在未注册环境写入
+  `use_agent=true` 后确认开关仍为 off，并在测试后恢复原值）；
+  `cdp_automation_smoke` ALL PASS（当前自动化页结构、规则编辑、程序选择器、
+  快捷键录制与代理状态并存）。
 - **剪贴板历史滚轮抖动** — 两个剪贴板 Presenter 的“保持选中项可见”副作用会跟随
   每次 Page Model 发布执行；滚轮触发 `viewport.request`、模型换上新的虚拟窗口后，
   副作用又把 `scrollTop` 拉回键盘选中行，形成反复回弹。现在行高变化只重测并锚定

@@ -35,7 +35,7 @@ export function Chip(props: {
   );
 }
 
-/** A preset-button group for a numeric value (entry box / window size). */
+/** A preset-button group for a numeric value (grid cell / window size). */
 export function NumberPreset(props: {
   value: number;
   presets: { label: string; value: number }[];

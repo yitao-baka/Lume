@@ -121,16 +121,19 @@ center, distinct system-index hints, and
 independent list/detail scrolling in the plugin manager.
 `node scripts/cdp_settings_accent_verify.mjs` covers the global accent:
 first-frame `data-accent`, normalized inline tokens, Quiet /
-Chromatic × light / dark settings tinting, WCAG contrast floors, system-theme
-re-derivation, preset/custom input persistence, the remembered custom color
+Chromatic × light / dark settings surfaces staying native while selection follows
+the accent, WCAG contrast floors, system-theme re-derivation, preset/custom input
+persistence, the remembered custom color
 (the picker ignores the preset in use and falls back to the skin default),
 Chromatic's dark Aqua default with the skin's original color in the first
 preset slot, undo, restore defaults, read-only save rollback, catalog keywords,
-Portaled help-surface tinting, spinner-free numeric “More…” inputs,
+Portal help surfaces keeping native panels, spinner-free numeric “More…” inputs,
 1040×720 / 560×420 overflow, the launcher sharing the same accent while keeping
-its own surface, and a full process restart. The lighter
-`node scripts/cdp_settings_smoke.mjs` covers the grouped navigation, command
-search, autosave status bar, restore confirmation, clipboard disabled-slider
+its own surface, and a full process restart. It also checks that a clean load
+shows no autosave confirmation, a real write briefly shows it, and it clears
+after settling. The lighter `node scripts/cdp_settings_smoke.mjs` covers the
+grouped navigation, command search, clean-load footer, restore confirmation,
+clipboard disabled-slider
 dependency, keycap shortcuts, and page screenshots. The former
 `cdp_settings_ux_audit_verify.mjs` filename forwards to the skin verifier.
 

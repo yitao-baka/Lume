@@ -182,6 +182,9 @@ export default function Settings() {
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [saveState, setSaveState] = createSignal<SaveState>("saved");
+  /** The footer confirms real writes for a short interval; it stays absent on
+   * first load and after external reloads, where nothing was saved. */
+  const [saveFeedbackVisible, setSaveFeedbackVisible] = createSignal(false);
   const [saveError, setSaveError] = createSignal<string | null>(null);
   const [launcherSkinError, setLauncherSkinError] = createSignal<string | null>(null);
   const [settingsSkinError, setSettingsSkinError] = createSignal<string | null>(null);
@@ -196,6 +199,7 @@ export default function Settings() {
   const [bodyCue, setBodyCue] = createSignal({ above: false, below: false });
 
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let saveFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
   let saveChain: Promise<boolean> = Promise.resolve(true);
   let failedSnapshot: SettingsData | null = null;
   let selfWriteUntil = 0;
@@ -238,6 +242,30 @@ export default function Settings() {
     bodyRaf = requestAnimationFrame(measureBodyCue);
   }
 
+  function hideSaveFeedback() {
+    if (saveFeedbackTimer) {
+      clearTimeout(saveFeedbackTimer);
+      saveFeedbackTimer = undefined;
+    }
+    setSaveFeedbackVisible(false);
+  }
+
+  function revealSaveFeedback() {
+    if (saveFeedbackTimer) {
+      clearTimeout(saveFeedbackTimer);
+      saveFeedbackTimer = undefined;
+    }
+    setSaveFeedbackVisible(true);
+  }
+
+  function dismissSaveFeedbackSoon() {
+    if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
+    saveFeedbackTimer = setTimeout(() => {
+      saveFeedbackTimer = undefined;
+      setSaveFeedbackVisible(false);
+    }, 2400);
+  }
+
   function activeTextEditor(): boolean {
     const active = document.activeElement as HTMLElement | null;
     if (!active || !contentEl?.contains(active)) return false;
@@ -268,6 +296,7 @@ export default function Settings() {
           setSettings(normalized);
           setBaseline(clone(normalized));
           setSaveState("saved");
+          hideSaveFeedback();
           setSaveError(null);
           setLauncherSkinError(null);
           setSettingsSkinError(null);
@@ -288,6 +317,7 @@ export default function Settings() {
 
   function queueSave(patch: SettingsPatch) {
     failedSnapshot = null;
+    revealSaveFeedback();
     setSaveError(null);
     setLauncherSkinError(null);
     setSettingsSkinError(null);
@@ -310,6 +340,7 @@ export default function Settings() {
     );
     if (Object.keys(patch).length === 0) {
       setSaveState("saved");
+      hideSaveFeedback();
       return true;
     }
     const snapshot = clone(draft);
@@ -322,6 +353,7 @@ export default function Settings() {
       batch(() => {
         setBaseline(clone(snapshot));
         setSaveState("saved");
+        dismissSaveFeedbackSoon();
         setLauncherSkinError(null);
         setSettingsSkinError(null);
         setAccentError(null);
@@ -334,6 +366,7 @@ export default function Settings() {
       failedSnapshot = snapshot;
       const message = settingsError(error, "settingsSaveFailed");
       batch(() => {
+        revealSaveFeedback();
         setSaveState("error");
         setSaveError(message);
         if (keys.includes("appearance.skin")) {
@@ -376,6 +409,7 @@ export default function Settings() {
     setSettings(clone(snapshot));
     applySkin(activeSettingsSkin(snapshot));
     applyAccent(snapshot.appearance.accent);
+    revealSaveFeedback();
     setSaveState("saving");
     await saveNow();
   }
@@ -697,6 +731,7 @@ export default function Settings() {
       mutation.disconnect();
       cancelAnimationFrame(bodyRaf);
       if (saveTimer) clearTimeout(saveTimer);
+      if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
       if (undoTimer) clearTimeout(undoTimer);
     });
   });
@@ -1008,25 +1043,27 @@ export default function Settings() {
         </main>
       </div>
       <footer class="settings-footer" ref={(el) => (footerEl = el)}>
-        <Show
-          when={saveState() === "error"}
-          fallback={
-            <span class="settings-save-status" role="status" aria-live="polite">
-              <span class="settings-save-symbol" aria-hidden="true">
-                {saveState() === "saving" ? "" : "✓"}
+        <Show when={saveState() === "error" || saveFeedbackVisible()}>
+          <Show
+            when={saveState() === "error"}
+            fallback={
+              <span class="settings-save-status" role="status" aria-live="polite">
+                <span class="settings-save-symbol" aria-hidden="true">
+                  {saveState() === "saving" ? "" : "✓"}
+                </span>
+                {t(saveState() === "saving" ? "settingsSaving" : "settingsAutoSaved")}
               </span>
-              {t(saveState() === "saving" ? "settingsSaving" : "settingsAutoSaved")}
-            </span>
-          }
-        >
-          <button
-            class="settings-save-status settings-retry-status"
-            type="button"
-            onClick={() => void retrySave()}
+            }
           >
-            <span class="settings-save-symbol" aria-hidden="true">!</span>
-            {t("settingsSaveFailedStatus")}
-          </button>
+            <button
+              class="settings-save-status settings-retry-status"
+              type="button"
+              onClick={() => void retrySave()}
+            >
+              <span class="settings-save-symbol" aria-hidden="true">!</span>
+              {t("settingsSaveFailedStatus")}
+            </button>
+          </Show>
         </Show>
         <span class="settings-footer-spacer" />
         <Show when={lastUndo()}>

@@ -111,7 +111,7 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
   backing tile. While extraction is pending or after it fails, the row uses
   the shared `res/icons/unknow_universal.svg` fallback; a successful icon
   replaces it.
-- 设置 → 导航页 → 条目框 → `round_app_icons` (default off) is the only circle
+- 设置 → 导航页 → 网格 → `round_app_icons` (default off) is the only circle
   contract. On, `.launcher.circle-app-icons` applies a `50%` radius and clips
   the same result artwork; off restores the unmasked presentation.
 - Truncated result names and descriptions expose their complete value through
@@ -181,17 +181,15 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
   uses it for spacer/window math and keeps the selected item visible.
 - `appearance.accent` overlays a user accent without changing skin geometry.
   Empty means each window's own skin-native accent. For dark Chromatic that is
-  湖蓝 (`#5ac8fa`), with `--settings-selected` using the same 16% mix an
-  explicit Aqua accent produces. Custom values derive `--ui-accent`,
-  `--ui-accent-text`, `--ui-accent-border`, `--ui-accent-on` and
-  `--ui-focus-ring`; the outer launcher `--surface` is never tinted.
-- Settings surfaces may mix the custom accent into `--settings-canvas`
-  (dark 5% / light 3%), `--settings-rail` (7% / 5%),
-  `--settings-panel` (4% / 2%), `--settings-control` (6% / 3%) and
-  `--settings-selected` (16% / 12%). Text, semantic, warning, danger, success
-  and overlay-shadow tokens stay unchanged. All mixed surfaces remain opaque
-  and the override adds no transitions. This tint is scoped to the settings
-  document and its Portal help surfaces.
+  湖蓝 (`#5ac8fa`). Custom values derive `--ui-accent`, `--ui-accent-text`,
+  `--ui-accent-border`, `--ui-accent-on` and `--ui-focus-ring`; neither the
+  outer launcher `--surface` nor any settings canvas / rail / panel / control
+  surface is tinted.
+- The settings document applies a custom accent only to interactive selection:
+  `--settings-selected` uses a 16% accent mix, while text, semantic, warning,
+  danger, success and overlay-shadow tokens stay unchanged. The selection
+  override adds no transitions, and Portal surfaces keep the native settings
+  panel color.
 - Accent decoration, small text and foreground-on-accent are derived separately
   with 3:1, 4.5:1 and 4.5:1 floors. Selection also keeps its border, underline
   or numbered-page cue so color never carries state alone.

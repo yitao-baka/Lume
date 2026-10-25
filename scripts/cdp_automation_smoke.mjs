@@ -59,17 +59,34 @@ async function findSettingsTarget() {
   return {};
 }
 
-/** Type `text` into the focused element (real text insertion → input events). */
-async function type(s, text) {
-  await s.send("Input.insertText", { text });
+/** Insert text into a specific control without depending on OS focus. */
+async function type(s, target, text) {
+  await s.evalJs(`(() => {
+    const el = ${target};
+    if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) return false;
+    el.value += ${JSON.stringify(text)};
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${JSON.stringify(text)} }));
+    return true;
+  })()`);
   await sleep(60);
 }
 
-/** Press a combination (modifiers bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8). */
-async function press(s, { code, key, vk, modifiers = 0 }) {
-  await s.send("Input.dispatchKeyEvent", { type: "keyDown", modifiers, code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+/** Dispatch a key event to a specific control (modifiers: Alt=1, Ctrl=2, Meta=4, Shift=8). */
+async function press(s, { code, key, modifiers = 0 }, target) {
+  await s.evalJs(`(() => {
+    const el = ${target ?? "(document.activeElement ?? document.body)"};
+    return el.dispatchEvent(new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      code: ${JSON.stringify(code)},
+      key: ${JSON.stringify(key)},
+      altKey: ${(modifiers & 1) !== 0},
+      ctrlKey: ${(modifiers & 2) !== 0},
+      metaKey: ${(modifiers & 4) !== 0},
+      shiftKey: ${(modifiers & 8) !== 0},
+    }));
+  })()`);
   await sleep(40);
-  await s.send("Input.dispatchKeyEvent", { type: "keyUp", modifiers, code, key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
 }
 
 let settingsT = null, mainT = null;
@@ -83,24 +100,31 @@ const m = await connect(mainT.webSocketDebuggerUrl);
 await m.evalJs(`document.querySelector('.icon-btn[aria-label]')?.click(); "clicked"`);
 await sleep(1200);
 const s = await connect(settingsT.webSocketDebuggerUrl);
+await s.send("Page.bringToFront");
 await sleep(600);
 
-// 自动化 nav (matched by its icon so this stays language-agnostic)
-await s.evalJs(`(() => { const navs = Array.from(document.querySelectorAll('.settings-nav'));
-  (navs.find((b) => /automation/.test(b.querySelector('img')?.src ?? "")) ?? navs[6])?.click(); return "ok"; })()`);
+// Deterministic starting state: this smoke owns its automation rules.
+await s.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', {
+  patch: { automation: { enabled: true, force_focus: false, actions: [] } }
+}).then(() => true)`);
+await sleep(400);
+
+// 自动化 nav
+await s.evalJs(`(() => { document.querySelector('.settings-nav[data-section="automation"]')?.click(); return "ok"; })()`);
 await sleep(300);
 
-const P = `document.querySelector('.settings-listadd input.settings-text-input')`;
-const R = `document.querySelector('.settings-listadd .settings-hotkey-btn')`;
-const D = `document.querySelector('.settings-listadd .settings-delay-input')`;
+const P = `document.querySelector('.settings-rule-add-grid input.settings-text-input')`;
+const R = `document.querySelector('.settings-rule-add-grid .settings-hotkey-btn')`;
+const D = `document.querySelector('.settings-rule-add-grid .settings-delay-input')`;
+const ADD = `document.querySelector('.settings-rule-add-grid .settings-action-primary')`;
 
 // 1. structure
 const shape = await s.evalJs(`({
   toggles: document.querySelectorAll('.settings-group .settings-toggle').length,
   empty: document.querySelector('.settings-empty')?.textContent ?? "",
-  textInputs: document.querySelectorAll('.settings-listadd input.settings-text-input').length,
-  recorders: document.querySelectorAll('.settings-listadd .settings-hotkey-btn').length,
-  delayFields: document.querySelectorAll('.settings-listadd .settings-delay-input').length,
+  textInputs: document.querySelectorAll('.settings-rule-add-grid input.settings-text-input').length,
+  recorders: document.querySelectorAll('.settings-rule-add-grid .settings-hotkey-btn').length,
+  delayFields: document.querySelectorAll('.settings-rule-add-grid .settings-delay-input').length,
 })`);
 check("自动化 renders master toggle + empty state", shape.toggles >= 2 && shape.empty.length > 0, JSON.stringify(shape));
 check("shortcut is a recorder button, not a second text field",
@@ -116,8 +140,8 @@ const forceFocus = await s.evalJs(`(() => {
   return { before, after: t.classList.contains('on') };
 })()`);
 await sleep(200);
-const dirtyAfterToggle = await s.evalJs(`!document.querySelector('.settings-footer .settings-action-primary').disabled`);
-check("抢回焦点 toggle defaults off, flips on, and marks the settings dirty",
+const dirtyAfterToggle = await s.evalJs(`!!document.querySelector('.settings-save-status')`);
+check("抢回焦点 toggle defaults off, flips on, and starts autosave",
   forceFocus.before === false && forceFocus.after === true && dirtyAfterToggle === true,
   JSON.stringify({ ...forceFocus, dirtyAfterToggle }));
 // put it back so the rest of the run uses the safe default
@@ -126,7 +150,7 @@ await sleep(150);
 
 // 2. the program field must accept typed text
 await s.evalJs(`${P}.focus(); "focused"`);
-await type(s, "notepad");
+await type(s, P, "notepad");
 await sleep(250);
 const typed = await s.evalJs(`${P}.value`);
 check("program field accepts typed text", typed === "notepad", JSON.stringify(typed));
@@ -137,12 +161,12 @@ await s.evalJs(`${R}.click(); "armed"`);
 await sleep(200);
 const armed = await s.evalJs(`${R}.classList.contains('active')`);
 check("recorder arms on click", armed === true);
-await press(s, { code: "KeyS", key: "s", vk: 83, modifiers: 3 });
+await press(s, { code: "KeyS", key: "s", modifiers: 3 }, R);
 await sleep(400);
 const recorded = await s.evalJs(`({
   text: ${R}?.textContent.trim(),
   active: ${R}?.classList.contains('active'),
-  addDisabled: document.querySelector('.settings-listadd .settings-icon-btn')?.disabled,
+  addDisabled: ${ADD}?.disabled,
 })`);
 check("Ctrl+Alt+S is captured and armed state clears",
   recorded.text === "Ctrl+Alt+S" && recorded.active === false, JSON.stringify(recorded));
@@ -153,7 +177,7 @@ await sleep(150);
 const armed2 = await s.evalJs(`${R}.classList.contains('active')`);
 await s.evalJs(`${P}.focus(); "focused program"`);
 await sleep(150);
-await type(s, "abc");
+await type(s, P, "abc");
 await sleep(250);
 const afterTyping = await s.evalJs(`({ value: ${P}.value, recorderActive: ${R}.classList.contains('active') })`);
 check("typing works even with the recorder armed (it cancels on focus change)",
@@ -162,52 +186,60 @@ await s.evalJs(`(() => { const i = ${P}; i.value = ""; i.dispatchEvent(new Event
 
 // 5. add the rule (program typed for real, combo re-recorded, custom delay)
 await s.evalJs(`${P}.focus(); "focused"`);
-await type(s, "notepad.exe");
+await type(s, P, "smoke-target.exe");
 await s.evalJs(`${R}.click(); "armed"`);
 await sleep(150);
-await press(s, { code: "KeyS", key: "s", vk: 83, modifiers: 3 });
+await press(s, { code: "KeyS", key: "s", modifiers: 3 }, R);
 await sleep(400);
 const defaultDelay = await s.evalJs(`${D}?.value`);
 check("delay field defaults to 120 ms", defaultDelay === "120", JSON.stringify(defaultDelay));
-// set a custom delay through the field
+// set a custom delay through the field and commit it with Enter
 await s.evalJs(`(() => { const d = ${D}; d.value = "2500"; d.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
+await sleep(100);
+await press(s, { code: "Enter", key: "Enter" }, D);
 await sleep(150);
-// an out-of-range value must clamp to 60000
+// An out-of-range value disables Add until the field is valid again.
 await s.evalJs(`(() => { const d = ${D}; d.value = "999999"; d.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
+await sleep(100);
+await press(s, { code: "Enter", key: "Enter" }, D);
 await sleep(150);
-const clamped = await s.evalJs(`${D}?.value`);
-check("delay clamps above 60000", clamped === "60000", JSON.stringify(clamped));
+const invalidDelay = await s.evalJs(`({ value: ${D}?.value, addDisabled: ${ADD}?.disabled })`);
+check("delay rejects values above 60000", invalidDelay.value === "999999" && invalidDelay.addDisabled === true, JSON.stringify(invalidDelay));
 await s.evalJs(`(() => { const d = ${D}; d.value = "2500"; d.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
+await sleep(100);
+await press(s, { code: "Enter", key: "Enter" }, D);
 await sleep(150);
-const readyToAdd = await s.evalJs(`({ program: ${P}.value, combo: ${R}.textContent.trim(), delay: ${D}.value, addDisabled: document.querySelector('.settings-listadd .settings-icon-btn')?.disabled })`);
-check("program + shortcut + delay ready to add", readyToAdd.program === "notepad.exe" && readyToAdd.combo === "Ctrl+Alt+S" && readyToAdd.delay === "2500" && readyToAdd.addDisabled === false, JSON.stringify(readyToAdd));
+const readyToAdd = await s.evalJs(`({ program: ${P}.value, combo: ${R}.textContent.trim(), delay: ${D}.value, addDisabled: ${ADD}?.disabled })`);
+check("program + shortcut + delay ready to add", readyToAdd.program === "smoke-target.exe" && readyToAdd.combo === "Ctrl+Alt+S" && readyToAdd.delay === "2500" && readyToAdd.addDisabled === false, JSON.stringify(readyToAdd));
 let shot = await s.send("Page.captureScreenshot", { format: "png" });
 writeFileSync("test/automation_recorded.png", Buffer.from(shot.result.data, "base64"));
 
-await s.evalJs(`document.querySelector('.settings-listadd .settings-icon-btn').click(); "added"`);
+await s.evalJs(`${ADD}.click(); "added"`);
 await sleep(300);
-const rows = await s.evalJs(`Array.from(document.querySelectorAll('.settings-listrow')).map((r) => r.textContent.trim())`);
+const rows = await s.evalJs(`Array.from(document.querySelectorAll('.settings-rule-card')).map((r) => r.textContent.trim())`);
 check("rule row renders with program + combo",
-  rows.length === 1 && rows[0].includes("notepad.exe") && rows[0].includes("Ctrl+Alt+S"), JSON.stringify(rows));
-const rowDelay = await s.evalJs(`document.querySelector('.settings-listrow .settings-delay-input')?.value`);
+  rows.length === 1 && rows[0].includes("smoke-target.exe") && rows[0].includes("Ctrl+Alt+S"), JSON.stringify(rows));
+await s.evalJs(`document.querySelector('.settings-rule-card .settings-rule-toggle')?.click(); true`);
+await sleep(200);
+const rowDelay = await s.evalJs(`document.querySelector('.settings-rule-card .settings-delay-input')?.value`);
 check("rule row keeps the per-rule delay", rowDelay === "2500", JSON.stringify(rowDelay));
 // the add-row draft resets to the default delay
 const draftDelay = await s.evalJs(`${D}?.value`);
 check("add-row draft resets the delay to the default", draftDelay === "120", JSON.stringify(draftDelay));
 // editing the rule's own delay persists in the working copy
-await s.evalJs(`(() => { const d = document.querySelector('.settings-listrow .settings-delay-input'); d.value = "800"; d.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
+await s.evalJs(`(() => { const d = document.querySelector('.settings-rule-card .settings-delay-input'); d.focus(); d.value = "800"; d.dispatchEvent(new Event("input", { bubbles: true })); d.blur(); return "ok"; })()`);
 await sleep(200);
-const editedDelay = await s.evalJs(`document.querySelector('.settings-listrow .settings-delay-input')?.value`);
+const editedDelay = await s.evalJs(`document.querySelector('.settings-rule-card .settings-delay-input')?.value`);
 check("per-rule delay is editable", editedDelay === "800", JSON.stringify(editedDelay));
 
 // 6. a modifier-less key must be rejected (keeps recording + shows a reason)
 await s.evalJs(`${R}.click(); "armed"`);
 await sleep(150);
-await press(s, { code: "KeyK", key: "k", vk: 75 });
+await press(s, { code: "KeyK", key: "k" }, R);
 await sleep(400);
 const rejected = await s.evalJs(`({
   active: ${R}.classList.contains('active'),
-  error: document.querySelector('.settings-listadd .settings-error')?.textContent ?? null,
+  error: document.querySelector('.settings-rule-add .settings-error')?.textContent ?? null,
 })`);
 check("modifier-less key is rejected with a message and stays recording",
   rejected.active === true && (rejected.error ?? "").length > 0, JSON.stringify(rejected));
@@ -215,7 +247,7 @@ shot = await s.send("Page.captureScreenshot", { format: "png" });
 writeFileSync("test/automation_rejected.png", Buffer.from(shot.result.data, "base64"));
 
 // 7. Esc cancels recording
-await press(s, { code: "Escape", key: "Escape", vk: 27 });
+await press(s, { code: "Escape", key: "Escape" }, R);
 await sleep(250);
 check("Esc cancels recording", (await s.evalJs(`${R}.classList.contains('active')`)) === false);
 
@@ -250,7 +282,7 @@ check("filter narrows the picker list",
 // picking a row fills the program field and closes the picker
 await s.evalJs(`(() => { const f = document.querySelector('.picker-filter'); f.value = ""; f.dispatchEvent(new Event("input", { bubbles: true })); return "ok"; })()`);
 await sleep(250);
-// Match loosely: on this machine the notepad handler is Notepad3.exe.
+// Match loosely because the packaged notepad handler name varies by machine.
 const targetName = await s.evalJs(`(() => {
   const row = Array.from(document.querySelectorAll('.picker-row'))
     .find((r) => r.querySelector('.picker-name').textContent.trim().toLowerCase().includes("notepad"));
@@ -267,58 +299,58 @@ check("picking fills the program field and closes the picker",
 // Esc closes the picker without touching the field
 await s.evalJs(`document.querySelector('.settings-pick-btn').click(); "opened"`);
 await sleep(400);
-await press(s, { code: "Escape", key: "Escape", vk: 27 });
+await press(s, { code: "Escape", key: "Escape" }, R);
 await sleep(300);
 check("Esc closes the picker", (await s.evalJs(`!!document.querySelector('.picker')`)) === false);
 
 // 9. 「测试」 fires a rule on demand, ignoring the new-window trigger.
-const notepadPid = execSync(
-  `powershell -NoProfile -Command "(Get-Process Notepad3 -ErrorAction SilentlyContinue | Select-Object -First 1).Id"`,
-  { encoding: "utf8" }
-).trim();
-console.log("[notepad pid]", notepadPid || "(none)");
 check("rule row has a 测试 button",
-  (await s.evalJs(`document.querySelectorAll('.settings-listrow .settings-test-btn').length`)) === 1);
+  (await s.evalJs(`document.querySelectorAll('.settings-rule-card .settings-test-btn').length`)) === 1);
 
-// The picker test left "Notepad3.exe" (this machine's real notepad) in the add
-// row — record a combo for it and add a second rule that can actually be tested.
+// The picker leaves the selected notepad executable in the add row; record a
+// combo and add a second rule that can actually be tested.
 await s.evalJs(`${R}.click(); "armed"`);
 await sleep(150);
-await press(s, { code: "KeyS", key: "s", vk: 83, modifiers: 3 });
+await press(s, { code: "KeyS", key: "s", modifiers: 3 }, R);
 await sleep(400);
 check("add row now targets the running notepad",
-  (await s.evalJs(`${P}.value`)) === "Notepad3.exe", await s.evalJs(`${P}.value`));
-await s.evalJs(`document.querySelector('.settings-listadd .settings-icon-btn').click(); "added"`);
+  targetName !== null && (await s.evalJs(`${P}.value`)) === targetName, JSON.stringify({ targetName, actual: await s.evalJs(`${P}.value`) }));
+await s.evalJs(`${ADD}.click(); "added"`);
 await sleep(300);
-const rowsAfter = await s.evalJs(`document.querySelectorAll('.settings-listrow').length`);
+const rowsAfter = await s.evalJs(`document.querySelectorAll('.settings-rule-card').length`);
 check("second rule added", rowsAfter === 2, JSON.stringify(rowsAfter));
 
 // Command-level: happy path, not-running, and unsendable shortcut.
 const call = (args) =>
   s.evalJs(`(async () => JSON.stringify(await window.__TAURI_INTERNALS__.invoke("test_automation_rule", ${JSON.stringify(args)})))()`);
 
-const testOk = JSON.parse(await call({ process: "Notepad3.exe", combo: "Ctrl+Alt+S" }));
+const testOk = JSON.parse(await call({ process: targetName, combo: "Ctrl+Alt+S" }));
 check("test_automation_rule sends to the running target",
-  testOk.ok === true && /Notepad3\.exe \(pid \d+\)/.test(testOk.detail), JSON.stringify(testOk));
+  testOk.ok === true && testOk.detail.includes(targetName) && /pid \d+/.test(testOk.detail), JSON.stringify(testOk));
 
 const testMissing = JSON.parse(await call({ process: "definitely-not-running.exe", combo: "Ctrl+Alt+S" }));
 check("test_automation_rule reports a program that is not running",
   testMissing.ok === false && testMissing.reason === "not_running", JSON.stringify(testMissing));
 
-const testBadCombo = JSON.parse(await call({ process: "Notepad3.exe", combo: "nonsense" }));
+const testBadCombo = JSON.parse(await call({ process: targetName, combo: "nonsense" }));
 check("test_automation_rule rejects an unsendable shortcut",
   testBadCombo.ok === false && testBadCombo.reason === "invalid_combo", JSON.stringify(testBadCombo));
 
 // The button itself goes through the same command and reports the outcome.
-await s.evalJs(`document.querySelectorAll('.settings-listrow .settings-test-btn')[1].click(); "clicked"`);
+await s.evalJs(`document.querySelectorAll('.settings-rule-card .settings-test-btn')[1].click(); "clicked"`);
 await sleep(1200);
 const toastText = await s.evalJs(`document.querySelector('.settings-toast')?.textContent ?? ""`);
 check("测试 button reports the outcome for the targeted program",
-  toastText.includes("Notepad3.exe"), JSON.stringify(toastText));
+  toastText.includes(targetName), JSON.stringify(toastText));
 shot = await s.send("Page.captureScreenshot", { format: "png" });
 writeFileSync("test/automation_test_button.png", Buffer.from(shot.result.data, "base64"));
 
-try { execSync("taskkill /F /IM notepad.exe 2>NUL", { stdio: "ignore" }); } catch {}
+if (notepad.pid) {
+  try { execSync(`taskkill /F /PID ${notepad.pid} 2>NUL`, { stdio: "ignore" }); } catch {}
+}
+await s.evalJs(`window.__TAURI_INTERNALS__.invoke('save_settings_patch', {
+  patch: { automation: { actions: [] } }
+}).then(() => true)`);
 
 console.log(failures === 0 ? "[automation smoke] ALL PASS" : `[automation smoke] ${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

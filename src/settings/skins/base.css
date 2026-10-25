@@ -928,6 +928,78 @@ html[data-skin] body.settings-window #root {
   width: 100%;
 }
 
+.settings-ignore-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-ignore-list {
+  overflow: hidden;
+  border: 1px solid var(--settings-line);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-control);
+}
+
+.settings-ignore-item {
+  min-height: 44px;
+  padding: 0 8px 0 12px;
+}
+
+.settings-ignore-item:last-child {
+  border-bottom: 0;
+}
+
+.settings-ignore-app {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--settings-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.settings-ignore-empty {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--settings-line);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-control);
+  color: var(--settings-muted);
+  font-size: 12px;
+}
+
+.settings-ignore-composer {
+  display: grid;
+  gap: 7px;
+}
+
+.settings-ignore-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-ignore-input-row .settings-text-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-ignore-input-row .settings-action {
+  min-width: 68px;
+  flex: 0 0 auto;
+}
+
+.settings-ignore-picker {
+  justify-self: start;
+  font-size: 11px;
+}
+
 .settings-empty {
   display: block;
   padding: 10px 0 12px;
@@ -2367,7 +2439,8 @@ button.settings-toggle.on .settings-toggle-knob {
 .plg-tile.provider { background: var(--settings-selected); color: var(--settings-selected-text); }
 
 .plg-main { min-width: 0; flex: 1; }
-.plg-name-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.plg-name-row { display: grid; align-items: start; gap: 4px; min-width: 0; }
+.plg-badges { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .plg-name { color: var(--settings-text); font-size: 13px; font-weight: 650; }
 .plg-card.compact .plg-name { font-size: 12px; }
 .plg-ver { color: var(--settings-muted); font-size: 10px; }

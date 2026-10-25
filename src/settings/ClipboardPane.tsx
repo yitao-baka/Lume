@@ -13,7 +13,6 @@ import {
   Toggle,
 } from "./controls";
 import { ProgramPicker } from "./ProgramPicker";
-import plusIcon from "../../res/icons/plus.svg";
 import deleteIcon from "../../res/icons/delete.svg";
 
 const CAPS = [100, 200, 500, 1000];
@@ -36,8 +35,8 @@ export default function ClipboardPane(props: {
   const [picking, setPicking] = createSignal(false);
   let pickTrigger: HTMLButtonElement | undefined;
 
-  async function addIgnoreApp() {
-    const raw = ignore().trim();
+  async function addIgnoreApp(rawName?: string) {
+    const raw = (rawName ?? ignore()).trim();
     if (!raw) {
       setIgnoreError(t("settingsClipIgnoreInvalid"));
       return;
@@ -176,16 +175,16 @@ export default function ClipboardPane(props: {
           details={[t("settingsClipIgnorePickerHint")]}
           class="settings-editor-row"
         >
-          <div class="settings-inline-editor">
+          <div class="settings-inline-editor settings-ignore-editor">
             <Show
               when={(c().ignore_apps ?? []).length > 0}
-              fallback={<span class="settings-empty">{t("clipIgnoreEmpty")}</span>}
+              fallback={<div class="settings-ignore-empty">{t("clipIgnoreEmpty")}</div>}
             >
-              <div class="settings-compact-list">
+              <div class="settings-compact-list settings-ignore-list">
                 <For each={c().ignore_apps ?? []}>
                   {(app) => (
-                    <div class="settings-compact-item">
-                      <span class="settings-path">{app}</span>
+                    <div class="settings-compact-item settings-ignore-item">
+                      <span class="settings-ignore-app" title={app}>{app}</span>
                       <button
                         class="settings-icon-btn"
                         type="button"
@@ -200,39 +199,39 @@ export default function ClipboardPane(props: {
                 </For>
               </div>
             </Show>
-            <div class="settings-row settings-listadd">
-              <input
-                class="settings-text-input"
-                type="text"
-                placeholder={t("clipIgnorePlaceholder")}
-                value={ignore()}
-                aria-label={t("clipIgnorePlaceholder")}
-                onInput={(event) => {
-                  setIgnore(event.currentTarget.value);
-                  setIgnoreError(null);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void addIgnoreApp();
-                }}
-              />
+            <div class="settings-ignore-composer">
+              <div class="settings-ignore-input-row">
+                <input
+                  class="settings-text-input"
+                  type="text"
+                  placeholder={t("clipIgnorePlaceholder")}
+                  value={ignore()}
+                  aria-label={t("clipIgnorePlaceholder")}
+                  onInput={(event) => {
+                    setIgnore(event.currentTarget.value);
+                    setIgnoreError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void addIgnoreApp();
+                  }}
+                />
+                <button
+                  class="settings-action"
+                  type="button"
+                  disabled={!ignore().trim() || ignoreBusy()}
+                  onClick={() => void addIgnoreApp()}
+                >
+                  {t("settingsAdd")}
+                </button>
+              </div>
               <button
                 ref={(el) => (pickTrigger = el)}
-                class="settings-pick-btn"
+                class="settings-link settings-ignore-picker"
                 type="button"
-                title={t("settingsClipIgnorePicker")}
+                title={t("settingsClipIgnorePickerHint")}
                 onClick={() => setPicking(true)}
               >
                 {t("settingsClipIgnorePicker")}
-              </button>
-              <button
-                class="settings-icon-btn"
-                type="button"
-                title={t("settingsAdd")}
-                aria-label={t("settingsAdd")}
-                disabled={!ignore().trim() || ignoreBusy()}
-                onClick={() => void addIgnoreApp()}
-              >
-                <img class="settings-icon-btn-icon" src={plusIcon} alt="" draggable={false} />
               </button>
             </div>
             <Show when={ignoreError()}>
@@ -312,8 +311,8 @@ export default function ClipboardPane(props: {
       <Show when={picking()}>
         <ProgramPicker
           onPick={(name) => {
-            setIgnore(name);
             setIgnoreError(null);
+            void addIgnoreApp(name);
           }}
           onClose={() => setPicking(false)}
           returnFocus={() => pickTrigger ?? null}

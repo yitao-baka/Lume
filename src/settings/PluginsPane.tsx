@@ -738,9 +738,10 @@ function InstallFacts(props: { info: LupxInfo }) {
     <div class="plg-install-facts">
       <div class="plg-install-head">
         <span class="plg-name">{props.info.name || props.info.id}</span>
-        <span class="plg-ver">{props.info.version || "-"}</span>
-        <span class="plg-badge">{kindLabel(props.info.kind)}</span>
-        <span class="plg-badge">API {props.info.api}</span>
+        <span class="plg-badges">
+          <span class="plg-ver">{props.info.version || "-"}</span>
+          <span class="plg-badge">{kindLabel(props.info.kind)}</span>
+        </span>
       </div>
       <Show when={props.info.description}>
         <div class="plg-desc">{props.info.description}</div>
@@ -913,20 +914,23 @@ function PluginCard(props: {
         <div class="plg-main">
           <div class="plg-name-row">
             <span class="plg-name">{pluginDisplayName(p().id, p().name)}</span>
-            <span class="plg-ver">{p().version}</span>
-            <span class="plg-badge">API {p().api}</span>
-            <span class="plg-badge" classList={{ builtin: p().builtin }}>
-              {p().builtin ? t("pluginBuiltin") : t("pluginDisk")}
+            <span class="plg-badges">
+              <Show when={p().version}>
+                <span class="plg-ver">{p().version}</span>
+              </Show>
+              <span class="plg-badge" classList={{ builtin: p().builtin }}>
+                {p().builtin ? t("pluginBuiltin") : t("pluginDisk")}
+              </span>
+              <Show when={p().development && props.devMode}>
+                <span class="plg-badge dev">{t("pluginDev")}</span>
+              </Show>
+              <Show when={p().detachable}>
+                <span class="plg-badge">{t("pluginDetachable")}</span>
+              </Show>
+              <Show when={p().kind === "mode" && p().hidden}>
+                <span class="plg-badge">{t("pluginHidden")}</span>
+              </Show>
             </span>
-            <Show when={p().development && props.devMode}>
-              <span class="plg-badge dev">{t("pluginDev")}</span>
-            </Show>
-            <Show when={p().detachable}>
-              <span class="plg-badge">{t("pluginDetachable")}</span>
-            </Show>
-            <Show when={p().kind === "mode" && p().hidden}>
-              <span class="plg-badge">{t("pluginHidden")}</span>
-            </Show>
           </div>
           <Show when={desc()}>
             <div class="plg-desc">{desc()}</div>

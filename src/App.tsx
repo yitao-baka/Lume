@@ -95,9 +95,9 @@ function App() {
   const [perModeQuery, setPerModeQuery] = createSignal(_a?.per_mode_query ?? false);
   /** Settings-driven: Shift+Enter launches with administrator privileges. */
   const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(_a?.shift_enter_admin !== false);
-  /** Settings-driven: entry-box edge length (a CSS var — mirrored as a signal
+  /** Settings-driven: grid-cell edge length (a CSS var — mirrored as a signal
    * so bar column measurement re-runs when it changes). */
-  const [entrySize, setEntrySize] = createSignal(_a?.entry_size ?? 110);
+  const [entrySize, setEntrySize] = createSignal(_a?.entry_size ?? 70);
   /** Settings-driven: crop Navigation result artwork to a circle. Default off:
    * render the icon exactly as extracted, without a masking radius. */
   const [circleAppIcons, setCircleAppIcons] = createSignal(_a?.round_app_icons ?? false);
@@ -779,7 +779,7 @@ function App() {
   }
 
   /** Apply the persisted settings the launcher renders live: UI language,
-   * color mode, launcher skin/accent, entry-box size and max height.
+   * color mode, launcher skin/accent, grid-cell size and max height.
    * Width/position are Rust-owned. */
   async function applyRuntimeSettings() {
     try {

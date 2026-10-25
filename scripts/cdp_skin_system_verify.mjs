@@ -152,15 +152,31 @@ if (!settings) {
 if (!settings) throw new Error("settings target missing");
 
 const invoke = (cmd, args = {}) => main.evalJs(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
+const writeClipboard = (text) => {
+  // The launcher samples the clipboard in the background; an immediate
+  // Set-Clipboard can lose the open race. Retry briefly instead of failing the
+  // whole run on a transient CLIPBRD_E_CANT_OPEN.
+  let lastError;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      execSync(`powershell -NoProfile -Command "Set-Clipboard -Value '${text}'"`, { stdio: "ignore" });
+      return;
+    } catch (error) {
+      lastError = error;
+      execSync(`powershell -NoProfile -Command "Start-Sleep -Milliseconds 80"`, { stdio: "ignore" });
+    }
+  }
+  throw lastError;
+};
 const seedClipboard = async (label) => {
   const text = `Lume skin ${label} ${Date.now()}`;
-  execSync(`powershell -NoProfile -Command "Set-Clipboard -Value '${text}'"`, { stdio: "ignore" });
+  writeClipboard(text);
   await sleep(1600);
 };
 const seedClipboardRows = async (count) => {
   for (let i = 0; i < count; i++) {
     const text = `Lume wheel row ${Date.now()}-${i}`;
-    execSync(`powershell -NoProfile -Command "Set-Clipboard -Value '${text}'"`, { stdio: "ignore" });
+    writeClipboard(text);
     await sleep(360);
   }
 };

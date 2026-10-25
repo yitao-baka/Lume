@@ -39,7 +39,7 @@ applyColorMode(cfg?.appearance?.color_mode ?? "system");
 // launcher shell and therefore follow `skin`, not `settings_skin`.
 applySkin(
   isSettings
-    ? cfg?.appearance?.settings_skin ?? cfg?.appearance?.skin
+    ? cfg?.appearance?.settings_skin ?? cfg?.appearance?.skin ?? "chromatic"
     : cfg?.appearance?.skin ?? cfg?.appearance?.settings_skin,
 );
 applyAccent(cfg?.appearance?.accent);

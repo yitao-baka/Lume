@@ -36,7 +36,7 @@ export interface SettingsData {
     /** The color the custom picker last stored — remembered independently of
      * `accent`. Empty = the picker shows pure white. */
     accent_custom: string;
-    /** Entry-box edge length in px — the box wrapping each main-menu entry. */
+    /** Grid-cell edge length in px — the box wrapping each main-menu entry. */
     entry_size: number;
     /** Crop Navigation result icons to a circle (default off — show the
      * extracted artwork as-is). */
@@ -181,10 +181,10 @@ export const DEFAULT_SETTINGS: SettingsData = {
     language: "system",
     color_mode: "system",
     skin: "quiet",
-    settings_skin: "quiet",
+    settings_skin: "chromatic",
     accent: "",
     accent_custom: "",
-    entry_size: 110,
+    entry_size: 70,
     round_app_icons: false,
     window_width: 720,
     window_height: 520,

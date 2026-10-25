@@ -152,15 +152,21 @@ export default function AutomationPane(props: {
   const [agentInstalled, setAgentInstalled] = createSignal<boolean | null>(null);
   let rowRefs: Record<string, HTMLElement | undefined> = {};
 
-  /** Refresh the helper's registration state (the row summary reads it). */
+  /** The stored preference only takes effect once `agent_status` confirms the
+   * scheduled task is registered. Unknown/unregistered states are fail-closed,
+   * so the switch is off until the OS says the helper can run. */
+  const agentEnabled = () =>
+    agentInstalled() === true && (automation().use_agent ?? true);
+
+  /** Refresh the helper's registration state (the switch and row summary). */
   async function refreshAgentInstalled() {
     // Only the "on but unregistered" state needs this answer — skip the probe
-    // (a sync `schtasks /Query` behind `agent_status`) while the switch is off.
+    // (a sync `schtasks /Query` behind `agent_status`) while the preference is off.
     if (!(automation().use_agent ?? true)) return;
     try {
       setAgentInstalled((await invoke<AgentStatus>("agent_status")).installed);
     } catch (err) {
-      // Fail soft: the summary falls back to the generic text, and the
+      // Fail soft and fail closed: the switch remains off, while the
       // turn-on path reports its own failure.
       console.error("[settings] agent_status", err);
       setAgentInstalled(null);
@@ -317,14 +323,14 @@ export default function AutomationPane(props: {
           id="automation.use_agent"
           label={t("autoUseAgent")}
           summary={
-            (automation().use_agent ?? true) && agentInstalled() === false
+            !agentEnabled() && agentInstalled() === false
               ? t("autoUseAgentUnregisteredSummary")
               : t("settingsUseAgentSummary")
           }
           details={[t("autoUseAgentHint")]}
         >
           <Toggle
-            checked={automation().use_agent ?? true}
+            checked={agentEnabled()}
             label={t("autoUseAgent")}
             disabled={agentCheckBusy()}
             onChange={(value) => void toggleUseAgent(value)}
@@ -334,17 +340,17 @@ export default function AutomationPane(props: {
           id="automation.agent_resident"
           label={t("autoAgentResident")}
           summary={
-            (automation().use_agent ?? true)
+            agentEnabled()
               ? t("settingsResidentSummary")
               : t("autoAgentResidentDependency")
           }
           details={[t("autoAgentResidentHint")]}
-          disabled={!(automation().use_agent ?? true)}
+          disabled={!agentEnabled()}
         >
           <Toggle
-            checked={automation().agent_resident ?? false}
+            checked={agentEnabled() && (automation().agent_resident ?? false)}
             label={t("autoAgentResident")}
-            disabled={!(automation().use_agent ?? true)}
+            disabled={!agentEnabled()}
             onChange={(value) => props.onChange({ agent_resident: value })}
           />
         </SettingRow>

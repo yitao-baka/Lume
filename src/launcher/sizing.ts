@@ -67,7 +67,7 @@ export function createWindowSizer(deps: SizerDeps) {
     }
   }
 
-  /** Current column count of the app grid (driven by 条目框大小). */
+  /** Current column count of the app grid (driven by 网格大小). */
   function gridCols(): number {
     const grid = pageQuery<HTMLElement>(".result-grid");
     if (!grid) return 6;

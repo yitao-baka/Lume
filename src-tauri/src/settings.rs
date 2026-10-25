@@ -54,16 +54,16 @@ impl Settings {
         // they are independent.
         let launcher_skin = self.appearance.skin.take();
         let settings_skin = self.appearance.settings_skin.take();
-        let shared_skin = launcher_skin
-            .as_deref()
-            .or(settings_skin.as_deref())
-            .unwrap_or_default();
-        let launcher_skin = normalize_skin(
-            launcher_skin.as_deref().unwrap_or(shared_skin),
-        );
-        let settings_skin = normalize_skin(
-            settings_skin.as_deref().unwrap_or(shared_skin),
-        );
+        let launcher_skin_missing = launcher_skin.is_none();
+        let launcher_skin = match launcher_skin.as_deref().or(settings_skin.as_deref()) {
+            Some(value) => normalize_skin(value).to_owned(),
+            None => default_skin(),
+        };
+        let settings_skin = match settings_skin.as_deref() {
+            Some(value) => normalize_skin(value).to_owned(),
+            None if launcher_skin_missing => default_settings_skin(),
+            None => launcher_skin.clone(),
+        };
         let accent = self
             .appearance
             .accent
@@ -205,7 +205,7 @@ pub struct Appearance {
     /// canvases and detached plugin windows.
     #[serde(default)]
     pub skin: Option<String>,
-    /// Settings-window visual skin: `"quiet"` (default) | `"chromatic"`.
+    /// Settings-window visual skin: `"quiet"` | `"chromatic"` (default).
     /// Missing inherits `skin`, preserving the former app-wide skin setting.
     #[serde(default)]
     pub settings_skin: Option<String>,
@@ -223,8 +223,8 @@ pub struct Appearance {
     legacy_settings_accent: Option<String>,
     #[serde(default, rename = "settings_accent_custom", skip_serializing)]
     legacy_settings_accent_custom: Option<String>,
-    /// Entry-box edge length in px — the square box wrapping each main-menu
-    /// entry (grid columns adapt to fit).
+    /// Grid-cell edge length in px — the square box wrapping each main-menu
+    /// entry (grid columns adapt to fit). Defaults to the small preset.
     #[serde(default = "default_entry_size")]
     pub entry_size: u32,
     /// Crop Navigation result icons to a circle. Default off: render the
@@ -339,9 +339,9 @@ fn default_idle_reset_minutes() -> u32 {
     30
 }
 
-/// Default entry-box edge (matches a ~110px box in the current 6-col grid).
+/// Default grid-cell edge (the small preset).
 fn default_entry_size() -> u32 {
-    110
+    70
 }
 
 /// Default theme: follow the OS light/dark preference.
@@ -351,6 +351,10 @@ fn default_color_mode() -> String {
 
 fn default_skin() -> String {
     "quiet".into()
+}
+
+fn default_settings_skin() -> String {
+    "chromatic".into()
 }
 
 /// Normalize the settings-window skin. Kept as a string (not a strict enum)
@@ -653,12 +657,12 @@ impl Default for Settings {
                 language: "system".into(),
                 color_mode: "system".into(),
                 skin: Some(default_skin()),
-                settings_skin: Some(default_skin()),
+                settings_skin: Some(default_settings_skin()),
                 accent: Some(String::new()),
                 accent_custom: Some(String::new()),
                 legacy_settings_accent: None,
                 legacy_settings_accent_custom: None,
-                entry_size: 110,
+                entry_size: default_entry_size(),
                 round_app_icons: false,
                 window_width: 720,
                 window_height: 520,
@@ -1382,9 +1386,10 @@ mod tests {
         assert_eq!(next.index.cache_refresh_interval_minutes, 5);
     }
 
-    /// Launcher and settings skins: defaults stay synchronized, old files
-    /// that only contain either key inherit it in both windows, and explicit
-    /// values are independent and round-trip.
+    /// Launcher and settings skins: the quiet launcher and chromatic settings
+    /// defaults apply when both keys are absent; old files that only contain
+    /// either key inherit it in both windows, and explicit values are
+    /// independent and round-trip.
     #[test]
     fn skins_default_migrate_and_round_trip() {
         let base = temp_base("settings-skins");
@@ -1392,12 +1397,26 @@ mod tests {
 
         let defaults = read_settings(&base);
         assert_eq!(defaults.appearance.skin(), "quiet");
-        assert_eq!(defaults.appearance.settings_skin(), "quiet");
+        assert_eq!(defaults.appearance.settings_skin(), "chromatic");
         let factory = fs::read_to_string(default_path(&base)).unwrap();
         assert!(factory.contains("skin = \"quiet\""));
-        assert!(factory.contains("settings_skin = \"quiet\""));
+        assert!(factory.contains("settings_skin = \"chromatic\""));
 
         let full = fs::read_to_string(settings_path(&base)).unwrap();
+
+        // With both keys absent the two windows start on their own defaults.
+        let neither = full
+            .lines()
+            .filter(|line| {
+                let line = line.trim_start();
+                !line.starts_with("skin =") && !line.starts_with("settings_skin =")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), neither).unwrap();
+        let independent_defaults = read_settings(&base);
+        assert_eq!(independent_defaults.appearance.skin(), "quiet");
+        assert_eq!(independent_defaults.appearance.settings_skin(), "chromatic");
 
         // A pre-dual-skin file with only `skin` applies it to both windows.
         let launcher_only = full
@@ -1418,11 +1437,11 @@ mod tests {
             .filter(|line| !line.trim_start().starts_with("skin ="))
             .collect::<Vec<_>>()
             .join("\n")
-            .replace("settings_skin = \"quiet\"", "settings_skin = \"chromatic\"");
+            .replace("settings_skin = \"chromatic\"", "settings_skin = \"quiet\"");
         fs::write(settings_path(&base), settings_only).unwrap();
         let legacy = read_settings(&base);
-        assert_eq!(legacy.appearance.skin(), "chromatic");
-        assert_eq!(legacy.appearance.settings_skin(), "chromatic");
+        assert_eq!(legacy.appearance.skin(), "quiet");
+        assert_eq!(legacy.appearance.settings_skin(), "quiet");
 
         // Once both values exist they are independent.
         let mut next = defaults;
@@ -1744,7 +1763,7 @@ mod tests {
         assert!(!backup_path(&base).exists(), "no backup until a write");
         let s = read_settings(&base);
         assert_eq!(s.appearance.language, "system");
-        assert_eq!(s.appearance.entry_size, 110);
+        assert_eq!(s.appearance.entry_size, 70);
         assert!(!s.appearance.round_app_icons, "圆形图标默认关");
         assert_eq!(s.appearance.window_height, 520);
         assert!(!s.appearance.mode_switch_icons_only, "图标开关默认关");

@@ -133,6 +133,19 @@ const cards = await s.evalJs(`Array.from(document.querySelectorAll('.plg-card'))
 }))`);
 check("cards render with name + sub line", cards.length >= 5 && cards.every((c) => c.name && c.sub), JSON.stringify(cards.length) + " cards");
 
+const cardLabels = await s.evalJs(`(() => {
+  const listCards = Array.from(document.querySelectorAll('.plg-list .plg-card'));
+  return {
+    apiLabels: Array.from(document.querySelectorAll('.plg-badge')).map((badge) => badge.textContent.trim()).filter((text) => /^API\s*\d+$/.test(text)),
+    badgesBelowName: listCards.every((card) => {
+      const name = card.querySelector('.plg-name')?.getBoundingClientRect();
+      const badges = card.querySelector('.plg-badges')?.getBoundingClientRect();
+      return !!name && !!badges && badges.top >= name.bottom - 1;
+    }),
+  };
+})()`);
+check("plugin cards omit API badges and place metadata below the name", cardLabels.apiLabels.length === 0 && cardLabels.badgesBelowName, JSON.stringify(cardLabels));
+
 // Expand the first disk plugin card → detail panel
 await s.evalJs(`(() => {
   const card = Array.from(document.querySelectorAll('.plg-card')).find((c) =>

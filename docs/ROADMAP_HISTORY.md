@@ -5180,3 +5180,44 @@ Presenter 名称，值没有持久化或下发路径。
   首帧，以及两个 clipboard Presenter 的真实鼠标滚轮 420px 稳定滚动。
 - `cdp_settings_accent_verify` **47/47 PASS**、`cdp_settings_smoke` ALL PASS。
   未新增插件权限、Tauri capability、数据库、插件 API 版本或网络依赖。
+
+## 83. 设置页反馈、表面与操作细节修正（2026-10-25）
+
+### 83.1 术语、默认值与保存反馈
+
+- 用户可见的「条目框」统一改为「网格」，`appearance.entry_size` 保留原键以
+  兼容既有文件；默认值从 110 改为 70（小）。
+- 主窗口皮肤仍默认 `quiet`，设置窗口 `appearance.settings_skin` 默认改为
+  `chromatic`。两个皮肤键都缺失时分别使用上述默认值；只有任一旧键存在时继续
+  让两窗继承同一值，避免统一皮肤时代的外观被迁移改写。
+- 设置底栏新增独立的保存反馈可见态：首次加载、外部刷新和无可写差异时
+  不显示状态；真实编辑显示「正在保存…」，成功写入后短暂显示「已自动保存」，
+  2.4 秒后收起，失败状态仍持续提供重试。
+
+### 83.2 表面与交互
+
+- 自定义主题色只混入 `--settings-selected` 等交互选中态；设置窗的
+  canvas / rail / panel / control 与启动器外层 `--surface` 均保持皮肤原值，
+  避免修改主题色时设置页底色发生细微漂移。
+- 插件列表移除 API 版本徽标；版本、内置/磁盘、可分离、隐藏与开发标签移到插件
+  名称下一行，保留紧凑列表的扫描层级。
+- 忽略应用改为独立列表/空态与新增区：手动输入使用带文字的「添加」按钮，
+  「选择运行中程序」是次级链接；从程序选择器确认后直接归一化并加入列表，
+  不再要求二次点击新增。
+- 「使用提权代理」按 `agent_status.installed` 与保存值共同计算显示状态，
+  未注册或探测失败时 fail-closed；常驻开关也只在代理可用时开放。
+
+### 83.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  **251 passed / 9 ignored**、`pnpm run test:skin-system` **11/11**、
+  `check_i18n` **580 键 × 3 语言**、debug `--no-bundle` 构建通过。
+- `cdp_settings_skin_verify` **62/62**、`cdp_settings_accent_verify` **50/50**
+  （含首次载入隐藏保存提示、真实写入后显示再收起、四组合设置表面不漂移）、
+  `cdp_skin_system_verify` **39/39**、`cdp_visual_audit_verify` **28/28**、
+  `cdp_plugins_pane_verify` ALL PASS（含无 API 徽标、元信息下移）、
+  `cdp_settings_smoke` ALL PASS（含忽略应用布局、选择运行中程序直接加入、
+  删除恢复与未注册代理开关关闭）、`cdp_automation_smoke` ALL PASS（当前自动化页
+  结构、规则编辑、程序选择器、快捷键录制与代理状态并存）。
+- 截屏：`test/settings-smoke/clipboard-ignore.png`、`plugins.png` 与
+  `test/settings-accent-verify/quiet-dark-indigo.png`。

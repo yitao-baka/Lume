@@ -1119,7 +1119,7 @@ body,
   overflow-y: auto;
   scrollbar-width: none;
   display: grid;
-  /* Entry-box auto-adapts: columns are at least 条目框大小, then stretch to
+  /* Grid cells auto-adapt: columns are at least 网格大小, then stretch to
      fill the window — no right-side gap. 小/中/大 is the reference size. */
   grid-template-columns: repeat(auto-fill, minmax(var(--entry-size, 110px), 1fr));
   gap: 8px;
@@ -1156,8 +1156,8 @@ body,
 }
 
 .result-box {
-  /* The entry box fills its grid column (auto-adapts to the window) and stays
-     square. Edge size is steered by 条目框大小 as the column minimum. */
+  /* The grid cell fills its column (auto-adapts to the window) and stays
+     square. Edge size is steered by 网格大小 as the column minimum. */
   aspect-ratio: 1 / 1;
   min-width: 0;
   display: flex;
@@ -1206,7 +1206,7 @@ body.reorder-dragging {
 }
 
 .result-box-tile {
-  /* The tile scales with the (auto-adapting) entry box. */
+  /* The tile scales with the (auto-adapting) grid cell. */
   width: 44%;
   aspect-ratio: 1;
   border-radius: 12px;

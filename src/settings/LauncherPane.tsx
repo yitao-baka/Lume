@@ -1,5 +1,5 @@
 //! 「启动器」页 — window geometry, home bars, session behavior, search
-//! placeholders, and entry-box appearance.
+//! placeholders, and grid-cell appearance.
 
 import { For } from "solid-js";
 import { t } from "../i18n";
@@ -67,7 +67,7 @@ function PositionGrid(props: {
   );
 }
 
-function EntrySizeControl(props: {
+function GridSizeControl(props: {
   value: number;
   onChange: (value: number) => void;
 }) {
@@ -318,7 +318,7 @@ export default function LauncherPane(props: {
 
       <SettingGroup title={t("groupEntryBox")} number="02.4">
         <SettingRow id="appearance.entry_size" label={t("settingsEntrySize")}>
-          <EntrySizeControl
+          <GridSizeControl
             value={a().entry_size}
             onChange={(value) => props.onChange({ entry_size: value })}
           />

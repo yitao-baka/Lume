@@ -42,8 +42,8 @@ writeFileSync(`${FIX}/main.js`, `export default {
   async search(q) {
     if (q.trim().toLowerCase() !== "iconprobe") return [];
     return [
-      { name: "自定义图标行", icon: "row.svg" },
-      { name: "默认图标行" },
+      { name: "自定义图标行", path: "C:\\Windows\\notepad.exe", icon: "row.svg" },
+      { name: "默认图标行", path: "C:\\Windows\\System32\\calc.exe" },
     ];
   },
 };

@@ -33,6 +33,9 @@ export interface PageSessionSnapshot {
   presenter: PresenterHostState;
   model: ReturnType<PageModelStore["meta"]>;
   query: string;
+  /** Whether the page currently owns the visible launcher surface. Presenter
+   * bridges replay this to late-ready iframes. */
+  visible: boolean;
 }
 
 export class PageSession {
@@ -45,6 +48,7 @@ export class PageSession {
   private presenterId: string | undefined;
   private readonly router: IntentRouter;
   private query = "";
+  private visible = false;
   private destroyed = false;
   private readonly unsubscribeModel: () => void;
 
@@ -170,8 +174,14 @@ export class PageSession {
     await this.service?.onSubInput?.(text);
   }
 
-  async show(): Promise<void> { await this.service?.onShow?.(); }
-  async hide(): Promise<void> { await this.service?.onHide?.(); }
+  async show(): Promise<void> {
+    this.visible = true;
+    await this.service?.onShow?.();
+  }
+  async hide(): Promise<void> {
+    this.visible = false;
+    await this.service?.onHide?.();
+  }
   async enter(info: unknown): Promise<void> { await this.service?.onEnter?.(info); }
   async filesDropped(paths: string[]): Promise<void> { await this.service?.onFilesDropped?.(paths); }
   async settings(values: Record<string, unknown>): Promise<void> { await this.service?.onSettings?.(values); }
@@ -187,6 +197,7 @@ export class PageSession {
       presenter: this.presenterHost.getState(),
       model: this.store.meta(),
       query: this.query,
+      visible: this.visible,
     };
   }
 

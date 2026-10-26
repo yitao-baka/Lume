@@ -113,6 +113,10 @@ export class PresenterHost {
     if (this.disposed) throw new Error("PresenterHost was disposed");
     const generation = ++this.mountGeneration;
     this.releaseCurrent();
+    // Presenter-owned chrome state must not survive into a replacement.
+    // Reset it before any new factory can run, and update the shell in the
+    // same turn so a modal page cannot keep consuming switch keys.
+    this.setState({ presenterId: null, modal: false, layout: null });
 
     const compatible = request.presenters.filter(
       (p) => p.models.length === 0 || p.models.includes(request.schema)
@@ -246,6 +250,7 @@ export class PresenterHost {
     const handle = this.current;
     this.current = null;
     this.currentPresenter = null;
+    this.setState({ presenterId: null, modal: false, layout: null });
     if (handle) this.disposeHandle(handle);
   }
 

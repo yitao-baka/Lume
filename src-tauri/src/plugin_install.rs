@@ -579,7 +579,11 @@ fn extract_to(source_path: &str, prefix: &str, staging: &Path) -> Result<(usize,
 /// installation's private files move into the fresh one (an upgrade must not
 /// wipe plugin data); the backup is only deleted once they are safe.
 fn swap_installed(base: &Path, staging: &Path, id: &str) -> Result<(), String> {
-    let target = base.join("plugins").join(id);
+    // Manual installs may use a directory name that differs from the manifest
+    // id. Upgrade the canonical existing directory; only a new install uses
+    // the id as its target name.
+    let target = crate::plugins::plugin_dir_for_id(base, id)
+        .unwrap_or_else(|| base.join("plugins").join(id));
     let backup = staging
         .parent()
         .ok_or("staging has no parent directory")?
@@ -939,7 +943,8 @@ fn uninstall_dir(base: &Path, id: &str) -> Result<(), String> {
     if !valid_plugin_id(id) {
         return Err("invalid plugin id".into());
     }
-    let target = base.join("plugins").join(id);
+    let target = crate::plugins::plugin_dir_for_id(base, id)
+        .unwrap_or_else(|| base.join("plugins").join(id));
     match std::fs::remove_dir_all(&target) {
         Ok(()) => eprintln!("[plugins] uninstalled \"{id}\""),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -948,7 +953,7 @@ fn uninstall_dir(base: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Uninstall a disk plugin: remove `<base>/plugins/<id>/` (its private
+/// Uninstall a disk plugin: remove its canonical on-disk directory (its private
 /// `files/` goes with it — it lives inside the plugin directory by design;
 /// the document store in `data/plugin_store.db` is kept).
 #[tauri::command]
@@ -1391,6 +1396,25 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
         std::fs::remove_file(v1).ok();
         std::fs::remove_file(v2).ok();
+    }
+
+    #[test]
+    fn upgrade_uses_the_canonical_directory_when_manifest_id_differs() {
+        let base = temp_base("mismatch-upgrade");
+        let old = base.join("plugins").join("manual-dir");
+        std::fs::create_dir_all(old.join("files")).unwrap();
+        std::fs::write(old.join("plugin.toml"), "id = \"real-id\"\nversion = \"1.0.0\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n").unwrap();
+        std::fs::write(old.join("main.js"), "v1").unwrap();
+        std::fs::write(old.join("files").join("note.txt"), "kept").unwrap();
+        let staging = staging_root(&base).join("manual-v2");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("plugin.toml"), "id = \"real-id\"\nversion = \"2.0.0\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n").unwrap();
+        std::fs::write(staging.join("main.js"), "v2").unwrap();
+        swap_installed(&base, &staging, "real-id").unwrap();
+        assert_eq!(std::fs::read_to_string(old.join("main.js")).unwrap(), "v2");
+        assert_eq!(std::fs::read_to_string(old.join("files").join("note.txt")).unwrap(), "kept");
+        assert!(!base.join("plugins").join("real-id").exists());
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

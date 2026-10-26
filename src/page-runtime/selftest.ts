@@ -171,7 +171,14 @@ export function runPageRuntimeSelfTests(): string[] {
     custom: null,
   });
   expect(huge === null || JSON.stringify(huge).length <= 1_000_000, "snapshot total must stay capped");
-  passed.push("snapshot layer and total-size caps");
+  const secret = capSnapshot({
+    v: 2,
+    auto: { fields: [{ key: "id:api-key", value: "sk-live-secret", checked: true, secret: true }] },
+    custom: null,
+  }) as { auto?: { fields?: { value?: unknown; checked?: boolean }[] } } | null;
+  expect(secret?.auto?.fields?.[0]?.value === "", "password fields must never enter auto snapshots");
+  expect(secret?.auto?.fields?.[0]?.checked === true, "password checked state remains restorable");
+  passed.push("snapshot layer and total-size caps with password redaction");
 
   expect(
     normalizeLayoutReport({ sizing: "fit", contentHeight: 320, expanded: false }).contentHeight === 320,
@@ -279,7 +286,11 @@ export async function runPageRuntimeAsyncSelfTests(): Promise<string[]> {
     actionId: "open",
   });
   expect(intents === 1, "valid intent reaches the Page Service");
-  passed.push("fixture Presenter ready and intent routing");
+  await session.show();
+  expect(session.snapshot().visible === true, "Page Session records the visible lifecycle state");
+  await session.hide();
+  expect(session.snapshot().visible === false, "Page Session records the hidden lifecycle state");
+  passed.push("fixture Presenter ready, visibility state and intent routing");
 
   const before = session.store.get();
   const list = createFixturePresenter("list");
@@ -363,6 +374,38 @@ export async function runPageRuntimeAsyncSelfTests(): Promise<string[]> {
   expect(slowDisposed, "superseded Presenter handle is disposed");
   raceHost.dispose();
   passed.push("Presenter mount generations cancel stale ready handshakes");
+
+  const chromeHost = new PresenterHost("selftest-presenter-chrome", { logErrors: false });
+  const chromePresenters = [
+    { id: "chrome-a", name: "A", models: [COLLECTION_SCHEMA], builtin: true },
+    { id: "chrome-b", name: "B", models: [COLLECTION_SCHEMA], builtin: true },
+  ];
+  await chromeHost.mount({
+    pageId: "selftest-presenter-chrome",
+    presenters: chromePresenters,
+    requestedId: "chrome-a",
+    schema: COLLECTION_SCHEMA,
+    store: session.store,
+    dispatch: (intent) => session.dispatch(intent),
+    factory: () => (context) => {
+      context.reportLayout({ sizing: "fixed", height: 555 });
+      context.setModal(true);
+      return { dispose: () => {} };
+    },
+  });
+  expect(chromeHost.getState().modal && chromeHost.getState().layout?.height === 555, "Presenter A owns modal/layout");
+  await chromeHost.mount({
+    pageId: "selftest-presenter-chrome",
+    presenters: chromePresenters,
+    requestedId: "chrome-b",
+    schema: COLLECTION_SCHEMA,
+    store: session.store,
+    dispatch: (intent) => session.dispatch(intent),
+    factory: () => () => ({ dispose: () => {} }),
+  });
+  expect(!chromeHost.getState().modal && chromeHost.getState().layout === null, "Presenter switch resets modal/layout");
+  chromeHost.dispose();
+  passed.push("Presenter switch resets transient chrome state");
 
   await session.dispose();
   let destroyedMountRejected = false;

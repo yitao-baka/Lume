@@ -35,11 +35,18 @@ export interface PickedIcon {
  * spec. */
 export type HostIcon = string | PluginIconSpec;
 
+/** Semantic activation path for a Navigate result. Native files/URLs are
+ * plain app rows; plugin rows can only be activated through their host
+ * callback and must never be pinned, revealed or launched as Administrator. */
+export type AppRowKind = "app" | "provider-enter" | "provider-drill" | "feature" | "mode";
+
 /** A launcher entry as returned by the Rust `search_apps` command. */
 export interface AppEntry {
   id: number;
   name: string;
   path: string;
+  /** Explicit result semantics. Missing = a normal launchable app/file/URL. */
+  rowKind?: AppRowKind;
   /** Provider extras : optional second line under the name in the
    * results grid. */
   description?: string;
@@ -67,6 +74,17 @@ export interface AppEntry {
     paths?: string[];
     window?: { process: string; className: string; title: string; path?: string };
   };
+}
+
+/** True for rows whose displayed `path` is only a synthetic identity key. */
+export function isSyntheticAppEntry(app: AppEntry): boolean {
+  return app.rowKind === "feature" ||
+    app.rowKind === "mode" ||
+    app.rowKind === "provider-enter" ||
+    app.rowKind === "provider-drill" ||
+    !!app.providerEnter ||
+    !!app.providerDrill ||
+    !!app.featureEnter;
 }
 
 /** One `file_search` hit — the AppEntry fields plus file metadata. The

@@ -912,6 +912,9 @@ export interface ProviderInstance {
   filter?(item: ProviderResult, query: string): Promise<ProviderResult[]> | ProviderResult[];
   /** The user changed this plugin's declared settings. */
   onSettings?(values: Record<string, unknown>): void;
+  /** Runtime hook discovery for proxied disk plugins. Missing = no metadata;
+   * callers then treat an exposed method as declared for compatibility. */
+  hasHook?(name: string): boolean;
 }
 
 /** A plugin: manifest identity + its already-created contributions.

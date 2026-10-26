@@ -22,7 +22,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::hash::{Hash, Hasher};
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
@@ -69,6 +69,13 @@ const PICTURE_CACHE: &str = "PictureCache";
 const THUMB_MAX: u32 = 200;
 /// Upper bound on stored HTML per row (keeps the DB lean).
 const HTML_CAP: usize = 64 * 1024;
+/// Compressed clipboard-image formats are copied out only within this bound.
+const MAX_CLIPBOARD_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+/// Decoded image bounds shared by clipboard capture, plugin payloads and
+/// file thumbnails. 16 MP is ~64 MiB as RGBA.
+const MAX_IMAGE_EDGE: u32 = 16_384;
+const MAX_IMAGE_PIXELS: u64 = 16_000_000;
+const MAX_IMAGE_ALLOC_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Auto-merge rules read from the live settings at capture time.
 struct MergeConfig {
@@ -136,16 +143,74 @@ pub struct ClipboardState {
     pub db: Mutex<Connection>,
     /// Last seen clipboard sequence number.
     pub last_seq: AtomicU32,
-    /// Last captured text, used to skip our own `copy_clipboard` writes.
-    pub last_text: Mutex<String>,
-    /// Last captured file-list (newline-joined), to skip our own copies.
-    pub last_files: Mutex<String>,
-    /// Hash of the last captured image (PNG bytes), to skip our own copies.
-    pub last_image_hash: Mutex<u64>,
+    /// Sequence produced by Lume's own most recent write. The listener skips
+    /// exactly this sequence, never a content value.
+    pub self_write_seq: AtomicU32,
+    /// True while a clipboard write is between SetClipboardData and the
+    /// follow-up sequence read; the listener must not race that gap.
+    pub self_write_pending: AtomicBool,
     /// Pause recording (runtime-only — not persisted; the status-bar toggle).
     pub paused: AtomicBool,
     /// Wall-clock time of the last paste — a paste closes the current merge.
     pub last_paste_at: Mutex<Option<i64>>,
+}
+
+/// Sequence returned by Windows after the last clipboard mutation.
+fn clipboard_sequence() -> u32 {
+    unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+}
+
+/// Wrap one Lume-initiated clipboard write. `pending` closes the race where
+/// the listener polls after SetClipboardData but before the new sequence is
+/// recorded; the exact sequence then suppresses the settled write.
+fn write_clipboard_payload(
+    state: &ClipboardState,
+    set: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    state.self_write_pending.store(true, Ordering::SeqCst);
+    match set() {
+        Ok(()) => {
+            state
+                .self_write_seq
+                .store(clipboard_sequence(), Ordering::SeqCst);
+            state.self_write_pending.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+        Err(error) => {
+            state.self_write_pending.store(false, Ordering::SeqCst);
+            Err(error)
+        }
+    }
+}
+
+/// Whether a changed clipboard sequence belongs to Lume's own write.
+fn should_skip_sequence(
+    sequence: u32,
+    self_sequence: u32,
+    self_pending: bool,
+) -> bool {
+    self_pending || (sequence != 0 && sequence == self_sequence)
+}
+
+/// Keep copied text byte-for-byte; trim only decides whether it is empty.
+fn retained_clipboard_text(text: String) -> Option<String> {
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Truncate a UTF-8 string without ever splitting a code point.
+fn truncate_utf8_boundary(text: &mut String, max_bytes: usize) {
+    if text.len() <= max_bytes {
+        return;
+    }
+    let mut cut = max_bytes.min(text.len());
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text.truncate(cut);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,10 +236,9 @@ fn init_db(conn: &Connection) -> rusqlite::Result<()> {
         );",
     )?;
     migrate(conn)?;
-    conn.execute_batch(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_text_unique
-            ON clipboard(content) WHERE kind = 'text';",
-    )?;
+    // The unique index is applied from the persisted dedup setting by
+    // set_dedup_index(); creating it here would fail on histories accumulated
+    // while dedup was disabled, before the setting is available.
     Ok(())
 }
 
@@ -184,10 +248,38 @@ fn init_db(conn: &Connection) -> rusqlite::Result<()> {
 /// when 去重 off tries to insert a fresh row.
 fn set_dedup_index(conn: &Connection, enabled: bool) -> rusqlite::Result<()> {
     if enabled {
-        conn.execute_batch(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_text_unique
-                ON clipboard(content) WHERE kind = 'text';",
-        )
+        let tx = conn.unchecked_transaction()?;
+        // Histories created with dedup off may contain duplicate text rows.
+        // Preserve the newest row per content and carry over any pin before
+        // recreating the partial unique index.
+        tx.execute_batch(
+            "UPDATE clipboard
+                 SET pinned = 1
+               WHERE kind = 'text'
+                 AND EXISTS (
+                     SELECT 1 FROM clipboard p
+                      WHERE p.kind = 'text'
+                        AND p.content = clipboard.content
+                        AND p.pinned = 1
+                 );
+             DELETE FROM clipboard
+              WHERE kind = 'text'
+                AND id NOT IN (
+                    SELECT keep.id
+                      FROM clipboard keep
+                     WHERE keep.kind = 'text'
+                       AND NOT EXISTS (
+                           SELECT 1 FROM clipboard newer
+                            WHERE newer.kind = 'text'
+                              AND newer.content = keep.content
+                              AND (newer.created_at > keep.created_at
+                                   OR (newer.created_at = keep.created_at AND newer.id > keep.id))
+                       )
+                );
+             CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_text_unique
+                 ON clipboard(content) WHERE kind = 'text';",
+        )?;
+        tx.commit()
     } else {
         conn.execute_batch("DROP INDEX IF EXISTS idx_clipboard_text_unique;")
     }
@@ -832,9 +924,51 @@ fn clear_history(conn: &Connection, base: &Path, keep_pinned: bool) -> rusqlite:
 // Images
 // ---------------------------------------------------------------------------
 
+fn image_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_EDGE);
+    limits.max_image_height = Some(MAX_IMAGE_EDGE);
+    limits.max_alloc = Some(MAX_IMAGE_ALLOC_BYTES);
+    limits
+}
+
+fn image_dimensions_within_limit(width: u32, height: u32) -> bool {
+    width > 0
+        && height > 0
+        && width <= MAX_IMAGE_EDGE
+        && height <= MAX_IMAGE_EDGE
+        && u64::from(width) * u64::from(height) <= MAX_IMAGE_PIXELS
+}
+
+/// Parse dimensions before allocating the RGBA buffer.
+fn checked_image_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| format!("read image header: {e}"))?;
+    reader.limits(image_limits());
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|e| format!("decode image dimensions: {e}"))?;
+    if !image_dimensions_within_limit(width, height) {
+        return Err(format!(
+            "image dimensions too large: {width}x{height} (cap {MAX_IMAGE_EDGE}px edge, {MAX_IMAGE_PIXELS} pixels)"
+        ));
+    }
+    Ok((width, height))
+}
+
+fn decode_image_bounded(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    checked_image_dimensions(bytes)?;
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| format!("read image header: {e}"))?;
+    reader.limits(image_limits());
+    reader.decode().map_err(|e| format!("decode image: {e}"))
+}
+
 /// Downscale a stored PNG to a small base64 data URI for the frontend.
 fn make_thumb(png: &[u8]) -> Option<String> {
-    let img = image::load_from_memory(png).ok()?.to_rgba8();
+    let img = decode_image_bounded(png).ok()?.to_rgba8();
     let (w, h) = (img.width(), img.height());
     let max = THUMB_MAX;
     let (nw, nh) = if w > h {
@@ -855,18 +989,15 @@ fn make_thumb(png: &[u8]) -> Option<String> {
 
 /// Encode an RGBA `ImageData` from the clipboard as PNG bytes.
 fn encode_png(img: &arboard::ImageData) -> Option<Vec<u8>> {
+    if !image_dimensions_within_limit(img.width as u32, img.height as u32) {
+        return None;
+    }
     let rgba = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.to_vec())?;
     let mut buf = Vec::new();
     image::DynamicImage::ImageRgba8(rgba)
         .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
         .ok()?;
     Some(buf)
-}
-
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,27 +1141,22 @@ fn capture(state: &ClipboardState, clip: &crate::settings::Clipboard) {
     // 1. Text, with optional rich-text HTML (CF_HTML) capped to keep the DB lean.
     if let Ok(mut cb) = arboard::Clipboard::new() {
         if let Ok(text) = cb.get_text() {
-            let text = text.trim().to_string();
-            if !text.is_empty() {
+            if let Some(text) = retained_clipboard_text(text) {
                 let html = cb
                     .get()
                     .html()
                     .ok()
                     .map(|mut h| {
-                        h.truncate(HTML_CAP);
+                        truncate_utf8_boundary(&mut h, HTML_CAP);
                         h
                     });
-                let mut last_text = state.last_text.lock().unwrap();
-                if text != *last_text {
-                    let conn = state.db.lock().unwrap();
-                    if insert_text_history(
-                        &conn, &text, &source, html, clip.history_cap, &base, &merge, clip.dedup,
-                    )
-                    .is_err()
-                    {
-                        eprintln!("[clipboard] failed to store text history");
-                    }
-                    *last_text = text;
+                let conn = state.db.lock().unwrap();
+                if insert_text_history(
+                    &conn, &text, &source, html, clip.history_cap, &base, &merge, clip.dedup,
+                )
+                .is_err()
+                {
+                    eprintln!("[clipboard] failed to store text history");
                 }
             }
             return;
@@ -1044,16 +1170,11 @@ fn capture(state: &ClipboardState, clip: &crate::settings::Clipboard) {
     // should not fall through to the bitmap branch).
     if let Some(paths) = read_file_list() {
         if clip.record_files {
-            let joined = paths.join("\n");
-            let mut last_files = state.last_files.lock().unwrap();
-            if joined != *last_files {
-                let conn = state.db.lock().unwrap();
-                if insert_file_history(&conn, &paths, &source, clip.history_cap, &base, clip.dedup)
-                    .is_err()
-                {
-                    eprintln!("[clipboard] failed to store file history");
-                }
-                *last_files = joined;
+            let conn = state.db.lock().unwrap();
+            if insert_file_history(&conn, &paths, &source, clip.history_cap, &base, clip.dedup)
+                .is_err()
+            {
+                eprintln!("[clipboard] failed to store file history");
             }
         }
         return;
@@ -1071,14 +1192,9 @@ fn capture(state: &ClipboardState, clip: &crate::settings::Clipboard) {
         .or_else(read_custom_png_image)
         .or_else(read_cf_bitmap_image);
         if let Some(png) = png {
-            let hash = hash_bytes(&png);
-            let mut last_hash = state.last_image_hash.lock().unwrap();
-            if hash != *last_hash {
-                let conn = state.db.lock().unwrap();
-                if insert_image_history(&conn, &png, &source, clip.history_cap, &base).is_err() {
-                    eprintln!("[clipboard] failed to store image history");
-                }
-                *last_hash = hash;
+            let conn = state.db.lock().unwrap();
+            if insert_image_history(&conn, &png, &source, clip.history_cap, &base).is_err() {
+                eprintln!("[clipboard] failed to store image history");
             }
         }
     }
@@ -1136,11 +1252,11 @@ fn read_custom_png_image() -> Option<Vec<u8>> {
                 let ptr = GlobalLock(HGLOBAL(handle.0));
                 if !ptr.is_null() {
                     let size = GlobalSize(HGLOBAL(handle.0));
-                    if size > 0 {
+                    if size > 0 && size <= MAX_CLIPBOARD_IMAGE_BYTES {
                         let bytes = std::slice::from_raw_parts(ptr as *const u8, size).to_vec();
                         if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
                             found = Some(bytes);
-                        } else if let Ok(img) = image::load_from_memory(&bytes) {
+                        } else if let Ok(img) = decode_image_bounded(&bytes) {
                             let mut buf = Vec::new();
                             if img
                                 .write_to(
@@ -1208,11 +1324,17 @@ fn spawn_listener(app: AppHandle) {
         let last = state.last_seq.load(Ordering::Relaxed);
         if seq != last {
             state.last_seq.store(seq, Ordering::Relaxed);
-            let clip = app
-                .state::<crate::settings::SettingsState>()
-                .current()
-                .clipboard;
-            capture(&state, &clip);
+            if !should_skip_sequence(
+                seq,
+                state.self_write_seq.load(Ordering::SeqCst),
+                state.self_write_pending.load(Ordering::SeqCst),
+            ) {
+                let clip = app
+                    .state::<crate::settings::SettingsState>()
+                    .current()
+                    .clipboard;
+                capture(&state, &clip);
+            }
         }
         std::thread::sleep(POLL_INTERVAL);
     });
@@ -1248,9 +1370,8 @@ pub fn init(app: &tauri::App) {
     app.manage(ClipboardState {
         db: Mutex::new(conn),
         last_seq: AtomicU32::new(0),
-        last_text: Mutex::new(String::new()),
-        last_files: Mutex::new(String::new()),
-        last_image_hash: Mutex::new(0),
+        self_write_seq: AtomicU32::new(0),
+        self_write_pending: AtomicBool::new(false),
         paused: AtomicBool::new(false),
         last_paste_at: Mutex::new(None),
     });
@@ -1587,16 +1708,7 @@ fn decode_image_payload(data: &str) -> Result<Vec<u8>, String> {
         Some((head, rest)) if head.starts_with("data:") => rest,
         _ => data,
     };
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(b64.trim())
-        .map_err(|e| format!("bad base64: {e}"))?;
-    if bytes.is_empty() {
-        return Err("empty image payload".into());
-    }
-    if bytes.len() > MAX_PLUGIN_IMAGE_BYTES {
-        return Err(format!("image too large ({} bytes)", bytes.len()));
-    }
-    Ok(bytes)
+    crate::bounded::decode_base64_bounded(b64, MAX_PLUGIN_IMAGE_BYTES)
 }
 
 /// Put a PNG (base64 or data URI) on the clipboard as an image.
@@ -1620,9 +1732,7 @@ pub async fn plugin_clipboard_write_image(
     )?;
     tauri::async_runtime::spawn_blocking(move || {
         let png = decode_image_payload(&data)?;
-        let rgba = image::load_from_memory(&png)
-            .map_err(|e| format!("decode image: {e}"))?
-            .to_rgba8();
+        let rgba = decode_image_bounded(&png)?.to_rgba8();
         let (w, h) = (rgba.width(), rgba.height());
         let img = arboard::ImageData {
             width: w as usize,
@@ -1819,9 +1929,7 @@ pub fn plugin_clipboard_paste(
         }
         if let Some(img) = image {
             let png = decode_image_payload(&img)?;
-            let rgba = image::load_from_memory(&png)
-                .map_err(|e| format!("decode image: {e}"))?
-                .to_rgba8();
+            let rgba = decode_image_bounded(&png)?.to_rgba8();
             let data = arboard::ImageData {
                 width: rgba.width() as usize,
                 height: rgba.height() as usize,
@@ -1891,7 +1999,9 @@ pub async fn copy_clipboard(
             .remember_checks;
         let base = crate::paths::data_dir();
         let paths = usable_paths(&row, remember, &base)?;
-        set_clipboard_from_row_paths(&row, &paths, plain.unwrap_or(false))
+        write_clipboard_payload(&state, || {
+            set_clipboard_from_row_paths(&row, &paths, plain.unwrap_or(false))
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1908,7 +2018,7 @@ pub fn set_clipboard_paused(paused: bool, state: State<ClipboardState>) -> Resul
 /// content is lossy-decoded as UTF-8 so a stray .txt with a weird encoding
 /// still previews).
 #[tauri::command]
-pub fn get_file_text(
+pub async fn get_file_text(
     path: String,
     plugin_id: Option<String>,
     host_token: Option<String>,
@@ -1924,11 +2034,12 @@ pub fn get_file_text(
         host_token.as_deref(),
         "fs.read",
     )?;
-    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-    if bytes.len() > 512 * 1024 {
-        return Err("file too large to preview".into());
-    }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = crate::bounded::read_file_bounded(Path::new(&path), 512 * 1024)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Read a file's raw bytes (base64) for preview renderers that must decode
@@ -1956,10 +2067,7 @@ pub async fn get_file_bytes(
     // Off the main thread: a 32 MB read + ~43 MB base64 string is hundreds of
     // milliseconds of blocking work that would otherwise freeze every IPC.
     tauri::async_runtime::spawn_blocking(move || {
-        let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-        if bytes.len() > 32 * 1024 * 1024 {
-            return Err("file too large to preview (cap 32 MB)".into());
-        }
+        let bytes = crate::bounded::read_file_bounded(Path::new(&path), 32 * 1024 * 1024)?;
         Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
     })
     .await
@@ -1992,10 +2100,7 @@ pub async fn get_file_thumb(
     // commands run on the main (UI) thread, and decoding a multi-megabyte image
     // there would stall every other IPC for the duration.
     tauri::async_runtime::spawn_blocking(move || {
-        let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-        if bytes.len() > 50 * 1024 * 1024 {
-            return Err("file too large to thumbnail".into());
-        }
+        let bytes = crate::bounded::read_file_bounded(Path::new(&path), 50 * 1024 * 1024)?;
         make_thumb(&bytes).ok_or_else(|| "not a readable image".into())
     })
     .await
@@ -2086,14 +2191,18 @@ fn auto_paste(
     focus: &crate::window::FocusState,
     set: impl FnOnce() -> Result<(), String>,
 ) -> Result<PasteOutcome, String> {
-    // Read the target first; it is cleared only after the clipboard write
-    // succeeds, so a failed set doesn't throw away a still-valid target.
+    // Read the target first; it stays one-shot until both the clipboard write
+    // and the paste hand-off succeed.
     let maybe_hwnd = *focus.last_hwnd.lock().unwrap();
+    let state = app.state::<ClipboardState>();
+    let mut payload = Some(set);
 
     let Some(hwnd_raw) = maybe_hwnd else {
         // No target window recorded — fall back to a plain copy.
         eprintln!("[clipboard] paste: no target window recorded — copied without pasting");
-        set()?;
+        write_clipboard_payload(&state, || {
+            payload.take().expect("clipboard payload consumed")()
+        })?;
         return Ok(PasteOutcome {
             outcome: "copied",
             reason: Some("no_target"),
@@ -2104,7 +2213,9 @@ fn auto_paste(
         // Window is gone — fall back to a plain copy.
         eprintln!("[clipboard] paste: target window is gone — copied without pasting");
         *focus.last_hwnd.lock().unwrap() = None;
-        set()?;
+        write_clipboard_payload(&state, || {
+            payload.take().expect("clipboard payload consumed")()
+        })?;
         return Ok(PasteOutcome {
             outcome: "copied",
             reason: Some("target_gone"),
@@ -2112,13 +2223,14 @@ fn auto_paste(
     }
 
     // Place the entry on the system clipboard (it stays there after the paste).
-    set()?;
-    // The target is one-shot only after the payload is safely on the clipboard.
-    focus.last_hwnd.lock().unwrap().take();
+    write_clipboard_payload(&state, || {
+        payload.take().expect("clipboard payload consumed")()
+    })?;
 
     // 粘贴后关闭: hide the launcher so focus can return to the target window.
-    // When disabled, keep the launcher up and suppress the blur that the paste
-    // would otherwise trigger.
+    // When disabled, keep the launcher up but still explicitly hand focus to
+    // the recorded target; suppressing auto-hide alone would send Ctrl+V back
+    // into the launcher search box.
     let paste_close = app
         .state::<crate::settings::SettingsState>()
         .current()
@@ -2129,24 +2241,30 @@ fn auto_paste(
     } else {
         crate::window::suppress_hide(focus, 1500);
     }
-    // Allow time for Windows to restore focus to the previous foreground window.
-    std::thread::sleep(Duration::from_millis(60));
 
-    // Send Ctrl+V to whatever window now has focus. If the injection failed,
-    // bring the launcher back so the frontend's error toast is actually
-    // visible (SendInput's UIPI failure is otherwise silent).
+    let target = HWND(hwnd_raw as *mut std::ffi::c_void);
+    if !crate::input::force_foreground(target) {
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+        return Err("could not focus the paste target window".into());
+    }
+
+    // Send Ctrl+V to the window we just verified as foreground. If injection
+    // failed, bring the launcher back so the frontend error toast is visible.
     let sent = unsafe { send_ctrl_v() };
     if !sent {
-        if paste_close {
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.set_focus();
-            }
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.set_focus();
         }
         return Err("SendInput failed to send Ctrl+V".into());
     }
 
-    // Give the target application time to process the paste.
+    // The paste actually reached the target. Consume the one-shot target and
+    // leave the payload on the clipboard as the most recently used content.
+    focus.last_hwnd.lock().unwrap().take();
     std::thread::sleep(Duration::from_millis(100));
 
     Ok(PasteOutcome {
@@ -2258,10 +2376,11 @@ fn set_clipboard_from_row_paths(row: &Row, paths: &[String], plain: bool) -> Res
             };
             // `rel` already carries the `PictureCache/` prefix — resolve against
             // the data dir, not picture_dir() (which would double the prefix).
-            let png = fs::read(crate::paths::data_dir().join(rel)).map_err(|e| e.to_string())?;
-            let rgba = image::load_from_memory(&png)
-                .map_err(|e| e.to_string())?
-                .to_rgba8();
+            let png = crate::bounded::read_file_bounded(
+                &crate::paths::data_dir().join(rel),
+                MAX_CLIPBOARD_IMAGE_BYTES,
+            )?;
+            let rgba = decode_image_bounded(&png)?.to_rgba8();
             let img = arboard::ImageData {
                 width: rgba.width() as usize,
                 height: rgba.height() as usize,
@@ -2626,6 +2745,7 @@ mod tests {
     fn memory_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         init_db(&conn).unwrap();
+        set_dedup_index(&conn, true).unwrap();
         conn
     }
 
@@ -3289,6 +3409,40 @@ mod tests {
     }
 
     #[test]
+    fn decoded_image_dimensions_are_bounded() {
+        assert!(image_dimensions_within_limit(4000, 4000));
+        assert!(!image_dimensions_within_limit(4000, 4001));
+        assert!(!image_dimensions_within_limit(MAX_IMAGE_EDGE + 1, 1));
+        assert!(!image_dimensions_within_limit(0, 1));
+    }
+
+    #[test]
+    fn unicode_html_truncation_never_splits_a_code_point() {
+        let mut html = "a".repeat(HTML_CAP - 1);
+        html.push('中');
+        html.push_str("tail");
+        truncate_utf8_boundary(&mut html, HTML_CAP);
+        assert!(html.len() <= HTML_CAP);
+        assert!(html.is_char_boundary(html.len()));
+        assert!(html.chars().all(|c| c != '�'));
+    }
+
+    #[test]
+    fn captured_text_preserves_leading_and_trailing_whitespace() {
+        let original = "  AUDIT-WS  ".to_string();
+        assert_eq!(retained_clipboard_text(original.clone()).as_deref(), Some(original.as_str()));
+        assert!(retained_clipboard_text(" \t\r\n ".into()).is_none());
+    }
+
+    #[test]
+    fn self_write_sequence_skips_only_the_matching_sequence() {
+        assert!(should_skip_sequence(41, 41, false));
+        assert!(should_skip_sequence(42, 41, true));
+        assert!(!should_skip_sequence(42, 41, false));
+        assert!(!should_skip_sequence(0, 0, false));
+    }
+
+    #[test]
     fn process_display_name_strips_dir_and_extension() {
         assert_eq!(process_display_name(r"C:\Program Files\Google\Chrome\Application\chrome.exe"), "Chrome");
         assert_eq!(process_display_name(r"C:\Windows\explorer.exe"), "Explorer");
@@ -3451,6 +3605,23 @@ mod tests {
         let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
         assert_eq!(hits.len(), 2, "dedup off records an identical copy as a fresh row");
         fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn enabling_dedup_collapses_existing_duplicates_and_keeps_pins() {
+        let conn = memory_db();
+        conn.execute_batch("DROP INDEX IF EXISTS idx_clipboard_text_unique;").unwrap();
+        conn.execute_batch(
+            "INSERT INTO clipboard(kind,content,data,path,pinned,created_at,source_app,html,merged_count)
+             VALUES ('text','same',NULL,NULL,1,1,'',NULL,1),
+                    ('text','same',NULL,NULL,0,2,'',NULL,1);",
+        )
+        .unwrap();
+        set_dedup_index(&conn, true).unwrap();
+        let rows = search_history(&conn, "same", "all", 20, Path::new("."), false).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].pinned);
+        assert_eq!(rows[0].created_at, 2, "newest duplicate is retained");
     }
 
     #[test]

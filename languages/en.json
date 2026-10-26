@@ -12,10 +12,10 @@
   "autoUseAgent": "Use the elevation agent",
   "autoUseAgentHint": "Windows only delivers synthetic input to windows of the same or a lower privilege level (UIPI), so a program running as administrator never receives the shortcut otherwise. This routes the send through a small elevated helper that does nothing but press the key. The helper must be registered once (System page, one UAC prompt) — the switch refuses to turn on before that; with it off or missing, Lume presses in-process and says so in the log.",
   "autoUseAgentUnregisteredTitle": "Elevation agent not registered",
-  "autoUseAgentUnregisteredHint": "\u201cUse the elevation agent\u201d sends the shortcut through lume-agent.exe, which has to be registered once (a scheduled task, one UAC prompt). Register it on the System page first \u2014 the switch stays off until then.",
+  "autoUseAgentUnregisteredHint": "“Use the elevation agent” sends the shortcut through lume-agent.exe, which has to be registered once (a scheduled task, one UAC prompt). Register it on the System page first — the switch stays off until then.",
   "autoUseAgentOpenSystem": "Open the System page",
   "autoUseAgentCheckFailed": "Could not read the elevation agent's status",
-  "autoUseAgentUnregisteredSummary": "The elevation agent is not registered yet, so elevated programs cannot be reached \u2014 register it on the System page.",
+  "autoUseAgentUnregisteredSummary": "The elevation agent is not registered yet, so elevated programs cannot be reached — register it on the System page.",
   "autoAgentResident": "Keep the agent running after logon",
   "autoAgentResidentHint": "Off (default): the helper starts on demand and exits again after a minute idle, so no privileged process sits around. On: it stays resident (a few MB) and injections are instant.",
   "autoTestNeedsAgent": "{process} runs as administrator — enable the elevation agent to reach it",
@@ -581,5 +581,9 @@
   "pluginsInstallStats_one": "{count} file · {size}",
   "pluginsInstallStats_other": "{count} files · {size}",
   "pluginFeatureFiles_one": "{label} ({count} file)",
-  "pluginFeatureFiles_other": "{label} ({count} files)"
+  "pluginFeatureFiles_other": "{label} ({count} files)",
+  "clipPauseFailed": "Could not change clipboard recording.",
+  "clipClearFailed": "Could not clear clipboard history.",
+  "clipDeleteFailed": "Could not delete the clipboard entry.",
+  "clipRestoreFailed": "Could not restore the clipboard entry."
 }

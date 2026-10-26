@@ -79,10 +79,12 @@ export function capSnapshot(snap: unknown, owner?: string): unknown {
     const rawFields = Array.isArray(source.auto?.fields) ? source.auto.fields : [];
     const fields = rawFields.slice(0, SNAPSHOT_MAX_FIELDS).flatMap((raw) => {
       if (!raw || typeof raw !== "object") return [];
-      const field = raw as { key?: unknown; value?: unknown; checked?: unknown };
+      const field = raw as { key?: unknown; value?: unknown; checked?: unknown; secret?: unknown };
       if (typeof field.key !== "string" || field.key.length > 512) return [];
       let value: string | string[];
-      if (Array.isArray(field.value)) {
+      if (field.secret === true) {
+        value = "";
+      } else if (Array.isArray(field.value)) {
         let chars = 0;
         value = field.value
           .slice(0, 64)

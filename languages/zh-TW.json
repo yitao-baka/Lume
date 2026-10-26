@@ -581,5 +581,9 @@
   "pluginsInstallStats_one": "{count} 個檔案 · {size}",
   "pluginsInstallStats_other": "{count} 個檔案 · {size}",
   "pluginFeatureFiles_one": "{label}（{count} 個檔案）",
-  "pluginFeatureFiles_other": "{label}（{count} 個檔案）"
+  "pluginFeatureFiles_other": "{label}（{count} 個檔案）",
+  "clipPauseFailed": "無法變更剪貼簿記錄狀態。",
+  "clipClearFailed": "無法清空剪貼簿歷史。",
+  "clipDeleteFailed": "無法刪除該剪貼簿項目。",
+  "clipRestoreFailed": "無法還原該剪貼簿項目。"
 }

@@ -1,7 +1,7 @@
 //! Navigate Page Service — owns bars, merged search, actions and the stable
 //! lume.navigate/v1 snapshot consumed by every Presenter.
 
-import type { AppEntry, MenuState, PluginIconSpec } from "../../launcher/types";
+import { isSyntheticAppEntry, type AppEntry, type MenuState, type PluginIconSpec } from "../../launcher/types";
 import type { IntentResult, JsonValue, PageIntent, PageModel, PageService, ResourceRef } from "../../page-runtime/contracts";
 import { NAVIGATE_SCHEMA, type NavigateItem, type NavigateModel, type NavigateSection } from "../../page-runtime/schemas";
 import type { ModeKeyContext, PluginServices } from "../../plugins/types";
@@ -54,6 +54,7 @@ function iconRef(icon: string | PluginIconSpec | undefined): ResourceRef | undef
 
 function barActionList(section: NavSection): string[] {
   if (section.id === "folder") return ["activate", "menu"];
+  if (section.id === "recommended") return ["open", "menu"];
   return ["open", "open-as-admin", "reveal", "pin", "unpin", "remove-recent", "menu"];
 }
 
@@ -79,7 +80,15 @@ function asAppEntry(item: NavItem): AppEntry {
     name: item.name,
     path: item.path,
     ...(item.icon ? { icon: item.icon } : {}),
+    ...(item.rowKind ? { rowKind: item.rowKind } : {}),
+    ...(item.providerEnter ? { providerEnter: item.providerEnter } : {}),
+    ...(item.providerDrill ? { providerDrill: item.providerDrill } : {}),
+    ...(item.featureEnter ? { featureEnter: item.featureEnter } : {}),
   };
+}
+
+function resultActionList(app: AppEntry): string[] {
+  return isSyntheticAppEntry(app) ? ["open", "menu"] : ["open", "open-as-admin", "reveal", "pin", "unpin", "menu"];
 }
 
 export function createNavigatePageService(deps: NavigatePageDeps): {
@@ -182,12 +191,17 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
       const id = targetId("result", `${app.path || app.name}\u0000${app.name}`, index, usedTargetIds);
       resultIds[index] = id;
       targets.set(id, { kind: "result", index, app });
+      const source = app.rowKind === "provider-enter" || app.rowKind === "provider-drill"
+        ? "provider" as const
+        : app.rowKind === "feature" || app.rowKind === "mode"
+          ? "feature" as const
+          : "app" as const;
       return {
         id,
         label: app.name,
         path: app.path,
-        source: app.providerEnter ? "provider" as const : app.providerDrill ? "feature" as const : "app" as const,
-        actions: ["open", "open-as-admin", "reveal", "pin", "unpin", "menu"],
+        source,
+        actions: resultActionList(app),
         ...(iconRef(app.icon) ? { icon: iconRef(app.icon) } : {}),
       } satisfies NavigateItem;
     });
@@ -292,6 +306,13 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
           return { status: "completed" };
         case "item.action": {
           if (!target) return { status: "failed", code: "target.missing", message: "Target is missing" };
+          const app = targetApp(target);
+          if (app && isSyntheticAppEntry(app) &&
+              (intent.actionId === "reveal" || intent.actionId === "pin" ||
+               intent.actionId === "unpin" || intent.actionId === "remove-recent" ||
+               intent.actionId === "open-as-admin")) {
+            return { status: "failed", code: "action.unsupported", message: "Synthetic rows only support activation" };
+          }
           if (intent.actionId === "open" || intent.actionId === "activate") {
             await activateTarget(target);
             return { status: "completed" };
@@ -300,7 +321,6 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
             await activateTarget(target, true);
             return { status: "completed" };
           }
-          const app = targetApp(target);
           if (intent.actionId === "reveal" && app) {
             nav.revealInFolder(app);
             return { status: "completed" };

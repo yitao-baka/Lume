@@ -11,7 +11,6 @@
 //! reserved device name (`NUL`, `CON`, …) — on Windows `<dir>\\NUL` is the
 //! null device, not a file, so a naive join would silently discard the write.
 
-use base64::Engine;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -38,12 +37,30 @@ pub struct PrivateFile {
 /// across `.lupx` upgrades.
 pub(crate) const PRIVATE_FILES_DIRNAME: &str = "files";
 
-/// `<base>/plugins/<id>/files/`.
+/// `<canonical plugin dir>/files/`, resolved from the manifest id through the
+/// same duplicate-id selection `get_plugins` uses.
 fn private_dir(base: &Path, id: &str) -> Result<PathBuf, String> {
     if !valid_plugin_id(id) {
         return Err("invalid plugin id".into());
     }
-    Ok(base.join("plugins").join(id).join(PRIVATE_FILES_DIRNAME))
+    let plugin_dir = crate::plugins::plugin_dir_for_id(base, id)
+        .ok_or_else(|| format!("plugin \"{id}\" has no on-disk directory"))?;
+    let plugins_root = std::fs::canonicalize(base.join("plugins"))
+        .map_err(|e| format!("resolve plugins directory: {e}"))?;
+    let canonical = std::fs::canonicalize(&plugin_dir)
+        .map_err(|e| format!("resolve plugin directory: {e}"))?;
+    #[cfg(windows)]
+    let inside = {
+        let root = plugins_root.to_string_lossy().replace('/', "\\").to_lowercase();
+        let target = canonical.to_string_lossy().replace('/', "\\").to_lowercase();
+        target != root && target.starts_with(&(root + "\\"))
+    };
+    #[cfg(not(windows))]
+    let inside = canonical.starts_with(&plugins_root);
+    if !inside {
+        return Err("plugin directory escapes the plugins root".into());
+    }
+    Ok(canonical.join(PRIVATE_FILES_DIRNAME))
 }
 
 /// Windows device names that must never be used as a file name.
@@ -175,9 +192,7 @@ let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), h
             data.as_str()
         }
     });
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(payload.trim())
-        .map_err(|e| format!("bad base64: {e}"))?;
+    let bytes = crate::bounded::decode_base64_bounded(payload, MAX_PRIVATE_BYTES)?;
     write_private(&base_dir(), &id, &name, &bytes)
 }
 
@@ -315,11 +330,23 @@ let id = crate::plugin_perm::resolve_plugin_caller(&perms, &window, Some(&id), h
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
+
+    fn write_manifest(base: &Path, dir: &str, id: &str) {
+        let root = base.join("plugins").join(dir);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("plugin.toml"),
+            format!("id = \"{id}\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n"),
+        )
+        .unwrap();
+    }
 
     fn temp_base(name: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("lume-pfs-{name}-{}", std::process::id()));
         std::fs::remove_dir_all(&root).ok();
-        std::fs::create_dir_all(root.join("plugins").join("demo")).unwrap();
+        write_manifest(&root, "demo", "demo");
+        write_manifest(&root, "other", "other");
         root
     }
 
@@ -369,6 +396,21 @@ mod tests {
         assert!(private_file(&base, "demo", &"a".repeat(121)).is_err());
         // Nothing outside the private dir was touched.
         assert!(!base.join("evil.txt").exists());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn private_files_follow_manifest_id_to_the_canonical_directory() {
+        let base = std::env::temp_dir().join(format!("lume-pfs-mismatch-{}", std::process::id()));
+        std::fs::remove_dir_all(&base).ok();
+        write_manifest(&base, "mismatch-dir", "real-id");
+        let path = write_private(&base, "real-id", "probe.txt", b"ok").unwrap();
+        assert!(path.contains("mismatch-dir"), "{path}");
+        assert!(!base.join("plugins").join("real-id").exists());
+        assert!(private_file(&base, "real-id", "probe.txt").is_ok());
+        assert_eq!(list_private(&base, "real-id").unwrap()[0].name, "probe.txt");
+        remove_private(&base, "real-id", "probe.txt").unwrap();
+        assert!(list_private(&base, "real-id").unwrap().is_empty());
         std::fs::remove_dir_all(&base).ok();
     }
 

@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod appicon;
 mod apps;
+mod bounded;
 mod automation;
 pub mod cache;
 mod clipboard;

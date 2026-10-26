@@ -581,5 +581,9 @@
   "pluginsInstallStats_one": "{count} 个文件 · {size}",
   "pluginsInstallStats_other": "{count} 个文件 · {size}",
   "pluginFeatureFiles_one": "{label}（{count} 个文件）",
-  "pluginFeatureFiles_other": "{label}（{count} 个文件）"
+  "pluginFeatureFiles_other": "{label}（{count} 个文件）",
+  "clipPauseFailed": "无法更改剪贴板记录状态。",
+  "clipClearFailed": "无法清空剪贴板历史。",
+  "clipDeleteFailed": "无法删除该剪贴板条目。",
+  "clipRestoreFailed": "无法恢复该剪贴板条目。"
 }

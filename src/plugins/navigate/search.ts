@@ -90,21 +90,32 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     seq: number
   ): AppEntry | null {
     if (!it?.name) return null;
+    // A drill row without select has no valid activation path. A row with no
+    // path and no action would otherwise become a visible shell that ShellExecute
+    // can never open, so drop it at the source.
+    const enter = it.enter === true;
+    const drill = it.drill === true;
+    const supportsSelect = typeof p.instance.select === "function" && (p.instance.hasHook?.("select") ?? true);
+    const supportsFilter = typeof p.instance.filter === "function" && (p.instance.hasHook?.("filter") ?? true);
+    if (drill && !supportsSelect) return null;
+    if (!it.path && !enter && !drill) return null;
     const key = it.path || `lume-plugin://${p.id}/${seq}`;
     const icon = resolvePluginIcon(it.icon, p.dir) ?? p.icon;
+    const rowKind = drill ? "provider-drill" as const : enter ? "provider-enter" as const : "app" as const;
     return {
       id: 0,
       name: it.name,
       path: key,
+      rowKind,
       ...(it.description ? { description: it.description } : {}),
       ...(icon ? { icon } : {}),
-      ...(it.enter ? { providerEnter: { pluginId: p.id, item: it } } : {}),
-      ...(it.drill && p.instance.select
+      ...(enter ? { providerEnter: { pluginId: p.id, item: it } } : {}),
+      ...(drill
         ? {
             providerDrill: {
               pluginId: p.id,
               item: it,
-              filterable: typeof p.instance.filter === "function",
+              filterable: supportsFilter,
             },
           }
         : {}),
@@ -123,6 +134,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       id: -1,
       name,
       path: `lume-feature://${f.pluginId}/${f.code}`,
+      rowKind: "feature",
       ...(f.icon ? { icon: f.icon } : {}),
       featureEnter: {
         pluginId: f.pluginId,
@@ -187,6 +199,10 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
                   name: e.name,
                   path: e.path,
                   ...(e.icon ? { icon: e.icon } : {}),
+                  ...(e.rowKind ? { rowKind: e.rowKind } : {}),
+                  ...(e.providerEnter ? { providerEnter: e.providerEnter } : {}),
+                  ...(e.providerDrill ? { providerDrill: e.providerDrill } : {}),
+                  ...(e.featureEnter ? { featureEnter: e.featureEnter } : {}),
                 })),
                 activate: (idx) => {
                   const item = entries[idx];
@@ -197,12 +213,12 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         );
         services.scheduleResize();
       };
-      const feats = () => [
-        ...windowFeatureMatches(fgContext()),
+      const feats = async () => [
+        ...(await windowFeatureMatches(fgContext())),
         ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
         ...(clipboardImgOk() ? imgFeatureMatches() : []),
       ];
-      rebuildEmpty(feats());
+      rebuildEmpty(await feats());
       if (nav.zone() === "grid") {
         const first = nav.sections()[0];
         if (first) nav.setZone(first.id);
@@ -210,11 +226,13 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       if (imgFeatureMatches().length > 0) {
         // One cheap probe per empty render (OpenClipboard + format check).
         void invoke<boolean>("plugin_clipboard_has_image")
-          .then((ok) => {
+          .then(async (ok) => {
             if (!requestCurrent(token, generation)) return;
             setClipboardImgOk(!!ok);
+            const windowRows = await windowFeatureMatches(fgContext());
+            if (!requestCurrent(token, generation)) return;
             rebuildEmpty([
-              ...windowFeatureMatches(fgContext()),
+              ...windowRows,
               ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
               ...(ok ? imgFeatureMatches() : []),
             ]);
@@ -250,14 +268,16 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         id: -1,
         name: `进入 ${kw.name}`,
         path: `lume-mode://${kw.id}`,
+        rowKind: "mode",
         ...(kw.icon ? { icon: kw.icon } : {}),
       });
     }
-    for (const f of featureMatches(q)) {
+    for (const f of await featureMatches(q)) {
       pushPlugin({
         id: -1,
         name: f.label,
         path: `lume-feature://${f.pluginId}/${f.code}`,
+        rowKind: "feature",
         ...(f.icon ? { icon: f.icon } : {}),
         featureEnter: { pluginId: f.pluginId, code: f.code, type: f.type, payload: f.payload },
       });
@@ -397,7 +417,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     if (item.providerDrill) {
       const d = item.providerDrill;
       const p = providerPlugins().find((x) => x.id === d.pluginId);
-      if (!p?.instance.select) return;
+      if (!p?.instance.select || p.instance.hasHook?.("select") === false) return;
       const parent = apps();
       const parentPluginStart = pluginStart();
       const token = services.searchToken();
@@ -579,6 +599,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     search,
     handleQuery,
     activate,
+    activateEntry: (app: AppEntry, elevated = false) => void activateEntry(app, elevated),
     popDrill,
     resetState,
     invalidateAsync: () => { asyncGeneration++; },

@@ -11,6 +11,26 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **专项审计 R2 修复（插件、导航与剪贴板）** — Page Service 在慢
+  `getModel()` 首次挂载期间统一排队 query/settings/files/show/hide/enter，
+  Presenter ready 后按 query → show → enter 重放；Presenter 切换会清空旧
+  modal/layout，密码输入只保留 checked 等非秘密状态。剪贴板采集改为按
+  clipboard sequence 跳过自身历史写回，文本不再 trim、HTML 按 UTF-8 边界
+  截断，文本→图片→文本可重复记录；`paste_close = false` 时显式把焦点交回
+  目标窗口再发送 Ctrl+V。暂停/清空/删除/撤销改为等待 Rust 确认并显示失败
+  toast。Provider/feature/mode 合成行只暴露语义激活，无 `select` 的 drill 行
+  丢弃，Rust pin 命令拒绝 `lume-*` scheme 并清理旧脏 pin。`template = "list"`
+  增加查询代际、Provider 预算与单次 `onShow`；插件私有文件、升级与卸载统一
+  使用 canonical 插件目录。文件/base64/图片/清单数组加入分配前预算，feature
+  与 window 正则移入 50 ms 可终止 Worker。验证：`pnpm exec tsc --noEmit`、
+  `pnpm run build`、`cargo check`、`cargo test` **270 passed / 9 ignored**、
+  `cargo clippy --all-targets --message-format=short` **0 warning**、Page
+  Runtime **18/18**、clipboard model **10/10**、clipboard store **7/7**、i18n
+  **587 键 × 3 语言**、debug `--no-bundle` 构建通过；
+  `cdp_audit_r2_verify` **15/15**、`cdp_plugin_mode_bar_verify` **15/15**；
+  WinForms 目标窗口实测 `paste_close = false` 时目标文本框收到内容且启动器
+  搜索框保持不变。重新开启内容去重时先折叠去重关闭期间产生的重复文本并保留 pin，
+  再恢复唯一索引。
 - **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载
   contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销
   能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 id

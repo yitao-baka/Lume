@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#82 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#87 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -5407,3 +5407,72 @@ Presenter 名称，值没有持久化或下发路径。
   `cdp_sandbox_verify` **19/19**、`cdp_presenter_network_verify` **10/10**
   全部通过；`cdp_page_runtime_verify` 同时覆盖非整数 DPI 下真实滚动末端不残留
   bottom fade。
+
+## 87. 专项审计 R2 修复（2026-10-26）
+
+原始发现与隔离复现见
+[专项审计 R2](History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-26_R2.md)。
+
+### 87.1 Page Runtime 与 Presenter
+
+- Page Service 冷启动使用统一 pending 状态：query、settings、filesDropped、
+  show/hide 与 enter 在 `getModel()` 完成前排队，完成后按 query → settings →
+  files → show/hide → enter 补投。Presenter 首次 mount 期间的事件进入桥接队列，
+  ready 后先重放 model/settings/theme/skin/snapshot，再重放 query → show →
+  enter。
+- PresenterHost 在每次 mount 前清空 presenterId/modal/layout；旧 generation 的
+  layout/modal 不能写入新页面。`PageSessionSnapshot` 增加 visible，供迟到的
+  Presenter 恢复 show 状态。
+- auto snapshot 与 frame state 对 `input[type=password]` 写入空 value 和
+  `secret=true`；宿主 `capSnapshot` 再次清空 secret value，恢复时跳过密码输入。
+
+### 87.2 剪贴板采集、状态与粘贴
+
+- 删除 `last_text`/`last_files`/`last_image_hash` 内容守卫，改用
+  `self_write_seq + self_write_pending`：只跳过 copy/paste 自身写回的精确
+  sequence；外部文本→图片→相同文本、dedup=false 连续相同内容都会重新记录。
+- 文本只 trim 判空，不改变保存值；HTML 在 UTF-8 字符边界安全截断。新增 UTF-8
+  边界、首尾空白与 sequence 状态回归。
+- `paste_close=false` 不再只 suppress hide：写入剪贴板后调用
+  `force_foreground(target)`，确认目标 HWND 真的前台后才 SendInput；焦点或注入
+  失败恢复启动器并报错，不返回虚假 `pasted`。
+- 剪贴板暂停状态等待 Rust ack；clear 成功后关闭确认框、清选择并刷新；
+  delete/undo 失败保留可重试状态并 toast。新增 `clipPauseFailed` /
+  `clipClearFailed` / `clipDeleteFailed` / `clipRestoreFailed` 三语键。
+
+### 87.3 导航与插件边界
+
+- AppEntry 增加 rowKind；provider `enter`/有效 `drill`、feature、mode 行保留
+  合成身份。无 path 且无动作的 provider 行、`drill` 但未导出 `select` 的行在
+  入口处丢弃。
+- 共享右键菜单对合成行只提供激活；Rust `pin_app` 拒绝 `lume-*`，pin store
+  初始化时清理旧版本可能写入的合成 pin。
+- `template = "list"` 增加下钻与本地 generation 守卫、Provider 行预算和 shown
+  门控，首次进入只执行一次 `onShow`，慢旧查询不能覆盖新输入。
+- 插件私有文件、升级与卸载改为从 manifest id 解析 canonical 插件目录，并校验
+  路径仍位于 `<base>/plugins/`；覆盖 `id != 目录名` 的写/读/list/remove/升级。
+
+### 87.4 资源边界与正则
+
+- 新增 `bounded.rs`：base64 先按编码长度预检再 decode；文件先 metadata 预检，
+  再以 cap+1 流式读取。`get_file_text` 改 async，文本/原始字节/缩略图读取都走
+  同一 helper。
+- 图片解码前检查边长与总像素（16,384 px / 16 MP），image reader 再设置
+  width/height/alloc limits；自定义 clipboard PNG 在复制进 Vec 前也检查大小。
+- manifest 门限制 keywords/features/settings/secrets、匹配数组、选项、字段与
+  regex 长度；feature/window 正则移入独立 Worker，50 ms 超时即 terminate，
+  主线程继续以无正则行完成搜索。
+- `cdp_plugin_mode_bar_verify` 的图标 fixture 补上真实 path，恢复 15/15。
+
+### 87.5 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  **270 passed / 9 ignored**、`cargo clippy --all-targets --message-format=short`
+  **0 warning**、debug `--no-bundle` 构建通过；i18n **587 键 × 3 语言**。
+- Page Runtime **18/18**、clipboard model **10/10**、clipboard store **7/7**；
+  `cdp_audit_r2_verify` **15/15**、`cdp_plugin_mode_bar_verify` **15/15**。
+- 审计隔离夹具：`audit_private_fs`、`audit_clip_sequence`、`audit_store_unit`、
+  `audit_presenter_state` 均通过；`audit_repro` 的旧缺陷断言按预期失败，而
+  onShow/enter、合成菜单仅激活、pin 拒绝与首尾空白断言通过。
+- WinForms 真实焦点夹具（`paste_close=false`）验证目标 TextBox 收到粘贴内容，
+  启动器搜索框保持原值。

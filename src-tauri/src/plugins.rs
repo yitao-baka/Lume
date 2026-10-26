@@ -556,6 +556,19 @@ pub(crate) fn manifest_for_id(base: &Path, id: &str) -> Option<PluginManifest> {
         .map(|p| p.manifest)
 }
 
+/// Canonical on-disk directory for a manifest id. Plugin-private files must
+/// use this directory: `id != directory name` is legal and id-based joins
+/// would point at a directory that was never installed.
+pub(crate) fn plugin_dir_for_id(base: &Path, id: &str) -> Option<std::path::PathBuf> {
+    if !valid_plugin_id(id) {
+        return None;
+    }
+    scan_disk_plugins(base)
+        .into_iter()
+        .find(|p| p.manifest.id == id)
+        .map(|p| p.dir)
+}
+
 /// Parse one `plugin.toml` (small standalone parse so tests don't need the
 /// full settings machinery). Also used by the Rust-side permission layer
 /// (`plugin_perm.rs`), which reads manifests on its own.
@@ -678,6 +691,143 @@ fn manifest_path_escape(dir: &Path, m: &PluginManifest) -> Result<(), String> {
     Ok(())
 }
 
+const MAX_KEYWORDS: usize = 64;
+const MAX_FEATURES: usize = 64;
+const MAX_SETTINGS: usize = 64;
+const MAX_SECRETS: usize = 32;
+const MAX_MATCH_VALUES: usize = 32;
+const MAX_SETTING_OPTIONS: usize = 32;
+const MAX_KEYWORD_CHARS: usize = 128;
+const MAX_REGEX_CHARS: usize = 512;
+const MAX_LABEL_CHARS: usize = 512;
+const MAX_OPTION_VALUE_CHARS: usize = 512;
+const MAX_SETTING_DEFAULT_BYTES: usize = 16 * 1024;
+
+fn bounded_text(value: &str, max_chars: usize, field: &str) -> Result<(), String> {
+    if value.chars().count() > max_chars || value.contains('\0') {
+        return Err(format!("{field} exceeds {max_chars} characters or contains NUL"));
+    }
+    Ok(())
+}
+
+fn validate_options(options: &[SettingsOption], field: &str) -> Result<(), String> {
+    if options.len() > MAX_SETTING_OPTIONS {
+        return Err(format!("{field} may declare at most {MAX_SETTING_OPTIONS} options"));
+    }
+    for option in options {
+        bounded_text(&option.value, MAX_OPTION_VALUE_CHARS, &format!("{field} option value"))?;
+        bounded_text(&option.label, MAX_LABEL_CHARS, &format!("{field} option label"))?;
+    }
+    Ok(())
+}
+
+/// Keep manifest fan-out bounded before any settings UI or per-keystroke
+/// feature matcher walks it. Regex timeout/isolation is enforced by the
+/// frontend matcher at execution time.
+fn validate_manifest_budgets(m: &PluginManifest) -> Result<(), String> {
+    if m.permissions.len() > 32 {
+        return Err("a plugin may declare at most 32 permissions".into());
+    }
+    for permission in &m.permissions {
+        bounded_text(permission, 64, "permission")?;
+    }
+    if m.network_allow.len() > 32 {
+        return Err("network_allow may contain at most 32 hosts".into());
+    }
+    for host in &m.network_allow {
+        bounded_text(host, 253, "network_allow entry")?;
+    }
+    if m.keywords.len() > MAX_KEYWORDS {
+        return Err(format!("a plugin may declare at most {MAX_KEYWORDS} keywords"));
+    }
+    for keyword in &m.keywords {
+        if keyword.trim().is_empty() || keyword.chars().count() > MAX_KEYWORD_CHARS || keyword.contains('\0') {
+            return Err(format!("keyword must be 1-{MAX_KEYWORD_CHARS} characters"));
+        }
+    }
+    if m.features.len() > MAX_FEATURES {
+        return Err(format!("a plugin may declare at most {MAX_FEATURES} features"));
+    }
+    for (index, feature) in m.features.iter().enumerate() {
+        let prefix = format!("feature[{index}]");
+        if feature.code.trim().is_empty() {
+            return Err(format!("{prefix} requires a code"));
+        }
+        bounded_text(&feature.code, 64, &format!("{prefix}.code"))?;
+        bounded_text(&feature.label, MAX_LABEL_CHARS, &format!("{prefix}.label"))?;
+        bounded_text(&feature.regex, MAX_REGEX_CHARS, &format!("{prefix}.regex"))?;
+        if !matches!(feature.feature_type.as_str(), "text" | "files" | "img" | "window") {
+            return Err(format!("{prefix} has unsupported type \"{}\"", feature.feature_type));
+        }
+        if let (Some(min), Some(max)) = (feature.min_length, feature.max_length) {
+            if min > max {
+                return Err(format!("{prefix} min_length exceeds max_length"));
+            }
+        }
+        for (field, values) in [
+            ("extensions", &feature.extensions),
+            ("process", &feature.process),
+            ("class", &feature.class),
+            ("title", &feature.title),
+        ] {
+            if values.len() > MAX_MATCH_VALUES {
+                return Err(format!("{prefix}.{field} may contain at most {MAX_MATCH_VALUES} values"));
+            }
+            for value in values {
+                bounded_text(value, MAX_LABEL_CHARS, &format!("{prefix}.{field} value"))?;
+            }
+        }
+    }
+    if m.settings.len() > MAX_SETTINGS {
+        return Err(format!("a plugin may declare at most {MAX_SETTINGS} settings"));
+    }
+    for (index, setting) in m.settings.iter().enumerate() {
+        let prefix = format!("setting[{index}]");
+        if !valid_plugin_id(&setting.key) {
+            return Err(format!("{prefix} has invalid key \"{}\"", setting.key));
+        }
+        bounded_text(&setting.label, MAX_LABEL_CHARS, &format!("{prefix}.label"))?;
+        if let Some(default) = &setting.default {
+            let bytes = serde_json::to_vec(default)
+                .map_err(|e| format!("{prefix} default is not JSON-compatible: {e}"))?;
+            if bytes.len() > MAX_SETTING_DEFAULT_BYTES {
+                return Err(format!("{prefix} default exceeds {MAX_SETTING_DEFAULT_BYTES} bytes"));
+            }
+        }
+        validate_options(&setting.options, &prefix)?;
+    }
+    if m.secrets.len() > MAX_SECRETS {
+        return Err(format!("a plugin may declare at most {MAX_SECRETS} secrets"));
+    }
+    for (index, secret) in m.secrets.iter().enumerate() {
+        bounded_text(&secret.label, MAX_LABEL_CHARS, &format!("secret[{index}].label"))?;
+    }
+    if m.presenter_settings.len() > 64 {
+        return Err("a mode may declare at most 64 Presenter settings".into());
+    }
+    for (index, setting) in m.presenter_settings.iter().enumerate() {
+        let prefix = format!("presenter_setting[{index}]");
+        bounded_text(&setting.label, MAX_LABEL_CHARS, &format!("{prefix}.label"))?;
+        if let Some(default) = &setting.default {
+            let bytes = serde_json::to_vec(default)
+                .map_err(|e| format!("{prefix} default is not JSON-compatible: {e}"))?;
+            if bytes.len() > MAX_SETTING_DEFAULT_BYTES {
+                return Err(format!("{prefix} default exceeds {MAX_SETTING_DEFAULT_BYTES} bytes"));
+            }
+        }
+        validate_options(&setting.options, &prefix)?;
+    }
+    for (index, presenter) in m.presenters.iter().enumerate() {
+        if presenter.models.len() > 32 {
+            return Err(format!("presenter[{index}] may declare at most 32 models"));
+        }
+        for model in &presenter.models {
+            bounded_text(model, 256, &format!("presenter[{index}] model"))?;
+        }
+    }
+    Ok(())
+}
+
 /// Validate the api 2 version gate and the manifest field combinations that
 /// cannot be repaired at runtime. The plugin stays visible to the settings pane
 /// when this fails, but the registry never loads any executable contribution.
@@ -698,6 +848,7 @@ pub(crate) fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
     if !matches!(m.kind.as_str(), "mode" | "provider" | "service") {
         return Err(format!("unknown plugin kind \"{}\"", m.kind));
     }
+    validate_manifest_budgets(m)?;
     if m.kind != "mode" {
         if m.entry.is_empty() {
             return Err(format!("{} plugins require an entry", m.kind));
@@ -1543,6 +1694,35 @@ entry = \"view.html\"
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(demo.entry.ends_with("dist/index.js"), "entry: {}", demo.entry);
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn manifest_collection_and_regex_budgets_are_enforced() {
+        let base = parse_manifest(
+            "id = \"demo\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n",
+        )
+        .unwrap();
+
+        let mut too_many = base.clone();
+        too_many.keywords = vec!["k".into(); MAX_KEYWORDS + 1];
+        assert!(validate_manifest(&too_many).unwrap_err().contains("keywords"));
+
+        let mut long_regex = base.clone();
+        long_regex.features = vec![PluginFeature {
+            code: "x".into(),
+            regex: "a".repeat(MAX_REGEX_CHARS + 1),
+            over: true,
+            ..PluginFeature::default()
+        }];
+        assert!(validate_manifest(&long_regex).unwrap_err().contains("regex"));
+
+        let mut huge_default = base.clone();
+        huge_default.settings = vec![PluginSetting {
+            key: "payload".into(),
+            default: Some(toml::Value::String("x".repeat(MAX_SETTING_DEFAULT_BYTES + 1))),
+            ..PluginSetting::default()
+        }];
+        assert!(validate_manifest(&huge_default).unwrap_err().contains("default"));
     }
 
     #[test]

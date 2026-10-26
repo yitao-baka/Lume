@@ -52,6 +52,10 @@ export function createClipboardStore(services: PluginServices) {
   const [deletingId, setDeletingId] = createSignal<number | null>(null);
   /** Clear-all confirm dialog visibility. */
   const [clearOpen, setClearOpen] = createSignal(false);
+  /** Backend mutation gates: never report a clipboard state the Rust side has
+   * not confirmed yet. */
+  const [clearBusy, setClearBusy] = createSignal(false);
+  const [pauseBusy, setPauseBusy] = createSignal(false);
   /** 清空 → keep pinned rows (confirm-dialog checkbox). */
   const [keepPinned, setKeepPinned] = createSignal(false);
   /** Settings-driven: show the source app in the second line. */
@@ -272,14 +276,19 @@ export function createClipboardStore(services: PluginServices) {
     });
   }
 
-  /** Restore the last deletion from the undo buffer. */
-  function undoDelete() {
+  /** Restore the last deletion from the undo buffer. The buffer stays put
+   * until Rust confirms the restore, so a failed request remains retryable. */
+  async function undoDelete(): Promise<void> {
     const d = undoBuf();
     if (!d) return;
-    setUndoBuf(null);
-    void invoke("restore_clipboard", { item: d })
-      .catch((err) => console.error("restore failed", err))
-      .finally(() => void services.runSearch(clipQuery()));
+    try {
+      await invoke("restore_clipboard", { item: d });
+      setUndoBuf(null);
+      await services.runSearch(clipQuery());
+    } catch (err) {
+      console.error("restore failed", err);
+      services.showToast(t("clipRestoreFailed"));
+    }
   }
 
   /** Start the delete animation, then actually delete once it finishes. */
@@ -292,27 +301,43 @@ export function createClipboardStore(services: PluginServices) {
     }, DELETE_ANIM_MS);
   }
 
-  /** Toggle the runtime recording pause (status-bar button). */
-  function toggleClipPause() {
+  /** Toggle the runtime recording pause (status-bar button). The visible
+   * state follows the backend acknowledgement, never an optimistic guess. */
+  async function toggleClipPause(): Promise<void> {
+    if (pauseBusy()) return;
+    setPauseBusy(true);
     const next = !clipPaused();
-    setClipPaused(next);
-    void invoke("set_clipboard_paused", { paused: next }).catch((err) =>
-      console.error("set_clipboard_paused failed", err)
-    );
+    try {
+      const confirmed = await invoke<boolean>("set_clipboard_paused", { paused: next });
+      setClipPaused(!!confirmed);
+    } catch (err) {
+      console.error("set_clipboard_paused failed", err);
+      services.showToast(t("clipPauseFailed"));
+    } finally {
+      setPauseBusy(false);
+    }
   }
 
-  /** Confirm dialog → clear the whole history (optionally keeping pinned). */
-  function doClear() {
-    setClearOpen(false);
+  /** Confirm dialog → clear the whole history (optionally keeping pinned).
+   * Keep the dialog open until Rust confirms; only then clear selection and
+   * refresh, so a slow clear can never re-render the old rows. */
+  async function doClear(): Promise<void> {
+    if (clearBusy()) return;
+    setClearBusy(true);
     const keepFavorites = keepPinned();
-    void invoke("clear_clipboard", { keepPinned: keepFavorites })
-      .then(() =>
-        services.showToast(t(keepFavorites ? "clipClearedKeptFavorites" : "clipCleared"))
-      )
-      .catch((err) => console.error("clear failed", err));
-    setKeepPinned(false);
-    setMultiIds(new Set<number>());
-    void services.runSearch(clipQuery());
+    try {
+      await invoke("clear_clipboard", { keepPinned: keepFavorites });
+      setClearOpen(false);
+      setKeepPinned(false);
+      setMultiIds(new Set<number>());
+      services.showToast(t(keepFavorites ? "clipClearedKeptFavorites" : "clipCleared"));
+      await services.runSearch(clipQuery());
+    } catch (err) {
+      console.error("clear failed", err);
+      services.showToast(t("clipClearFailed"));
+    } finally {
+      setClearBusy(false);
+    }
   }
 
   /** Pin/unpin a specific clipboard entry (context-menu action). Updates the
@@ -344,10 +369,14 @@ export function createClipboardStore(services: PluginServices) {
         return next;
       });
       services.showToast(t("clipDeletedOne"), { undo: undoDelete, duration: TOAST_UNDO_MS });
+      await services.runSearch(clipQuery());
     } catch (err) {
+      // The row is still visible because no list mutation happens before the
+      // backend confirms. Surface the failure instead of silently pretending
+      // the delete succeeded.
       console.error("delete failed", err);
+      services.showToast(t("clipDeleteFailed"));
     }
-    await services.runSearch(clipQuery());
   }
 
   /** Delete the selected clipboard entry (Del key), with the collapse animation. */
@@ -420,6 +449,8 @@ export function createClipboardStore(services: PluginServices) {
     deletingId,
     clearOpen,
     setClearOpen,
+    clearBusy,
+    pauseBusy,
     keepPinned,
     setKeepPinned,
     showSourceApp,

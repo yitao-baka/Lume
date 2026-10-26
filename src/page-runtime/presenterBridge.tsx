@@ -73,7 +73,11 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
     }
     return "path:" + domPath(el);
   }
+  function isSecretField(el) {
+    return !!(el && el.type === "password");
+  }
   function fieldValue(el) {
+    if (isSecretField(el)) return "";
     if (el.multiple) return Array.from(el.options).filter(function (o) { return o.selected; }).map(function (o) { return o.value; });
     if (el.type === "checkbox" || el.type === "radio") return el.checked ? "on" : "";
     if (el.isContentEditable) return el.innerText || "";
@@ -81,7 +85,7 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
   }
   function captureState(reason) {
     var values = Array.from(document.querySelectorAll("input,textarea,select,[contenteditable]")).slice(0, 200).map(function (el) {
-      return { id: fieldKey(el), value: String(fieldValue(el)).slice(0, 65536), checked: !!el.checked };
+      return { id: fieldKey(el), value: String(fieldValue(el)).slice(0, 65536), checked: !!el.checked, secret: isSecretField(el) };
     });
     return { name: window.__LUME_TITLEBAR__ ? "titlebar" : "", form: HOST_FORM, reason: reason || "update", values: values };
   }
@@ -100,7 +104,7 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       } else {
         value = String(value == null ? "" : value).slice(0, SNAPSHOT_MAX_FIELD_CHARS);
       }
-      return { key: fieldKey(el), value: value, checked: !!el.checked };
+      return { key: fieldKey(el), value: value, checked: !!el.checked, secret: isSecretField(el) };
     });
     var custom = typeof handlers.snapshot === "function" ? handlers.snapshot() : null;
     if (custom != null) {
@@ -145,6 +149,10 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       var saved = fields[i];
       var el = resolveSnapshotField(saved.key);
       if (!el) continue;
+      if (saved.secret === true || isSecretField(el)) {
+        if (el.type === "checkbox" || el.type === "radio") el.checked = !!saved.checked;
+        continue;
+      }
       if (el.multiple) {
         var selected = Array.isArray(saved.value) ? saved.value : String(saved.value == null ? "" : saved.value).split(",");
         for (var j = 0; j < el.options.length; j++) el.options[j].selected = selected.indexOf(el.options[j].value) >= 0;
@@ -341,7 +349,8 @@ export interface PresenterBridge {
 }
 
 export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBridge {
-  const { View, post, live, snapshot, call } = createIframeView(
+  const queued: { type: string; payload?: unknown }[] = [];
+  const { View, post: postNow, live, snapshot, call } = createIframeView(
     async (method, args) => {
       switch (method) {
         case "page.ready":
@@ -392,8 +401,8 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
       }
     },
     () => {
-      post("model", opts.session.store.get());
-      post("settings", opts.settings?.() ?? {});
+      postNow("model", opts.session.store.get());
+      postNow("settings", opts.settings?.() ?? {});
       const state = opts.themeGet() as
         | { mode?: unknown; skin?: unknown; accent?: unknown }
         | null
@@ -403,10 +412,24 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
         : currentThemeMode();
       const skin = normalizeSkin(state?.skin ?? currentSkin());
       const accent = normalizeAccent(state?.accent ?? currentAccent());
-      post("theme", mode);
-      post("skin", { id: skin, accent, surface: skinSurface(skin, mode) });
+      postNow("theme", mode);
+      postNow("skin", { id: skin, accent, surface: skinSurface(skin, mode) });
       const snapshot = opts.takeSnapshot?.();
-      if (snapshot != null) post("restore", snapshot);
+      if (snapshot != null) postNow("restore", snapshot);
+
+      // A Presenter can become live after slow service startup or a
+      // replacement mount. Re-deliver the authoritative page state before
+      // queued enter/custom events so consumers observe query -> show -> enter.
+      const current = opts.session.snapshot();
+      postNow("query", current.query);
+      if (current.visible) postNow("show");
+      const queuedEvents = queued.splice(0);
+      for (const event of queuedEvents) {
+        if (["model", "settings", "theme", "skin", "restore", "query", "show", "hide"].includes(event.type)) {
+          continue;
+        }
+        postNow(event.type, event.payload);
+      }
     },
     {
       class: opts.iframeClass ?? "plugin-frame presenter-frame",
@@ -414,6 +437,21 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
       id: opts.pageId,
     }
   );
+  const post = (type: string, payload?: unknown): void => {
+    if (!live()) {
+      // Events are often produced while the iframe is still loading (first
+      // activation, slow service, replacement Presenter). Buffer them and
+      // replay after the authoritative model/query/show state.
+      if (queued.length >= 128) queued.shift();
+      queued.push({ type, payload });
+      return;
+    }
+    try {
+      postNow(type, payload);
+    } catch (err) {
+      console.error("[page-runtime] Presenter event could not be delivered:", type, err);
+    }
+  };
   const state = opts.themeGet() as { mode?: unknown; skin?: unknown; accent?: unknown } | null | undefined;
   const mode = state?.mode === "light" || state?.mode === "dark" ? state.mode : currentThemeMode();
   const skin = normalizeSkin(state?.skin ?? currentSkin());

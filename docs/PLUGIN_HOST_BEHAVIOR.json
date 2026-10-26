@@ -22,22 +22,66 @@
       "searchMode": "concurrent",
       "timeoutMsPerProvider": 6000,
       "maxRowsPerResult": 64,
-      "maxBytesPerPluginResult": 196608
+      "maxBytesPerPluginResult": 196608,
+      "syntheticRowsActivationOnly": true,
+      "drillRequiresSelect": true,
+      "featureRegexWorkerTimeoutMs": 50
     },
     "icons": {
       "httpSupported": false,
-      "allowedSchemes": ["data", "asset", "blob"],
+      "allowedSchemes": [
+        "data",
+        "asset",
+        "blob"
+      ],
       "relativePathsResolveAgainstPluginDir": true
+    },
+    "listTemplate": {
+      "enabled": true,
+      "usesProviderRowBudget": true,
+      "staleSearchesAreInvalidated": true,
+      "onShowOncePerDisplay": true
     }
   },
   "presenter": {
     "component": "page-runtime",
     "staleMountsAreCancelled": true,
     "supersededHandlesAreDisposed": true,
-    "destroyedSessionRemounts": false
+    "destroyedSessionRemounts": false,
+    "readyReplayOrder": [
+      "model",
+      "settings",
+      "theme",
+      "skin",
+      "snapshot",
+      "query",
+      "show",
+      "enter"
+    ],
+    "passwordValuesRedacted": true,
+    "switchResetsModalAndLayout": true
   },
   "logicHost": {
     "notReadyHooksCountTowardCircuitBreaker": false,
     "unloadRejectsPendingCalls": true
+  },
+  "pageService": {
+    "startupEventsQueued": true,
+    "replayOrder": [
+      "query",
+      "settings",
+      "filesDropped",
+      "show",
+      "enter"
+    ]
+  },
+  "privateFiles": {
+    "canonicalPluginDirectory": true,
+    "idMayDifferFromDirectoryName": true
+  },
+  "clipboard": {
+    "ownWriteGuard": "clipboard-sequence",
+    "preservesOuterWhitespace": true,
+    "htmlTruncation": "utf8-boundary"
   }
 }

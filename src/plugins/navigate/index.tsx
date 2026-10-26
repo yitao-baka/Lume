@@ -132,7 +132,10 @@ export function createNavigatePlugin(
     onShow: async () => { await session.show(); },
     onHide: async () => { await session.hide(); },
     onFilesDropped: (paths) => { void session.filesDropped(paths); },
-    menuActions: () => page.store as unknown,
+    menuActions: () => ({
+      ...page.store,
+      activateEntry: (app: AppEntry) => page.search.activateEntry(app),
+    }),
     snapshot: () => Promise.resolve({ pageRuntime: model() }),
     View: () => (
       <Show

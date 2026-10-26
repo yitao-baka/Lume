@@ -88,7 +88,9 @@ export default {
 
 - **返回条目** `{ name, path }` — 与原生结果同构：追加在原生索引结果之后
   （按 path 去重，总数封顶 20），激活时经 `launch_app` 打开（文件路径与
-  URL 都可以）。**图标**：条目的显式 `icon`（`data:`/`asset:`/`blob:` URI 或相对插件目录的路径；HTTP(S) 被拒绝；
+  URL 都可以）。只有 `enter: true` 的动作行可省略 `path`；`drill: true`
+  必须同时实际导出 `select`，否则该行被丢弃。合成行右键只提供激活，不能
+  Pin / 打开位置 / 管理员启动。**图标**：条目的显式 `icon`（`data:`/`asset:`/`blob:` URI 或相对插件目录的路径；HTTP(S) 被拒绝；
   也可给 `{ light, dark }` 两套，宿主按所在表面主题选一套）
   → 清单图标集（`icon_light`/`icon_dark`/`icon`）→ `path` 常规管线
   （取不到 → 未知图标回退）。
@@ -162,7 +164,9 @@ URI）。**类别匹配**：`files` 规则还可以写 `file_type = "folder"`（
 
 **免 HTML 的列表模式**：mode 插件声明 `template = "list"` 后不用写
 `view` —— 宿主用内置列表渲染 `search(q)` 返回的行（形状同 provider 结果），
-↑/↓/Enter/点击走 `onEnter(item)`。示例 `examples/plugins/list-demo/`。
+结果受 Provider 同款行数/字节预算和查询代际保护；首次显示只跑一次
+`onShow`。↑/↓/Enter/点击走 `onEnter(item)`。示例
+`examples/plugins/list-demo/`。
 
 ## 数据、私有文件与插件设置
 
@@ -185,7 +189,9 @@ await ctx.db.bulkDocs([{ _id: "a", text: "1" }, { _id: "b", text: "2" }]);
 文档，`storage.json` 已自动迁移并改名为 `storage.json.migrated`），新代码
 建议直接用 `db`。
 
-**② 私有文件 `ctx.fs`** — `<plugin>/files/`，**无需任何权限**（属于插件自己）：
+**② 私有文件 `ctx.fs`** — 实际插件目录下的 `files/`，**无需任何权限**
+（属于插件自己）。即使清单 `id` 与目录名不同，宿主也使用 canonical
+目录，升级/卸载同样如此：
 
 ```js
 const path = await ctx.fs.writeText("export.txt", text);   // → 绝对路径

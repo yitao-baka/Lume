@@ -49,6 +49,11 @@ export interface NavItem {
   icon?: string | PluginIconSpec;
   /** Render as a monochrome (currentColor-filtered) SVG tile. */
   mono?: boolean;
+  /** Semantic row metadata for the 推荐使用 section's context menu. */
+  rowKind?: AppEntry["rowKind"];
+  providerEnter?: AppEntry["providerEnter"];
+  providerDrill?: AppEntry["providerDrill"];
+  featureEnter?: AppEntry["featureEnter"];
 }
 
 /** One titled bar (栏目) on the empty-query Navigate main menu. Native bars
@@ -292,7 +297,7 @@ export function createNavigateStore(deps: NavigateDeps) {
               kind: "app",
               x: e.clientX,
               y: e.clientY,
-              app: { id: item.id, name: item.name, path: item.path },
+              app: item as AppEntry,
             });
         },
       });

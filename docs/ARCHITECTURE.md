@@ -286,13 +286,16 @@ environment.
 
 ### `clipboard.rs`
 - **Capture**: `spawn_listener` polls `GetClipboardSequenceNumber` every
-  250 ms on a background thread. On change it prefers text via `arboard`, else
-  reads an image (RGBA → PNG blob). The listener's own `copy_clipboard` writes
-  are skipped (`last_text` / `last_image_hash`).
+  250 ms on a background thread. On change it prefers text via `arboard`, then
+  file lists, then images (RGBA → PNG blob). Lume's own history-copy/paste
+  writes are skipped by exact clipboard sequence number, never by content, so
+  two external copies of identical content still create two events (or bump a
+  deduped row). Captured text keeps leading/trailing whitespace; rich HTML is
+  truncated only at a UTF-8 boundary.
 - **Store**: SQLite at `data_dir()/lume.db` (`rusqlite`, bundled).
   Text rows are deduplicated — a partial unique index on `content WHERE kind
   = 'text'` plus an explicit update-then-insert bumps recency instead of
-  duplicating. Auto-merged text rows are always downgraded to plain text
+  duplicating. Re-enabling dedup collapses historical duplicates to the newest row (carrying any pin) before recreating the unique index, so an off-period history can never prevent startup. Auto-merged text rows are always downgraded to plain text
   (`html = NULL`); concatenated pieces never keep stale rich-text markup.
   Images are stored as PNG blobs. Recency timestamps are forced
   strictly monotonic so ordering never ties.
@@ -314,7 +317,10 @@ environment.
   file probes and cache cleanup never run on Tauri's main thread.
 
 - **Copy back**: `copy_clipboard(id)` looks up the row — text via
-  `arboard::set_text`, images via PNG-decode → `set_image`.
+  `arboard::set_text`, images via PNG-decode → `set_image`. Auto-paste writes
+  the payload, hides or suppresses auto-hide according to `paste_close`, then
+  explicitly restores the recorded target HWND as foreground before SendInput;
+  focus failure is reported instead of claiming a paste.
 - **Ignored apps**: names use the same process-stem normalization as capture;
   `clipboard_ignore_app_icons` resolves icon paths from running windows, App
   Paths, Start Menu shortcuts and PATH off the IPC thread, then reuses the
@@ -543,7 +549,11 @@ before adding a field:
   routing, Presenter compatibility/fallback and built-in model schemas.
   `PageSession.publish` validates every service snapshot; a malformed or
   oversized model becomes a visible `model.invalid` page error instead of an
-  empty/crashed Presenter.
+  empty/crashed Presenter. Page Service lifecycle events queue across slow
+  startup and replay as query → settings → files → show/hide → enter.
+  Presenter mounts reset modal/layout ownership, buffer events until ready,
+  then replay model/query/show before enter. Auto snapshots never read
+  password values (fields carry `secret`; the host clears them again).
 - `src/page-services/` — built-in pages' logic layer. `navigate/service.ts`
   owns the bar registry, merged search pipeline, actions and drag-reorder;
   `clipboard/service.ts` wraps the Rust-backed clipboard store and publishes
@@ -568,7 +578,9 @@ before adding a field:
   fields are plugin-relative; Rust validates both the lexical path and the
   canonical target, and logic modules are read through a token-scoped Rust
   command. Snapshot caps run in-frame, at the bridge and again on Rust's
-  cross-window close report.
+  cross-window close report. Feature/window regexes execute in a dedicated
+  Worker with a 50 ms timeout; manifest arrays, strings and pattern lengths are
+  bounded before they reach the per-keystroke matcher.
 - `src/plugins/` — **every page below the search box is a plugin**.
   Built-in navigation and clipboard expose a thin internal `ModeInstance`
   shell adapter over `PageSession`; disk page modes enter the shared registry
@@ -693,8 +705,10 @@ before adding a field:
   below the normal results under a 推荐使用 divider. ↑/↓ cycle the
   bars on the empty main menu, ←/→ move within the active bar; on a query
   the arrows walk the one linear grid across the divider; mouse hover
-  selects, click launches. Context menus offer pin / launch / open location
-  / (recent: remove-from-recent) / admin.
+  selects, click launches. Plain app rows expose pin / launch / open location
+  / (recent: remove-from-recent) / admin; plugin synthetic rows (`enter`,
+  `drill`, feature, mode keyword) expose activation only, and Rust rejects
+  internal `lume-*` schemes from the pin store.
 - **Clipboard** renders a virtualized list (~30 DOM rows) with category tabs,
   multi-select merge paste and delete-with-undo. Row height comes from
   `clipboardRowHeight(skin, presenterId)`; the Presenter reports it through

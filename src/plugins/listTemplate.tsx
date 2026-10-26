@@ -28,6 +28,7 @@ import type {
 import type { ClipboardItem } from "../launcher/types";
 import { pickIcon, resolveIconInput } from "../launcher/iconSpec";
 import { callHook, manifestIconSpec, throttledLogicCall } from "./registry";
+import { sanitizeProviderRows } from "./contributionBudget";
 import { plog } from "./log";
 import { t } from "../i18n";
 
@@ -105,6 +106,21 @@ export function createListTemplateMode(
   const [loaded, setLoaded] = createSignal(false);
   const hook = (name: string, ...args: unknown[]) => callHook(m.id, logic, name, ...args);
   const defaultIcon = manifestIconSpec(m);
+  let searchGeneration = 0;
+  let shown = false;
+
+  const showLogic = () => {
+    if (shown) return;
+    shown = true;
+    hook("onShow");
+    services.scheduleResize();
+  };
+  const hideLogic = () => {
+    if (!shown) return;
+    shown = false;
+    searchGeneration++;
+    hook("onHide");
+  };
 
   const activateRow = (i: number) => {
     const item = rows()[i];
@@ -126,27 +142,47 @@ export function createListTemplateMode(
       throttledLogicCall(m.id, "onQuery", [q]);
     },
     search: async (q: string) => {
+      const token = services.searchToken();
+      const generation = ++searchGeneration;
+      const current = () =>
+        generation === searchGeneration &&
+        token === services.searchToken() &&
+        services.mode() === m.id;
       setQuerySig(q);
+      showLogic();
       try {
         const search = logic.search;
         if (typeof search !== "function") {
           plog.error(m.id, "list template needs search(q) — got", typeof search);
-          setRows([]);
+          if (current()) setRows([]);
         } else {
           const out = await (search as (q: string) => Promise<ProviderResult[]> | ProviderResult[])(q);
-          setRows(Array.isArray(out) ? out.filter((r) => r && typeof r.name === "string") : []);
+          if (!current()) return;
+          const bounded = sanitizeProviderRows(out);
+          if (bounded.droppedRows || bounded.truncated) {
+            plog.warn(
+              m.id,
+              `list rows budget applied: dropped=${bounded.droppedRows}` +
+                (bounded.truncated ? " (truncated)" : "")
+            );
+          }
+          setRows(bounded.value);
         }
       } catch (err) {
-        plog.error(m.id, "list search failed:", err);
-        setRows([]);
+        if (current()) {
+          plog.error(m.id, "list search failed:", err);
+          setRows([]);
+        }
+      } finally {
+        if (current()) {
+          setLoaded(true); // the loading gate opens even on an error — never stuck
+          services.scheduleResize();
+        }
       }
-      setLoaded(true); // the loading gate opens even on an error — never stuck
-      // ModeInstance contract: every search ends with a resize request.
-      services.scheduleResize();
     },
     reset: () => {
       setSelected(0);
-      hook("onShow");
+      showLogic();
       services.scheduleResize();
     },
     selected,
@@ -166,7 +202,8 @@ export function createListTemplateMode(
     pageKind: () => "main",
     restorePage: () => {},
     applySettings: () => {},
-    onHide: () => hook("onHide"),
+    onShow: showLogic,
+    onHide: hideLogic,
     onEnter: (info: FeatureEnterInfo) => hook("onFeature", info),
     onSubInput: (text: string) => throttledLogicCall(m.id, "onSubInput", [text]),
     onSettings: (values: Record<string, unknown>) => hook("onSettings", values),

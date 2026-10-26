@@ -1,10 +1,10 @@
 # 插件系统加固建议
 
-> 2026-10-26 的插件、导航与剪贴板联合审计见 [AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-26.md](./History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-26.md)；本文件继续只记录尚未实施的防御纵深建议。
+> 2026-10-26 的插件、导航与剪贴板联合审计见 [AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-26.md](./History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-26.md)；同日的第二轮专项报告见 [AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-26_R2.md](./History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-26_R2.md)。本文件继续只记录尚未实施的防御纵深建议。
 
 > 基线：`76a99eb`（2026-10-16）。复现件位于仓库本地 `test/`（scratch，
 > 不入库）。本文件只记录尚未实施的防御纵深建议；缺陷处置记录见
-> `CHANGELOG.md` 的 `[Unreleased]` 与 `docs/ROADMAP_HISTORY.md` #50/#51/#85。
+> `CHANGELOG.md` 的 `[Unreleased]` 与 `docs/ROADMAP_HISTORY.md` #50/#51/#85/#87。
 
 这些项目前都不构成可直接利用的漏洞：沙箱帧的 opaque origin 会让 raw
 `invoke` 被 Tauri 拒绝，且权限台账与 Rust 命令侧校验已按插件 id

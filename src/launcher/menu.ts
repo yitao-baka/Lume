@@ -11,7 +11,7 @@ import pinIcon from "../../res/icons/pin.svg";
 import pinnedIcon from "../../res/icons/pinned.svg";
 import runIcon from "../../res/icons/normal_run.svg";
 import { isUrl } from "./clipData";
-import type { AppEntry, MenuState } from "./types";
+import { isSyntheticAppEntry, type AppEntry, type MenuState } from "./types";
 
 /** The navigate-side actions the shared context menu needs — provided by the
  * navigate home page's store (structurally satisfied). */
@@ -19,6 +19,7 @@ export interface NavMenuActions {
   pinnedApps(): { path: string }[];
   toggleAppPin(app: AppEntry): void;
   launchApp(app: AppEntry, elevated?: boolean): void;
+  activateEntry(app: AppEntry): void | Promise<void>;
   revealInFolder(app: AppEntry): void;
   deleteRecent(app: AppEntry): void;
   activateFolder(idx: number, elevated: boolean): void;
@@ -52,6 +53,17 @@ export function buildMenuItems(deps: MenuDeps, m: MenuState): MenuItem[] {
   const { nav, clip } = deps;
   if (!m) return [];
   if (m.kind === "app") {
+    // Plugin feature/provider rows only have semantic activation. Their
+    // synthetic `lume-*` path is not a file, URL or safe pin target.
+    if (isSyntheticAppEntry(m.app)) {
+      return [
+        {
+          label: t("launch"),
+          icon: runIcon,
+          action: () => void nav.activateEntry(m.app),
+        },
+      ];
+    }
     const isPinned = nav.pinnedApps().some((p) => p.path === m.app.path);
     const items = [
       {

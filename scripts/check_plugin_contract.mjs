@@ -25,6 +25,12 @@ const iconSpec = read("src/launcher/iconSpec.ts");
 const presenterHost = read("src/page-runtime/presenterHost.ts");
 const clipboardService = read("src/page-services/clipboard/service.ts");
 const navigateSearch = read("src/plugins/navigate/search.ts");
+const pageRuntime = read("src/plugins/pageRuntimeMode.tsx");
+const presenterBridge = read("src/page-runtime/presenterBridge.tsx");
+const listTemplate = read("src/plugins/listTemplate.tsx");
+const pluginFs = read("src-tauri/src/plugin_fs.rs");
+const clipboard = read("src-tauri/src/clipboard.rs");
+const pluginGate = read("src-tauri/src/plugins.rs");
 
 check(registry.includes("logicLoadedIds.delete(id)"), "registry does not show the disable/unload boundary");
 check(registry.includes("sanitizeProviderRows"), "registry does not budget provider results");
@@ -33,6 +39,21 @@ check(iconSpec.includes("/^https?:/i.test(icon)"), "icon resolver does not rejec
 check(presenterHost.includes("mountGeneration"), "PresenterHost has no mount generation guard");
 check(clipboardService.includes("isInteractiveKeyTarget"), "clipboard Space handling does not exclude controls");
 check(navigateSearch.includes("asyncGeneration"), "Navigate provider work has no local generation guard");
+check(contract.pageService?.startupEventsQueued === true, "Page Service startup events must queue");
+check(pageRuntime.includes("flushPendingLifecycle"), "Page Service lifecycle flush is missing");
+check(contract.presenter?.passwordValuesRedacted === true, "Presenter password redaction contract drifted");
+check(presenterBridge.includes("isSecretField"), "Presenter bridge does not redact password fields");
+check(presenterBridge.includes("queued.splice(0)"), "Presenter bridge does not replay queued events");
+check(contract.honoredContributions.provider?.drillRequiresSelect === true, "Provider drill/select contract drifted");
+check(navigateSearch.includes("supportsSelect"), "Provider rows do not gate drill by select");
+check(contract.honoredContributions.provider?.featureRegexWorkerTimeoutMs === 50, "Feature regex timeout drifted");
+check(contract.honoredContributions.listTemplate?.usesProviderRowBudget === true, "List template budget contract drifted");
+check(listTemplate.includes("sanitizeProviderRows") && listTemplate.includes("searchGeneration"), "List template generation/budget guard is missing");
+check(contract.privateFiles?.canonicalPluginDirectory === true, "Private-file directory contract drifted");
+check(pluginFs.includes("plugin_dir_for_id"), "Private files do not use the canonical plugin directory");
+check(pluginGate.includes("MAX_FEATURES") && pluginGate.includes("MAX_REGEX_CHARS"), "Manifest fan-out/regex limits are missing");
+check(contract.clipboard?.ownWriteGuard === "clipboard-sequence", "Clipboard own-write contract drifted");
+check(clipboard.includes("self_write_seq") && clipboard.includes("retained_clipboard_text"), "Clipboard sequence/whitespace guard is missing");
 
 if (failures.length) {
   for (const failure of failures) console.error(`[plugin-contract] FAIL ${failure}`);

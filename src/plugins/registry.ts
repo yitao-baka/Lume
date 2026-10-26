@@ -854,6 +854,7 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           features: m.features ?? [],
           dir: m.dir,
           provider: {
+            hasHook: (name: string) => logicHasHook(m.id, name),
             search: async (q) => {
               const rows = await logicCall(m.id, "search", [q]).catch((err) => {
                 plog.error(m.id, "provider search failed:", err);
@@ -1422,38 +1423,87 @@ export function onPluginWindowClosed(
 // are cached per plugin+rule+pattern; a pattern matching the empty string is
 // dropped (it would fire on every keystroke — the same rule uTools applies).
 
-const featureRegexCache = new Map<string, RegExp | null>();
-
-function featureRegexCacheKey(pluginId: string, idx: number, pattern: string): string {
-  // NUL cannot occur in a plugin id or manifest pattern, so it is a safe
-  // separator for prefix invalidation (per-plugin clear on unload/reload).
-  return `${pluginId}\u0000${idx}\u0000${pattern}`;
+interface FeatureRegexJob {
+  id: string;
+  pattern: string;
 }
 
-function clearFeatureRegexCache(pluginId: string): void {
-  const prefix = `${pluginId}\u0000`;
-  for (const key of featureRegexCache.keys()) {
-    if (key.startsWith(prefix)) featureRegexCache.delete(key);
+const FEATURE_REGEX_TIMEOUT_MS = 50;
+const FEATURE_REGEX_MAX_JOBS = 256;
+const FEATURE_REGEX_MAX_QUERY_CHARS = 8192;
+let featureRegexWorker: Worker | undefined;
+let featureRegexRequestId = 0;
+const featureRegexPending = new Map<number, {
+  resolve: (matched: Set<string>) => void;
+  reject: (error: Error) => void;
+  timer: number;
+}>();
+
+function rejectFeatureRegexRequests(reason: Error): void {
+  featureRegexWorker?.terminate();
+  featureRegexWorker = undefined;
+  for (const pending of featureRegexPending.values()) {
+    window.clearTimeout(pending.timer);
+    pending.reject(reason);
   }
+  featureRegexPending.clear();
 }
 
-function compileFeatureRegex(pluginId: string, idx: number, pattern: string): RegExp | null {
-  const key = featureRegexCacheKey(pluginId, idx, pattern);
-  const hit = featureRegexCache.get(key);
-  if (hit !== undefined) return hit;
-  let out: RegExp | null = null;
-  try {
-    const re = new RegExp(pattern, "i");
-    if (re.test("")) {
-      plog.warn(pluginId, `feature[${idx}] regex matches the empty string — ignored`);
-    } else {
-      out = re;
+function clearFeatureRegexCache(_pluginId: string): void {
+  // The isolated worker caches compiled patterns. Plugin unload/reload is the
+  // natural point to discard that cache and any in-flight hostile match.
+  rejectFeatureRegexRequests(new Error("feature regex matcher reset"));
+}
+
+function ensureFeatureRegexWorker(): Worker {
+  if (featureRegexWorker) return featureRegexWorker;
+  if (typeof Worker === "undefined") {
+    throw new Error("feature regex worker is unavailable");
+  }
+  const worker = new Worker(new URL("./featureRegexWorker.ts", import.meta.url), {
+    type: "module",
+    name: "lume-feature-regex",
+  });
+  worker.onmessage = (event: MessageEvent<{ requestId: number; matched: string[] }>) => {
+    const pending = featureRegexPending.get(event.data?.requestId);
+    if (!pending) return;
+    featureRegexPending.delete(event.data.requestId);
+    window.clearTimeout(pending.timer);
+    pending.resolve(new Set(Array.isArray(event.data.matched) ? event.data.matched : []));
+  };
+  worker.onerror = () => rejectFeatureRegexRequests(new Error("feature regex worker failed"));
+  featureRegexWorker = worker;
+  return worker;
+}
+
+async function matchFeatureRegexes(
+  jobs: FeatureRegexJob[],
+  query: string
+): Promise<Set<string>> {
+  if (jobs.length === 0) return new Set();
+  if (query.length > FEATURE_REGEX_MAX_QUERY_CHARS) {
+    plog.warn(null, "feature regex query exceeded 8192 chars — regex rules skipped");
+    return new Set();
+  }
+  if (jobs.length > FEATURE_REGEX_MAX_JOBS) {
+    plog.warn(null, `feature regex jobs exceeded ${FEATURE_REGEX_MAX_JOBS} — extra rules skipped`);
+    jobs = jobs.slice(0, FEATURE_REGEX_MAX_JOBS);
+  }
+  const worker = ensureFeatureRegexWorker();
+  const requestId = ++featureRegexRequestId;
+  return new Promise<Set<string>>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      rejectFeatureRegexRequests(new Error("feature regex timed out"));
+    }, FEATURE_REGEX_TIMEOUT_MS);
+    featureRegexPending.set(requestId, { resolve, reject, timer });
+    try {
+      worker.postMessage({ requestId, query, patterns: jobs });
+    } catch (err) {
+      window.clearTimeout(timer);
+      featureRegexPending.delete(requestId);
+      reject(err instanceof Error ? err : new Error(String(err)));
     }
-  } catch (err) {
-    plog.error(pluginId, `feature[${idx}] bad regex "${pattern}":`, err);
-  }
-  featureRegexCache.set(key, out);
-  return out;
+  });
 }
 
 /** A fired entry rule: the row data + what the plugin receives on enter. */
@@ -1471,15 +1521,18 @@ function featureIcon(p: LauncherPlugin, f: PluginFeature): PluginIconSpec | unde
   return resolveThemedIcon(f.icon, f.iconLight, f.iconDark, p.dir) ?? p.icon;
 }
 
-/** Entry rules of enabled plugins matching a query (empty query → none). */
-export function featureMatches(q: string): FeatureMatch[] {
+/** Entry rules of enabled plugins matching a query (empty query → none).
+ * Regex rules run in a disposable worker so a pathological pattern cannot
+ * freeze the launcher's main thread. */
+export async function featureMatches(q: string): Promise<FeatureMatch[]> {
   const query = q.trim();
   if (!query) return [];
-  const out: FeatureMatch[] = [];
+  const candidates: { match: FeatureMatch; regexId?: string }[] = [];
+  const jobs: FeatureRegexJob[] = [];
   for (const p of plugins) {
     if (!isEnabled(p.id)) continue;
     const feats = (p as { features?: PluginFeature[] }).features ?? [];
-    feats.forEach((f, i) => {
+    feats.forEach((f) => {
       if (!f?.code) return;
       // files/img rules never match query text — fileFeatureMatches /
       // imgFeatureMatches own them.
@@ -1487,26 +1540,33 @@ export function featureMatches(q: string): FeatureMatch[] {
       const len = query.length;
       if (f.minLength != null && len < f.minLength) return;
       if (f.maxLength != null && len > f.maxLength) return;
-      let type: FeatureEnterInfo["type"] = "over";
-      if (f.regex) {
-        const re = compileFeatureRegex(p.id, i, f.regex);
-        if (!re || !re.test(query)) return;
-        type = "regex";
-      } else if (!f.over) {
-        return; // a rule with neither regex nor over never matches
-      }
       const icon = featureIcon(p, f);
-      out.push({
+      const match: FeatureMatch = {
         pluginId: p.id,
         code: f.code,
-        type,
+        type: f.regex ? "regex" : "over",
         payload: query,
         label: f.label || (p as { pluginName?: string }).pluginName || p.id,
         ...(icon ? { icon } : {}),
-      });
+      };
+      if (f.regex) {
+        const regexId = `${p.id}\u0000${f.code}\u0000${jobs.length}`;
+        jobs.push({ id: regexId, pattern: f.regex });
+        candidates.push({ match, regexId });
+      } else if (f.over) {
+        candidates.push({ match });
+      }
     });
   }
-  return out;
+  let matched = new Set<string>();
+  try {
+    matched = await matchFeatureRegexes(jobs, query);
+  } catch (err) {
+    plog.warn(null, `feature regex skipped: ${String(err)}`);
+  }
+  return candidates
+    .filter((candidate) => !candidate.regexId || matched.has(candidate.regexId))
+    .map((candidate) => candidate.match);
 }
 
 /** Extension → `fileType` category table (docs/ROADMAP_HISTORY.md #28). Curated, not
@@ -1611,12 +1671,13 @@ export function imgFeatureMatches(): FeatureMatch[] {
  * matches (symmetric with a text rule that has neither regex nor over).
  * The payload carries the matched window info so a plugin can adapt (e.g.
  * offer actions for the file the user is looking at). */
-export function windowFeatureMatches(fg: ForegroundInfo | null): FeatureMatch[] {
+export async function windowFeatureMatches(fg: ForegroundInfo | null): Promise<FeatureMatch[]> {
   if (!fg) return [];
   const process = fg.process.toLowerCase();
   const processStem = process.replace(/\.exe$/, "");
   const className = fg.className.toLowerCase();
-  const out: FeatureMatch[] = [];
+  const candidates: { match: FeatureMatch; regexIds: string[] }[] = [];
+  const jobs: FeatureRegexJob[] = [];
   for (const p of plugins) {
     if (!isEnabled(p.id)) continue;
     const feats = (p as { features?: PluginFeature[] }).features ?? [];
@@ -1628,31 +1689,47 @@ export function windowFeatureMatches(fg: ForegroundInfo | null): FeatureMatch[] 
       if (procs.length === 0 && classes.length === 0 && titles.length === 0) return;
       if (procs.length > 0 && !procs.some((v) => v === process || v === processStem)) return;
       if (classes.length > 0 && !classes.includes(className)) return;
-      if (titles.length > 0 && !titles.some((v) => titleValueMatches(p.id, idx, v, fg.title))) return;
+      const regexIds: string[] = [];
+      if (titles.length > 0) {
+        const plainMatch = titles.some((value) => {
+          const wrapped = /^\/(.*)\/$/.exec(value.trim());
+          return !wrapped && fg.title.toLowerCase().includes(value.toLowerCase());
+        });
+        if (!plainMatch) {
+          for (let ti = 0; ti < titles.length; ti++) {
+            const wrapped = /^\/(.*)\/$/.exec(titles[ti].trim());
+            if (!wrapped) continue;
+            const regexId = `${p.id}\u0000window\u0000${idx}\u0000${ti}`;
+            regexIds.push(regexId);
+            jobs.push({ id: regexId, pattern: wrapped[1] });
+          }
+          if (regexIds.length === 0) return;
+        }
+      }
       const icon = featureIcon(p, f);
-      out.push({
-        pluginId: p.id,
-        code: f.code,
-        type: "window",
-        payload: "",
-        window: fg,
-        label: f.label || (p as { pluginName?: string }).pluginName || p.id,
-        ...(icon ? { icon } : {}),
+      candidates.push({
+        match: {
+          pluginId: p.id,
+          code: f.code,
+          type: "window",
+          payload: "",
+          window: fg,
+          label: f.label || (p as { pluginName?: string }).pluginName || p.id,
+          ...(icon ? { icon } : {}),
+        },
+        regexIds,
       });
     });
   }
-  return out;
-}
-
-/** One `title` matcher value: a case-insensitive substring, or a regex when
- * wrapped in `/…/` (compiled through the same cache/guards as the text-rule
- * patterns — same plugin+rule key space, invalid and empty-matching patterns
- * are dropped). */
-function titleValueMatches(pluginId: string, ruleIdx: number, value: string, title: string): boolean {
-  const wrapped = /^\/(.*)\/$/.exec(value.trim());
-  if (!wrapped) return title.toLowerCase().includes(value.toLowerCase());
-  const re = compileFeatureRegex(pluginId, ruleIdx, wrapped[1]);
-  return re ? re.test(title) : false;
+  let matched = new Set<string>();
+  try {
+    matched = await matchFeatureRegexes(jobs, fg.title);
+  } catch (err) {
+    plog.warn(null, `window feature regex skipped: ${String(err)}`);
+  }
+  return candidates
+    .filter((candidate) => candidate.regexIds.length === 0 || candidate.regexIds.some((id) => matched.has(id)))
+    .map((candidate) => candidate.match);
 }
 
 /** Whether any enabled plugin declares a `type = "window"` rule — gates the

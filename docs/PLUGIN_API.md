@@ -261,11 +261,11 @@ export default function create(ctx) {
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | 是 | 结果条目显示名（网格里单行省略）。 |
-| `path` | string | — | 文件绝对路径 **或** URL。声明了 `enter` 的条目可省略（动作条目不打开任何东西，宿主生成合成去重键）。激活时经 `launch_app`（`ShellExecuteW`）打开。 |
+| `path` | string | 条件 | 文件绝对路径 **或** URL。只有声明了 `enter`（或带有效 `select` 的 `drill`）的动作条目可以省略；仅 `path` 的普通行必须提供它。没有 `path` 且没有动作的行会被丢弃。激活普通行时经 `launch_app`（`ShellExecuteW`）打开。 |
 | `description` | string | — | 可选副行，显示在名字下方（结果网格两行形态）。 |
 | `icon` | string \| `{ light?, dark? }` | — | 可选显式图标：字符串形式是 `data:`/`asset:`/`blob:` URI 或文件路径（HTTP(S) 被拒绝；相对路径相对插件目录）；`{ light, dark }` 为两套变体（取值规则相同），宿主按所在表面主题选一套并按原样渲染。省略（或对象里一个都没有）= 用插件清单的图标集；都没有才走 `path` 的常规图标管线。 |
 | `enter` | boolean | — | 标记：激活本条目**不调 `launch_app`**，改为回调 provider 的 `onEnter(item)`；启动器保持打开，插件自行决定何时 `ctx.app.hide()`。 |
-| `drill` | boolean | — | 声明下钻行：激活改为调 `select(item)`（§10.2）。 |
+| `drill` | boolean | — | 声明下钻行：激活改为调 `select(item)`（§10.2）。插件必须实际导出 `select`；缺少实现时该行在进入网格前被丢弃。 |
 
 #### `enter` 动作条目
 
@@ -294,6 +294,7 @@ export default function create(ctx) {
 - 与原生条目激活路径的差异：`onEnter` 抛错/缺失只记控制台日志；启动器**不隐藏**
   （与 `app.revealPath` 同一哲学 — 做完动作往往还要继续搜，隐藏由插件决定）。
 - 普通条目（无 `enter`）激活路径不变：`launch_app` 打开 `path`。
+- Provider 合成行（`enter` / `drill`）只有“激活”语义。共享右键菜单不提供 Pin、打开位置或管理员启动，`pin_app` 也拒绝 `lume-*` 内部 scheme。
 
 ### 5.2 调用时机与结果合并
 
@@ -310,7 +311,10 @@ export default function create(ctx) {
   4. 每个 provider 每次最多返回 **64** 行、总计 **192 KiB**；坏形状、超长字段、
      非有限数值和超预算行被丢弃并由宿主记录；
   5. 整个过程同时用根搜索令牌与页面本地 generation 守卫；新查询、模式切换、
-     页面隐藏或重置都会使旧结果失效。
+     页面隐藏或重置都会使旧结果失效；
+  6. feature/window 正则不在主线程直接执行。宿主把它们交给短生命周期 Worker，
+     50 ms 未返回即终止 Worker 并丢弃本次正则行；清单同时限制 feature 数量、
+     pattern 长度与匹配数组长度。
 - **激活路径**：普通条目与原生条目完全一致 — 点击/Enter → `launch_app`
   （URL 走默认浏览器，文件走 ShellExecute）。**图标优先级**：条目的
   显式 `icon`（字符串或 `{light,dark}` 两套；URI 或相对插件目录的
@@ -497,9 +501,11 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 
 ### 6.3 状态重放与就绪握手
 
-桥接脚本在 `<head>`、页面自己的 `lume.on.*` 赋值在 `</body>` 之前——所以宿主
-**不会**在 iframe 一挂载就推事件。页面 `load` 后桥接发 `__lumeReady`，宿主
-随即重放当前状态：`query` → `show` → 本次进入载荷 `enter`（若有）。含义：
+Page Service 在慢 `getModel()`/首次挂载期间收到的事件不会丢失：宿主按
+`query` → `settings` → `filesDropped` → `show`/`hide` → `enter` 顺序排队，
+服务就绪后补投。Presenter 侧也按 generation 缓冲 `enter`/自定义事件；iframe
+发 `__lumeReady` 后，宿主先重放当前 model、settings、theme、skin、快照，
+再重放 `query` → `show` → 本次 `enter`（若有）。含义：
 
 1. 页面脚本请同步赋值 `lume.on.*`（异步赋值会错过首播）；
 2. 重复收到同一 `show`/`query` 是正常的，处理器应幂等；
@@ -541,7 +547,8 @@ Presenter 在 detach、窗口关闭回流或 keep-alive LRU 淘汰前接收
   放弃快照。Rust 的 `plugin_window_close_report` 另有字节上限，超限时以无
   快照关闭，不拒绝关闭窗口。
 - 新 `enter` 清除旧会话帧，新的页面载荷优先于任何迟到快照。`password`
-  字段只保存 checked 等状态，不读取值。
+  字段（以及宿主复检到的 `secret` 标记）永不读取 value，只保留 checked 等
+  非秘密状态；恢复时也跳过密码字段。
 
 ### 6.5 搜索框共享语义
 
@@ -1509,7 +1516,8 @@ export default {
   行随输入刷新；**没实现 `filter`** 则搜索框保持常规语义——一旦继续输入会运行
   普通搜索并离开下钻层（行为可预期，不静默）。
 - 下钻行同样支持 `enter`/`icon`/`description`；`select`/`filter` 抛错只记日志
-  并 toast，不影响其它 provider。
+  并 toast，不影响其它 provider。`drill: true` 但未导出 `select` 的行不会出现在
+  网格中，避免生成无法激活的合成条目。
 
 ### 10.3 插件互跳（`app.redirect`）
 
@@ -1538,12 +1546,15 @@ Solid 列表组件渲染其行；键盘 ↑/↓/Enter 走共享导航（宿主�
 
 - **`search(q) → 行数组`（必需）**：行形状与 provider 结果相同
   （`{ name, path?, description?, icon? }`，`name` 必填；`icon` 同样接受
-  `{ light, dark }`，省略时用插件清单的图标集）。
+  `{ light, dark }`，省略时用插件清单的图标集）。结果经过与 Provider 相同的
+  64 行 / 192 KiB 预算，并由搜索令牌 + 本地 generation 双重守卫；慢的旧查询
+  不能覆盖较新的输入。
 - `onEnter(item)`（可选）：行激活。启动器保持打开 —— 插件自己决定何时
   `ctx.app.hide()`。
 - 可选钩子 `onShow` / `onHide` / `onQuery(q)` / `onSubInput` / `onSettings` 与
-  provider/service 相同；`[[features]]` 命中投递到 `onFeature(info)`（mode 在
-  切页后收，同 §9.1）。`[[settings]]` 照常生效。
+  provider/service 相同；首次进入、模式栏激活与 `reset()` 共享同一个 shown
+  门控，`onShow` 每次显示只执行一次。`[[features]]` 命中投递到
+  `onFeature(info)`（mode 在切页后收，同 §9.1）。`[[settings]]` 照常生效。
 - `view` 字段被忽略；`height` / `icon` / `keywords` 照常。
 
 示例：`examples/plugins/list-demo/`（零 HTML，文档库 + 剪贴板 + features）。
@@ -1599,6 +1610,9 @@ await ctx.fs.removePrivate("export.txt");                // 不存在也算成�
 ```
 
 - 私有目录属于插件自己：**不需要任何权限**，随插件目录一起被用户掌控/删除。
+- 目录位置以清单对应的 canonical 插件目录为准：合法的 `id != 目录名` 会落到
+  实际安装目录下的 `files/`，不会按 id 再拼出一个新目录。升级与卸载也使用同一
+  目录；路径在解析后再次校验必须位于 `<base>/plugins/` 内。
 - `name` 只能是**文件名**（不能带 `/`、`\`、`:`，不能是 `.`/`..`，不能以空格或点
   结尾，不能是 `NUL`/`CON`/`COM1`… 这类 Windows 保留设备名——`<dir>\NUL` 是设备
   不是文件，naive 拼接会静默丢弃内容），上限 120 字符、单文件 10 MiB。
@@ -1722,7 +1736,7 @@ Rust 侧（`plugin_install.rs`）语义：
 | 校验 | 清单解析（`parse_manifest`）+ 必须显式声明 `id`（包内无目录名可回退）+ `valid_plugin_id` 字符集；entry 名逐段守卫（`\`→`/` 规范化——PowerShell 兼容、拒绝绝对路径/`..`/保留设备名/控制字符/结尾空格点、单段 ≤120 字符）；单文件 ≤64 MiB、总解压 ≤256 MiB、条目 ≤4096；前两者按**实测**解压字节判定（zip 头部声明的未压缩大小可伪造——解压/哈希时逐块计数，声明与实测不一致的包直接拒绝）；`LUME.SIGN` 是签名元数据，不计入 payload 文件数与字节数 |
 | 换位 | 解压到 `<base>/data/install-staging/<id>-<ts>`（**不在 `plugins/` 下**——半成品不会被扫描发现）→ 旧安装 rename 到 staging 备份 → rename 到位（**失败自动还原旧安装**）→ 旧安装私有 `files/` 移入新目录（目录名常量在 `plugin_fs::PRIVATE_FILES_DIRNAME`；无则跳过，双方都有则逐项合并、**旧数据赢**同路径冲突；恢复失败把旧安装改名 `<id>-files-recovery-<pid>` 留在 `plugins/` 待手动处理——数据安全前不删备份）→ 清备份 |
 | 生效 | 双事件：`settings-applied`（清单刷新）+ `plugin-reload`（已加载模块立即从新文件重 import——**升级无需重启**） |
-| 卸载 | 删 `<plugins>/<id>/`（私有 `files/` 随目录走——它就在插件目录里；`data/plugin_store.db` 的文档**保留**）；目录不存在不算错（重复卸载幂等） |
+| 卸载 | 删清单 id 对应的 canonical 插件目录（私有 `files/` 随目录走——它就在插件目录里；`data/plugin_store.db` 的文档**保留**）；目录不存在不算错（重复卸载幂等） |
 | 残留 | staging 目录在启动时整体清理（崩溃/被杀不留垃圾） |
 
 ---
@@ -1824,9 +1838,12 @@ settings 类无权限命令对 main 窗口内的帧仍按声称 id 计——彻�
 | 重新启用 | 下一次清单刷新按普通加载流程重建；未重启不保留旧逻辑帧。 |
 | `navBars` 预算 | 单插件最多 8 栏 / 120 项 / 192 KiB；整页最多 32 栏 / 320 项 / 512 KiB。超限逐项截断或丢弃该栏目，空查询首页继续渲染。 |
 | Provider 预算 | 单次结果最多 64 行 / 192 KiB；单行最多 16 KiB；坏字段与非有限数值整行丢弃。 |
-| Provider 搜索 | 原生结果先发布；provider 并发查询，单插件 6s 超时，完成一个增量合并一个。 |
+| Provider 搜索 | 原生结果先发布；provider 并发查询，单插件 6s 超时，完成一个增量合并一个。feature/window 正则由可终止 Worker 执行，50 ms 超时。 |
+| 合成行菜单 | `enter` / `drill` / feature / mode 行只提供语义激活；不显示 Pin、打开位置或管理员启动，Rust `pin_app` 拒绝 `lume-*` scheme。 |
+| 冷启动生命周期 | Page Service 就绪前排队 query/settings/files/show/hide/enter，完成 `getModel()` 后按契约顺序补投；Presenter ready 重放 model/settings/theme/skin/snapshot/query/show。 |
+| 快照秘密字段 | auto snapshot 对 `input[type=password]` 只保存 checked 等非秘密状态，宿主对 `secret` 字段再次清空 value，恢复时跳过密码输入。 |
 | 异步旧结果 | Provider search/select/filter 与 Presenter mount 均带 generation；新查询、隐藏、重置、模式切换或下一次 mount 使旧结果失效。 |
-| Presenter 切换 | 旧 factory/ready 完成后直接 dispose，不写当前句柄或状态；destroyed Page Session 拒绝重挂载。 |
+| Presenter 切换 | 旧 factory/ready 完成后直接 dispose，不写当前句柄或状态；destroyed Page Session 拒绝重挂载；新 mount 开始时 modal/layout 复位为空。 |
 | HTTP(S) 图标 | 不支持；清单图标只接受插件目录内相对路径，Provider/navBars 行图标只接受 `data:`、`asset:`、`blob:` 或本地路径。远程取图必须走声明 `network` 的 `http.request` 并自行转成允许的形式。 |
 | 未就绪 hook | `logic not loaded` 快速失败且不计入熔断；卸载会立即拒绝该插件全部 pending call。 |
 
@@ -1930,6 +1947,10 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
   `service` / `logic` role 边界、异步 `navBars`、长结果 ID 激活、分离窗口
   query 重放、逻辑 listener/pending 清理与重复重载。
 - `cdp_plugin_nav_clipboard_fix_verify.mjs` — 专项边界回归：禁用即卸载且拒绝能力、清单 id 门、`navBars`/Provider 总预算、Provider 下钻代际、HTTP(S) 图标拒绝、剪贴板按钮原生 Space 与批量文件存在性异步命令。
+- `cdp_audit_r2_verify.mjs` — 第二轮专项回归：慢 Page Service 冷启动生命周期
+  顺序、Presenter 密码字段脱敏、Provider 无效 drill/无路径行丢弃、合成行菜单与
+  pin 拒绝、列表模板延迟查询代际/onShow、剪贴板跨载荷重复与首尾空白、灾难性
+  feature 正则的 Worker 超时隔离。
 - `cdp_page_runtime_verify.mjs` — 导航/剪贴板 Page Runtime：双 Presenter、
   选择保持、剪贴板单次查询、真实滚动渐隐、虚拟窗口与尺寸/设置恢复。
 - `cdp_plugin_window_verify.mjs` — 独立窗口：分离 →
@@ -1971,6 +1992,9 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
   RPC 轨迹；数据与设置面可验设置项渲染与改动后插件 toast、以及未声明能力
   的拒绝文案；`detachable` 模式可验「在独立窗口打开」→ 窗口内 toast/resize
   → Esc 关闭 → 再分离原位恢复（§6.8）。
+- 剪贴板 `paste_close = false` 使用真实 WinForms 文本框：目标框必须收到
+  Ctrl+V 内容，启动器搜索框保持原值；目标窗口关闭/拒绝前台时前端必须显示
+  失败而不是成功。
 
 
 ---

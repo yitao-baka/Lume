@@ -28,8 +28,23 @@ fn init_pins(conn: &Connection) -> rusqlite::Result<()> {
             path       TEXT NOT NULL UNIQUE,
             name       TEXT NOT NULL,
             created_at INTEGER NOT NULL
-        );",
+        );
+        -- Earlier builds could persist Navigate's synthetic row keys. They are
+        -- not launch targets; drop them while opening the pin store.
+        DELETE FROM pinned_apps WHERE lower(path) LIKE 'lume-%';",
     )
+}
+
+/// Pins must point at something ShellExecute can launch. Navigate's internal
+/// `lume-*` schemes exist only as in-memory row identities.
+fn validate_pin_target(path: &str) -> Result<(), String> {
+    if path.is_empty() || path.len() > 32768 || path.chars().any(|c| c == '\0' || c.is_control()) {
+        return Err("invalid pin target".into());
+    }
+    if path.to_ascii_lowercase().starts_with("lume-") {
+        return Err("internal lume rows cannot be pinned".into());
+    }
+    Ok(())
 }
 
 /// Pins in the order they were added (oldest first).
@@ -106,6 +121,7 @@ pub fn get_pinned_apps(state: State<PinsState>) -> Result<Vec<PinnedApp>, String
 /// Pin an app (by `.lnk` path + display name). Idempotent.
 #[tauri::command]
 pub fn pin_app(path: String, name: String, state: State<PinsState>) -> Result<(), String> {
+    validate_pin_target(&path)?;
     let conn = state.0.lock().unwrap();
     add_pin(&conn, &path, &name).map_err(|e| e.to_string())
 }
@@ -161,6 +177,35 @@ mod tests {
         let pins = list_pins(&conn).unwrap();
         assert_eq!(pins.len(), 1);
         assert_eq!(pins[0].name, "Beta");
+    }
+
+    #[test]
+    fn internal_navigate_rows_are_not_pinnable() {
+        assert!(validate_pin_target("lume-feature://hidden-mode/note").is_err());
+        assert!(validate_pin_target("LUME-MODE://clipboard").is_err());
+        assert!(validate_pin_target("C:/Windows/notepad.exe").is_ok());
+        assert!(validate_pin_target("https://example.com").is_ok());
+    }
+
+    #[test]
+    fn opening_a_legacy_store_drops_internal_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE pinned_apps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            INSERT INTO pinned_apps(path, name, created_at) VALUES
+                ('lume-feature://old/row', 'Old plugin row', 1),
+                ('C:/real.lnk', 'Real app', 2);",
+        )
+        .unwrap();
+        init_pins(&conn).unwrap();
+        let pins = list_pins(&conn).unwrap();
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0].path, "C:/real.lnk");
     }
 
     #[test]

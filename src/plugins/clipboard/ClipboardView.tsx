@@ -406,6 +406,8 @@ export function ClipboardView(props: ClipboardViewProps) {
             class="clip-status-btn"
             classList={{ paused: clip.clipPaused() }}
             title={clip.clipPaused() ? t("clipResume") : t("clipPause")}
+            disabled={clip.pauseBusy()}
+            aria-busy={clip.pauseBusy()}
             onClick={clip.toggleClipPause}
           >
             {clip.clipPaused() ? t("clipResume") : t("clipPause")}
@@ -452,7 +454,12 @@ export function ClipboardView(props: ClipboardViewProps) {
               >
                 {t("cancel")}
               </button>
-              <button class="clip-confirm-ok" onClick={clip.doClear}>
+              <button
+                class="clip-confirm-ok"
+                disabled={clip.clearBusy()}
+                aria-busy={clip.clearBusy()}
+                onClick={clip.doClear}
+              >
                 {t("clipClear")}
               </button>
             </div>

@@ -11,6 +11,7 @@ pnpm install
 pnpm exec tsc --noEmit
 pnpm run test:page-runtime
 pnpm run test:clipboard-model
+pnpm run test:clipboard-store
 pnpm run test:skin-system
 pnpm run test:plugin-contract
 pnpm run build
@@ -37,6 +38,11 @@ fall back per row, large text becomes a 4,096-character preview, the multi-file
 preview is shortened by both entry count and serialized bytes, and both
 clipboard Presenters' fade conditions follow real `scrollTop` / `clientHeight` /
 `scrollHeight` geometry rather than the overscanned window offset.
+
+`pnpm run test:clipboard-store` drives the real clipboard store with a failing
+and delayed IPC mock. It checks that pause changes follow Rust acknowledgement,
+clear waits for the backend before closing/refreshing, clear/delete/undo failures
+surface localized toasts and preserve retryable UI state.
 
 `pnpm run test:skin-system` loads the same modules through Vite SSR and checks
 skin normalization, the four shared surfaces, clipboard row heights, accent
@@ -86,6 +92,13 @@ multi-select badges, clear-dialog focus, and search focus restoration after
 closing that dialog. It also asserts that one clipboard mode switch performs
 exactly one database search and that both Presenter fade edges flip only at the
 real top/bottom scroll positions.
+
+The second-round audit boundary uses `node scripts/cdp_audit_r2_verify.mjs`.
+It covers slow Page Service cold-start replay order, Presenter password
+redaction, provider action/drill validity, synthetic-row menu and pin refusal,
+list-template delayed-query generations plus one `onShow`, cross-kind clipboard
+duplicates / whitespace preservation, and catastrophic feature-regex timeout
+isolation.
 
 The disk plugin reference path uses
 `node scripts/cdp_file_search_presenter_verify.mjs`. It mounts
@@ -621,10 +634,12 @@ dev URL instead.
    string row keeps `invert(1)`; the detached window's taskbar HICON is the
    raw uploaded variant per the plugin's effective mode. `--legacy` reruns
    only the legacy single-icon taskbar branch (dark still inverts).
-9. **Manual item** — real OS file drag into the launcher, real UAC prompts,
-   service/agent registration, taskbar AUMID pinning and actual drag of a
-   detached-window titlebar cannot be fully automated; use the sections above
-   plus `docs/PLUGIN_API.md` §10.
+10. **Manual item** — real OS file drag into the launcher, real UAC prompts,
+    service/agent registration, taskbar AUMID pinning and actual drag of a
+    detached-window titlebar cannot be fully automated; use the sections above
+    plus `docs/PLUGIN_API.md` §10. Real paste-target focus is exercised with a
+    WinForms text box and `paste_close = false`; the target must receive the
+    payload while the launcher search box remains unchanged.
 
 ## Known hotkey conflicts
 

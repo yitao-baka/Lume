@@ -105,7 +105,14 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
   let serviceStarted = false;
   let needsServiceRestart = false;
   let lastMountAttempt = 0;
-  let pendingQuery = "";
+  let pendingQuery: string | null = null;
+  let pendingShow: boolean | null = null;
+  let pendingSettings: Record<string, unknown> | null = null;
+  let pendingFilesDropped: string[] | null = null;
+  let pendingEnter: { has: boolean; info?: unknown } = { has: false };
+  let pendingPresenterEnter: { has: boolean; info?: unknown } = { has: false };
+  let pendingPresenterSettings: Record<string, unknown> | null = null;
+  let lifecycleGeneration = 0;
   let presenterSettings: Record<string, Record<string, unknown>> = {};
   const htmlCache = new Map<string, string>();
 
@@ -144,6 +151,11 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
           ...(report.height != null ? { height: report.height } : {}),
           ...(report.expanded != null ? { expanded: report.expanded } : {}),
         });
+      } else {
+        // Presenter-owned layout is scoped to that Presenter generation. A
+        // replacement that has not reported yet must use the page default,
+        // never the old Presenter's height.
+        setLayout({ sizing: "fixed" });
       }
     },
     onModel: (model) => {
@@ -172,9 +184,39 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     }
   }
 
+  /** Replay service lifecycle events in contract order after a slow first
+   * getModel(). Taking the snapshot before awaiting lets new input update the
+   * next slot instead of being dropped behind this flush. */
+  async function flushPendingLifecycle(): Promise<void> {
+    if (!serviceStarted || !session) return;
+    const generation = lifecycleGeneration;
+    const query = pendingQuery;
+    const show = pendingShow;
+    const settings = pendingSettings;
+    const files = pendingFilesDropped;
+    const enter = pendingEnter;
+    pendingQuery = null;
+    pendingShow = null;
+    pendingSettings = null;
+    pendingFilesDropped = null;
+    pendingEnter = { has: false };
+
+    if (query !== null) await session.setQuery(query);
+    if (generation !== lifecycleGeneration) return;
+    if (settings !== null) await session.settings(settings);
+    if (generation !== lifecycleGeneration) return;
+    if (files !== null) await session.filesDropped(files);
+    if (generation !== lifecycleGeneration) return;
+    if (show === true) await session.show();
+    else if (show === false) await session.hide();
+    if (generation !== lifecycleGeneration) return;
+    if (enter.has) await session.enter(enter.info);
+  }
+
   async function ensureStarted(): Promise<void> {
     if (serviceStarted) return;
     if (startPromise) return startPromise;
+    const generation = lifecycleGeneration;
     const attempt = (async () => {
       if (needsServiceRestart && deps.restartService) {
         await deps.restartService();
@@ -187,8 +229,9 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
         throw error;
       }
       await session!.start(remoteService);
+      if (generation !== lifecycleGeneration) return;
       serviceStarted = true;
-      if (pendingQuery) await session!.setQuery(pendingQuery);
+      await flushPendingLifecycle();
     })();
     startPromise = attempt;
     try {
@@ -291,6 +334,16 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
         }
       }
 
+      if (pendingPresenterSettings !== null) {
+        next.post("settings", pendingPresenterSettings);
+        titlebarBridge?.post("settings", pendingPresenterSettings);
+        pendingPresenterSettings = null;
+      }
+      if (pendingPresenterEnter.has) {
+        next.post("enter", pendingPresenterEnter.info);
+        titlebarBridge?.post("enter", pendingPresenterEnter.info);
+        pendingPresenterEnter = { has: false };
+      }
       next.postModel(ctx.model);
       return {
         ready: async () => {
@@ -386,7 +439,10 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
         if (failed()) retryIfDue();
         else void mount().catch(() => {});
       }
-      if (serviceStarted) await session?.setQuery(q);
+      if (serviceStarted) {
+        pendingQuery = null;
+        await session?.setQuery(q);
+      }
       postBoth("query", q);
       deps.services.scheduleResize();
     },
@@ -472,18 +528,57 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     },
     onShow: async () => {
       retryIfDue();
-      if (serviceStarted) await session?.show();
+      pendingShow = true;
+      postBoth("show");
+      if (serviceStarted) {
+        pendingShow = null;
+        await session?.show();
+      } else if (startPromise) {
+        await startPromise;
+      }
     },
-    onHide: async () => { await session?.hide(); },
+    onHide: async () => {
+      pendingShow = false;
+      postBoth("hide");
+      if (serviceStarted) {
+        pendingShow = null;
+        await session?.hide();
+      } else if (startPromise) {
+        await startPromise;
+      }
+    },
     onEnter: (info) => {
       // A new declarative entry is a new page session payload: stale
       // view/titlebar frames from the previous visit must not overwrite it.
       dropSessionFrames(m.id);
-      void session?.enter(info);
+      pendingEnter = { has: true, info };
+      pendingPresenterEnter = { has: true, info };
       postBoth("enter", info);
+      if (bridge || titlebarBridge) pendingPresenterEnter = { has: false };
+      if (serviceStarted) {
+        pendingEnter = { has: false };
+        void session?.enter(info).catch((err) => console.error("[page-runtime] onEnter failed:", err));
+      } else {
+        void ensureStarted().catch((err) => console.error("[page-runtime] onEnter start failed:", err));
+      }
     },
-    onSettings: (values) => { void session?.settings(values); postBoth("settings", values); },
-    onFilesDropped: (paths) => { void session?.filesDropped(paths); },
+    onSettings: (values) => {
+      pendingSettings = values;
+      pendingPresenterSettings = values;
+      postBoth("settings", values);
+      if (bridge || titlebarBridge) pendingPresenterSettings = null;
+      if (serviceStarted) {
+        pendingSettings = null;
+        void session?.settings(values).catch((err) => console.error("[page-runtime] onSettings failed:", err));
+      }
+    },
+    onFilesDropped: (paths) => {
+      pendingFilesDropped = paths;
+      if (serviceStarted) {
+        pendingFilesDropped = null;
+        void session?.filesDropped(paths).catch((err) => console.error("[page-runtime] onFilesDropped failed:", err));
+      }
+    },
     snapshot: () => bridge?.snapshot() ?? Promise.resolve(null),
     View,
   };
@@ -605,6 +700,16 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       });
     },
     dispose: async () => {
+      lifecycleGeneration++;
+      pendingQuery = null;
+      pendingShow = null;
+      pendingSettings = null;
+      pendingFilesDropped = null;
+      pendingEnter = { has: false };
+      pendingPresenterEnter = { has: false };
+      pendingPresenterSettings = null;
+      bridge = undefined;
+      titlebarBridge = undefined;
       await session?.dispose();
     },
   };

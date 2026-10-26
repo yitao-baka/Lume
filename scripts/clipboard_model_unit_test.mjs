@@ -112,8 +112,10 @@ try {
   const onePixel = scroll.clipboardScrollFades(1, 200, 2000);
   const nearBottom = scroll.clipboardScrollFades(1799, 200, 2000);
   const atBottom = scroll.clipboardScrollFades(1800, 200, 2000);
+  const fractionalBottom = scroll.clipboardScrollFades(1799.2, 200, 2000);
   check("top fade appears on the first real scrolled pixel", !atTop.top && onePixel.top, JSON.stringify({ atTop, onePixel }));
   check("bottom fade remains at one pixel above the end", nearBottom.bottom && !atBottom.bottom, JSON.stringify({ nearBottom, atBottom }));
+  check("fractional scroll clamp at the true end hides the bottom fade", !fractionalBottom.bottom, JSON.stringify({ fractionalBottom }));
 } finally {
   await server.close();
 }

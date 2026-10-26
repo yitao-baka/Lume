@@ -7,6 +7,8 @@ import { NAVIGATE_SCHEMA, type NavigateItem, type NavigateModel, type NavigateSe
 import type { ModeKeyContext, PluginServices } from "../../plugins/types";
 import { createNavigateStore, GRID_ZONE, type ContributedBar, type NavItem, type NavSection, type NavigateStore } from "../../plugins/navigate/store";
 import { createNavigateSearch, type NavigateSearch } from "../../plugins/navigate/search";
+import { fitNavBarPageBudget } from "../../plugins/contributionBudget";
+import { plog } from "../../plugins/log";
 
 export interface NavigatePageDeps {
   services: PluginServices;
@@ -130,10 +132,18 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
         console.error("navBars failed:", result.reason);
       }
     }
+    const budgeted = fitNavBarPageBudget(contribs);
+    if (budgeted.droppedRows || budgeted.droppedItems || budgeted.truncated) {
+      plog.warn(
+        "apps",
+        `navBars page budget applied: bars=${budgeted.droppedRows} items=${budgeted.droppedItems}` +
+          (budgeted.truncated ? " (truncated)" : "")
+      );
+    }
     const applied = seq === barsRefreshSeq;
-    barsProbe.push({ seq, ids: contribs.map((bar) => bar.id), applied });
+    barsProbe.push({ seq, ids: budgeted.value.map((bar) => bar.id), applied });
     if (barsProbe.length > 40) barsProbe.shift();
-    if (applied) nav.setPluginBars(contribs);
+    if (applied) nav.setPluginBars(budgeted.value);
   }
 
   function snapshot(): PageModel {
@@ -251,6 +261,7 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
     },
     async onShow() { await onShow(); },
     onHide() {
+      search.invalidateAsync();
       deps.services.markMouse();
     },
     async onFilesDropped(paths) { search.onFilesDropped(paths); },

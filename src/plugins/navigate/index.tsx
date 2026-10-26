@@ -136,31 +136,46 @@ export function createNavigatePlugin(
     snapshot: () => Promise.resolve({ pageRuntime: model() }),
     View: () => (
       <Show
-        when={presenterId() === "navigate-list"}
+        when={model()?.status === "error"}
         fallback={
-          <NavigateGridPresenter
-            data={() => model()?.data as NavigateModel | undefined}
-            selectedId={() => model()?.selection?.primaryId}
-            barCols={host.barCols}
-            iconFor={host.icons.iconFor}
-            dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
-            markMouse={() => services.markMouse()}
-            selectionSource={() => services.selectionSource()}
-          />
+          <Show
+            when={presenterId() === "navigate-list"}
+            fallback={
+              <NavigateGridPresenter
+                data={() => model()?.data as NavigateModel | undefined}
+                selectedId={() => model()?.selection?.primaryId}
+                barCols={host.barCols}
+                iconFor={host.icons.iconFor}
+                dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
+                markMouse={() => services.markMouse()}
+                selectionSource={() => services.selectionSource()}
+              />
+            }
+          >
+            <NavigateListPresenter
+              data={() => model()?.data as NavigateModel | undefined}
+              selectedId={() => model()?.selection?.primaryId}
+              barCols={host.barCols}
+              iconFor={host.icons.iconFor}
+              dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
+              markMouse={() => services.markMouse()}
+              selectionSource={() => services.selectionSource()}
+            />
+          </Show>
         }
       >
-        <NavigateListPresenter
-          data={() => model()?.data as NavigateModel | undefined}
-          selectedId={() => model()?.selection?.primaryId}
-          barCols={host.barCols}
-          iconFor={host.icons.iconFor}
-          dispatch={(intent: { type: string; targetId?: string; actionId?: string; payload?: unknown }) => session.dispatch(intent as PageIntent)}
-          markMouse={() => services.markMouse()}
-          selectionSource={() => services.selectionSource()}
-        />
+        <div class="presenter-error" role="alert">
+          <div class="presenter-error-title">{t("pageModelInvalid")}</div>
+          <div class="presenter-error-detail">{t("pageModelInvalidHint")}</div>
+          <Show when={model()?.error?.message}>
+            <div class="presenter-error-detail">{model()?.error?.message}</div>
+          </Show>
+          <button class="presenter-error-retry" type="button" onClick={() => services.openSettings()}>
+            {t("openSettings")}
+          </button>
+        </div>
       </Show>
-    ),
-  };
+    ),  };
 
   return {
     id: NAVIGATE_MODE_ID,

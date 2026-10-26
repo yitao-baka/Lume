@@ -1,0 +1,8 @@
+id = "audit-fix-provider"
+name = "Audit Fix Provider"
+version = "1.0.0"
+kind = "provider"
+api = 2
+entry = "main.js"
+icon = "icon.svg"
+keywords = ["auditfix"]

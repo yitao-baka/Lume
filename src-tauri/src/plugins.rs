@@ -507,6 +507,7 @@ fn plugins_dir(base: &Path) -> std::path::PathBuf {
 /// can never escape its own directory.
 pub(crate) fn valid_plugin_id(id: &str) -> bool {
     !id.is_empty()
+        && id.len() <= 64
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
@@ -681,6 +682,12 @@ fn manifest_path_escape(dir: &Path, m: &PluginManifest) -> Result<(), String> {
 /// cannot be repaired at runtime. The plugin stays visible to the settings pane
 /// when this fails, but the registry never loads any executable contribution.
 pub(crate) fn validate_manifest(m: &PluginManifest) -> Result<(), String> {
+    if !valid_plugin_id(&m.id) {
+        return Err(format!(
+            "invalid plugin id \"{}\": use 1-64 ASCII letters, digits, hyphen or underscore",
+            m.id
+        ));
+    }
     validate_manifest_paths(m)?;
     if m.api != HOST_PLUGIN_API {
         return Err(format!(
@@ -1493,6 +1500,10 @@ entry = \"view.html\"
         assert_eq!(manifest_id_of(&root.join("plugins").join("ghost")), "ghost");
         assert!(valid_plugin_id("demo-1_2"));
         assert!(!valid_plugin_id("") && !valid_plugin_id("..\\evil") && !valid_plugin_id("a b"));
+        assert!(!valid_plugin_id("a.b"));
+        assert!(!valid_plugin_id("a/b"));
+        assert!(!valid_plugin_id("a\tb"));
+        assert!(!valid_plugin_id(&"a".repeat(65)));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -1623,6 +1634,22 @@ entry = \"view.html\"
         assert!(json.contains("\"extensions\":[\"md\",\"txt\"]"), "{json}");
     }
 
+    #[test]
+    fn invalid_manifest_id_is_rejected_at_the_gate() {
+        let mut manifest = parse_manifest(
+            "id = \"valid\"\nkind = \"provider\"\napi = 2\nentry = \"main.js\"\n",
+        )
+        .unwrap();
+        for id in ["bad id", "bad.id", "bad/id", "bad\\id", "bad\nid"] {
+            manifest.id = id.to_string();
+            let err = validate_manifest(&manifest).unwrap_err();
+            assert!(err.contains("invalid plugin id"), "{id:?}: {err}");
+        }
+        manifest.id = "a".repeat(65);
+        assert!(validate_manifest(&manifest)
+            .unwrap_err()
+            .contains("invalid plugin id"));
+    }
     #[test]
     fn api_two_is_the_only_accepted_version() {
         let missing = parse_manifest("id = \"old\"\nkind = \"provider\"\nentry = \"main.js\"\n").unwrap();

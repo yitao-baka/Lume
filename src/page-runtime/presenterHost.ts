@@ -81,6 +81,9 @@ export class PresenterHost {
   private current: PresenterHandle | null = null;
   private currentPresenter: PresenterDescriptor | null = null;
   private disposed = false;
+  /** A newer mount makes every older mount stale, including factories and
+   * ready handshakes that have not settled yet. */
+  private mountGeneration = 0;
 
   private readonly onStates?: (state: PresenterHostState) => void;
   private readonly logErrors: boolean;
@@ -107,8 +110,10 @@ export class PresenterHost {
   }
 
   async mount(request: MountPresenterRequest): Promise<PresenterHostState> {
-    this.disposed = false;
-    this.unmount();
+    if (this.disposed) throw new Error("PresenterHost was disposed");
+    const generation = ++this.mountGeneration;
+    this.releaseCurrent();
+
     const compatible = request.presenters.filter(
       (p) => p.models.length === 0 || p.models.includes(request.schema)
     );
@@ -118,18 +123,22 @@ export class PresenterHost {
       request.requestedId
     );
     if (!first) {
-      this.setState({
-        status: "error",
-        error: `no Presenter supports schema "${request.schema}"`,
-        presenterId: null,
-        attempts: 0,
-      });
+      if (this.isCurrent(generation)) {
+        this.setState({
+          status: "error",
+          error: `no Presenter supports schema "${request.schema}"`,
+          presenterId: null,
+          attempts: 0,
+        });
+      }
       return this.getState();
     }
+
     const ordered = [first, ...compatible.filter((p) => p.id !== first.id)];
     let attempts = 0;
     for (const presenter of ordered) {
       for (let attempt = 0; attempt < 2; attempt++) {
+        if (!this.isCurrent(generation)) return this.getState();
         attempts++;
         let handle: PresenterHandle | undefined;
         this.setState({
@@ -151,14 +160,25 @@ export class PresenterHost {
             },
             subscribe: (listener) => request.store.subscribe(listener),
             dispatch: (intent) => request.dispatch(intent),
-            reportLayout: (report) => this.reportLayout(report),
-            setModal: (open) => this.setModal(open),
-            requestSearchFocus: () => request.onSearchFocus?.(),
+            reportLayout: (report) => {
+              if (this.isCurrent(generation)) this.reportLayout(report);
+            },
+            setModal: (open) => {
+              if (this.isCurrent(generation)) this.setModal(open);
+            },
+            requestSearchFocus: () => {
+              if (this.isCurrent(generation)) request.onSearchFocus?.();
+            },
           };
-          handle = await request.factory(presenter)(context);
+          const created = await request.factory(presenter)(context);
+          if (!this.isCurrent(generation)) {
+            this.disposeHandle(created);
+            return this.getState();
+          }
+          handle = created;
           await (typeof handle.ready === "function" ? handle.ready() : handle.ready);
-          if (this.disposed) {
-            handle.dispose();
+          if (!this.isCurrent(generation)) {
+            this.disposeHandle(handle);
             return this.getState();
           }
           this.current = handle;
@@ -166,13 +186,8 @@ export class PresenterHost {
           this.setState({ status: "ready", error: undefined });
           return this.getState();
         } catch (err) {
-          try {
-            handle?.dispose();
-          } catch (disposeErr) {
-            if (this.logErrors) {
-              console.error(`[page-runtime] Presenter ${presenter.id} cleanup failed:`, disposeErr);
-            }
-          }
+          this.disposeHandle(handle);
+          if (!this.isCurrent(generation)) return this.getState();
           const message = String(err);
           if (this.logErrors) console.error(`[page-runtime] Presenter ${presenter.id} failed:`, err);
           this.setState({ status: "error", error: message });
@@ -180,16 +195,19 @@ export class PresenterHost {
         }
       }
     }
-    this.setState({
-      status: "error",
-      presenterId: null,
-      error: `all Presenters failed after ${attempts} attempts`,
-    });
+
+    if (this.isCurrent(generation)) {
+      this.setState({
+        status: "error",
+        presenterId: null,
+        error: `all Presenters failed after ${attempts} attempts`,
+      });
+    }
     return this.getState();
   }
 
   updateModel(model: PageModel): void {
-    if (this.state.status !== "ready") return;
+    if (this.disposed || this.state.status !== "ready") return;
     try {
       this.current?.update?.(model);
     } catch (err) {
@@ -199,26 +217,45 @@ export class PresenterHost {
   }
 
   reportLayout(report: PageLayoutReport): void {
+    if (this.disposed) return;
     this.setState({ layout: { ...report } });
   }
 
   setModal(open: boolean): void {
+    if (this.disposed) return;
     this.setState({ modal: open });
   }
 
   unmount(): void {
-    try {
-      this.current?.dispose();
-    } catch (err) {
-      if (this.logErrors) console.error("[page-runtime] Presenter dispose failed:", err);
-    }
-    this.current = null;
-    this.currentPresenter = null;
+    this.mountGeneration++;
+    this.releaseCurrent();
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
-    this.unmount();
+    this.mountGeneration++;
+    this.releaseCurrent();
+  }
+
+  private isCurrent(generation: number): boolean {
+    return !this.disposed && generation === this.mountGeneration;
+  }
+
+  private releaseCurrent(): void {
+    const handle = this.current;
+    this.current = null;
+    this.currentPresenter = null;
+    if (handle) this.disposeHandle(handle);
+  }
+
+  private disposeHandle(handle: PresenterHandle | undefined): void {
+    if (!handle) return;
+    try {
+      handle.dispose();
+    } catch (err) {
+      if (this.logErrors) console.error("[page-runtime] Presenter dispose failed:", err);
+    }
   }
 
   private setState(patch: Partial<PresenterHostState>): void {
@@ -228,4 +265,3 @@ export class PresenterHost {
     this.onStates?.(snapshot);
   }
 }
-

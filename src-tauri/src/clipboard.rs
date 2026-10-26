@@ -259,6 +259,13 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     // Legacy rows are single copies — normalize the column default (0) to 1.
     conn.execute("UPDATE clipboard SET merged_count = 1 WHERE merged_count = 0", [])?;
+    // Older builds kept the first piece HTML on merged rows. That snapshot no
+    // longer represents `content`, so apply the plain-text downgrade once.
+    conn.execute(
+        "UPDATE clipboard SET html = NULL
+         WHERE kind = 'text' AND merged_count > 1 AND html IS NOT NULL",
+        [],
+    )?;
     Ok(())
 }
 
@@ -338,7 +345,8 @@ fn insert_text_history(
                 conn.execute(
                     "UPDATE clipboard SET content = content || char(10) || ?1,
                                           merged_count = merged_count + 1,
-                                          created_at = ?2
+                                          created_at = ?2,
+                                          html = NULL
                      WHERE id = ?3",
                     params![text, created_at, last_id],
                 )?;
@@ -509,7 +517,8 @@ fn search_history(
 ) -> rusqlite::Result<Vec<ClipboardItem>> {
     let mut sql = String::from(
         "SELECT id, kind, content, data, path, pinned, created_at, source_app, html, merged_count, checked FROM clipboard
-         WHERE (content LIKE '%' || ?1 || '%' OR source_app LIKE '%' || ?1 || '%')",
+         WHERE (instr(lower(content), lower(?1)) > 0
+            OR instr(lower(source_app), lower(?1)) > 0)",
     );
     match kind {
         "text" => sql.push_str(" AND kind = 'text'"),
@@ -1593,13 +1602,13 @@ fn decode_image_payload(data: &str) -> Result<Vec<u8>, String> {
 /// Put a PNG (base64 or data URI) on the clipboard as an image.
 /// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_clipboard_write_image(
+pub async fn plugin_clipboard_write_image(
     data: String,
     plugin_id: Option<String>,
     host_token: Option<String>,
     window: tauri::WebviewWindow,
-    perms: tauri::State<crate::plugin_perm::PluginPermState>,
-    settings: tauri::State<crate::settings::SettingsState>,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<(), String> {
     crate::plugin_perm::assert_native_or_capability(
         &perms,
@@ -1609,22 +1618,25 @@ pub fn plugin_clipboard_write_image(
         host_token.as_deref(),
         "clipboard",
     )?;
-    let png = decode_image_payload(&data)?;
-    let rgba = image::load_from_memory(&png)
-        .map_err(|e| format!("decode image: {e}"))?
-        .to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
-    let img = arboard::ImageData {
-        width: w as usize,
-        height: h as usize,
-        bytes: Cow::Owned(rgba.into_raw()),
-    };
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    cb.set_image(img).map_err(|e| e.to_string())?;
-    eprintln!("[plugins] clipboard.writeImage: {w}x{h}");
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let png = decode_image_payload(&data)?;
+        let rgba = image::load_from_memory(&png)
+            .map_err(|e| format!("decode image: {e}"))?
+            .to_rgba8();
+        let (w, h) = (rgba.width(), rgba.height());
+        let img = arboard::ImageData {
+            width: w as usize,
+            height: h as usize,
+            bytes: Cow::Owned(rgba.into_raw()),
+        };
+        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        cb.set_image(img).map_err(|e| e.to_string())?;
+        eprintln!("[plugins] clipboard.writeImage: {w}x{h}");
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
-
 /// Put a file/folder list on the clipboard as CF_HDROP (Explorer-style copy).
 /// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
@@ -1860,22 +1872,30 @@ pub async fn search_clipboard(
 /// checked ∩ existing subset (多文件勾选); an invalid row is rejected with a
 /// sentinel the frontend maps to a toast.
 #[tauri::command]
-pub fn copy_clipboard(
+pub async fn copy_clipboard(
     id: u32,
     plain: Option<bool>,
-    state: State<ClipboardState>,
-    settings: State<crate::settings::SettingsState>,
+    app: AppHandle,
 ) -> Result<(), String> {
-    let conn = state.db.lock().unwrap();
-    let row = get_row(&conn, id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("clipboard item {id} not found"))?;
-    let remember = settings.current().clipboard.remember_checks;
-    let base = crate::paths::data_dir();
-    let paths = usable_paths(&row, remember, &base)?;
-    set_clipboard_from_row_paths(&row, &paths, plain.unwrap_or(false))
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        let conn = state.db.lock().unwrap();
+        let row = get_row(&conn, id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("clipboard item {id} not found"))?;
+        drop(conn);
+        let remember = app
+            .state::<crate::settings::SettingsState>()
+            .current()
+            .clipboard
+            .remember_checks;
+        let base = crate::paths::data_dir();
+        let paths = usable_paths(&row, remember, &base)?;
+        set_clipboard_from_row_paths(&row, &paths, plain.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
-
 /// Pause / resume clipboard recording (runtime-only — not persisted). Returns
 /// the new paused state.
 #[tauri::command]
@@ -2140,30 +2160,31 @@ fn auto_paste(
 /// a plain clipboard copy when no target window is recorded. The entry stays
 /// on the system clipboard after the paste (it is what was just used).
 #[tauri::command]
-pub fn paste_clipboard(
-    id: u32,
-    state: State<ClipboardState>,
-    focus: State<crate::window::FocusState>,
-    app: AppHandle,
-) -> Result<PasteOutcome, String> {
-    let conn = state.db.lock().unwrap();
-    let row = get_row(&conn, id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("clipboard item {id} not found"))?;
-    drop(conn);
-    let remember = app
-        .state::<crate::settings::SettingsState>()
-        .current()
-        .clipboard
-        .remember_checks;
-    let base = crate::paths::data_dir();
-    let res = auto_paste(&app, &focus, || {
-        let paths = usable_paths(&row, remember, &base)?;
-        set_clipboard_from_row_paths(&row, &paths, false)
-    });
-    // A paste closes the current auto-merge window (deliberate use of an entry).
-    *state.last_paste_at.lock().unwrap() = Some(now_millis());
-    res
+pub async fn paste_clipboard(id: u32, app: AppHandle) -> Result<PasteOutcome, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        let focus = app.state::<crate::window::FocusState>();
+        let conn = state.db.lock().unwrap();
+        let row = get_row(&conn, id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("clipboard item {id} not found"))?;
+        drop(conn);
+        let remember = app
+            .state::<crate::settings::SettingsState>()
+            .current()
+            .clipboard
+            .remember_checks;
+        let base = crate::paths::data_dir();
+        let res = auto_paste(&app, &focus, || {
+            let paths = usable_paths(&row, remember, &base)?;
+            set_clipboard_from_row_paths(&row, &paths, false)
+        });
+        // A paste closes the current auto-merge window (deliberate use of an entry).
+        *state.last_paste_at.lock().unwrap() = Some(now_millis());
+        res
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Paste several entries at once as one merged text: every selected *text*
@@ -2171,53 +2192,56 @@ pub fn paste_clipboard(
 /// back to a single-item paste of the first selected entry. Falls back to a
 /// plain copy when no target window is recorded.
 #[tauri::command]
-pub fn paste_clipboard_multi(
+pub async fn paste_clipboard_multi(
     ids: Vec<u32>,
-    state: State<ClipboardState>,
-    focus: State<crate::window::FocusState>,
     app: AppHandle,
 ) -> Result<PasteOutcome, String> {
-    let conn = state.db.lock().unwrap();
-    let mut texts: Vec<String> = Vec::new();
-    let mut first: Option<Row> = None;
-    for id in ids {
-        if let Some(row) = get_row(&conn, id).map_err(|e| e.to_string())? {
-            if first.is_none() {
-                first = Some(row.clone());
-            }
-            if row.kind == "text" {
-                texts.push(row.content);
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        let focus = app.state::<crate::window::FocusState>();
+        let conn = state.db.lock().unwrap();
+        let mut texts: Vec<String> = Vec::new();
+        let mut first: Option<Row> = None;
+        for id in ids {
+            if let Some(row) = get_row(&conn, id).map_err(|e| e.to_string())? {
+                if first.is_none() {
+                    first = Some(row.clone());
+                }
+                if row.kind == "text" {
+                    texts.push(row.content);
+                }
             }
         }
-    }
-    drop(conn);
+        drop(conn);
 
-    let res = if !texts.is_empty() {
-        let joined = texts.join("\n");
-        auto_paste(&app, &focus, || {
-            let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-            cb.set_text(&joined).map_err(|e| e.to_string())
-        })
-    } else {
-        let remember = app
-            .state::<crate::settings::SettingsState>()
-            .current()
-            .clipboard
-            .remember_checks;
-        let base = crate::paths::data_dir();
-        match first {
-            Some(row) => auto_paste(&app, &focus, || {
-                let paths = usable_paths(&row, remember, &base)?;
-                set_clipboard_from_row_paths(&row, &paths, false)
-            }),
-            None => Err("no clipboard items found".into()),
-        }
-    };
-    // A paste closes the current auto-merge window.
-    *state.last_paste_at.lock().unwrap() = Some(now_millis());
-    res
+        let res = if !texts.is_empty() {
+            let joined = texts.join("\n");
+            auto_paste(&app, &focus, || {
+                let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+                cb.set_text(&joined).map_err(|e| e.to_string())
+            })
+        } else {
+            let remember = app
+                .state::<crate::settings::SettingsState>()
+                .current()
+                .clipboard
+                .remember_checks;
+            let base = crate::paths::data_dir();
+            match first {
+                Some(row) => auto_paste(&app, &focus, || {
+                    let paths = usable_paths(&row, remember, &base)?;
+                    set_clipboard_from_row_paths(&row, &paths, false)
+                }),
+                None => Err("no clipboard items found".into()),
+            }
+        };
+        // A paste closes the current auto-merge window.
+        *state.last_paste_at.lock().unwrap() = Some(now_millis());
+        res
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
-
 /// Place a history row onto the system clipboard: text inline, image read
 /// back from its picture-cache file, file rows re-assembled as a CF_HDROP path
 /// list. `paths` is the pre-filtered subset for file rows (checked ∩ existing);
@@ -2390,16 +2414,20 @@ unsafe fn send_ctrl_v() -> bool {
 /// restore it from its undo buffer (the picture file is retained until the
 /// next sweep).
 #[tauri::command]
-pub fn delete_clipboard(id: u32, state: State<ClipboardState>) -> Result<DeletedClip, String> {
-    let conn = state.db.lock().unwrap();
-    let row = get_row(&conn, id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("clipboard item {id} not found"))?;
-    let deleted = DeletedClip::from(&row);
-    delete_row(&conn, id, &crate::paths::data_dir()).map_err(|e| e.to_string())?;
-    Ok(deleted)
+pub async fn delete_clipboard(id: u32, app: AppHandle) -> Result<DeletedClip, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        let conn = state.db.lock().unwrap();
+        let row = get_row(&conn, id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("clipboard item {id} not found"))?;
+        let deleted = DeletedClip::from(&row);
+        delete_row(&conn, id, &crate::paths::data_dir()).map_err(|e| e.to_string())?;
+        Ok(deleted)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
-
 /// Restore a previously-deleted entry (the undo button's backend).
 #[tauri::command]
 pub fn restore_clipboard(
@@ -2419,14 +2447,31 @@ pub fn restore_clipboard(
 
 /// Per-path existence check for the multi-file list preview (missing files are
 /// struck through and their checkbox disabled).
-#[tauri::command]
-pub fn check_file_exists(paths: Vec<String>) -> Vec<bool> {
-    paths
-        .iter()
-        .map(|p| Path::new(p).exists())
-        .collect()
-}
+const MAX_EXISTENCE_PATHS: usize = 1024;
+const MAX_EXISTENCE_PATH_CHARS: usize = 32_768;
 
+#[tauri::command]
+pub async fn check_file_exists(paths: Vec<String>) -> Result<Vec<bool>, String> {
+    if paths.len() > MAX_EXISTENCE_PATHS {
+        return Err(format!(
+            "too many paths for existence check: {} (max {MAX_EXISTENCE_PATHS})",
+            paths.len()
+        ));
+    }
+    if let Some(index) = paths.iter().position(|path| {
+        path.len() > MAX_EXISTENCE_PATH_CHARS || path.contains('\0')
+    }) {
+        return Err(format!("invalid path at index {index}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|path| Path::new(path).exists())
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
 /// Persist a multi-file entry's checked-file indices (`None` clears the
 /// override → the entry falls back to "every existing file checked").
 #[tauri::command]
@@ -2455,18 +2500,20 @@ pub fn pin_clipboard(id: u32, pinned: bool, state: State<ClipboardState>) -> Res
 /// Clear the clipboard history. With `keep_pinned`, pinned entries (and their
 /// picture files) survive. Returns the number of rows deleted.
 #[tauri::command]
-pub fn clear_clipboard(
-    keep_pinned: bool,
-    state: State<ClipboardState>,
-) -> Result<u32, String> {
-    let conn = state.db.lock().unwrap();
-    let count = conn
-        .query_row("SELECT COUNT(*) FROM clipboard", [], |r| r.get::<_, u32>(0))
-        .unwrap_or(0);
-    clear_history(&conn, &crate::paths::data_dir(), keep_pinned).map_err(|e| e.to_string())?;
-    Ok(count)
+pub async fn clear_clipboard(keep_pinned: bool, app: AppHandle) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        let conn = state.db.lock().unwrap();
+        let count = conn
+            .query_row("SELECT COUNT(*) FROM clipboard", [], |r| r.get::<_, u32>(0))
+            .unwrap_or(0);
+        clear_history(&conn, &crate::paths::data_dir(), keep_pinned)
+            .map_err(|e| e.to_string())?;
+        Ok(count)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -2639,6 +2686,25 @@ mod tests {
     }
 
     #[test]
+    fn migration_plaintext_downgrades_existing_merged_html() {
+        let conn = memory_db();
+        let base = temp_base("merge-migrate");
+        let merge = MergeConfig {
+            enabled: true,
+            window_ms: 60_000,
+            last_paste_at: None,
+        };
+        insert_text_history(&conn, "one", TEST_SRC, Some("<b>one</b>".into()), TEST_CAP, &base, &merge, true).unwrap();
+        insert_text_history(&conn, "two", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
+        conn.execute("UPDATE clipboard SET html = '<b>one</b>' WHERE merged_count > 1", []).unwrap();
+        init_db(&conn).unwrap();
+        let row = conn
+            .query_row("SELECT html FROM clipboard WHERE merged_count > 1", [], |r| r.get::<_, Option<String>>(0))
+            .unwrap();
+        assert_eq!(row, None, "legacy merged HTML is downgraded on startup");
+        fs::remove_dir_all(&base).ok();
+    }
+    #[test]
     fn insert_and_substring_search() {
         let conn = memory_db();
         let base = temp_base("sub");
@@ -2715,6 +2781,23 @@ mod tests {
         fs::remove_dir_all(&base).ok();
     }
 
+    #[test]
+    fn search_treats_like_wildcards_literally() {
+        let conn = memory_db();
+        let base = temp_base("like-literal");
+        insert_text_history(&conn, "100% complete", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "snake_case", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "back\\slash", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "MiXeD 中文", "App_100%", None, TEST_CAP, &base, &no_merge(), true).unwrap();
+
+        assert_eq!(search_history(&conn, "%", "all", 20, &base, false).unwrap().len(), 2);
+        assert_eq!(search_history(&conn, "_", "all", 20, &base, false).unwrap().len(), 2);
+        assert_eq!(search_history(&conn, "\\", "all", 20, &base, false).unwrap().len(), 1);
+        assert_eq!(search_history(&conn, "mixed", "all", 20, &base, false).unwrap().len(), 1);
+        assert_eq!(search_history(&conn, "100%", "all", 20, &base, false).unwrap().len(), 2);
+        assert_eq!(search_history(&conn, "no_such_wildcard%", "all", 20, &base, false).unwrap().len(), 0);
+        fs::remove_dir_all(&base).ok();
+    }
     #[test]
     fn history_cap_limits_rows() {
         let conn = memory_db();
@@ -2947,6 +3030,45 @@ mod tests {
     }
 
     #[test]
+    fn rich_text_merge_degrades_to_plain_text() {
+        let conn = memory_db();
+        let base = temp_base("merge-html");
+        let merge = MergeConfig {
+            enabled: true,
+            window_ms: 60_000,
+            last_paste_at: None,
+        };
+        insert_text_history(
+            &conn,
+            "one",
+            TEST_SRC,
+            Some("<b>one</b>".into()),
+            TEST_CAP,
+            &base,
+            &merge,
+            true,
+        )
+        .unwrap();
+        insert_text_history(
+            &conn,
+            "two",
+            TEST_SRC,
+            Some("<i>two</i>".into()),
+            TEST_CAP,
+            &base,
+            &merge,
+            true,
+        )
+        .unwrap();
+        let hits = search_history(&conn, "", "all", 20, &base, false).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].content, "one\ntwo");
+        assert!(!hits[0].has_html, "merged rich text must not advertise stale HTML");
+        let row = get_row(&conn, hits[0].id).unwrap().unwrap();
+        assert!(row.html.is_none(), "merged row is copied back as plain text");
+        fs::remove_dir_all(&base).ok();
+    }
+    #[test]
     fn merge_opens_new_row_outside_window() {
         let conn = memory_db();
         let base = temp_base("merge-out");
@@ -3019,7 +3141,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_keeps_html_and_merged_count() {
+    fn restore_keeps_merged_count_after_plaintext_downgrade() {
         let conn = memory_db();
         let base = temp_base("restore-p2");
         let merge = MergeConfig {
@@ -3038,9 +3160,9 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, "alpha\nbeta");
         assert_eq!(hits[0].merged_count, 2, "merged count survives restore");
-        assert!(hits[0].has_html, "html flag survives restore");
+        assert!(!hits[0].has_html, "merged rich text stays downgraded after restore");
         let row = get_row(&conn, hits[0].id).unwrap().unwrap();
-        assert_eq!(row.html.as_deref(), Some("<b>alpha</b>"));
+        assert_eq!(row.html, None);
         fs::remove_dir_all(&base).ok();
     }
 

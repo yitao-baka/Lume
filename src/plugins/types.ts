@@ -624,6 +624,8 @@ export interface PluginServices {
   persistLastPage(): void;
   /** Run the root search pipeline (selection reset + mode dispatch). */
   runSearch(q: string): Promise<void>;
+  /** Open the first-party settings window (recoverable page-error action). */
+  openSettings(): void;
   /** Defer a window re-measure to the next frame. */
   scheduleResize(): void;
   /** Monotonic token — bump on every root-level search; drop stale results. */
@@ -847,9 +849,10 @@ export interface ProviderResult {
   path?: string;
   /** Optional second line rendered under the name in the results grid. */
   description?: string;
-  /** Explicit icon: a string (data:/http(s):/asset:/blob: URI, or a file
+  /** Explicit icon: a string (data:/asset:/blob: URI, or a file
    * path relative to the plugin dir) or a `{ light, dark }` pair of the
-   * same forms (docs/ROADMAP_HISTORY.md #44 — the host picks by the surface theme; explicit
+   * same forms. HTTP(S) is refused. docs/ROADMAP_HISTORY.md #44 — the host
+   * picks by the surface theme; explicit
    * variants render as-is, a plain string keeps the legacy convention).
    * Omitted → the plugin's own icon set, then the regular icon pipeline for
    * `path`. */
@@ -883,7 +886,7 @@ export interface NavBarContribution {
   /** Rendered title — the plugin localizes it itself. */
   title: string;
   /** Bar entries. `icon` is optional: a string or `{ light, dark }` pair
-   * (data:/http(s):/asset: URIs pass through; relative paths resolve against
+   * (data:/asset:/blob: pass through; relative paths resolve against HTTP(S) is refused,
    * the plugin dir, #44); omitted → the regular icon pipeline (real icons
    * for file paths, unknown-icon fallback otherwise). */
   items: { name: string; path: string; icon?: string | PluginIconInput }[];

@@ -22,6 +22,7 @@ import { fetchDiskFile, pluginFilePath } from "./disk";
 import { plog } from "./log";
 import { setPermissionSource } from "./permissions";
 import { resolveIconInput, resolveThemedIcon } from "../launcher/iconSpec";
+import { sanitizeNavBarContributions, sanitizeProviderRows } from "./contributionBudget";
 import type { HostIcon, PluginIconSpec } from "../launcher/types";
 import { currentThemeMode } from "../theme";
 import { currentSkin, onSkinChange } from "../skins/runtime";
@@ -189,7 +190,13 @@ export function setPluginServices(services: PluginServices) {
 // `plugin-logic-action` 事件回来（Rust 已按令牌强制归属 plugin id）。
 // 宿主窗口就绪/崩溃通告驱动 load 的（重）发——覆盖建窗竞态与崩溃恢复。
 
-const logicPending = new Map<number, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+interface PendingLogicCall {
+  id: string;
+  timer: number;
+  resolve: (v: unknown) => void;
+  reject: (e: unknown) => void;
+}
+const logicPending = new Map<number, PendingLogicCall>();
 let logicCallSeq = 0;
 /** 已向宿主发过 load 的插件（宿主 ready 时重发；unload 时移除）。 */
 const logicLoadedIds = new Set<string>();
@@ -307,6 +314,8 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
       reject(new Error(`logic call timeout: ${id}.${name}`));
     }, timeoutMs);
     logicPending.set(callId, {
+      id,
+      timer,
       resolve: (v) => {
         window.clearTimeout(timer);
         noteLogicSuccess(id);
@@ -332,10 +341,11 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
  * `plugin-logic-host-ready` 通告驱动重发兜底。熔断打开的插件不再重发
  * （#32.4：保持暂停直到重载/保存设置）。 */
 function pushLogicLoad(id: string): void {
+  const manifest = manifests().find((item) => item.id === id);
+  if (!isEnabled(id) || manifest?.apiError) return;
   if (logicOffline.has(id)) return;
   logicPendingReady.add(id); // 帧就绪信号（logic-loaded）到达前 hook 快速失败
   logicLoadedIds.add(id);
-  const manifest = manifests().find((item) => item.id === id);
   void invoke("plugin_logic_host_ensure")
     .then(() => invoke("plugin_logic_push", {
       id,
@@ -349,6 +359,7 @@ function pushLogicLoad(id: string): void {
  * The supervisor removes the dead iframe on unload, then the fresh load
  * recreates it and resolves the readiness waiter. */
 async function restartLogicService(id: string): Promise<void> {
+  if (!isEnabled(id)) throw new Error(`plugin "${id}" is disabled`);
   resetCircuit(id);
   logicPendingReady.add(id);
   logicLoadedIds.add(id);
@@ -379,6 +390,7 @@ export function throttledLogicCall(
   args: unknown[],
   ms = THROTTLE_MS
 ): void {
+  if (!isEnabled(id)) return;
   const key = `${id}\u0000${name}`;
   const existing = throttledCalls.get(key);
   if (existing) {
@@ -405,6 +417,7 @@ function clearThrottledCalls(id: string): void {
 
 /** ctx 动作分发（Rust 中继已按令牌归属 id）。 */
 function handleLogicAction(id: string, action: string, args: Record<string, unknown>): void {
+  if (!isEnabled(id)) return;
   const services = pluginServices;
   if (!services) return;
   switch (action) {
@@ -492,7 +505,7 @@ function initLogicRelay(): void {
     (e) => {
       const { id, callId, ok, result, error } = e.payload;
       const p = logicPending.get(callId);
-      if (p) {
+      if (p && p.id === id) {
         logicPending.delete(callId);
         if (ok) {
           noteLogicSuccess(id);
@@ -513,6 +526,7 @@ function initLogicRelay(): void {
   );
   void listen<{ id: string; model: PageModel }>("plugin-page-model", (e) => {
     const { id, model } = e.payload;
+    if (!isEnabled(id)) return;
     const runtime = pageRuntimeModes.get(id);
     try {
       validatePageModel(model);
@@ -529,14 +543,17 @@ function initLogicRelay(): void {
     }
   });
   void listen<{ id: string; event: unknown }>("plugin-page-event", (e) => {
+    if (!isEnabled(e.payload.id)) return;
     pageRuntimeModes.get(e.payload.id)?.emitEvent(e.payload.event);
     pushDetachedRuntimeState(e.payload.id, { pageEvent: e.payload.event });
   });
   void listen<{ id: string; error: unknown }>("plugin-page-error", (e) => {
+    if (!isEnabled(e.payload.id)) return;
     pageRuntimeModes.get(e.payload.id)?.publishError(e.payload.error);
     pushDetachedRuntimeState(e.payload.id, { pageError: e.payload.error });
   });
   void listen<{ id: string }>("plugin-page-clear-error", (e) => {
+    if (!isEnabled(e.payload.id)) return;
     pageRuntimeModes.get(e.payload.id)?.clearError();
     pushDetachedRuntimeState(e.payload.id, { pageClearError: true });
   });
@@ -549,6 +566,7 @@ function initLogicRelay(): void {
     void (async () => {
       const { id, requestId, name, args } = e.payload;
       try {
+        if (!isEnabled(id)) throw new Error("plugin is disabled: " + id);
         const runtime = pageRuntimeModes.get(id);
         if (!runtime) throw new Error("Page Runtime is not loaded: " + id);
         const result = await runtime.callRemote(name, args ?? {});
@@ -624,46 +642,41 @@ export function pluginIcon(id: string): HostIcon | undefined {
   return p?.icon ?? p?.modeMeta?.icon ?? undefined;
 }
 
-/** Validate + normalize a plugin's `navBars()` return: prefix bar ids with
- * the plugin id (the zone-key namespace), resolve icons (relative paths
- * against the plugin dir, #44), cap items per bar. Malformed bars/entries are
- * dropped with a console error. */
+/** Validate, bound and preserve plugin-owned fields on every provider result
+ * path (search / select / filter). */
+function normalizeProviderRows(pluginId: string, raw: unknown, hook: string): ProviderResult[] {
+  const result = sanitizeProviderRows(raw);
+  if (result.droppedRows || result.truncated) {
+    plog.warn(
+      pluginId,
+      `${hook} result budget applied: dropped=${result.droppedRows}` +
+        (result.truncated ? " (truncated)" : "")
+    );
+  }
+  return result.value;
+}
+
+/** Validate, budget and normalize a plugin's `navBars()` return. Bar ids are
+ * namespaced, icons resolve against the plugin dir (#44), and malformed or
+ * oversized contributions are dropped with a diagnostic. */
 function normalizeNavBarContributions(
   pluginId: string,
   raw: unknown,
   dir?: string
 ): NavBarContribution[] {
-  if (!Array.isArray(raw)) return [];
-  const out: NavBarContribution[] = [];
-  for (const bar of raw) {
-    const b = bar as { id?: unknown; title?: unknown; items?: unknown } | null;
-    if (
-      !b ||
-      typeof b.id !== "string" ||
-      b.id === "" ||
-      typeof b.title !== "string" ||
-      !Array.isArray(b.items)
-    ) {
-      plog.error(pluginId, "bad navBars entry (dropped):", b);
-      continue;
-    }
-    const items = b.items
-      .slice(0, 50) // keep the bar grid sane, like the provider result cap
-      .filter((it): it is { name: string; path: string; icon?: unknown } => {
-        const x = it as { name?: unknown; path?: unknown; icon?: unknown } | null;
-        return (
-          !!x &&
-          typeof x.name === "string" &&
-          typeof x.path === "string" &&
-          (x.icon === undefined ||
-            typeof x.icon === "string" ||
-            (typeof x.icon === "object" && x.icon !== null))
-        );
-      })
-      .map((it) => ({ name: it.name, path: it.path, icon: resolveIconInput(it.icon, dir) }));
-    out.push({ id: `${pluginId}:${b.id}`, title: b.title, items });
+  const result = sanitizeNavBarContributions(
+    pluginId,
+    raw,
+    (icon) => resolveIconInput(icon, dir)
+  );
+  if (result.droppedRows || result.droppedItems || result.truncated) {
+    plog.warn(
+      pluginId,
+      `navBars budget applied: bars=${result.droppedRows} items=${result.droppedItems}` +
+        (result.truncated ? " (truncated)" : "")
+    );
   }
-  return out;
+  return result.value as NavBarContribution[];
 }
 
 /** The plugin's optional `navBars` hook as a LauncherPlugin contribution —
@@ -683,6 +696,7 @@ function navBarsContribution(
       await waitForLogicReady(pluginId);
       if (!logicHasHook(pluginId, "navBars")) return [];
       const raw = await (logic.navBars as () => unknown)();
+      if (!isEnabled(pluginId)) return [];
       return normalizeNavBarContributions(pluginId, raw, dir);
     } catch (err) {
       console.error("[plugins] navBars failed:", pluginId, err);
@@ -701,18 +715,22 @@ function navBarsContribution(
 setPermissionSource((id) => manifests().find((x) => x.id === id));
 
 
-/** Unload one disk plugin's contributions (hot reload): drop its
- * registrations, forget its load attempt and clear the module cache so a
- * re-import re-reads the code from disk. (The cache is global — already-
- * imported modules of other plugins stay alive; only future loads recompile.)
- * Returns false when the id was never loaded from disk. */
+/** Unload one disk plugin's contributions, logic frame, pending calls and
+ * lifecycle state. Disable and hot reload both use this same boundary; a
+ * contribution must never outlive the enabled manifest that created it. */
 export async function unloadDiskPlugin(id: string): Promise<boolean> {
+  const had =
+    registeredDiskIds.has(id) ||
+    loadedDiskIds.has(id) ||
+    pageRuntimeModes.has(id) ||
+    logicLoadedIds.has(id);
+  if (!had) return false;
+
   clearFeatureRegexCache(id);
-  if (!registeredDiskIds.has(id)) return false;
   const runtime = pageRuntimeModes.get(id);
   pageRuntimeModes.delete(id);
   latestPageModels.delete(id);
-  void runtime?.dispose();
+  await runtime?.dispose();
   registeredDiskIds.delete(id);
   loadedDiskIds.delete(id);
   for (let i = plugins.length - 1; i >= 0; i--) {
@@ -722,6 +740,17 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   logicHooks.delete(id);
   clearThrottledCalls(id);
   resetCircuit(id); // 重载 = 重新开始：熔断状态不跨代（#32.4）
+
+  // Finish every in-flight RPC now, not at its 8s timeout. A disabled plugin
+  // must not receive a late result, and a reload must not inherit stale calls.
+  const unloadedError = new Error(`plugin "${id}" unloaded`);
+  for (const [callId, pending] of logicPending) {
+    if (pending.id !== id) continue;
+    window.clearTimeout(pending.timer);
+    logicPending.delete(callId);
+    pending.reject(unloadedError);
+  }
+
   // 重载窗口 = 未就绪：帧已拆、新帧未起，期间的 hook 快速失败（不计熔断）。
   logicPendingReady.add(id);
   // await 而非 fire-and-forget：宿主必须先把帧拆掉再放行后续注册流程——
@@ -734,7 +763,6 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   dropSessionFrames(id); // 代码即将重载：会话快照不跨代
   return true;
 }
-
 /** Hot-reload one disk plugin (settings-pane 重载 button → `plugin-reload`
  * event). Re-reads manifests so manifest edits apply too; unknown ids are
  * reported back as false. */
@@ -760,7 +788,29 @@ export async function reloadDiskPlugin(id: string): Promise<boolean> {
 export async function loadDiskPlugins(seq = refreshSeq) {
   const services = pluginServices;
   let loadedAny = false;
-  for (const m of manifests()) {
+  const current = manifests();
+  const installable = new Set(
+    current
+      .filter((m) => !m.builtin && m.enabled && !m.apiError && !!m.dir)
+      .map((m) => m.id)
+  );
+
+  // Reconciliation is the disable boundary: a manifest that was removed,
+  // disabled or newly rejected must tear down anything its previous enabled
+  // version had registered. Do this before the load loop so the enabled view
+  // is never a superset of the running contributions.
+  const activeOrLoaded = new Set([...registeredDiskIds, ...loadedDiskIds]);
+  for (const id of activeOrLoaded) {
+    if (seq !== refreshSeq) return;
+    if (installable.has(id)) continue;
+    const removed = await unloadDiskPlugin(id);
+    if (removed) {
+      pluginServices?.nextSearchToken(); // discard a provider result already in flight
+      plog.info(id, "unloaded because the current manifest is not installable");
+    }
+  }
+
+  for (const m of current) {
     if (seq !== refreshSeq) {
       plog.debug(null, "disk-plugin load superseded; stopping stale pass");
       return;
@@ -809,7 +859,7 @@ export async function loadDiskPlugins(seq = refreshSeq) {
                 plog.error(m.id, "provider search failed:", err);
                 return undefined;
               });
-              return Array.isArray(rows) ? rows : [];
+              return normalizeProviderRows(m.id, rows, "search");
             },
             onEnter: (item: ProviderResult) =>
               void logicCall(m.id, "onEnter", [item]).catch((err) =>
@@ -821,11 +871,11 @@ export async function loadDiskPlugins(seq = refreshSeq) {
               ),
             select: async (item: ProviderResult) => {
               const rows = await logicCall(m.id, "select", [item]).catch(() => undefined);
-              return Array.isArray(rows) ? rows : [];
+              return normalizeProviderRows(m.id, rows, "search");
             },
             filter: async (item: ProviderResult, q: string) => {
               const rows = await logicCall(m.id, "filter", [item, q]).catch(() => undefined);
-              return Array.isArray(rows) ? rows : [];
+              return normalizeProviderRows(m.id, rows, "search");
             },
             onSettings: (values: Record<string, unknown>) =>
               void logicCall(m.id, "onSettings", [values]).catch((err) =>
@@ -967,15 +1017,11 @@ export async function loadDiskPlugins(seq = refreshSeq) {
   if (loadedAny && seq === refreshSeq) setManifests((prev) => [...prev]);
 }
 
-/** Load a plugin's effective settings and hand them to its
- * contribution hooks. Called when a disk plugin is loaded and whenever the
- * settings window changes a value (the Rust `plugin-settings` event) — the
- * plugin instance lives in this window, the pane lives in the settings one, so
- * the values have to be pushed across. */
 /** Load one plugin's Presenter-scoped values and push them into its live
  * Page Runtime. The settings window and the launcher are separate windows, so
  * the Rust event only names the plugin; the effective values are re-read here. */
 export async function applyPluginPresenterSettings(id: string): Promise<void> {
+  if (!isEnabled(id)) return;
   const runtime = pageRuntimeModes.get(id);
   if (!runtime) return;
   try {
@@ -983,6 +1029,7 @@ export async function applyPluginPresenterSettings(id: string): Promise<void> {
       "plugin_presenter_settings_get",
       { id }
     )) ?? {};
+    if (!isEnabled(id)) return;
     runtime.applyPresenterSettings(values);
     pushDetachedRuntimeState(id, {
       presenter: runtime.currentPresenterId(),
@@ -993,12 +1040,15 @@ export async function applyPluginPresenterSettings(id: string): Promise<void> {
   }
 }
 
+/** Load a plugin's effective settings and hand them to its contribution hooks. */
 export async function applyPluginSettings(id: string): Promise<void> {
+  if (!isEnabled(id)) return;
   const p = plugins.find((x) => x.id === id);
   if (!p) return;
   let values: Record<string, unknown>;
   try {
     values = (await invoke<Record<string, unknown>>("plugin_settings_get", { id })) ?? {};
+    if (!isEnabled(id)) return;
   } catch (err) {
     plog.error(id, "settings load failed:", err);
     return;

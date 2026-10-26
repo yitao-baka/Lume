@@ -12,6 +12,7 @@ pnpm exec tsc --noEmit
 pnpm run test:page-runtime
 pnpm run test:clipboard-model
 pnpm run test:skin-system
+pnpm run test:plugin-contract
 pnpm run build
 cd src-tauri
 cargo check
@@ -24,7 +25,9 @@ The Page Runtime foundation has browser-independent checks through
 revision monotonicity and frame coalescing, JSON/cycle/size rejection,
 resource-scheme validation, intent target/action checks, collection-window
 bounds, Presenter compatibility fallback, model/selection retention across
-Presenter switches, remount after repeated Presenter failures, and the visible
+Presenter switches, remount after repeated Presenter failures, concurrent
+mount generations, destroyed-session mount rejection, contribution budgets,
+and the visible
 `model.invalid` fallback for a malformed service snapshot.
 
 `pnpm run test:clipboard-model` loads `modelBudget.ts` through Vite SSR and
@@ -38,7 +41,7 @@ clipboard Presenters' fade conditions follow real `scrollTop` / `clientHeight` /
 `pnpm run test:skin-system` loads the same modules through Vite SSR and checks
 skin normalization, the four shared surfaces, clipboard row heights, accent
 normalization, native skin accents, and the 3:1 / 4.5:1 contrast floors of all
-derived accent tiers.
+derived accent tiers. `pnpm run test:plugin-contract` checks the machine-readable host behavior table against implementation markers before the production build.
 
 Static text invariants are covered by `node scripts/check_i18n.mjs`: the three
 `languages/*.json` bundles must carry the same key set, every key must be
@@ -61,6 +64,14 @@ Presenter sandbox and its capability surface, stores/clears a declared secret
 through the settings UI, verifies that only the service reads it, exercises
 cache hits, two Presenters, engine switching, cancellation, timeout and network
 failure, and asserts that the API key never appears in the Page Model.
+
+The plugin/navigation/clipboard boundary regression uses
+`node scripts/cdp_plugin_nav_clipboard_fix_verify.mjs`. It installs isolated
+provider/service fixtures plus a manual invalid-id directory, then checks the
+disable/unload boundary (iframe removal, lifecycle silence, token revocation),
+per-plugin and page-level navBars budgets, malformed/oversized provider rows,
+provider drill generations, HTTP(S) icon refusal, native Space activation on
+clipboard categories/status/row actions, and the async file-existence path.
 
 Built-in Page Service / Presenter integration uses
 `node scripts/cdp_page_runtime_verify.mjs`. It switches the navigation and

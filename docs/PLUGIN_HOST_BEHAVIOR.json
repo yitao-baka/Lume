@@ -1,0 +1,43 @@
+{
+  "api": 2,
+  "disabledPlugin": {
+    "unloadsLogicFrame": true,
+    "revokesCapabilityTokens": true,
+    "receivesLifecycleHooks": false,
+    "capabilityCallsAllowed": false
+  },
+  "honoredContributions": {
+    "navBars": {
+      "enabled": true,
+      "maxBarsPerPlugin": 8,
+      "maxItemsPerPlugin": 120,
+      "maxBytesPerPlugin": 196608,
+      "maxBarsPerPage": 32,
+      "maxItemsPerPage": 320,
+      "maxBytesPerPage": 524288,
+      "emptyQueryBlocksNavigation": false
+    },
+    "provider": {
+      "enabled": true,
+      "searchMode": "concurrent",
+      "timeoutMsPerProvider": 6000,
+      "maxRowsPerResult": 64,
+      "maxBytesPerPluginResult": 196608
+    },
+    "icons": {
+      "httpSupported": false,
+      "allowedSchemes": ["data", "asset", "blob"],
+      "relativePathsResolveAgainstPluginDir": true
+    }
+  },
+  "presenter": {
+    "component": "page-runtime",
+    "staleMountsAreCancelled": true,
+    "supersededHandlesAreDisposed": true,
+    "destroyedSessionRemounts": false
+  },
+  "logicHost": {
+    "notReadyHooksCountTowardCircuitBreaker": false,
+    "unloadRejectsPendingCalls": true
+  }
+}

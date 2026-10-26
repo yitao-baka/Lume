@@ -19,13 +19,16 @@ import { themeMode } from "../theme";
 import type { ColorMode } from "../theme";
 import type { PickedIcon, PluginIconSpec } from "./types";
 
-/** data:/http(s):/asset:/blob: URIs pass through untouched; anything else is
- * a file path (absolute, or relative to `base` — a manifest icon is relative
- * to the plugin dir) → asset URL. */
+/** Return a WebView-safe icon URL. HTTP(S) is deliberately unsupported;
+ * data:/asset:/blob: pass through, and other values are filesystem paths
+ * (absolute, or relative to `base`) → asset URL. */
 export function resolveIconUrl(icon: unknown, base?: string): string | undefined {
   if (typeof icon !== "string" || icon === "") return undefined;
-  if (/^(data:|https?:|asset:|blob:)/i.test(icon)) return icon;
-  if (base && !/^(?:[A-Za-z]:[\\/]|\\\\)/.test(icon)) {
+  if (/^https?:/i.test(icon)) return undefined;
+  if (/^(data:|asset:|blob:)/i.test(icon)) return icon;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(icon)) return undefined;
+  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(icon)) return convertFileSrc(icon);
+  if (base) {
     return convertFileSrc(base + "\\" + icon);
   }
   return convertFileSrc(icon);

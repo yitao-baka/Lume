@@ -50,7 +50,7 @@ async function findTargets() {
   const pages = (await getTargets()).filter((t) => t.type === "page" && t.url.includes("tauri.localhost"));
   for (const t of pages) {
     const c = await connect(t.webSocketDebuggerUrl);
-    const isSettings = await c.evalJs(`document.body.classList.contains("settings-window")`);
+    const isSettings = await c.evalJs(`document.body?.classList.contains("settings-window") === true`);
     if (isSettings) return { settingsT: t, mainT: pages.find((p) => p !== t) };
     c.ws.close();
   }

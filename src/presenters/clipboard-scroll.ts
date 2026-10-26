@@ -13,6 +13,9 @@ export function clipboardScrollFades(
 ): ClipboardScrollFades {
   return {
     top: scrollTop > 0,
-    bottom: scrollTop + clientHeight < scrollHeight,
+    // Browser scrollTop can clamp to a fractional value a fraction below the
+    // mathematical maximum at non-integer DPI. Compare the visible bottom edge
+    // after pixel rounding so a true end does not keep a phantom fade.
+    bottom: Math.ceil(scrollTop + clientHeight) < Math.ceil(scrollHeight),
   };
 }

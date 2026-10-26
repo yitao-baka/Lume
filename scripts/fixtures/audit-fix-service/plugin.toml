@@ -1,0 +1,7 @@
+id = "audit-fix-service"
+name = "Audit Fix Service"
+version = "1.0.0"
+kind = "service"
+api = 2
+permissions = ["clipboard"]
+entry = "main.js"

@@ -506,6 +506,7 @@ function App() {
       void switchMode(id);
     },
     runSearch,
+    openSettings: () => openSettings(),
     setQuery,
     setModePlaceholder: (pluginId, text) => {
       // Scoped to the caller's own mode id (createHostApi supplies the id) —

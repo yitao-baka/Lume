@@ -5342,3 +5342,68 @@ Presenter 名称，值没有持久化或下发路径。
 - `cdp_plugin_v2_verify` **5/5**、`cdp_detached_page_runtime_verify` **12/12**、
   `cdp_circuit_verify` PASS（hello-mode 显式进入后 7 次 hook、0 pending）、
   `check_i18n` **580 键 × 3 语言**。
+
+## 86. 插件、导航与剪贴板第二轮审计修复（2026-10-26）
+
+原始发现与复现件见
+[专项审计](History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-26.md)。
+
+### 86.1 停用、清单与贡献边界
+
+- 停用磁盘插件现在走与热重载相同的 `unloadDiskPlugin()`：删除 contribution、
+  页面运行时、逻辑 iframe、session frame、节流计时器与 pending RPC；manifest
+  被移除或新变为 `apiError` 时也做 reconcile。`allPlugins()` 只向生命周期回调
+  暴露 enabled 项。
+- `set_plugin_enabled(false)` 立即调用 Rust `plugin_perm::invalidate()` 撤销
+  逻辑 token；`assert_capability()` 同时检查 `settings.plugins.disabled`，旧 frame
+  即使尚未拆完也无法继续调用宿主能力。
+- manifest gate 增加 1–64 字符的插件 id 校验，只接受 ASCII 字母、数字、`-`、
+  `_`；目录名回退值走同一门，非法 id 在 settings 中保留 `apiError` 且不注册贡献。
+- `ContributionBudget` 统一约束 Provider 与 navBars：Provider 单结果 64 行 /
+  192 KiB / 单行 16 KiB；navBars 单插件 8 栏 / 120 项 / 192 KiB，整页 32 栏 /
+  320 项 / 512 KiB。坏 path/icon、非有限数值和超长字段被丢弃或截断并记录插件。
+- Provider 搜索改为原生结果先发布、多个 Provider 并发查询（单插件 6s 超时）并按
+  完成顺序增量合并。导航 Presenter 对 `status = "error"` 显示可恢复错误、详情和
+  “打开设置”动作，不再把失败模型渲染成空首页。
+
+### 86.2 异步代际与 Presenter
+
+- Provider search/select/filter 共用 root token + 页面本地 generation；新查询、
+  模式切换、隐藏、重置和 Esc 下钻退出都会使旧结果失效，旧 `select()` 不再覆盖
+  新查询或重占搜索框。
+- PresenterHost 增加单调 mount generation。旧 factory/`ready()` 完成后直接
+  dispose，不写 current handle/state；Page Session destroyed 后拒绝重挂载。
+- Host behavior contract 新增 `docs/PLUGIN_HOST_BEHAVIOR.json` 与
+  `scripts/check_plugin_contract.mjs`，并接入前端生产构建。
+
+### 86.3 剪贴板与图标契约
+
+- 自动合并富文本时原子清空 `html`，合并行按纯文本复制，避免回写只含首段格式的
+  旧 HTML；新增 Rust 回归覆盖两段富文本合并与 undo/restore。
+- 剪贴板搜索改用 `instr(lower(content/source_app), lower(?))` 字面匹配，
+  `%`、`_`、反斜杠不再被解释为 SQL `LIKE` 通配符；保留既有 ASCII 大小写不敏感
+  语义和 kind/source-app 组合过滤。
+- 页面级 Space 多选只在焦点不属于 button/tab/link/input/textarea/select/
+  contenteditable 时生效；分类、暂停、清空和行操作按钮恢复原生 Space 激活。
+- HTTP(S) 图标统一拒绝：清单图标只接受插件目录内相对文件，Provider/navBars
+  行图标接受 `data:`/`asset:`/`blob:` 或本地路径。远程图标不再制造不可达 WebView
+  请求，也不绕过 `network` 权限。
+- `copy_clipboard`、`paste_clipboard*`、`delete_clipboard`、`clear_clipboard`、
+  `plugin_clipboard_write_image` 与 `check_file_exists` 改为
+  `async + spawn_blocking`；文件存在性检查限制 1024 条、单路径 32 KiB 并拒绝 NUL。
+
+### 86.4 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`pnpm run test:plugin-contract`、
+  `cargo check`、`cargo test` **258 passed / 9 ignored**、
+  `cargo clippy --all-targets --message-format=short` **0 warning**。
+- Page Runtime **17/17**（mount generation、destroyed session、贡献预算）、
+  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**。
+- `cdp_plugin_nav_clipboard_fix_verify.mjs` **31/31**：停用/重启用、token
+  拒绝、navBars 洪泛、Provider 预算与下钻竞态、HTTP 图标、剪贴板按钮 Space、
+  非法 id 和异步文件存在性检查全部 PASS。
+- `cdp_plugin_audit_runtime_verify`、`cdp_page_runtime_verify`、
+  `cdp_clipboard_smoke`、`cdp_p1_verify` **14/14**、
+  `cdp_sandbox_verify` **19/19**、`cdp_presenter_network_verify` **10/10**
+  全部通过；`cdp_page_runtime_verify` 同时覆盖非整数 DPI 下真实滚动末端不残留
+  bottom fade。

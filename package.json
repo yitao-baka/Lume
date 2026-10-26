@@ -6,9 +6,10 @@
   "scripts": {
     "start": "vite",
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/check_plugin_contract.mjs && vite build",
     "test:clipboard-model": "node scripts/clipboard_model_unit_test.mjs",
     "test:page-runtime": "node scripts/page_runtime_unit_test.mjs",
+    "test:plugin-contract": "node scripts/check_plugin_contract.mjs",
     "test:skin-system": "node scripts/skin_system_unit_test.mjs",
     "serve": "vite preview",
     "tauri": "tauri",

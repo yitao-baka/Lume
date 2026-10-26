@@ -29,6 +29,7 @@ import {
   windowFeatureMatches,
 } from "../registry";
 import type { NavigateStore } from "./store";
+import { sanitizeProviderRows } from "../contributionBudget";
 
 export interface NavigateSearchDeps {
   /** This page's own mode id ("apps") — activity checks against `services.mode()`. */
@@ -47,6 +48,14 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
    * render in the 「推荐使用」 block below the normal results (#43). */
   const [pluginStart, setPluginStart] = createSignal(0);
   const [selected, setSelected] = createSignal(0);
+  /** Local generation for every async page action. Root search tokens cover
+   * typed queries; this also invalidates provider work on hide/reset/mode
+   * switches where no new search is dispatched. */
+  let asyncGeneration = 0;
+  const requestCurrent = (token: number, generation: number) =>
+    generation === asyncGeneration &&
+    token === services.searchToken() &&
+    services.mode() === deps.id;
   // — plugin entry rows for OS file drops (paths arrive via the Tauri
   // drag-drop handler) and for the clipboard image. Cleared on hide/summon.
   // `droppedFileKinds` runs parallel to `droppedFiles` (docs/ROADMAP_HISTORY.md #28):
@@ -144,6 +153,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
   function popDrill(): boolean {
     const d = drill();
     if (!d) return false;
+    asyncGeneration++;
     setDrill(null);
     setApps(d.parent);
     setPluginStart(d.parentPluginStart);
@@ -153,21 +163,18 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     return true;
   }
 
-  /** The home page's search — the merge pipeline, dropping stale responses by
-   * the root's search token (the shell bumps it before every dispatch). */
+  /** The home page's search — native results publish first, then provider
+   * results merge concurrently as each completes. Every write checks both the
+   * root search token and this page's local generation. */
   async function search(q: string) {
     nav.setNavHidden(false); // typing reveals the first entry's highlight
     if (drill()) setDrill(null); // a fresh search leaves the drilled level
     const token = services.searchToken();
+    const generation = ++asyncGeneration;
     if (q.trim() === "") {
       // Keep the zone: the empty menu re-runs this search for its async
       // feature refreshes (foreground context / clipboard probe) and must not
       // drop the bar highlight the summon auto-selected.
-      // Empty query shows the main-menu bars (最近使用 / 已固定 / 推荐使用 /
-      // plugin bars / Explorer), never a browse grid. Plugin rows for the
-      // current context — a fresh file drop, the clipboard holding an image
-      // with an img rule declared, a matched foreground-window rule — land in
-      // the 「推荐使用」 section (#43), so they no longer replace the bars.
       const rebuildEmpty = (feats: FeatureMatch[]) => {
         const entries = feats.map(featureRowToEntry);
         setApps([]);
@@ -196,24 +203,16 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         ...(clipboardImgOk() ? imgFeatureMatches() : []),
       ];
       rebuildEmpty(feats());
-      // Clearing a query removes the grid, so a zone left at "grid" would
-      // leave the visible bars without any selection until another keypress.
-      // Preserve an existing bar zone, otherwise select the first section.
       if (nav.zone() === "grid") {
         const first = nav.sections()[0];
         if (first) nav.setZone(first.id);
       }
       if (imgFeatureMatches().length > 0) {
-        // One cheap probe per empty render (OpenClipboard + format check) —
-        // a screenshot taken while the menu is up makes the row appear, and
-        // the clipboard changing back to text drops it. Stale-guarded by
-        // the request token.
+        // One cheap probe per empty render (OpenClipboard + format check).
         void invoke<boolean>("plugin_clipboard_has_image")
           .then((ok) => {
-            if (token !== services.searchToken()) return;
+            if (!requestCurrent(token, generation)) return;
             setClipboardImgOk(!!ok);
-            // Rebuild either way: the probe may have ADDED the row (image
-            // appeared) or must DROP a stale one (clipboard changed back).
             rebuildEmpty([
               ...windowFeatureMatches(fgContext()),
               ...fileFeatureMatches(droppedFiles(), droppedFileKinds()),
@@ -224,14 +223,9 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       }
       return;
     }
-    // A query owns the selection: the grid, not a bar — and it hides the
-    // empty-menu section. Plugin-appended rows (全局关键字 / feature /
-    // file-drop / providers) collect below the normal results in the
-    // 「推荐使用」 block, split at `pluginStart` (#43).
+
     nav.setZone("grid");
     nav.setRecommended(null);
-    // Native index and the unified file-search backend race in parallel;
-    // both are stale-guarded by the same request token below.
     const [res, files] = (await Promise.all([
       invoke("search_apps", { query: q }),
       invoke<FileSearchOut>("file_search", { query: q }).catch((err) => {
@@ -239,26 +233,28 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         return null;
       }),
     ])) as [AppEntry[], FileSearchOut | null];
-    if (token !== services.searchToken()) return;
-    // Merge into two blocks: the normal results (native index → file-search
-    // hits; deduped by path, capped to keep the grid sane) and the plugin-
-    // appended rows (全局关键字 → feature rows → file-drop rows → providers,
-    // never crowded out) rendered under the 「推荐使用」 divider.
+    if (!requestCurrent(token, generation)) return;
+
     const normal: AppEntry[] = [...res];
-    const plugin: AppEntry[] = [];
-    const seen = new Set(res.map((r) => r.path));
+    const basePlugin: AppEntry[] = [];
+    const seen = new Set(normal.map((row) => row.path));
+    const pushPlugin = (row: AppEntry) => {
+      if (normal.length + basePlugin.length >= 20) return;
+      if (row.path && seen.has(row.path)) return;
+      if (row.path) seen.add(row.path);
+      basePlugin.push(row);
+    };
+
     for (const kw of modeKeywordMatches(q)) {
-      plugin.push({
+      pushPlugin({
         id: -1,
         name: `进入 ${kw.name}`,
         path: `lume-mode://${kw.id}`,
         ...(kw.icon ? { icon: kw.icon } : {}),
       });
     }
-    // 声明式进入（features）：正则/任意文本命中 → 「<label>」行，
-    // 激活把当前查询作为 payload 投递给插件（mode 先切页再 onEnter）。
     for (const f of featureMatches(q)) {
-      plugin.push({
+      pushPlugin({
         id: -1,
         name: f.label,
         path: `lume-feature://${f.pluginId}/${f.code}`,
@@ -266,44 +262,91 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
         featureEnter: { pluginId: f.pluginId, code: f.code, type: f.type, payload: f.payload },
       });
     }
-    // : a file dropped while a query is up also offers its rows.
     for (const f of fileFeatureMatches(droppedFiles(), droppedFileKinds())) {
-      plugin.push(featureRowToEntry(f));
+      pushPlugin(featureRowToEntry(f));
     }
     for (const f of files?.entries ?? []) {
-      if (normal.length + plugin.length >= 20) break;
+      if (normal.length + basePlugin.length >= 20) break;
       if (!f?.name || !f?.path || seen.has(f.path)) continue;
       seen.add(f.path);
       normal.push(f);
     }
-    for (const p of providerPlugins()) {
-      try {
-        const items = await p.instance.search(q);
-        if (token !== services.searchToken()) return;
-        for (const it of items ?? []) {
-          if (normal.length + plugin.length >= 20) break;
-          const key = it.path || `lume-plugin://${p.id}/${plugin.length}`;
-          if (seen.has(key)) continue;
-          const entry = providerRowToEntry(p, it, plugin.length);
-          if (!entry) continue;
-          seen.add(key);
-          plugin.push(entry);
-        }
-      } catch (err) {
-        console.error("provider search failed:", p.id, err);
-      }
-    }
-    const merged = [...normal, ...plugin];
-    setApps(merged);
-    setPluginStart(normal.length);
-    // Rows with an explicit icon or a plugin-enter action don't go through
-    // the icon pipeline (icon is already resolved / path is synthetic).
-    void deps.icons.loadIcons(
-      merged.filter((a) => !a.icon && !a.providerEnter && !a.featureEnter)
-    );
-    services.scheduleResize();
-  }
 
+    const publish = (providerRows: AppEntry[] = []) => {
+      if (!requestCurrent(token, generation)) return;
+      const capacity = Math.max(0, 20 - normal.length);
+      const plugin = providerRows.slice(0, capacity);
+      const merged = [...normal, ...plugin];
+      setApps(merged);
+      setPluginStart(normal.length);
+      void deps.icons.loadIcons(
+        merged.filter((a) => !a.icon && !a.providerEnter && !a.featureEnter)
+      );
+      services.scheduleResize();
+    };
+
+    // Native/file-index results are useful without waiting for any provider.
+    publish(basePlugin);
+
+    const providers = providerPlugins();
+    const slots: AppEntry[][] = providers.map(() => []);
+    const renderProviders = () => {
+      if (!requestCurrent(token, generation)) return;
+      const rows: AppEntry[] = [...basePlugin];
+      const providerSeen = new Set(seen);
+      for (const slot of slots) {
+        for (const row of slot) {
+          if (normal.length + rows.length >= 20) break;
+          if (row.path && providerSeen.has(row.path)) continue;
+          if (row.path) providerSeen.add(row.path);
+          rows.push(row);
+        }
+      }
+      publish(rows);
+    };
+
+    const timeout = (work: Promise<ProviderResult[]>, pluginId: string) =>
+      new Promise<ProviderResult[]>((resolve, reject) => {
+        const timer = window.setTimeout(
+          () => reject(new Error(`provider "${pluginId}" timed out`)),
+          6000
+        );
+        work.then(
+          (value) => {
+            window.clearTimeout(timer);
+            resolve(value);
+          },
+          (error) => {
+            window.clearTimeout(timer);
+            reject(error);
+          }
+        );
+      });
+
+    await Promise.all(
+      providers.map(async (p, index) => {
+        try {
+          const items = await timeout(Promise.resolve(p.instance.search(q)), p.id);
+          if (!requestCurrent(token, generation)) return;
+          const safe = sanitizeProviderRows(items);
+          if (safe.droppedRows || safe.truncated) {
+            console.warn(
+              `[plugins] provider ${p.id} result budget applied: dropped=${safe.droppedRows}` +
+                (safe.truncated ? " (truncated)" : "")
+            );
+          }
+          slots[index] = safe.value
+            .map((item, seq) => providerRowToEntry(p, item, seq))
+            .filter((entry): entry is AppEntry => !!entry);
+          renderProviders();
+        } catch (err) {
+          if (requestCurrent(token, generation)) {
+            console.error("provider search failed:", p.id, err);
+          }
+        }
+      })
+    );
+  }
   /** Intercept the drill-filter keystrokes : while drilled into a
    * filterable provider row, typing feeds the current level instead of
    * running a search. Returns false when not drilled. */
@@ -312,22 +355,26 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     const owner = services.subInputOwner();
     if (!d?.filterable || d.pluginId !== owner) return false;
     const p = providerPlugins().find((x) => x.id === d.pluginId);
+    if (!p?.instance.filter) return false;
+    const filter = p.instance.filter;
     const token = services.nextSearchToken();
+    const generation = ++asyncGeneration;
     void (async () => {
       try {
-        const rows = await p?.instance.filter?.(d.item as never, q);
-        if (token !== services.searchToken()) return;
-        setApps(rowsToEntries(p!, rows ?? []));
+        const rows = await filter(d.item as never, q);
+        if (!requestCurrent(token, generation)) return;
+        setApps(rowsToEntries(p, rows ?? []));
         setPluginStart(0); // filtered level = the whole grid
         setSelected(0);
         services.scheduleResize();
       } catch (err) {
-        console.error("provider filter failed:", d.pluginId, err);
+        if (requestCurrent(token, generation)) {
+          console.error("provider filter failed:", d.pluginId, err);
+        }
       }
     })();
     return true;
   }
-
   /** Activate one entry: a feature/keyword row, a provider action/drill row,
    * or a plain launch. Shared by the results grid and the 「推荐使用」 section
    * (the section contract calls it back with its own index). */
@@ -353,9 +400,12 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       if (!p?.instance.select) return;
       const parent = apps();
       const parentPluginStart = pluginStart();
+      const token = services.searchToken();
+      const generation = ++asyncGeneration;
       void (async () => {
         try {
           const rows = await p.instance.select!(d.item as never);
+          if (!requestCurrent(token, generation)) return;
           setApps(rowsToEntries(p, rows ?? []));
           setPluginStart(0); // a drilled level replaces the whole grid
           setDrill({
@@ -369,13 +419,14 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
           setSelected(0);
           services.scheduleResize();
         } catch (err) {
-          console.error("provider select failed:", d.pluginId, err);
-          services.showToast(t("pluginActionUnavailable", { id: d.pluginId }));
+          if (requestCurrent(token, generation)) {
+            console.error("provider select failed:", d.pluginId, err);
+            services.showToast(t("pluginActionUnavailable", { id: d.pluginId }));
+          }
         }
       })();
       return;
-    }
-    // Provider action row (manifest of `enter`): hand the original result
+    }    // Provider action row (manifest of `enter`): hand the original result
     // object back to the plugin's onEnter instead of launching anything.
     // The launcher stays open — the plugin hides itself when done.
     if (item.providerEnter) {
@@ -492,6 +543,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
   /** Per-show reset (the summon-time reset hook): rows, drill level and the
    * one-shot feature-row state. */
   function resetState() {
+    asyncGeneration++;
     setDrill(null);
     setDroppedFiles([]);
     setDroppedFileKinds([]);
@@ -529,6 +581,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     activate,
     popDrill,
     resetState,
+    invalidateAsync: () => { asyncGeneration++; },
     onFilesDropped,
     fetchFgContext,
   };

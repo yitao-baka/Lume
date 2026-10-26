@@ -1167,6 +1167,7 @@ pub fn set_plugin_enabled(
     window: tauri::WebviewWindow,
     app: AppHandle,
     state: State<SettingsState>,
+    perms: State<crate::plugin_perm::PluginPermState>,
 ) -> Result<(), String> {
         crate::plugin_perm::deny_from_plugin_windows(&window)?;
     let mut guard = state.0.lock().unwrap();
@@ -1174,11 +1175,14 @@ pub fn set_plugin_enabled(
     if enabled {
         next.plugins.disabled.retain(|d| d != &id);
     } else if !next.plugins.disabled.iter().any(|d| d == &id) {
-        next.plugins.disabled.push(id);
+        next.plugins.disabled.push(id.clone());
     }
     write_settings_light(&paths::base_dir(), &next)?;
     *guard = next;
     drop(guard);
+    // Revoke every logic token immediately. The frontend also unloads the
+    // iframe, but capability denial must not depend on that cleanup winning.
+    crate::plugin_perm::invalidate(&perms, &id);
     app.emit("settings-applied", ()).map_err(|e| e.to_string())?;
     Ok(())
 }

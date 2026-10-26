@@ -107,6 +107,7 @@ function makeServices(id: string, token: string): PluginServices {
     resetAndHide: () => action("hide"),
     persistLastPage: () => {},
     runSearch: async () => {},
+    openSettings: () => action("openSettings"),
     scheduleResize: () => {},
     searchToken: () => 0,
     nextSearchToken: () => 0,

@@ -75,6 +75,7 @@ export class PageSession {
   async mount(
     factory: (presenter: PresenterDescriptor) => PresenterFactory
   ): Promise<PresenterHostState> {
+    if (this.destroyed) throw new Error("Page Session was destroyed");
     return this.presenterHost.mount({
       pageId: this.pageId,
       presenters: this.presenters,
@@ -89,6 +90,7 @@ export class PageSession {
 
   /** Choose the Presenter for the next mount without mounting it yet. */
   setRequestedPresenter(presenterId: string): void {
+    if (this.destroyed) throw new Error("Page Session was destroyed");
     if (!this.presenters.some((p) => p.id === presenterId)) {
       throw new Error(`unknown Presenter "${presenterId}"`);
     }

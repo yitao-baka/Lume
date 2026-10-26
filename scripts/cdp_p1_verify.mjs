@@ -161,8 +161,8 @@ await sleep(1200);
 check("clipboard.paste hid the launcher (auto-paste flow ran)", /visible=0/.test(winState()), winState());
 const pasteLog = readFileSync("test/p1_lume.log", "utf8");
 check("paste used the real paste path (no plain-copy fallback)", pasteLog.includes("[plugins] clipboard.paste: text") && !pasteLog.includes("copied without pasting"));
-const clipText = ps(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetText()`);
-check("pasted text stayed on the clipboard", clipText === " paste check", clipText);
+let clipText = ""; for (let i = 0; i < 10 && clipText !== "paste check"; i++) { clipText = ps(`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetText()`); if (clipText !== "paste check") await sleep(200); }
+check("pasted text stayed on the clipboard", clipText === "paste check", clipText);
 
 await m.shot("p1_panel.png");
 console.log(`\n${pass} passed, ${fail} failed`);

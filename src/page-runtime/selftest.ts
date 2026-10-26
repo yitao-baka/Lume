@@ -2,7 +2,7 @@
 //! launcher does not import this module; scripts/page_runtime_unit_test.mjs
 //! loads it through Vite SSR.
 
-import type { PageModel } from "./contracts";
+import type { PageIntent, PageModel } from "./contracts";
 import { validateIntent } from "./intents";
 import { normalizeLayoutReport, normalizeResizeRequest } from "./layout";
 import { PageModelStore, validatePageModel } from "./modelStore";
@@ -15,6 +15,13 @@ import { createFixturePresenter, fixturePresenters } from "./fixturePresenter";
 import { isTranslationData } from "./translatorDemo";
 import translationFixture from "./fixtures/translator-translation.v1.json";
 import { capSnapshot } from "../plugins/iframeBridge";
+import {
+  NAV_BAR_LIMITS,
+  PROVIDER_ROW_LIMITS,
+  fitNavBarPageBudget,
+  sanitizeNavBarContributions,
+  sanitizeProviderRows,
+} from "../plugins/contributionBudget";
 
 function expect(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -175,6 +182,57 @@ export function runPageRuntimeSelfTests(): string[] {
   expectThrows(() => normalizeResizeRequest(Number.NaN, 320), "finite");
   expect(normalizeResizeRequest(900, 320).width === 900, "valid resize axes survive validation");
   passed.push("Presenter layout validation and fit height");
+  const providerBudget = sanitizeProviderRows([
+    { name: "ok", path: "https://example.com/ok" },
+    { name: "bad path", path: { nested: true } },
+    { name: "bad icon", path: "https://example.com/icon", icon: 7 },
+    { name: "bad number", path: "https://example.com/nan", score: Number.POSITIVE_INFINITY },
+    ...Array.from({ length: 100 }, (_, i) => ({ name: `row-${i}`, path: `https://example.com/${i}` })),
+  ]);
+  expect(
+    providerBudget.value.length <= PROVIDER_ROW_LIMITS.maxRows,
+    "provider rows must obey the row-count budget"
+  );
+  expect(providerBudget.droppedRows === 3, "malformed provider rows are dropped");
+  expect(
+    !providerBudget.value.some((row) => ["bad path", "bad icon", "bad number"].includes(row.name)),
+    "malformed provider rows never reach the grid"
+  );
+
+  const navBudget = sanitizeNavBarContributions(
+    "budget-probe",
+    Array.from({ length: 40 }, (_, bar) => ({
+      id: `bar-${bar}`,
+      title: `Bar ${bar}`,
+      items: Array.from({ length: 50 }, (_, item) => ({
+        name: `Item ${bar}-${item}`,
+        path: `https://example.com/${bar}/${item}/${"x".repeat(120)}`,
+      })),
+    })),
+    () => undefined
+  );
+  expect(navBudget.value.length <= NAV_BAR_LIMITS.maxBarsPerPlugin, "navBars bar budget applies");
+  expect(
+    navBudget.value.reduce((sum, bar) => sum + bar.items.length, 0) <= NAV_BAR_LIMITS.maxItemsPerPlugin,
+    "navBars item budget applies"
+  );
+  expect(navBudget.truncated, "oversized navBars are reported as truncated");
+
+  const pageBars = Array.from({ length: 40 }, (_, i) => ({
+    id: `p:${i}`,
+    title: `Page bar ${i}`,
+    items: Array.from({ length: 20 }, (_, j) => ({
+      name: `Page item ${i}-${j}`,
+      path: `https://example.com/page/${i}/${j}`,
+    })),
+  }));
+  const pageBudget = fitNavBarPageBudget(pageBars);
+  expect(pageBudget.value.length <= NAV_BAR_LIMITS.maxPageBars, "page-level nav bar budget applies");
+  expect(
+    pageBudget.value.reduce((sum, bar) => sum + bar.items.length, 0) <= NAV_BAR_LIMITS.maxPageItems,
+    "page-level nav item budget applies"
+  );
+  passed.push("plugin contribution budgets are bounded and reported");
 
   return passed;
 }
@@ -268,6 +326,52 @@ export async function runPageRuntimeAsyncSelfTests(): Promise<string[]> {
   expect(failedReady.status === "error" && disposedFailures === 2, "failed ready handles must be disposed");
   passed.push("Presenter ready-failure cleanup");
 
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const raceHost = new PresenterHost("selftest-presenter-race", { logErrors: false });
+  let slowDisposed = false;
+  const raceRequest = {
+    pageId: "selftest-presenter-race",
+    presenters: [
+      { id: "slow-a", name: "Slow", models: [COLLECTION_SCHEMA], builtin: true },
+      { id: "fast-b", name: "Fast", models: [COLLECTION_SCHEMA], builtin: true },
+    ],
+    schema: COLLECTION_SCHEMA,
+    store: session.store,
+    dispatch: (intent: PageIntent) => session.dispatch(intent),
+  };
+  const slowMount = raceHost.mount({
+    ...raceRequest,
+    requestedId: "slow-a",
+    factory: () => () => ({
+      ready: async () => { await sleep(120); },
+      dispose: () => { slowDisposed = true; },
+    }),
+  });
+  await sleep(5);
+  const fastMount = raceHost.mount({
+    ...raceRequest,
+    requestedId: "fast-b",
+    factory: () => () => ({
+      ready: async () => { await sleep(15); },
+      dispose: () => {},
+    }),
+  });
+  await Promise.all([slowMount, fastMount]);
+  expect(raceHost.getState().presenterId === "fast-b", "latest Presenter wins a concurrent mount");
+  expect(raceHost.getState().status === "ready", "latest Presenter remains ready");
+  expect(raceHost.getPresenter()?.id === "fast-b", "current handle matches reported Presenter");
+  expect(slowDisposed, "superseded Presenter handle is disposed");
+  raceHost.dispose();
+  passed.push("Presenter mount generations cancel stale ready handshakes");
+
   await session.dispose();
+  let destroyedMountRejected = false;
+  try {
+    await session.mount(() => createFixturePresenter("destroyed").factory);
+  } catch (err) {
+    destroyedMountRejected = String(err).includes("destroyed");
+  }
+  expect(destroyedMountRejected, "destroyed Page Session refuses a late mount");
+  passed.push("destroyed Page Session cannot remount");
   return passed;
 }

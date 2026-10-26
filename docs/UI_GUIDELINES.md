@@ -253,6 +253,11 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
   container-wide focus ring. The selected row/tile border is the page-level
   position cue.
 
+- **Native control keys win**: page-level clipboard `Space` multi-select only
+  applies when focus is outside buttons, links, tabs, inputs, textareas,
+  selects and contenteditable regions. Category, pause, clear and row-action
+  buttons therefore keep their native Space activation and visible focus.
+  `Delete` remains a page shortcut only outside text editing.
 ## Accessibility & targets
 
 - Every switch carries a non-empty accessible name derived from its visible

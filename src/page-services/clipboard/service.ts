@@ -16,6 +16,14 @@ export interface ClipboardPageDeps {
   services: PluginServices;
 }
 
+/** Native Space activation belongs to the focused control. The page-level
+ * multi-select shortcut only runs when focus is outside interactive elements. */
+function isInteractiveKeyTarget(target: EventTarget | null): boolean {
+  return target instanceof Element &&
+    !!target.closest(
+      'button, [role="button"], [role="tab"], a, input, textarea, select, summary, [contenteditable]:not([contenteditable="false"])'
+    );
+}
 function clipTargetId(item: ClipboardItem): string {
   return "clip:" + item.id;
 }
@@ -300,7 +308,7 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
       }
       return false;
     }
-    if (event.key === " " && !ctx.editing && ctx.hasResults) {
+    if (event.key === " " && !ctx.editing && ctx.hasResults && !isInteractiveKeyTarget(event.target)) {
       event.preventDefault();
       store.toggleMulti(store.selected());
       return true;

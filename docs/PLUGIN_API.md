@@ -93,7 +93,7 @@ export default {
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `id` | string | **目录名** | 插件唯一 id。省略时回退为所在目录名；与目录名不一致时以清单为准（不强制相等）。启停、去重、日志都以它为键。两个目录声明同一个 id 时只保留一个：目录名与 id 相同（不区分大小写）者优先；没有这种目录时按目录名字典序取首项。权限校验与贡献加载使用同一份 canonical 清单。磁盘插件不能占用内置 id（内置插件优先）。 |
+| `id` | string | **目录名** | 插件唯一 id，长度为 1–64，只允许 ASCII 字母、数字、`-`、`_`。省略时回退为所在目录名；回退值同样受此校验。与目录名不一致时以清单为准（不强制相等），非法 id 在清单门被拒绝。启停、去重、日志都以它为键。两个目录声明同一个 id 时只保留一个：目录名与 id 相同（不区分大小写）者优先；没有这种目录时按目录名字典序取首项。权限校验与贡献加载使用同一份 canonical 清单。磁盘插件不能占用内置 id（内置插件优先）。 |
 | `name` | string | `""` | 设置页显示名；为空时前端回退显示 id。 |
 | `version` | string | `""` | 显示用；设置页以 chip 呈现。内置插件固定为 lume 的包版本。 |
 | `kind` | string | `"mode"` | `provider` \| `mode` \| `service`。`mode` 声明 Page Service 与 Presenter；provider/service 需要 `entry`。 |
@@ -115,8 +115,8 @@ export default {
 | `detach_button` | bool | `true` | **mode 专属 + `detachable` 配套**（§6.8）— 宿主是否在模式页右上角渲染内置的悬停「在独立窗口打开」按钮。插件自绘分离按钮（常驻、纯图标…）时设 `false` 把右上角完全让给页面，分离走 `lume.app.detach()`（§6.1）。 |
 | `hidden` | bool | `false` | **mode 专属** — 在模式切换栏（pill）与切换键（Tab）循环中隐藏本模式：不渲染 pill、Tab 不切入（模式激活时 Tab 从导航页重新开始）。唯一入口是导航页搜索结果：keywords 的「进入 <name>」行、`[[features]]` 命中行与插件互跳（`app.redirect`）。设置 → 插件 卡片会显示「仅搜索进入」徽标；插件仍然可以被启停。示例：`examples/plugins/hidden-mode/`。 |
 | `keep_session` | bool | `false` | **mode 专属** — 闲置重置（启动器隐藏超过设置阈值后的下一次呼出，§6.6）时保留本模式会话状态的**声明式默认**：查询、页面状态、保活宿主与会话帧都不动。用户可在 设置 → 插件 逐插件覆盖（`settings.plugins.keep_session_overrides`，用户值优先）。适合「状态 = 未保存草稿」的页面；不改变「超阈值先回导航页」这一点。示例：`examples/plugins/state-probe/`。 |
-| `icon` | string | `""` | **旧版单图（兼容）** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录，或 `data:`/`http(s):`/`asset:`/`blob:` URI）。省略 = 不显示图标。**同时是本插件在导航搜索结果里的默认行图标**：keywords 行、没有自己 `icon` 的 provider 结果与 feature 行都用它（没有才回退到 `path` 常规图标管线）。旧图表现不变：在本来就按 `--icon-filter` 反相的位置（模式 pill、列表模板行、设置 → 插件 主从列表的图标块）深色下仍反相；结果网格沿用原样。分离窗口（§6.8）的任务栏图标同源。 |
-| `icon_light` | string | `""` | **浅色界面变体** — 浅色表面显示的那套图（通常是深色描边），相对插件目录（URI 规则同上）。省略 → 回退 `icon`（仍没有 → 用另一套）。显式变体一律**按原样渲染、不再反相**。 |
+| `icon` | string | `""` | **旧版单图（兼容）** — 模式 pill（与 Tab 循环）的图标文件（相对插件目录的本地文件；HTTP(S) 与其它 URI 形式在此字段中会被清单门拒绝）。省略 = 不显示图标。**同时是本插件在导航搜索结果里的默认行图标**：keywords 行、没有自己 `icon` 的 provider 结果与 feature 行都用它（没有才回退到 `path` 常规图标管线）。旧图表现不变：在本来就按 `--icon-filter` 反相的位置（模式 pill、列表模板行、设置 → 插件 主从列表的图标块）深色下仍反相；结果网格沿用原样。分离窗口（§6.8）的任务栏图标同源。 |
+| `icon_light` | string | `""` | **浅色界面变体** — 浅色表面显示的那套图（通常是深色描边），相对插件目录的本地文件（规则同上）。省略 → 回退 `icon`（仍没有 → 用另一套）。显式变体一律**按原样渲染、不再反相**。 |
 | `icon_dark` | string | `""` | **深色界面变体** — 深色表面显示的那套图（通常是浅色描边）。省略 → 回退 `icon`（仍没有 → 用另一套）。 |
 
 **解析规则**（`plugins.rs::parse_manifest` / `scan_disk_plugins`）：
@@ -201,8 +201,8 @@ interface PluginManifest {   // 前端看到的形态
   （无论成败）。修改插件代码 → 设置 → 插件 点「↻ 重载」，或重启 Lume
   （§4.4）；清单声明 `development = true` 的插件每次刷新自动重载。
 - **禁用**：设置 → 插件 关闭后，`settings.plugins.disabled` 记录 id →
-  `providerPlugins()` 的 enabled 过滤把它的结果从合并中剔除——**但模块
-  仍驻留内存**（v1 不卸载已加载模块）。重新启用立即恢复结果，无需重启。
+  registry 立即卸载该插件的 contribution、逻辑 iframe、待处理 RPC 与生命周期回调，
+  Rust 能力层同时拒绝 disabled id。重新启用后下一次刷新重新加载，无需重启。
 - **关闭活动模式插件**：refresh 后校验当前模式仍然存在，不存在则自动切回
   导航页并清空搜索。
 - **内置 provider**（如果有）与磁盘 provider 走同一合并管线。
@@ -263,7 +263,7 @@ export default function create(ctx) {
 | `name` | string | 是 | 结果条目显示名（网格里单行省略）。 |
 | `path` | string | — | 文件绝对路径 **或** URL。声明了 `enter` 的条目可省略（动作条目不打开任何东西，宿主生成合成去重键）。激活时经 `launch_app`（`ShellExecuteW`）打开。 |
 | `description` | string | — | 可选副行，显示在名字下方（结果网格两行形态）。 |
-| `icon` | string \| `{ light?, dark? }` | — | 可选显式图标：字符串形式是 `data:`/`http(s):`/`asset:`/`blob:` URI 或文件路径（**相对路径相对插件目录**）；`{ light, dark }` 为两套变体（取值规则相同），宿主按所在表面主题选一套并按原样渲染。省略（或对象里一个都没有）= 用插件清单的图标集；都没有才走 `path` 的常规图标管线。 |
+| `icon` | string \| `{ light?, dark? }` | — | 可选显式图标：字符串形式是 `data:`/`asset:`/`blob:` URI 或文件路径（HTTP(S) 被拒绝；相对路径相对插件目录）；`{ light, dark }` 为两套变体（取值规则相同），宿主按所在表面主题选一套并按原样渲染。省略（或对象里一个都没有）= 用插件清单的图标集；都没有才走 `path` 的常规图标管线。 |
 | `enter` | boolean | — | 标记：激活本条目**不调 `launch_app`**，改为回调 provider 的 `onEnter(item)`；启动器保持打开，插件自行决定何时 `ctx.app.hide()`。 |
 | `drill` | boolean | — | 声明下钻行：激活改为调 `select(item)`（§10.2）。 |
 
@@ -301,15 +301,16 @@ export default function create(ctx) {
 - 每次按键搜索都会调用——`search` 应当快速返回（异步网络请求请自行加
   防抖/缓存；慢响应会被 stale-token 机制丢弃结果，见下）。
 - 合并规则（导航页 apps 分支，`src/plugins/navigate/search.ts`）：
-  1. 原生索引结果（`search_apps`）与文件搜索命中构成**正常结果网格**
+  1. 原生索引结果（`search_apps`）与文件搜索命中先发布为**正常结果网格**
      （文件命中按 `path` 与原生结果去重，合计封顶 **20**）；
-  2. 每个**已启用** provider 的返回条目落在网格下方的**「推荐使用」块**
-     ——与 `lume-mode://` 关键字行、feature 行同块，以标题分隔行与正常
-     结果隔开；关键字/feature 行不被 20 条封顶挤掉，provider 与
-     文件命中共享该预算；
-  3. 按 `path` 全局去重（与原生结果、与其它 provider 之间都去重）；
-  4. 整个过程用根搜索令牌（`searchToken`）守卫——期间有新按键搜索，
-     迟到的结果被丢弃。
+  2. 每个**已启用** provider 并发查询，单个 provider 的超时为 **6s**；
+     一个结果返回就增量合并，不等待其它 provider；
+  3. provider 条目与 `lume-mode://` 关键字行、feature 行同属「推荐使用」块，
+     按 `path` 全局去重，并服从总行数与序列化字节预算；
+  4. 每个 provider 每次最多返回 **64** 行、总计 **192 KiB**；坏形状、超长字段、
+     非有限数值和超预算行被丢弃并由宿主记录；
+  5. 整个过程同时用根搜索令牌与页面本地 generation 守卫；新查询、模式切换、
+     页面隐藏或重置都会使旧结果失效。
 - **激活路径**：普通条目与原生条目完全一致 — 点击/Enter → `launch_app`
   （URL 走默认浏览器，文件走 ShellExecute）。**图标优先级**：条目的
   显式 `icon`（字符串或 `{light,dark}` 两套；URI 或相对插件目录的
@@ -415,7 +416,7 @@ export default function create(ctx) {
   URL 都可以）→ 启动器隐藏；右键 → 共享 app 菜单（固定/启动/打开位置/管理
   员启动）。
 - **图标**：`icon` 可省 — 文件路径走 `get_app_icons` 管线（取不到 → 未知图
-  标回退）；`data:`/`https?:`/`asset:`/`blob:` URI 直接使用，其它字符串按
+  标回退）；`data:`/`asset:`/`blob:` URI 直接使用，`http(s):` 被拒绝，其它字符串按
   文件路径经 asset 协议解析（相对路径相对插件目录）。也可给
   `{ light, dark }` 两套，宿主按所在表面主题选一套、显式变体按原样渲染。
 - **调用时机**：组合时、每次呼出（`launcher-shown`）、每次插件刷新
@@ -928,7 +929,9 @@ Presenter 的 `lume.page`：
 - `lume.http/storage/db/fs/clipboard/dialog/screen/search/secrets` 均不存在；
   任何其它 RPC 都会被拒绝。Presenter 不能直接调用 Tauri 命令。
 
-同一模型可声明多个 Presenter，切换只替换 iframe，不重建 Page Service；
+同一模型可声明多个 Presenter，切换只替换 iframe，不重建 Page Service。
+连续切换使用单调 mount generation：旧 factory / `ready()` 迟到完成后直接
+dispose，不写当前句柄或状态；destroyed Page Session 拒绝再次挂载。
 `__presenterStates`、`__pageModels`、`__pageIntents` 和 `__pageResources`
 提供脱敏诊断。`__presenterSettings` 记录最近一次下发给 Presenter 的设置和
 live 状态。
@@ -1810,9 +1813,27 @@ settings 类无权限命令对 main 窗口内的帧仍按声称 id 计——彻�
 
 ---
 
-## 15. 调试与测试
+## 15. 宿主行为契约
 
-### 15.1 日志分级
+安全敏感行为由 `docs/PLUGIN_HOST_BEHAVIOR.json` 机器可读描述，
+`scripts/check_plugin_contract.mjs` 在前端生产构建前校验实现标记。
+
+| 行为 | 契约 |
+|---|---|
+| 禁用已加载插件 | registry 卸载 contribution、逻辑 iframe、待处理 RPC、会话帧与生命周期状态；Rust 同时撤销 token 并拒绝 disabled id 的能力调用。 |
+| 重新启用 | 下一次清单刷新按普通加载流程重建；未重启不保留旧逻辑帧。 |
+| `navBars` 预算 | 单插件最多 8 栏 / 120 项 / 192 KiB；整页最多 32 栏 / 320 项 / 512 KiB。超限逐项截断或丢弃该栏目，空查询首页继续渲染。 |
+| Provider 预算 | 单次结果最多 64 行 / 192 KiB；单行最多 16 KiB；坏字段与非有限数值整行丢弃。 |
+| Provider 搜索 | 原生结果先发布；provider 并发查询，单插件 6s 超时，完成一个增量合并一个。 |
+| 异步旧结果 | Provider search/select/filter 与 Presenter mount 均带 generation；新查询、隐藏、重置、模式切换或下一次 mount 使旧结果失效。 |
+| Presenter 切换 | 旧 factory/ready 完成后直接 dispose，不写当前句柄或状态；destroyed Page Session 拒绝重挂载。 |
+| HTTP(S) 图标 | 不支持；清单图标只接受插件目录内相对路径，Provider/navBars 行图标只接受 `data:`、`asset:`、`blob:` 或本地路径。远程取图必须走声明 `network` 的 `http.request` 并自行转成允许的形式。 |
+| 未就绪 hook | `logic not loaded` 快速失败且不计入熔断；卸载会立即拒绝该插件全部 pending call。 |
+
+## 16. 调试与测试
+
+
+### 16.1 日志分级
 
 WebView2 DevTools / CDP 可见控制台日志；Rust 侧行在 stderr 输出（dev 终端
 或重定向可见）。前端统一走 `src/plugins/log.ts` 的 `plog`：宿主侧前缀
@@ -1838,7 +1859,7 @@ WebView2 DevTools / CDP 可见控制台日志；Rust 侧行在 stderr 输出（d
   `fs private write|read|list|remove (<id>) <name> …` /
   `storage migrate: …`（迁移逐插件一行）。
 
-### 15.2 CDP 连接
+### 16.2 CDP 连接
 
 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`
 启动后连 `127.0.0.1:9222`。**改前端后的重建要求**：`tauri build` 产出的
@@ -1846,7 +1867,7 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
 生效。`tauri dev` / 裸 `cargo build` 不带该 feature，加载 devUrl
 （localhost:1420，vite 需在跑）——调试前端不必每次重嵌。
 
-### 15.3 观测探针 tap
+### 16.3 观测探针 tap
 
 `srcdoc` 视图帧的 CDP execution context 不暴露给宿主 target，探针用宿主侧
 的环形缓冲：
@@ -1894,9 +1915,9 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
   区分开（后者靠 `__lumeReady` 永远等不到：那要等页面 load）——装载看门狗
   据此决定是否重新触发导航（§6.8.1）。插件页无需消费。
 
-### 15.4 验证脚本索引
+### 16.4 验证脚本索引
 
-以下脚本位于 `scripts/`（CDP 冒烟；运行前需构建带内嵌前端的 exe）：
+以下脚本位于 `scripts/`（CDP 冒烟；运行前需构建带内嵌前端的 exe）。构建前的 `scripts/check_plugin_contract.mjs` 校验 `docs/PLUGIN_HOST_BEHAVIOR.json` 与实现标记：
 
 - `cdp_sandbox_verify.mjs` — 沙箱：opaque iframe 隔离 +
   桥接/按键/焦点在沙箱内照常 + Rust 命令侧白名单（探针插件
@@ -1908,6 +1929,7 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
 - `cdp_plugin_audit_runtime_verify.mjs` — 专项运行时回归：清单权限热刷新、
   `service` / `logic` role 边界、异步 `navBars`、长结果 ID 激活、分离窗口
   query 重放、逻辑 listener/pending 清理与重复重载。
+- `cdp_plugin_nav_clipboard_fix_verify.mjs` — 专项边界回归：禁用即卸载且拒绝能力、清单 id 门、`navBars`/Provider 总预算、Provider 下钻代际、HTTP(S) 图标拒绝、剪贴板按钮原生 Space 与批量文件存在性异步命令。
 - `cdp_page_runtime_verify.mjs` — 导航/剪贴板 Page Runtime：双 Presenter、
   选择保持、剪贴板单次查询、真实滚动渐隐、虚拟窗口与尺寸/设置恢复。
 - `cdp_plugin_window_verify.mjs` — 独立窗口：分离 →
@@ -1941,7 +1963,7 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
 - `cdp_settings_smoke.mjs` — 8 分区设置冒烟。
 - `cdp_launcher_shots.mjs` — 启动器截图（前后对比）。
 
-### 15.5 手工验证清单
+### 16.5 手工验证清单
 
 - 放入插件 → 重启 → 设置/插件可见 → 搜索出现结果行 → 启停 toggle 即时生效
   → 关闭活动模式插件自动回导航页。
@@ -1953,7 +1975,7 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
 
 ---
 
-## 16. 兼容性与版本化
+## 17. 兼容性与版本化
 
 - **宿主 API 版本契约**：宿主实现的版本 = `HOST_PLUGIN_API`（当前 **2**，
   Rust `plugins.rs` 与前端 `types.ts` 双侧镜像）。清单必须显式声明
@@ -1975,7 +1997,7 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
 
 ---
 
-## 17. 路线
+## 18. 路线
 
 未做项（市场源、拖包/文件关联安装、浏览器 URL/划词捕获、超级面板、
 AI 宿主 API）与开放事项、优先级见 `docs/ROADMAP.md`。

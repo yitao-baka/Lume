@@ -292,21 +292,27 @@ environment.
 - **Store**: SQLite at `data_dir()/lume.db` (`rusqlite`, bundled).
   Text rows are deduplicated — a partial unique index on `content WHERE kind
   = 'text'` plus an explicit update-then-insert bumps recency instead of
-  duplicating. Images are stored as PNG blobs. Recency timestamps are forced
+  duplicating. Auto-merged text rows are always downgraded to plain text
+  (`html = NULL`); concatenated pieces never keep stale rich-text markup.
+  Images are stored as PNG blobs. Recency timestamps are forced
   strictly monotonic so ordering never ties.
 - **Pinning**: `pinned` column; search orders pinned first, and pruning only
   trims the newest 300 *unpinned* rows.
 - **Migration**: `init_db` detects the v0.2 table (no `kind` column) and
   rebuilds it in place, preserving existing text history.
-- **Search**: `search_clipboard(query)` runs a case-insensitive substring
-  `LIKE` match, pinned-first then most recent, top 20; an empty query browses
-  recent history. Image rows carry a downscaled base64 thumbnail.
+- **Search**: `search_clipboard(query)` runs a case-insensitive **literal**
+  substring match (`instr(lower(...))`, not SQL `LIKE` wildcards), pinned-first
+  then most recent, top 20; an empty query browses recent history. Image rows
+  carry a downscaled base64 thumbnail.
   **Async on purpose**: Tauri runs *sync* commands on the main (UI) thread —
   a full-history load blocked every other IPC for seconds in a debug build,
   stalling the frontend's window resizes (the loading gate's collapse among
   them). Same rationale as `get_file_thumb` / `get_file_bytes` /
   `get_video_thumb`; anything that reads files, decodes images or queries a
-  big table belongs off the main thread (see docs/ROADMAP_HISTORY.md).
+  big table belongs off the main thread (see docs/ROADMAP_HISTORY.md). The
+  copy/paste/delete/clear/exists commands follow the same rule; image decode,
+  file probes and cache cleanup never run on Tauri's main thread.
+
 - **Copy back**: `copy_clipboard(id)` looks up the row — text via
   `arboard::set_text`, images via PNG-decode → `set_image`.
 - **Ignored apps**: names use the same process-stem normalization as capture;
@@ -592,7 +598,12 @@ before adding a field:
     lifecycle work is serialized so an old `unload` cannot revoke a new
     token. `navBars` waits for the logic-ready signal and its declared hook set,
     then awaits the real RPC result; navigation refreshes use a generation so
-    stale asynchronous columns cannot overwrite newer ones. The registry also owns the mode-pill data:
+    stale asynchronous columns cannot overwrite newer ones. Disabling a plugin
+    runs the same unload path as reload and revokes its logic tokens. Provider
+    and navBars fan-in pass through shared per-plugin/page budgets; providers
+    search concurrently and publish incrementally. HTTP(S) row icons are
+    refused so the deny-only WebView proxy cannot bypass `network`. The registry
+    also owns the mode-pill data:
     a manifest `hidden = true` mode is filtered out of the pill bar and the
     switch-key cycle (its entry is the Navigate search row), and every
     Navigate row a plugin contributes defaults to the plugin's own icon set

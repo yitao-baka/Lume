@@ -88,7 +88,7 @@ export default {
 
 - **返回条目** `{ name, path }` — 与原生结果同构：追加在原生索引结果之后
   （按 path 去重，总数封顶 20），激活时经 `launch_app` 打开（文件路径与
-  URL 都可以）。**图标**：条目的显式 `icon`（URI 或相对插件目录的路径；
+  URL 都可以）。**图标**：条目的显式 `icon`（`data:`/`asset:`/`blob:` URI 或相对插件目录的路径；HTTP(S) 被拒绝；
   也可给 `{ light, dark }` 两套，宿主按所在表面主题选一套）
   → 清单图标集（`icon_light`/`icon_dark`/`icon`）→ `path` 常规管线
   （取不到 → 未知图标回退）。

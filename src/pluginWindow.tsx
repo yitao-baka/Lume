@@ -153,6 +153,9 @@ function App() {
     runSearch: async () => {
       plog.debug(id, "runSearch ignored in the detached window");
     },
+    openSettings: () => {
+      void invoke("open_settings").catch((err) => plog.error(id, "open settings failed:", err));
+    },
     scheduleResize: () => {},
     searchToken: () => 0,
     nextSearchToken: () => 0,

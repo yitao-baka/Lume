@@ -11,6 +11,23 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载
+  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销
+  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 id
+  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状
+  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；
+  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新
+  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，
+  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。
+  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的
+  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。
+  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入
+  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：
+  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、
+  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targets
+  --message-format=short` **0 warning**、Page Runtime **17/17**、
+  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；
+  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。
 - **主窗口与设置窗口独立皮肤** — `appearance.skin` 继续控制启动器、导航、
   剪贴板、嵌入插件画布与分离插件窗口，新增 `appearance.settings_skin` 只控制
   设置窗口；主窗口默认 `quiet`，设置窗口默认 `chromatic`，可分别选择 Quiet /
@@ -869,6 +886,7 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **模式切换栏仅图标（ROADMAP #47）** — 设置 → 导航页新增「模式切换栏仅显示
   图标」`appearance.mode_switch_icons_only`（默认关，保持 图标 + 名称）。
   开启后模式胶囊只显示图标，`title`/`aria-label`（悬停 tooltip）保名；两种
@@ -982,6 +1000,7 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 
 - **插件会话续存 + 分离窗口状态同步泛化（ROADMAP #40）** — 同一会话内
   hide/show、模式切换与分离回流都保持上次页面、查询与页面状态（对标
@@ -1031,6 +1050,7 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **`app.detach` 桥接接口 + `detach_button` 清单开关（P6）** —
   `lume.app.detach()` 把调用方的模式页分离为独立窗口（快照/建窗/回放与内置
   悬停按钮同一条链路；已在独立窗口内调用则聚焦本窗口）。内置的「在独立窗口
@@ -1139,6 +1159,7 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **独立窗任务栏图标与身份（P6.8，ROADMAP #34）** — 分离出的插件窗口在任务栏
   用**插件自己的图标**，并以独立身份成项，不再显示启动器图标/与 Lume 窗口
   合并：
@@ -1395,6 +1416,7 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **分离窗口权限/主题补全 + `fs.bytes` 字节桥接（2026-09-25）** — 三项跟进，
   补齐 P5/P6 落地后插件生态实际会遇到的三处缺口：
   ① **分离窗口权限台账接线**（修复）：`setPermissionSource` 原本只在启动器
@@ -1710,6 +1732,7 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **插件自定窗口尺寸（清单 `height` + RPC `app.resize`）** — ① mode 插件
   清单可声明 `height`（逻辑 px）：`PluginInfo` 透传，sizer 定高分支经
   `ModeInstance.desiredHeight()` 取值，前端钳制到最小高度与工作区高度，未
@@ -1749,6 +1772,7 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **插件系统第二轮：provider 搜索贡献 + 第三方 JS 动态加载 + 插件管理页** —
   ① `provider` 贡献类型：`search(query)` 返回 `{name, path}` 条目，追加在
   Navigate 原生搜索结果之后（path 去重、封顶 20、异常隔离），激活/图标
@@ -1764,6 +1788,7 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **插件系统 v1（ROADMAP #7）+ 剪贴板/预览插件化** — 插件 = 清单
   （`<base>/plugins/<id>/plugin.toml`：id/name/version/kind/description/
   permissions）+ 前端贡献。Rust 新增 `plugins.rs`：清单解析与目录扫描
@@ -1888,6 +1913,7 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **多文件条目列表预览 + 勾选（ROADMAP #17）** — ≥2 文件的剪贴板条目在卫星窗显示
   **文件列表**（复选框 + 逐文件存在性，缺失项划线变灰并禁用勾选），取代"预览第一个
   文件"；复制/粘贴只对**勾选的子集**生效（HDROP 按勾选路径过滤）。「记住勾选」全局开关
@@ -2031,6 +2057,7 @@ phase 3; completes #13).
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Preview pane** — selecting a clipboard row opens a right-side preview
   (the window widens by 320 px, narrowing back when the selection clears).
   Text rows show the full content (scrollable); image rows show the full-size
@@ -2112,6 +2139,7 @@ Clipboard manager phase 2 — rich text, ignored apps, pause, auto-merge
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Rich text / plain-text copy** — text copies that carry CF_HTML store it
   (`html` column, 64 KB cap); copy / paste keeps the formatting (HTML + plain
   text), and a new 「复制为纯文本」 context-menu item copies without it.
@@ -2144,6 +2172,7 @@ virtual scrolling (ROADMAP item 13, phase 1).
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Clipboard page layout** — the clipboard mode is now a full page: category
   tabs (全部 / 文本 / 图片 / 文件 / 收藏), a virtualized history list with
   fixed window height, a status bar (条目计数 + 清空), and a proper empty
@@ -2214,6 +2243,7 @@ Clipboard auto-paste + copy button, follow-mouse position, interface extras
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Clipboard auto-paste** — Enter on a clipboard entry (or 粘贴回 in the
   context menu) now writes the entry to the system clipboard, hides the
   launcher and sends `Ctrl+V` into the window that had focus **before** the
@@ -2250,6 +2280,7 @@ Recently-used bar + reworked pinned bar + interface settings (ROADMAP item 10).
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **最近使用 (Recent) bar** — the main menu now has a 「最近使用」 bar above the
   pinned bar, recording the last launches (apps **and** files) via the single
   `launch_app` chokepoint. Opens are deduped by path (re-opening bumps to the
@@ -2290,6 +2321,7 @@ Live environment-variable synchronization (ROADMAP item 9).
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Environment sync** — Lume now listens for system environment changes
   (`WM_SETTINGCHANGE` broadcast + registry-change notification on
   `HKCU\Environment` and the HKLM session-manager environment key) and refreshes
@@ -2306,6 +2338,7 @@ Auto-sizing launcher window.
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Auto-sizing window** — the launcher window height now fits its content:
   few results shrink it, the full app grid grows it to a cap (520px) where it
   scrolls internally, and it stays centered. Width stays 720. Requires the
@@ -2338,6 +2371,7 @@ System tray icon with Restart / Exit.
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Tray icon** — Lume now lives in the system tray. Left-click toggles the
   launcher; right-click shows a menu with 「重启」/「关闭」 (Chinese systems) or
   Restart / Exit. Restart uses Tauri's built-in `request_restart`; Exit uses
@@ -2349,6 +2383,7 @@ Pinyin search for Chinese app names (ROADMAP item 5).
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Pinyin search** — Chinese app names are indexed with their full pinyin
   and pinyin initials at scan time. Typing `kuake` or `kk` finds 「夸克」;
   `wanmei` finds 「完美解码」. Pinyin matches are weighted slightly below
@@ -2361,6 +2396,7 @@ Custom right-click context menu.
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Custom context menu** — right-clicking an app box shows 「固定/取消固定 ·
   启动」; right-clicking a clipboard entry shows 「复制回剪贴板 · 固定/取消固定 ·
   删除」. The menu follows the cursor, dismisses on `Esc` / click-outside /
@@ -2374,6 +2410,7 @@ Navigate pinned bar (ROADMAP item 3) + smaller grid boxes.
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Pinned bar** — a distinct strip of pinned apps sits above the Navigate
   main-menu grid. `Ctrl+P` pins/unpins the selected app; `↑` enters the bar
   from the grid's first row, `←`/`→` move within it, `↓` returns to the grid.
@@ -2395,6 +2432,7 @@ Real application icons (ROADMAP item 2).
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Real app icons** — the Navigate grid now shows each app's actual icon
   instead of a colored letter tile. Icons are extracted via the Windows shell
   (`IShellItemImageFactory`) at 64px for HiDPI crispness.
@@ -2416,6 +2454,7 @@ Internationalization (i18n).
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **i18n** — all UI strings now come from a centralized table in
   `src/i18n.ts` supporting **Simplified Chinese**, **Traditional Chinese** and
   **English**. The active locale is detected from the system language
@@ -2455,6 +2494,7 @@ Interaction fixes + Navigate grid + project roadmap.
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Navigate grid** — the main menu renders apps as a 5-column grid of
   square boxes (letter tile + name). Empty query browses all apps; arrow keys
   navigate in four directions; hover selects; click launches. Long names are
@@ -2474,6 +2514,7 @@ Clipboard enhancements: pin / delete / clear, and image history.
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Images** — the listener captures images from the clipboard (RGBA → PNG
   blob stored in SQLite). Image rows show a downscaled thumbnail tile and
   `Enter` writes the original back to the clipboard. Consecutive duplicates
@@ -2497,6 +2538,7 @@ backed by SQLite — the database foundation declared in the README tech stack.
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Clipboard capture** — a background thread polls the Windows clipboard
   sequence number (250 ms) and stores new text in SQLite
   (`src-tauri/src/clipboard.rs`). Own writes from `copy_clipboard` are skipped.
@@ -2522,6 +2564,7 @@ daily driver app launcher.
 
 ### Added
 
+- **插件、导航与剪贴板第二轮审计修复** — 停用磁盘插件现在会真正卸载n  contribution、逻辑 iframe、pending RPC 与生命周期状态，并由 Rust 立即撤销n  能力 token；生命周期广播只遍历 enabled 插件。清单门增加 1–64 字符的插件 idn  校验；Provider/navBars 增加单插件与整页的条目/字段/序列化字节预算，非法形状n  只影响该贡献。Provider 搜索改为原生结果先发布、多插件并发查询与增量合并；n  search/select/filter 使用 root token + 页面 generation，旧下钻结果不再覆盖新n  查询。PresenterHost 用 mount generation 丢弃并 dispose 过期 factory/ready，n  destroyed Page Session 拒绝重挂载；Page Model 错误页提供“打开设置”恢复路径。n  剪贴板自动合并富文本时清空 HTML、搜索改为 SQL 字面匹配，Space 不再吞掉按钮的n  原生激活；HTTP(S) 插件图标统一拒绝，避免与 deny proxy/network 权限契约冲突。n  复制、粘贴、删除、清空、插件图片写入与文件存在性检查移入n  `spawn_blocking`。新增机器可读宿主行为契约与构建前检查。验证：n  `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、n  `cargo test` **258 passed / 9 ignored**、`cargo clippy --all-targetsn  --message-format=short` **0 warning**、Page Runtime **17/17**、n  clipboard model **10/10**、skin **11/11**、i18n **583 键 × 3 语言**；n  `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS。n
 - **Global toggle shortcut** — `Alt+Space` preferred, auto-fallbacks to the
   next free combination (`Ctrl+Space`, `Ctrl+Alt+Space`) when another app owns
   the key. The active combo is shown in the launcher hint.

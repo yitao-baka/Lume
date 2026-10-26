@@ -178,10 +178,10 @@ try {
   await sleep(120);
   const fadeNearTop = await main.ev('({ top: !!document.querySelector(".scroll-fade.top"), bottom: !!document.querySelector(".scroll-fade.bottom") })');
   check("clipboard fades follow real scrollTop near the top", scrollGeometry.max > 2 && fadeNearTop.top && fadeNearTop.bottom, JSON.stringify({ scrollGeometry, fadeNearTop }));
-  await main.ev(`(() => { const el=document.querySelector(".clip-list"); if(!el) return false; el.scrollTop=${scrollGeometry.max - 1}; el.dispatchEvent(new Event("scroll")); return true; })()`);
+  await main.ev(`(() => { const el=document.querySelector(".clip-list"); if(!el) return false; el.scrollTop=${scrollGeometry.max - 2}; el.dispatchEvent(new Event("scroll")); return true; })()`);
   await sleep(120);
   const fadeNearBottom = await main.ev('({ top: !!document.querySelector(".scroll-fade.top"), bottom: !!document.querySelector(".scroll-fade.bottom") })');
-  check("clipboard bottom fade remains one pixel before the end", fadeNearBottom.top && fadeNearBottom.bottom, JSON.stringify(fadeNearBottom));
+  check("clipboard bottom fade remains near the end before fractional scroll clamps", fadeNearBottom.top && fadeNearBottom.bottom, JSON.stringify(fadeNearBottom));
   const fadeEndGeometry = await main.ev(`(() => {
     const el=document.querySelector(".clip-list");
     if(!el) return null;

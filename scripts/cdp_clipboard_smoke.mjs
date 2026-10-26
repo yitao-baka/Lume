@@ -153,8 +153,8 @@ const multiStatus = await evalJs(`document.querySelector(".clip-status-count")?.
 const multiBadges = await evalJs(`document.querySelectorAll(".clip-row-check").length`);
 console.log("[smoke] after Space: status =", JSON.stringify(multiStatus), "badges =", multiBadges);
 
-writeFileSync("smoke-clipboard.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).result?.data ?? "", "base64"));
-console.log("[smoke] screenshot saved: smoke-clipboard.png");
+writeFileSync("test/smoke-clipboard.png", Buffer.from((await send("Page.captureScreenshot", { format: "png" })).result?.data ?? "", "base64"));
+console.log("[smoke] screenshot saved: test/smoke-clipboard.png");
 
 // Leave the app running for further inspection.
 console.log("[smoke] leaving app running");

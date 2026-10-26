@@ -262,7 +262,9 @@ pub fn assert_capability(
     if !valid_plugin_id(id) {
         return Err(format!("permission denied: invalid plugin id \"{}\"", id));
     }
-    let Some(entry) = entry_for(perms, base, id) else {
+    if plugins.disabled.iter().any(|disabled| disabled == id) {
+        return Err(format!("permission denied: plugin \"{}\" is disabled", id));
+    }    let Some(entry) = entry_for(perms, base, id) else {
         return Err(format!("permission denied: unknown plugin \"{}\"", id));
     };
     if let Some(reason) = &entry.rejection {
@@ -329,6 +331,17 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    #[test]
+    fn disabled_plugin_capability_fails_closed() {
+        let root = std::env::temp_dir().join(format!("lume-perm-disabled-{}", std::process::id()));
+        write_plugin(&root, "demo", "id = \"demo\"\npermissions = [\"network\", \"clipboard\"]\n");
+        let perms = PluginPermState::default();
+        let mut settings = plugins();
+        settings.disabled.push("demo".into());
+        let err = assert_capability(&perms, &settings, &root, "demo", "clipboard").unwrap_err();
+        assert!(err.contains("disabled"), "{err}");
+        std::fs::remove_dir_all(&root).ok();
+    }
     #[test]
     fn unsupported_api_manifest_grants_no_capability() {
         let root = std::env::temp_dir().join(format!("lume-perm-api-{}", std::process::id()));

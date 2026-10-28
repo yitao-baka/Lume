@@ -395,7 +395,16 @@ export function createNavigateStore(deps: NavigateDeps) {
    * activation (identical to native bar items: `launch_app` opens files AND
    * URLs), the shared app context menu, and its own selection/expansion state. */
   function setPluginBars(contribs: ContributedBar[]) {
-    const built: NavSection[] = contribs
+    // Defense in depth: the registry/page budget is authoritative, but a
+    // duplicate zone here would make two rendered sections share selection
+    // and expansion state. Keep only the first instance.
+    const seen = new Set<string>();
+    const unique = contribs.filter((bar) => {
+      if (seen.has(bar.id)) return false;
+      seen.add(bar.id);
+      return true;
+    });
+    const built: NavSection[] = unique
       .filter((b) => b.items.length > 0)
       .map((b) => {
         const items: NavItem[] = b.items.map((it) => ({
@@ -893,6 +902,7 @@ export function createNavigateStore(deps: NavigateDeps) {
     activeSection,
     sectionById,
     sectionReach,
+    pluginBars,
     activateIndex,
     anyExpanded,
     resetSelections,

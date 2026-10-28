@@ -3,7 +3,7 @@
 //! invokes Tauri commands.
 
 import { t } from "../../i18n";
-import type { ClipboardItem, ClipKind } from "../../launcher/types";
+import type { ClipboardCategoryCounts, ClipboardItem, ClipKind } from "../../launcher/types";
 import { basename, clipTitle, fileContent, previewTarget as clipPreviewTarget } from "../../launcher/clipData";
 import { CLIP_CATS } from "../../launcher/types";
 import type { IntentResult, JsonValue, PageIntent, PageModel, PageService, ResourceRef } from "../../page-runtime/contracts";
@@ -100,14 +100,11 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
     const selectedIds = [...multi].map((id) => "clip:" + id);
     if (selectedIds.length === 0 && all[selected]) selectedIds.push(clipTargetId(all[selected]));
     const selectedId = all[selected] ? clipTargetId(all[selected]) : undefined;
+    const counts: ClipboardCategoryCounts = store.categoryCounts();
     const categories: ClipboardCategory[] = CLIP_CATS.map((category) => ({
       id: category.kind,
       label: t(category.label),
-      count: category.kind === "all"
-        ? all.length
-        : category.kind === "favorites"
-          ? all.filter((item) => item.pinned).length
-          : all.filter((item) => item.kind === category.kind).length,
+      count: counts[category.kind],
     }));
     let preview = store.previewEnabled()
       ? clipPreviewTarget(all[selected], store.rememberChecks())
@@ -132,16 +129,19 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
         categories,
         activeCategory: store.clipKind(),
         items,
-        total: all.length,
+        total: store.categoryTotal(),
         window: { offset: start, limit: items.length },
         selectedIndex: all.length > 0 ? Math.max(0, Math.min(selected, all.length - 1)) : -1,
         selectedIds,
         ...(selectedId ? { primaryId: selectedId } : {}),
         paused: store.clipPaused(),
         status: {
-          total: all.length,
+          total: store.categoryTotal(),
           selected: multi.size,
-          text: multi.size > 0 ? t("clipSelected", { count: multi.size }) : t("clipTotal", { count: all.length }),
+          text:
+            multi.size > 0
+              ? t("clipSelected", { count: multi.size })
+              : t("clipTotal", { count: store.categoryTotal() }),
         },
         clearState: { open: store.clearOpen(), keepPinned: store.keepPinned() },
         showSourceApp: store.showSourceApp(),

@@ -133,7 +133,10 @@ const waitForTitle = async (fragment, tries = 20) => {
   }
   return false;
 };
-const dbSearch = (query) => evalJs(`window.__TAURI_INTERNALS__.invoke("search_clipboard", { query: ${JSON.stringify(query)}, kind: "all" })`);
+const dbSearch = async (query) => {
+  const reply = await evalJs(`window.__TAURI_INTERNALS__.invoke("search_clipboard", { query: ${JSON.stringify(query)}, kind: "all" })`);
+  return Array.isArray(reply) ? reply : reply.items;
+};
 const waitForDbRow = async (content, tries = 20) => {
   for (let i = 0; i < tries; i++) {
     const rows = await dbSearch(content);
@@ -185,7 +188,8 @@ await sleep(1200);
 await refresh();
 const mergedRows = await count();
 const nowTitles = await titles();
-const mergeDb = await evalJs(`window.__TAURI_INTERNALS__.invoke("search_clipboard", { query: "merge-", kind: "all" })`);
+const mergeReply = await evalJs(`window.__TAURI_INTERNALS__.invoke("search_clipboard", { query: "merge-", kind: "all" })`);
+const mergeDb = Array.isArray(mergeReply) ? mergeReply : mergeReply.items;
 const merged = (mergeDb || []).filter((row) =>
   String(row.content || "").includes(`merge-alpha-${runId}`) &&
   String(row.content || "").includes(`merge-beta-${runId}`)

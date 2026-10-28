@@ -61,7 +61,8 @@ for (const t of targets.filter((x) => x.type === "page")) {
 }
 if (!main) throw new Error("launcher not found");
 
-const items = await main.evalJs(`window.__TAURI_INTERNALS__.invoke("search_clipboard", { query: "", kind: "all" })`);
+const reply = await main.evalJs(`window.__TAURI_INTERNALS__.invoke("search_clipboard", { query: "", kind: "all" })`);
+const items = Array.isArray(reply) ? reply : reply.items;
 const old = items[items.length - 1];
 console.log("[repro] oldest row id=", old.id, "kind=", old.kind);
 

@@ -225,6 +225,25 @@ export function runPageRuntimeSelfTests(): string[] {
   );
   expect(navBudget.truncated, "oversized navBars are reported as truncated");
 
+  const duplicate = sanitizeNavBarContributions(
+    "duplicate-probe",
+    [
+      { id: "same", title: "First", items: [{ name: "One", path: "https://example.com/one" }] },
+      { id: "same", title: "Second", items: [{ name: "Two", path: "https://example.com/two" }] },
+    ],
+    () => undefined
+  );
+  expect(duplicate.value.length === 1 && duplicate.value[0].title === "First", "duplicate plugin bar ids keep only the first");
+  expect(duplicate.droppedRows === 1 && duplicate.truncated, "duplicate plugin bar ids are diagnosed as dropped");
+
+  const duplicatePageBars = [
+    { id: "p:same", title: "First", items: [{ name: "One", path: "https://example.com/one" }] },
+    { id: "p:same", title: "Second", items: [{ name: "Two", path: "https://example.com/two" }] },
+  ];
+  const duplicatePage = fitNavBarPageBudget(duplicatePageBars);
+  expect(duplicatePage.value.length === 1 && duplicatePage.value[0].title === "First", "page budget drops duplicate zone keys");
+  expect(duplicatePage.droppedRows === 1, "page budget reports duplicate zone keys");
+
   const pageBars = Array.from({ length: 40 }, (_, i) => ({
     id: `p:${i}`,
     title: `Page bar ${i}`,

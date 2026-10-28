@@ -395,6 +395,16 @@ try {
       deleteState.clicks.some((cls) => cls.includes("clip-act-danger")),
     JSON.stringify({ deleteFocus, beforeDelete, deleteState }));
 
+  const missingId = 9999999;
+  const missingPin = await invoke("pin_clipboard", { id: missingId, pinned: true }).then(() => false, () => true);
+  const missingChecked = await invoke("set_clipboard_checked", { id: missingId, checked: [] }).then(() => false, () => true);
+  check("clipboard pin rejects a missing id", missingPin);
+  check("clipboard checked-state rejects a missing id", missingChecked);
+  const countsReply = await invoke("search_clipboard", { query: "", kind: "all" });
+  check("clipboard search returns stable category metadata",
+    !Array.isArray(countsReply) && Number.isFinite(countsReply.total) && Number.isFinite(countsReply.categories?.all),
+    JSON.stringify(countsReply?.categories ?? null));
+
   const existsStarted = Date.now();
   const existsCount = await main.evaluate(`window.__TAURI_INTERNALS__.invoke("check_file_exists", {
     paths: Array.from({ length: 256 }, (_, i) => "C:\\\\audit-missing\\\\" + i)

@@ -12,11 +12,10 @@ const behavior = {
 };
 const events = [];
 const toasts = [];
-globalThis.window = {
-  __LUME_CONFIG__: { appearance: {}, clipboard: {} },
-  setTimeout,
-  clearTimeout,
-};
+globalThis.window = globalThis;
+window.__LUME_CONFIG__ = { appearance: {}, clipboard: {} };
+window.setTimeout = setTimeout;
+window.clearTimeout = clearTimeout;
 globalThis.document = { documentElement: { lang: "" }, getElementById: () => null, querySelector: () => null };
 window.__TAURI_INTERNALS__ = globalThis.__TAURI_INTERNALS__ = {
   invoke: async (cmd, args) => {
@@ -39,7 +38,11 @@ window.__TAURI_INTERNALS__ = globalThis.__TAURI_INTERNALS__ = {
       return null;
     }
     if (cmd === "search_clipboard") {
-      return [{ id: 1, kind: "text", content: "row", created_at: Date.now(), pinned: false, valid: true, has_html: false, merged_count: 1 }];
+      return {
+        items: [{ id: 1, kind: "text", content: "row", created_at: Date.now(), pinned: false, valid: true, has_html: false, merged_count: 1 }],
+        total: 1,
+        categories: { all: 1, text: 1, textfile: 0, image: 0, music: 0, video: 0, favorites: 0 },
+      };
     }
     return null;
   },
@@ -89,6 +92,13 @@ try {
     dragWindow: () => {},
   };
   const store = createClipboardStore(services);
+
+  await store.search("");
+  check(
+    "search consumes backend category counts and the active-category total",
+    store.categoryCounts().textfile === 0 && store.categoryTotal() === 1 && store.clips().length === 1,
+    JSON.stringify({ counts: store.categoryCounts(), total: store.categoryTotal() }),
+  );
 
   await store.toggleClipPause();
   check("pause failure leaves recording visibly enabled", store.clipPaused() === false && toasts.includes("无法更改剪贴板记录状态。"), JSON.stringify({ paused: store.clipPaused(), toasts }));

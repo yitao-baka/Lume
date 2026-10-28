@@ -42,7 +42,9 @@ clipboard Presenters' fade conditions follow real `scrollTop` / `clientHeight` /
 `pnpm run test:clipboard-store` drives the real clipboard store with a failing
 and delayed IPC mock. It checks that pause changes follow Rust acknowledgement,
 clear waits for the backend before closing/refreshing, clear/delete/undo failures
-surface localized toasts and preserve retryable UI state.
+surface localized toasts and preserve retryable UI state, and the store consumes
+backend category counts and the active-category total rather than deriving them
+from the filtered rows.
 
 `pnpm run test:skin-system` loads the same modules through Vite SSR and checks
 skin normalization, the four shared surfaces, clipboard row heights, accent
@@ -75,9 +77,10 @@ The plugin/navigation/clipboard boundary regression uses
 `node scripts/cdp_plugin_nav_clipboard_fix_verify.mjs`. It installs isolated
 provider/service fixtures plus a manual invalid-id directory, then checks the
 disable/unload boundary (iframe removal, lifecycle silence, token revocation),
-per-plugin and page-level navBars budgets, malformed/oversized provider rows,
-provider drill generations, HTTP(S) icon refusal, native Space activation on
-clipboard categories/status/row actions, and the async file-existence path.
+per-plugin and page-level navBars budgets, duplicate navBars id rejection,
+malformed/oversized provider rows, provider drill generations, HTTP(S) icon
+refusal, native Space activation on clipboard categories/status/row actions,
+and the async file-existence path.
 
 Built-in Page Service / Presenter integration uses
 `node scripts/cdp_page_runtime_verify.mjs`. It switches the navigation and

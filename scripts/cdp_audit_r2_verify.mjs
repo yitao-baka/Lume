@@ -243,8 +243,11 @@ const passwordStates = await main.ev('JSON.stringify(window.__frameStates ?? [])
 check("Presenter receives query/show before enter", lifecycle?.events?.indexOf("probe.query") >= 0 && lifecycle?.events?.indexOf("probe.query") < lifecycle?.events?.indexOf("probe.show") && lifecycle?.events?.indexOf("probe.show") < lifecycle?.events?.indexOf("probe.enter"), JSON.stringify(lifecycle?.events));
 check("password auto-snapshot value is redacted", passwordStates.includes('"secret":true') && !passwordStates.includes("sk-live-audit-r2"), passwordStates.slice(0, 500));
 
-// F-04/F-05: switching payload kinds must not reuse an old content guard,
-// and text capture preserves bytes exactly (including outer whitespace).
+// Plugin clipboard writes go through the launcher self-write guard: text,
+// image and file payloads must not be captured as external history. First
+// seed a real external copy through the capture listener, then verify each
+// host write leaves that row unchanged (no duplicate, reorder or source-app
+// misattribution).
 const originalSettings = await invoke("get_settings");
 const originalDedup = originalSettings?.clipboard?.dedup ?? true;
 try {
@@ -257,13 +260,20 @@ try {
   await sleep(900);
   await invoke("set_clipboard_text", { text: clipText });
   await sleep(900);
-  const sequenceRows = await invoke("search_clipboard", { query: clipText, kind: "all" });
-  check("same text records again after an image payload", Array.isArray(sequenceRows) && sequenceRows.length === 2, JSON.stringify(sequenceRows));
+  const sequenceReply = await invoke("search_clipboard", { query: clipText, kind: "all" });
+  const sequenceRows = Array.isArray(sequenceReply) ? sequenceReply : sequenceReply.items;
+  check("self-written text/image do not enter clipboard history", Array.isArray(sequenceRows) && sequenceRows.length === 0, JSON.stringify(sequenceRows));
   const whitespace = `  R2-WS-${Date.now()}  `;
+  const beforeWsReply = await invoke("search_clipboard", { query: "R2-WS-", kind: "all" });
+  const beforeWs = Array.isArray(beforeWsReply) ? beforeWsReply : beforeWsReply.items;
   await invoke("set_clipboard_text", { text: whitespace });
   await sleep(900);
-  const wsRows = await invoke("search_clipboard", { query: "R2-WS-", kind: "all" });
-  check("clipboard capture preserves outer whitespace", wsRows?.some((row) => row.content === whitespace), JSON.stringify(wsRows));
+  const wsReply = await invoke("search_clipboard", { query: "R2-WS-", kind: "all" });
+  const wsRows = Array.isArray(wsReply) ? wsReply : wsReply.items;
+  const wsBeforeIds = new Set(beforeWs.map((row) => row.id));
+  check("plugin text writes do not enter clipboard history",
+    Array.isArray(wsRows) && wsRows.length === beforeWs.length && wsRows.every((row) => wsBeforeIds.has(row.id)),
+    JSON.stringify({ beforeWs, wsRows }));
   for (const row of [...(sequenceRows ?? []), ...(wsRows ?? [])]) {
     await invoke("delete_clipboard", { id: row.id }).catch(() => {});
   }

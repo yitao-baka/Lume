@@ -303,18 +303,24 @@ environment.
   trims the newest 300 *unpinned* rows.
 - **Migration**: `init_db` detects the v0.2 table (no `kind` column) and
   rebuilds it in place, preserving existing text history.
-- **Search**: `search_clipboard(query)` runs a case-insensitive **literal**
-  substring match (`instr(lower(...))`, not SQL `LIKE` wildcards), pinned-first
-  then most recent, top 20; an empty query browses recent history. Image rows
-  carry a downscaled base64 thumbnail.
+- **Search**: `search_clipboard(query, kind)` runs a case-insensitive
+  **literal** substring match (`instr(lower(...))`, not SQL `LIKE` wildcards).
+  The reply is `{ items, total, categories }`: content type is resolved from the
+  row (file rows use their first path) before `history_cap` is applied, and each
+  category caps its own unpinned rows. Pinned rows stay outside that cap, so an
+  old favorite remains visible even when newer unpinned rows exceed the cap.
+  Counts aggregate the same query independently of the active category, so tab
+  badges do not shrink when the user switches tabs. Image rows carry a downscaled
+  base64 thumbnail.
   **Async on purpose**: Tauri runs *sync* commands on the main (UI) thread —
   a full-history load blocked every other IPC for seconds in a debug build,
   stalling the frontend's window resizes (the loading gate's collapse among
   them). Same rationale as `get_file_thumb` / `get_file_bytes` /
   `get_video_thumb`; anything that reads files, decodes images or queries a
   big table belongs off the main thread (see docs/ROADMAP_HISTORY.md). The
-  copy/paste/delete/clear/exists commands follow the same rule; image decode,
-  file probes and cache cleanup never run on Tauri's main thread.
+  copy/paste/delete/clear/exists commands and every plugin-facing clipboard
+  read/write/probe follow the same rule; image decode, file probes and cache
+  cleanup never run on Tauri's main thread.
 
 - **Copy back**: `copy_clipboard(id)` looks up the row — text via
   `arboard::set_text`, images via PNG-decode → `set_image`. Auto-paste writes

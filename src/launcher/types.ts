@@ -183,6 +183,28 @@ export interface DeletedClip {
  * are content-kind filters over file rows (图片 also includes image rows). */
 export type ClipKind = "all" | "text" | "textfile" | "image" | "music" | "video" | "favorites";
 
+/** Per-category counts returned by `search_clipboard`. Counts are computed
+ * from the same query result set before the active tab filters the rows; each
+ * non-favorite count independently caps unpinned rows, while pinned rows stay
+ * outside the history cap. */
+export interface ClipboardCategoryCounts {
+  all: number;
+  text: number;
+  textfile: number;
+  image: number;
+  music: number;
+  video: number;
+  favorites: number;
+}
+
+/** Rich clipboard search reply. The flat-array shape remains accepted by the
+ * store for compatibility with older Rust binaries during upgrades. */
+export interface ClipboardSearchResult {
+  items: ClipboardItem[];
+  total: number;
+  categories: ClipboardCategoryCounts;
+}
+
 /** Payload pushed to the satellite preview window (mirrors the Rust
  * `PreviewRequest` in window.rs). */
 export interface PreviewReq {

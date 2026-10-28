@@ -14,7 +14,9 @@ import {
   DELETE_ANIM_MS,
   TOAST_UNDO_MS,
   type ClipKind,
+  type ClipboardCategoryCounts,
   type ClipboardItem,
+  type ClipboardSearchResult,
   type DeletedClip,
 } from "../../launcher/types";
 import type { PluginServices } from "../../plugins/types";
@@ -23,6 +25,10 @@ import type { PluginServices } from "../../plugins/types";
 interface PasteOutcome {
   outcome: "pasted" | "copied";
   reason?: string | null;
+}
+
+function emptyCategoryCounts(): ClipboardCategoryCounts {
+  return { all: 0, text: 0, textfile: 0, image: 0, music: 0, video: 0, favorites: 0 };
 }
 
 export function createClipboardStore(services: PluginServices) {
@@ -40,6 +46,11 @@ export function createClipboardStore(services: PluginServices) {
 
   // ── Rows + selection (plugin-owned; the root reads via ModeInstance) ──
   const [clips, setClips] = createSignal<ClipboardItem[]>([]);
+  /** Per-category counts for the current query, independent of the active tab. */
+  const [categoryCounts, setCategoryCounts] =
+    createSignal<ClipboardCategoryCounts>(emptyCategoryCounts());
+  /** Active-category row total from the backend (may include cap-exempt pins). */
+  const [categoryTotal, setCategoryTotal] = createSignal(0);
   const [selected, setSelected] = createSignal(0);
 
   /** Active history filter category. */
@@ -123,12 +134,20 @@ export function createClipboardStore(services: PluginServices) {
     try {
       const probe = window as unknown as { __searchClipboardCalls?: number };
       probe.__searchClipboardCalls = (probe.__searchClipboardCalls ?? 0) + 1;
-      const res = (await invoke("search_clipboard", {
+      const reply = (await invoke("search_clipboard", {
         query: q,
         kind: clipKind(),
-      })) as ClipboardItem[];
+      })) as ClipboardItem[] | ClipboardSearchResult;
       if (token !== services.searchToken()) return;
+      const res = Array.isArray(reply) ? reply : reply.items;
       setClips(res);
+      if (Array.isArray(reply)) {
+        setCategoryCounts({ ...emptyCategoryCounts(), all: reply.length });
+        setCategoryTotal(reply.length);
+      } else {
+        setCategoryCounts(reply.categories);
+        setCategoryTotal(reply.total);
+      }
       // Hidden rows must never remain part of a merge-paste selection after a
       // filter/category/search change.
       const visible = new Set(res.map((item) => item.id));
@@ -437,6 +456,8 @@ export function createClipboardStore(services: PluginServices) {
     // rows + selection
     clips,
     setClips,
+    categoryCounts,
+    categoryTotal,
     selected,
     setSelected,
     // category + page persistence

@@ -35,6 +35,7 @@ const pluginGate = read("src-tauri/src/plugins.rs");
 check(registry.includes("logicLoadedIds.delete(id)"), "registry does not show the disable/unload boundary");
 check(registry.includes("sanitizeProviderRows"), "registry does not budget provider results");
 check(registry.includes("sanitizeNavBarContributions"), "registry does not budget navBars");
+check(read("src/plugins/contributionBudget.ts").includes("seenBarIds"), "navBars duplicate ids are not rejected");
 check(iconSpec.includes("/^https?:/i.test(icon)"), "icon resolver does not reject HTTP(S)");
 check(presenterHost.includes("mountGeneration"), "PresenterHost has no mount generation guard");
 check(clipboardService.includes("isInteractiveKeyTarget"), "clipboard Space handling does not exclude controls");

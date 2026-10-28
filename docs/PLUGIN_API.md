@@ -409,7 +409,7 @@ export default function create(ctx) {
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `id` | string | 是 | 栏目 id，插件内唯一；宿主加 `<插件id>:` 前缀作为键盘导航 zone 键。 |
+| `id` | string | 是 | 栏目 id，插件内唯一；宿主加 `<插件id>:` 前缀作为键盘导航 zone 键。重复 id 的后续栏目会被丢弃并产生 diagnostic。 |
 | `title` | string | 是 | 栏目标题，原样渲染。 |
 | `items` | `{ name, path, icon? }[]` | 是 | 每栏封顶 50 条；name/path 必填，坏条目丢弃并记控制台日志。 |
 
@@ -1233,6 +1233,12 @@ await ctx.clipboard.paste({ text: "粘贴到前台窗口" });          // 写入
   → 注入 Ctrl+V；**载荷粘贴后留在剪贴板上**（与普通复制一致）。只有一个载荷
   字段允许存在；没有目标窗口时退化为纯复制（并记日志）。
 - 图片上限 32 MB（解码前检查）。
+- `writeText` / `writeImage` / `writeFiles` 都是启动器自身写回：成功后登记
+  Windows clipboard sequence，**不会**进入剪贴板历史，也不会归属到当前前台
+  应用。若产品上需要让插件内容进入历史，必须另设显式来源与策略，不能依赖
+  外部复制监听。
+- 读取、写入与图片解码都在 Rust 工作线程执行；剪贴板被其它进程占用时调用会
+  失败或返回“暂无内容”，启动器 UI 与其它 IPC 不被阻塞。
 - 权限：`clipboard`（文本读写与其它剪贴板方法同名）。
 
 #### `dialog.open` / `dialog.save` — 原生文件对话框

@@ -79,6 +79,11 @@ function PreviewApp() {
   /** Multi-file list (docs/ROADMAP_HISTORY.md #17): paths + existence + checked indices. */
   const [filelist, setFilelist] = createSignal<FileListState | null>(null);
 
+  /** Monotonic request generation. Every async branch captures it before its
+   * first await and checks again before touching shared preview state. */
+  let loadGeneration = 0;
+  const isCurrentRequest = (generation: number) => generation === loadGeneration;
+
   /** Toggle a file's checkbox. Persists only while 记住勾选 is on. */
   function toggleFile(idx: number, on: boolean) {
     const fl = filelist();
@@ -163,11 +168,15 @@ function PreviewApp() {
     return convertFileSrc(path);
   }
 
-  /** Lazily load pdfjs-dist and open the document from the asset protocol. */
-  async function loadPdf(path: string) {
+  /** Lazily load pdfjs-dist and open the document from the asset protocol.
+   * The caller's generation is checked after every await: a document from an
+   * older selection is destroyed, never published over the current preview. */
+  async function loadPdf(path: string, generation: number): Promise<void> {
     setPdfError(false);
+    let doc: PDFDocumentProxy | null = null;
     try {
       const pdfjs = await import("pdfjs-dist");
+      if (!isCurrentRequest(generation)) return;
       if (!pdfjs.GlobalWorkerOptions.workerSrc) {
         // Vite resolves this to the bundled worker asset (dev + prod).
         pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -175,11 +184,19 @@ function PreviewApp() {
           import.meta.url,
         ).toString();
       }
-      const doc = await pdfjs.getDocument({ url: await allowedAssetUrl(path) }).promise;
+      const url = await allowedAssetUrl(path);
+      if (!isCurrentRequest(generation)) return;
+      doc = await pdfjs.getDocument({ url }).promise;
+      if (!isCurrentRequest(generation)) {
+        await doc.loadingTask.destroy().catch(() => {});
+        return;
+      }
       setPdfDoc(doc);
       setPdfPage(1);
       setPdfScale(1);
     } catch (e) {
+      if (doc) await doc.loadingTask.destroy().catch(() => {});
+      if (!isCurrentRequest(generation)) return;
       console.error("[preview] pdf load failed", e);
       setPdfError(true);
     }
@@ -187,6 +204,7 @@ function PreviewApp() {
 
   /** Render a request: resolve per-kind asset URLs (textfile/image/video/pdf are async). */
   async function load(r: PreviewRequest) {
+    const generation = ++loadGeneration;
     setReq(r);
     setText(null);
     setImgSrc(null);
@@ -204,8 +222,11 @@ function PreviewApp() {
     }
     if (r.kind === "textfile" && r.path) {
       try {
-        setText(await invoke<string>("get_file_text", { path: r.path, pluginId: "preview" }));
+        const content = await invoke<string>("get_file_text", { path: r.path, pluginId: "preview" });
+        if (!isCurrentRequest(generation)) return;
+        setText(content);
       } catch (e) {
+        if (!isCurrentRequest(generation)) return;
         console.error("[preview] text file load failed", e);
         setError(true);
       }
@@ -213,15 +234,22 @@ function PreviewApp() {
       try {
         // Image-file rows carry `path`; image-kind rows resolve via the id.
         const path = r.path ?? (await invoke<string>("get_clipboard_image", { id: r.id }));
-        setImgSrc(await allowedAssetUrl(path));
+        if (!isCurrentRequest(generation)) return;
+        const src = await allowedAssetUrl(path);
+        if (!isCurrentRequest(generation)) return;
+        setImgSrc(src);
       } catch (e) {
+        if (!isCurrentRequest(generation)) return;
         console.error("[preview] image load failed", e);
         setError(true);
       }
     } else if ((r.kind === "audio" || r.kind === "video") && r.path) {
       try {
-        setMediaSrc(await allowedAssetUrl(r.path));
+        const src = await allowedAssetUrl(r.path);
+        if (!isCurrentRequest(generation)) return;
+        setMediaSrc(src);
       } catch (e) {
+        if (!isCurrentRequest(generation)) return;
         console.error("[preview] media load failed", e);
         setError(true);
         return;
@@ -230,22 +258,33 @@ function PreviewApp() {
       // (the player is preload="none", so without it the area is just black).
       if (r.kind === "video") {
         void invoke<string>("get_video_thumb", { path: r.path, pluginId: "preview" })
-          .then(setPoster)
-          .catch(() => setPoster(null));
+          .then((value) => {
+            if (isCurrentRequest(generation)) setPoster(value);
+          })
+          .catch(() => {
+            if (isCurrentRequest(generation)) setPoster(null);
+          });
       }
     } else if (r.kind === "pdf" && r.path) {
-      void loadPdf(r.path);
+      void loadPdf(r.path, generation);
     } else if (r.kind === "filelist" && r.paths) {
       // Multi-file entry: the list, each path's existence, and the checked set
       // (stored override ∩ existing when 记住勾选 on; else every existing file).
       const paths = r.paths.filter(Boolean);
-      const exists = await invoke<boolean[]>("check_file_exists", { paths });
-      const remember = r.remember_checks ?? true;
-      const saved = remember && r.checked ? new Set(r.checked) : null;
-      const checked = new Set(
-        paths.map((_, i) => i).filter((i) => exists[i] && (!saved || saved.has(i)))
-      );
-      setFilelist({ paths, exists, checked, remember });
+      try {
+        const exists = await invoke<boolean[]>("check_file_exists", { paths });
+        if (!isCurrentRequest(generation)) return;
+        const remember = r.remember_checks ?? true;
+        const saved = remember && r.checked ? new Set(r.checked) : null;
+        const checked = new Set(
+          paths.map((_, i) => i).filter((i) => exists[i] && (!saved || saved.has(i)))
+        );
+        setFilelist({ paths, exists, checked, remember });
+      } catch (e) {
+        if (!isCurrentRequest(generation)) return;
+        console.error("[preview] file list load failed", e);
+        setError(true);
+      }
     }
   }
 

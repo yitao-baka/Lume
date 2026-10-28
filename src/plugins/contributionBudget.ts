@@ -212,6 +212,7 @@ export function sanitizeNavBarContributions(
   }
 
   const bars: RawNavBar[] = [];
+  const seenBarIds = new Set<string>();
   let totalItems = 0;
   let droppedRows = 0;
   let droppedItems = 0;
@@ -237,6 +238,12 @@ export function sanitizeNavBarContributions(
       droppedRows++;
       continue;
     }
+    if (seenBarIds.has(rawBar.id)) {
+      droppedRows++;
+      truncated = true;
+      continue;
+    }
+    seenBarIds.add(rawBar.id);
 
     const title = rawBar.title.length > NAV_BAR_LIMITS.maxTitleChars
       ? rawBar.title.slice(0, NAV_BAR_LIMITS.maxTitleChars)
@@ -290,12 +297,19 @@ export function fitNavBarPageBudget(
   bars: NavBarContribution[]
 ): ContributionBudgetResult<NavBarContribution[]> {
   const out: NavBarContribution[] = [];
+  const seenBarIds = new Set<string>();
   let totalItems = 0;
   let droppedRows = 0;
   let droppedItems = 0;
   let truncated = false;
 
   for (const bar of bars) {
+    if (seenBarIds.has(bar.id)) {
+      droppedRows++;
+      truncated = true;
+      continue;
+    }
+    seenBarIds.add(bar.id);
     if (out.length >= NAV_BAR_LIMITS.maxPageBars) {
       droppedRows++;
       truncated = true;

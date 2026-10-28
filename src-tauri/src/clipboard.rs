@@ -116,6 +116,29 @@ pub struct ClipboardItem {
     pub checked: Option<Vec<u32>>,
 }
 
+/// Counts for every clipboard category, computed from the same filtered row
+/// set as the returned items. Each count independently applies the history cap
+/// to unpinned rows; pinned rows never consume that cap.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct ClipboardCategoryCounts {
+    pub all: u32,
+    pub text: u32,
+    pub textfile: u32,
+    pub image: u32,
+    pub music: u32,
+    pub video: u32,
+    pub favorites: u32,
+}
+
+/// One clipboard query result: the selected category's rows, the active
+/// category total, and stable per-category counts for the same query.
+#[derive(Debug, Serialize)]
+pub struct ClipboardSearchResult {
+    pub items: Vec<ClipboardItem>,
+    pub total: u32,
+    pub categories: ClipboardCategoryCounts,
+}
+
 /// A row as stored in SQLite.
 #[derive(Clone)]
 struct Row {
@@ -592,44 +615,50 @@ fn migrate_blobs_to_files(conn: &Connection, base: &Path) -> rusqlite::Result<()
     Ok(())
 }
 
-/// Substring search over history, pinned first then most recent. An empty
-/// query returns the most recent `limit` entries. Matches the text content
-/// *or* the source-app name. `kind` narrows to a category:
-/// `"all"` | `"text"` | `"textfile"` | `"image"` | `"video"` | `"favorites"`.
-/// The 文本文件 / 图片 / 视频 categories are content-kind filters over `file`
-/// rows (the 图片 category also includes `image` rows). SQLite `LIKE` is ASCII
-/// case-insensitive.
-fn search_history(
-    conn: &Connection,
-    query: &str,
-    kind: &str,
-    limit: i64,
-    base: &Path,
-    favorites_top: bool,
-) -> rusqlite::Result<Vec<ClipboardItem>> {
+/// Content category of a stored row. File rows use their first path so the
+/// text-file / image / music / video categories share the same predicate as
+/// the preview classification. This is the single source of truth for both
+/// filtering and category counts.
+fn content_category(row: &Row) -> &'static str {
+    match row.kind.as_str() {
+        "text" => "text",
+        "image" => "image",
+        "file" => first_path(row).map(file_content_kind).unwrap_or("other"),
+        _ => "other",
+    }
+}
+
+fn category_matches(category: &str, content_category: &str) -> bool {
+    match category {
+        "text" => content_category == "text",
+        "textfile" => content_category == "text",
+        "music" => content_category == "audio",
+        "video" => content_category == "video",
+        "image" => content_category == "image",
+        _ => true,
+    }
+}
+
+/// Rows matching a search query and category, newest first. Category filtering
+/// happens before the cap: file content types are resolved from the path in
+/// Rust, and only then does the caller clamp the number of unpinned rows.
+fn matching_rows(conn: &Connection, query: &str, category: &str) -> rusqlite::Result<Vec<Row>> {
     let mut sql = String::from(
         "SELECT id, kind, content, data, path, pinned, created_at, source_app, html, merged_count, checked FROM clipboard
          WHERE (instr(lower(content), lower(?1)) > 0
             OR instr(lower(source_app), lower(?1)) > 0)",
     );
-    match kind {
-        "text" => sql.push_str(" AND kind = 'text'"),
-        // File-content categories query file rows, then post-filter in Rust.
-        "textfile" | "music" | "video" => sql.push_str(" AND kind = 'file'"),
-        "image" => sql.push_str(" AND kind IN ('image', 'file')"),
-        "favorites" => sql.push_str(" AND pinned = 1"),
-        _ => {} // "all" — no extra filter
+    if category == "favorites" {
+        sql.push_str(" AND pinned = 1");
+    } else if category == "text" {
+        sql.push_str(" AND kind = 'text'");
+    } else if matches!(category, "textfile" | "music" | "video" | "image") {
+        sql.push_str(" AND kind IN ('image', 'file')");
     }
-    sql.push_str(if favorites_top {
-        // 收藏置顶: favorited rows first.
-        " ORDER BY pinned DESC, created_at DESC, id DESC LIMIT ?2"
-    } else {
-        // Otherwise pure recency (favorites keep their badge but not the top).
-        " ORDER BY created_at DESC, id DESC LIMIT ?2"
-    });
+    sql.push_str(" ORDER BY created_at DESC, id DESC");
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(params![query, limit], |row| {
+        .query_map(params![query], |row| {
             Ok(Row {
                 id: row.get(0)?,
                 kind: row.get(1)?,
@@ -645,28 +674,90 @@ fn search_history(
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let rows = match kind {
-        "textfile" => rows
-            .into_iter()
-            .filter(|r| first_path(r).map(file_content_kind) == Some("text"))
-            .collect(),
-        "music" => rows
-            .into_iter()
-            .filter(|r| first_path(r).map(file_content_kind) == Some("audio"))
-            .collect(),
-        "video" => rows
-            .into_iter()
-            .filter(|r| first_path(r).map(file_content_kind) == Some("video"))
-            .collect(),
-        "image" => rows
-            .into_iter()
-            .filter(|r| {
-                r.kind == "image" || first_path(r).map(file_content_kind) == Some("image")
-            })
-            .collect(),
-        _ => rows,
+    Ok(rows
+        .into_iter()
+        .filter(|row| {
+            category == "all"
+                || (category == "favorites" && row.pinned)
+                || (category != "favorites" && category_matches(category, content_category(row)))
+        })
+        .collect())
+}
+
+/// Apply the history cap to unpinned rows only. Pinned rows are exempt from
+/// pruning and must therefore remain visible outside the cap.
+fn capped_rows(rows: impl IntoIterator<Item = Row>, limit: u32) -> Vec<Row> {
+    let limit = limit.max(1) as usize;
+    let mut out = Vec::new();
+    let mut unpinned = 0usize;
+    for row in rows {
+        if row.pinned {
+            out.push(row);
+        } else if unpinned < limit {
+            out.push(row);
+            unpinned += 1;
+        }
+    }
+    out
+}
+
+fn category_counts(rows: &[Row], limit: u32) -> ClipboardCategoryCounts {
+    let capped = |predicate: &dyn Fn(&Row) -> bool| -> u32 {
+        capped_rows(rows.iter().filter(|row| predicate(row)).cloned(), limit).len() as u32
     };
-    Ok(rows.into_iter().map(|r| row_to_item(r, base)).collect())
+    ClipboardCategoryCounts {
+        all: capped(&|_| true),
+        text: capped(&|row| row.kind == "text"),
+        textfile: capped(&|row| row.kind == "file" && content_category(row) == "text"),
+        image: capped(&|row| content_category(row) == "image"),
+        music: capped(&|row| content_category(row) == "audio"),
+        video: capped(&|row| content_category(row) == "video"),
+        favorites: rows.iter().filter(|row| row.pinned).count() as u32,
+    }
+}
+
+/// Shared search implementation. All categories are evaluated over the same
+/// query-filtered rows, then each category independently applies the unpinned
+/// history cap. `favorites_top` only changes display order.
+fn search_history_result(
+    conn: &Connection,
+    query: &str,
+    kind: &str,
+    limit: u32,
+    base: &Path,
+    favorites_top: bool,
+) -> rusqlite::Result<ClipboardSearchResult> {
+    let rows = matching_rows(conn, query, kind)?;
+    let categories = category_counts(&matching_rows(conn, query, "all")?, limit);
+    let mut selected = capped_rows(rows, limit);
+    if favorites_top {
+        selected.sort_by(|a, b| {
+            b.pinned
+                .cmp(&a.pinned)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+                .then_with(|| b.id.cmp(&a.id))
+        });
+    }
+    let total = selected.len() as u32;
+    Ok(ClipboardSearchResult {
+        items: selected.into_iter().map(|r| row_to_item(r, base)).collect(),
+        total,
+        categories,
+    })
+}
+
+/// Backwards-compatible item-only helper used by unit tests and internal
+/// callers. The Tauri command returns the richer result with category counts.
+#[cfg(test)]
+fn search_history(
+    conn: &Connection,
+    query: &str,
+    kind: &str,
+    limit: i64,
+    base: &Path,
+    favorites_top: bool,
+) -> rusqlite::Result<Vec<ClipboardItem>> {
+    Ok(search_history_result(conn, query, kind, limit.max(1) as u32, base, favorites_top)?.items)
 }
 
 /// First path of a file row (the whole content is a newline-joined list).
@@ -893,31 +984,34 @@ fn restore_row(
 }
 
 fn set_pinned(conn: &Connection, id: u32, pinned: bool) -> rusqlite::Result<()> {
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE clipboard SET pinned = ?1 WHERE id = ?2",
         params![pinned as i64, id],
     )?;
+    if changed == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
     Ok(())
 }
 
 /// Delete every history row. With `keep_pinned`, pinned rows (and their
 /// picture-cache files) survive; otherwise the table is emptied and the
 /// picture cache is swept of all files.
-fn clear_history(conn: &Connection, base: &Path, keep_pinned: bool) -> rusqlite::Result<()> {
+fn clear_history(conn: &Connection, base: &Path, keep_pinned: bool) -> rusqlite::Result<usize> {
     if keep_pinned {
-        conn.execute("DELETE FROM clipboard WHERE pinned = 0", [])?;
-    } else {
-        conn.execute("DELETE FROM clipboard", [])?;
-        let dir = base.join(PICTURE_CACHE);
-        if let Ok(entries) = fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let _ = fs::remove_file(entry.path());
-            }
+        let deleted = conn.execute("DELETE FROM clipboard WHERE pinned = 0", [])?;
+        gc_picture_cache(conn, base);
+        return Ok(deleted);
+    }
+    let deleted = conn.execute("DELETE FROM clipboard", [])?;
+    let dir = base.join(PICTURE_CACHE);
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let _ = fs::remove_file(entry.path());
         }
-        return Ok(());
     }
     gc_picture_cache(conn, base);
-    Ok(())
+    Ok(deleted)
 }
 
 // ---------------------------------------------------------------------------
@@ -1397,14 +1491,9 @@ fn io_err(e: impl std::fmt::Display) -> rusqlite::Error {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Search clipboard history. Empty query returns the most recent entries.
-/// `kind` filters the category (`"all"` default); the result limit is the
-/// configured history cap so the frontend's virtual list can page the whole
-/// history.
 /// Read the current system clipboard TEXT (None = non-text or empty).
-/// Exposed to plugins via the `clipboard.readText()` host API.
 #[tauri::command]
-pub fn get_clipboard_text(
+pub async fn get_clipboard_text(
     plugin_id: Option<String>,
     host_token: Option<String>,
     window: tauri::WebviewWindow,
@@ -1419,16 +1508,21 @@ pub fn get_clipboard_text(
         host_token.as_deref(),
         "clipboard",
     )?;
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    match cb.get().text() {
-        Ok(text) => Ok(if text.is_empty() { None } else { Some(text) }),
-        Err(_) => Ok(None), // non-text content is not an error for readers
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        match cb.get().text() {
+            Ok(text) => Ok(if text.is_empty() { None } else { Some(text) }),
+            Err(_) => Ok(None),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Write plain text to the system clipboard (plugin `clipboard.writeText`).
+/// Uses the shared self-write guard so plugin content never enters history.
 #[tauri::command]
-pub fn set_clipboard_text(
+pub async fn set_clipboard_text(
     text: String,
     plugin_id: Option<String>,
     host_token: Option<String>,
@@ -1444,8 +1538,16 @@ pub fn set_clipboard_text(
         host_token.as_deref(),
         "clipboard",
     )?;
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    cb.set_text(text).map_err(|e| e.to_string())
+    let app = window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        write_clipboard_payload(&state, || {
+            let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+            cb.set_text(text).map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Normalize a manually entered or picked ignore-list value to the same
@@ -1730,33 +1832,37 @@ pub async fn plugin_clipboard_write_image(
         host_token.as_deref(),
         "clipboard",
     )?;
+    let app = window.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let png = decode_image_payload(&data)?;
-        let rgba = decode_image_bounded(&png)?.to_rgba8();
-        let (w, h) = (rgba.width(), rgba.height());
-        let img = arboard::ImageData {
-            width: w as usize,
-            height: h as usize,
-            bytes: Cow::Owned(rgba.into_raw()),
-        };
-        let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-        cb.set_image(img).map_err(|e| e.to_string())?;
-        eprintln!("[plugins] clipboard.writeImage: {w}x{h}");
-        Ok(())
+        let state = app.state::<ClipboardState>();
+        write_clipboard_payload(&state, || {
+            let png = decode_image_payload(&data)?;
+            let rgba = decode_image_bounded(&png)?.to_rgba8();
+            let (w, h) = (rgba.width(), rgba.height());
+            let img = arboard::ImageData {
+                width: w as usize,
+                height: h as usize,
+                bytes: Cow::Owned(rgba.into_raw()),
+            };
+            let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+            cb.set_image(img).map_err(|e| e.to_string())?;
+            eprintln!("[plugins] clipboard.writeImage: {w}x{h}");
+            Ok(())
+        })
     })
     .await
     .map_err(|e| e.to_string())?
 }
+
 /// Put a file/folder list on the clipboard as CF_HDROP (Explorer-style copy).
-/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_clipboard_write_files(
+pub async fn plugin_clipboard_write_files(
     paths: Vec<String>,
     plugin_id: Option<String>,
     host_token: Option<String>,
     window: tauri::WebviewWindow,
-    perms: tauri::State<crate::plugin_perm::PluginPermState>,
-    settings: tauri::State<crate::settings::SettingsState>,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<(), String> {
     crate::plugin_perm::assert_native_or_capability(
         &perms,
@@ -1769,19 +1875,24 @@ pub fn plugin_clipboard_write_files(
     if paths.is_empty() {
         return Err("no paths given".into());
     }
-    eprintln!("[plugins] clipboard.writeFiles: {} path(s)", paths.len());
-    set_files_to_clipboard(&paths)
+    let app = window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        eprintln!("[plugins] clipboard.writeFiles: {} path(s)", paths.len());
+        write_clipboard_payload(&state, || set_files_to_clipboard(&paths))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The clipboard's current file list (empty when it holds something else).
-/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
-pub fn plugin_clipboard_read_files(
+pub async fn plugin_clipboard_read_files(
     plugin_id: Option<String>,
     host_token: Option<String>,
     window: tauri::WebviewWindow,
-    perms: tauri::State<crate::plugin_perm::PluginPermState>,
-    settings: tauri::State<crate::settings::SettingsState>,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<Vec<String>, String> {
     crate::plugin_perm::assert_native_or_capability(
         &perms,
@@ -1791,34 +1902,26 @@ pub fn plugin_clipboard_read_files(
         host_token.as_deref(),
         "clipboard",
     )?;
-    Ok(read_file_list().unwrap_or_default())
+    tauri::async_runtime::spawn_blocking(|| Ok(read_file_list().unwrap_or_default()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Whether the clipboard currently holds an image in any format the reader
-/// below (`plugin_clipboard_read_image`) can decode: CF_DIB/DIBV5 (arboard),
-/// a plain CF_BITMAP, or a screenshot tool's custom PNG format. Never throws
-/// for "not an image" — `Ok(false)` — because the empty-query probe calls
-/// this on every summon. A CF_HDROP file list is NOT an image (the capture
-/// chain checks files before bitmaps for the same reason).
+/// below can decode. A CF_HDROP file list is NOT an image.
 #[tauri::command]
-pub fn plugin_clipboard_has_image() -> Result<bool, String> {
-    unsafe {
+pub async fn plugin_clipboard_has_image() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(|| unsafe {
         if OpenClipboard(None).is_err() {
-            // Another process holds the clipboard open — nothing sensible to
-            // report right now.
-            return Ok(false);
+            return false;
         }
         let _guard = OpenClipboardGuard;
-        if IsClipboardFormatAvailable(8 /* CF_DIB */).is_ok()
-            || IsClipboardFormatAvailable(2 /* CF_BITMAP */).is_ok()
-        {
-            return Ok(true);
+        if IsClipboardFormatAvailable(8).is_ok() || IsClipboardFormatAvailable(2).is_ok() {
+            return true;
         }
         if IsClipboardFormatAvailable(CF_HDROP).is_ok() {
-            return Ok(false);
+            return false;
         }
-        // Custom formats: the same name check `read_custom_png_image` uses,
-        // so the probe and the reader can never disagree.
         let mut fmt: u32 = 0;
         loop {
             fmt = EnumClipboardFormats(fmt);
@@ -1835,25 +1938,23 @@ pub fn plugin_clipboard_has_image() -> Result<bool, String> {
             }
             let nm = String::from_utf16_lossy(&name[..n as usize]).to_lowercase();
             if nm.contains("png") || nm.contains("image/png") {
-                return Ok(true);
+                return true;
             }
         }
-        Ok(false)
-    }
+        false
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
-/// Read the clipboard's image as a `data:image/png;base64,…` URI (plugin
-/// `clipboard.readImage`). Same acquisition chain as the history capture
-/// (`arboard` CF_DIB → custom PNG → CF_BITMAP) so the two can never disagree.
-/// None when the clipboard holds no decodable image.
-/// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
+/// Read the clipboard's image as a `data:image/png;base64,…` URI.
 #[tauri::command]
-pub fn plugin_clipboard_read_image(
+pub async fn plugin_clipboard_read_image(
     plugin_id: Option<String>,
     host_token: Option<String>,
     window: tauri::WebviewWindow,
-    perms: tauri::State<crate::plugin_perm::PluginPermState>,
-    settings: tauri::State<crate::settings::SettingsState>,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<Option<String>, String> {
     crate::plugin_perm::assert_native_or_capability(
         &perms,
@@ -1863,16 +1964,23 @@ pub fn plugin_clipboard_read_image(
         host_token.as_deref(),
         "clipboard",
     )?;
-    let png = if let Ok(mut cb) = arboard::Clipboard::new() {
-        cb.get_image().ok().and_then(|img| encode_png(&img))
-    } else {
-        None
-    }
-    .or_else(read_custom_png_image)
-    .or_else(read_cf_bitmap_image);
-    Ok(png.map(|bytes| {
-        format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
-    }))
+    tauri::async_runtime::spawn_blocking(|| {
+        let png = if let Ok(mut cb) = arboard::Clipboard::new() {
+            cb.get_image().ok().and_then(|img| encode_png(&img))
+        } else {
+            None
+        }
+        .or_else(read_custom_png_image)
+        .or_else(read_cf_bitmap_image);
+        Ok(png.map(|bytes| {
+            format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            )
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Write one payload to the clipboard and paste it into the window that had
@@ -1882,16 +1990,16 @@ pub fn plugin_clipboard_read_image(
 /// Permission: `clipboard` — enforced Rust-side (plugin_perm.rs).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn plugin_clipboard_paste(
+pub async fn plugin_clipboard_paste(
     text: Option<String>,
     image: Option<String>,
     files: Option<Vec<String>>,
     plugin_id: Option<String>,
     host_token: Option<String>,
     window: tauri::WebviewWindow,
-    perms: tauri::State<crate::plugin_perm::PluginPermState>,
-    settings: tauri::State<crate::settings::SettingsState>,
-    focus: State<crate::window::FocusState>,
+    perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
+    settings: tauri::State<'_, crate::settings::SettingsState>,
+    focus: State<'_, crate::window::FocusState>,
     app: AppHandle,
 ) -> Result<(), String> {
     crate::plugin_perm::assert_native_or_capability(
@@ -1959,12 +2067,12 @@ pub async fn search_clipboard(
     kind: Option<String>,
     state: State<'_, ClipboardState>,
     settings: State<'_, crate::settings::SettingsState>,
-) -> Result<Vec<ClipboardItem>, String> {
+) -> Result<ClipboardSearchResult, String> {
     let kind = kind.unwrap_or_else(|| "all".into());
     let clip = settings.current().clipboard;
-    let limit = clip.history_cap.max(1);
+    let limit = clip.history_cap.max(1) as u32;
     let conn = state.db.lock().unwrap();
-    search_history(
+    search_history_result(
         &conn,
         query.trim(),
         &kind,
@@ -2594,24 +2702,32 @@ pub async fn check_file_exists(paths: Vec<String>) -> Result<Vec<bool>, String> 
 /// Persist a multi-file entry's checked-file indices (`None` clears the
 /// override → the entry falls back to "every existing file checked").
 #[tauri::command]
-pub fn set_clipboard_checked(
+pub async fn set_clipboard_checked(
     id: u32,
     checked: Option<Vec<u32>>,
-    state: State<ClipboardState>,
+    state: State<'_, ClipboardState>,
 ) -> Result<(), String> {
     let json = checked.map(|v| serde_json::to_string(&v).unwrap_or_default());
     let conn = state.db.lock().unwrap();
-    conn.execute(
-        "UPDATE clipboard SET checked = ?1 WHERE id = ?2",
-        params![json, id],
-    )
-    .map_err(|e| e.to_string())?;
+    let changed = conn
+        .execute(
+            "UPDATE clipboard SET checked = ?1 WHERE id = ?2",
+            params![json, id],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err(format!("clipboard item {id} not found"));
+    }
     Ok(())
 }
 
 /// Pin or unpin a history entry.
 #[tauri::command]
-pub fn pin_clipboard(id: u32, pinned: bool, state: State<ClipboardState>) -> Result<(), String> {
+pub async fn pin_clipboard(
+    id: u32,
+    pinned: bool,
+    state: State<'_, ClipboardState>,
+) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     set_pinned(&conn, id, pinned).map_err(|e| e.to_string())
 }
@@ -2623,12 +2739,9 @@ pub async fn clear_clipboard(keep_pinned: bool, app: AppHandle) -> Result<u32, S
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<ClipboardState>();
         let conn = state.db.lock().unwrap();
-        let count = conn
-            .query_row("SELECT COUNT(*) FROM clipboard", [], |r| r.get::<_, u32>(0))
-            .unwrap_or(0);
         clear_history(&conn, &crate::paths::data_dir(), keep_pinned)
-            .map_err(|e| e.to_string())?;
-        Ok(count)
+            .map(|deleted| deleted as u32)
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2919,14 +3032,81 @@ mod tests {
         fs::remove_dir_all(&base).ok();
     }
     #[test]
-    fn history_cap_limits_rows() {
+    fn history_cap_applies_after_content_category_filtering() {
         let conn = memory_db();
-        let base = temp_base("cap");
-        for i in 0..(TEST_CAP as usize + 10) {
-            insert_text_history(&conn, &format!("entry {i}"), TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        let base = temp_base("category-cap");
+        insert_file_history(&conn, &["C:/audit/old.txt".into()], TEST_SRC, 1_000, &base, true).unwrap();
+        for i in 0..8 {
+            insert_file_history(&conn, &[format!("C:/audit/new-{i}.mkv")], TEST_SRC, 1_000, &base, false).unwrap();
         }
-        let hits = search_history(&conn, "", "all", 10_000, &base, false).unwrap();
-        assert_eq!(hits.len(), TEST_CAP as usize);
+        let text = search_history(&conn, "", "textfile", 2, &base, false).unwrap();
+        assert_eq!(text.len(), 1);
+        assert_eq!(text[0].content, "C:/audit/old.txt");
+        let video = search_history(&conn, "", "video", 2, &base, false).unwrap();
+        assert_eq!(video.len(), 2, "the category's own cap is still applied");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn pinned_rows_are_visible_beyond_the_history_cap() {
+        let conn = memory_db();
+        let base = temp_base("pinned-cap");
+        insert_text_history(&conn, "old-pin", TEST_SRC, None, 1_000, &base, &no_merge(), true).unwrap();
+        let pin = search_history(&conn, "old-pin", "all", 20, &base, false).unwrap()[0].id;
+        set_pinned(&conn, pin, true).unwrap();
+        for i in 0..5 {
+            insert_text_history(&conn, &format!("fresh-{i}"), TEST_SRC, None, 1_000, &base, &no_merge(), true).unwrap();
+        }
+        let rows = search_history(&conn, "", "all", 2, &base, false).unwrap();
+        assert_eq!(rows.len(), 3, "two unpinned rows + the cap-exempt pin");
+        assert!(rows.iter().any(|row| row.content == "old-pin"));
+        let favorites = search_history(&conn, "", "favorites", 2, &base, false).unwrap();
+        assert_eq!(favorites.len(), 1);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn category_counts_use_content_kind_and_ignore_active_filter() {
+        let conn = memory_db();
+        let base = temp_base("category-counts");
+        insert_text_history(&conn, "plain", TEST_SRC, None, 1_000, &base, &no_merge(), true).unwrap();
+        insert_file_history(&conn, &["C:/a.txt".into()], TEST_SRC, 1_000, &base, true).unwrap();
+        insert_file_history(&conn, &["C:/b.mp3".into()], TEST_SRC, 1_000, &base, true).unwrap();
+        insert_file_history(&conn, &["C:/c.mkv".into()], TEST_SRC, 1_000, &base, true).unwrap();
+        insert_file_history(&conn, &["C:/d.png".into()], TEST_SRC, 1_000, &base, true).unwrap();
+        insert_image_history(&conn, &sample_png(), TEST_SRC, 1_000, &base).unwrap();
+        let result = search_history_result(&conn, "", "textfile", 20, &base, false).unwrap();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.total, 1);
+        assert_eq!(result.categories, ClipboardCategoryCounts {
+            all: 6,
+            text: 1,
+            textfile: 1,
+            image: 2,
+            music: 1,
+            video: 1,
+            favorites: 0,
+        });
+        let all = search_history_result(&conn, "", "all", 20, &base, false).unwrap();
+        assert_eq!(all.categories, result.categories);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn mutation_helpers_reject_missing_ids_and_report_actual_deletes() {
+        let conn = memory_db();
+        let base = temp_base("mutation-semantics");
+        assert!(set_pinned(&conn, 9_999, true).is_err());
+        insert_text_history(&conn, "keep", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        let keep = search_history(&conn, "keep", "all", 20, &base, false).unwrap()[0].id;
+        set_pinned(&conn, keep, true).unwrap();
+        insert_text_history(&conn, "drop-a", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        insert_text_history(&conn, "drop-b", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true).unwrap();
+        let deleted = clear_history(&conn, &base, true).unwrap();
+        assert_eq!(deleted, 2, "kept pins are not counted as deletions");
+        let rows = search_history(&conn, "", "all", 20, &base, false).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].content, "keep");
         fs::remove_dir_all(&base).ok();
     }
 

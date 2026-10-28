@@ -5476,3 +5476,48 @@ Presenter 名称，值没有持久化或下发路径。
   onShow/enter、合成菜单仅激活、pin 拒绝与首尾空白断言通过。
 - WinForms 真实焦点夹具（`paste_close=false`）验证目标 TextBox 收到粘贴内容，
   启动器搜索框保持原值。
+
+## 88. 插件、导航与剪贴板专项审计修复（2026-10-28）
+
+[专项审计](History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-28.md)。
+
+### 88.1 剪贴板宿主边界
+
+- 插件 `clipboard.writeText` / `writeImage` / `writeFiles` 统一经过
+  `write_clipboard_payload`，成功写入后登记 Windows clipboard sequence；捕获监听器
+  不再把插件生成内容记为用户历史，也不会用当时前台进程伪造 `source_app`。
+- 插件文本/文件/图片读取、文本/文件/图片写入、检查状态、pin 与插件粘贴均改为 async
+  command；原生剪贴板调用与解码在工作线程执行，剪贴板被其他进程占用时不再阻塞
+  UI IPC。
+
+### 88.2 分类查询与计数
+
+- `search_clipboard` 返回 `{ items, total, categories }`。分类匹配以行内容类型为
+  单一事实源：普通文本、文本文件、图片（含图片文件）、音乐、视频、收藏分别过滤，
+  再对未收藏行独立应用 `history_cap`；收藏行不受普通上限截断。
+- 分类计数从同一 query 的全量候选独立聚合，不再从当前分类的已过滤结果推导；
+  “全部”与分类徽标在切换分类时保持稳定。剪贴板 store 同时保留旧数组响应的
+  兼容读取。
+
+### 88.3 预览与导航防御
+
+- 卫星预览的每次 load 递增 generation；文本、图片、媒体海报、文件列表、PDF 的
+  所有 await 返回后都校验代际，迟到结果不得覆盖新选择。PDF 迟到文档会销毁。
+- navBars 在单插件 sanitize 与整页预算两层拒绝重复 id，导航 store 再按首次出现
+  去重，避免重复 zone 共享展开/选择状态。
+
+### 88.4 Mutation 语义
+
+- `pin_clipboard` / `set_clipboard_checked` 对不存在的 id 返回明确错误；
+  `clear_clipboard` 返回实际删除行数，`keep_pinned` 保留的收藏不计数。
+
+### 88.5 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  **273 passed / 9 ignored**、`cargo clippy --all-targets --message-format=short`
+  **0 warning**、Page Runtime **18/18**、clipboard model **10/10**、clipboard
+  store **8/8**、plugin contract PASS、i18n **587 键 × 3 语言**；debug
+  `--no-bundle` 构建通过。
+- `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS（含插件写回、分类元数据与
+  mutation 错误语义），`cdp_audit_r2_verify` **15/15**，
+  `cdp_page_runtime_verify` 全部 PASS。

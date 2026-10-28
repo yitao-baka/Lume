@@ -11,6 +11,7 @@ All notable changes to Lume are documented here. Format based on
 
 ### Added
 
+- **插件、导航与剪贴板专项审计修复（2026-10-28）** — 插件 writeText/writeImage/writeFiles 统一经 self-write sequence 抑制，生成内容不进入剪贴板历史；插件可触发的剪贴板读写、检查与 mutation 移出主线程。`search_clipboard` 返回 `{ items, total, categories }`，内容分类过滤发生在历史上限之前，收藏不占普通上限，分类计数由同一查询的独立聚合产生。卫星预览的文本/图片/媒体海报/文件列表/PDF 加载增加请求代际，迟到结果不会覆盖新选择。navBars 在 sanitize、整页预算与导航 store 三层拒绝重复 id；pin/checked 对不存在的 id 报错，clear 返回实际删除数。详细记录见 `docs/ROADMAP_HISTORY.md` #88。验证：`pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test` **273 passed / 9 ignored**、`cargo clippy --all-targets --message-format=short` **0 warning**、Page Runtime 18/18、clipboard model 10/10、clipboard store 8/8、plugin contract PASS、i18n 587 键 × 3 语言、debug `--no-bundle` 构建通过；`cdp_plugin_nav_clipboard_fix_verify`、`cdp_audit_r2_verify` **15/15**、`cdp_page_runtime_verify` 全部通过。
 - **专项审计 R2 修复（插件、导航与剪贴板）** — Page Service 在慢
   `getModel()` 首次挂载期间统一排队 query/settings/files/show/hide/enter，
   Presenter ready 后按 query → show → enter 重放；Presenter 切换会清空旧

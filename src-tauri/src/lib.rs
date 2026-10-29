@@ -59,7 +59,25 @@ fn acquire_single_instance() -> InstanceGuard {
     use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
     use windows::Win32::System::Threading::CreateMutexW;
 
-    let name: Vec<u16> = "LumeLauncher_SingleInstance"
+    // The verification harness runs isolated copies of the debug executable
+    // beside a private data directory. Give those copies their own mutex so a
+    // test never has to stop (or accidentally attach to) the user's launcher.
+    // Release builds always use the process-wide name below.
+    #[cfg(debug_assertions)]
+    let test_suffix = std::env::var("LUME_INSTANCE_ID")
+        .ok()
+        .filter(|value| {
+            !value.is_empty()
+                && value
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        })
+        .map(|value| format!("-{value}"))
+        .unwrap_or_default();
+    #[cfg(not(debug_assertions))]
+    let test_suffix = String::new();
+
+    let name: Vec<u16> = format!("LumeLauncher_SingleInstance{test_suffix}")
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();

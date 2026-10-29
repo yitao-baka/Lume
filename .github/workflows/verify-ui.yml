@@ -1,0 +1,38 @@
+name: Verify UI
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 18 * * *"
+
+concurrency:
+  group: verify-ui
+  cancel-in-progress: false
+
+jobs:
+  ui:
+    # The harness needs an interactive Windows desktop. Register a runner with
+    # these labels; GitHub-hosted runners are not guaranteed to provide one.
+    runs-on: [self-hosted, Windows, X64, lume-ui]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify:ui
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-ui-${{ github.run_id }}
+          path: test/verify
+          if-no-files-found: ignore

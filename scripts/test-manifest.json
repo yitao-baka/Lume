@@ -1,0 +1,91 @@
+{
+  "suites": {
+    "smoke": {
+      "module": "suites/smoke.mjs",
+      "description": "Launcher shell, mode switching and basic clipboard surface"
+    },
+    "settings": {
+      "module": "suites/settings.mjs",
+      "description": "Settings navigation, search surface and clipboard pane"
+    },
+    "plugin-runtime": {
+      "module": "suites/plugin-runtime.mjs",
+      "description": "API 2 plugin entry, Presenter readiness and sandbox"
+    },
+    "clipboard-ui": {
+      "module": "suites/clipboard-ui.mjs",
+      "description": "Clipboard surface, pause acknowledgement and clear confirmation"
+    },
+    "preview": {
+      "module": "suites/preview.mjs",
+      "description": "Core preview window and plugin permission gate"
+    },
+    "agent": {
+      "module": "suites/agent.mjs",
+      "description": "Elevation-agent settings, status shape and fail-closed registration gate"
+    }
+  },
+  "impact": [
+    {
+      "paths": ["scripts/test-harness/", "scripts/test-manifest.json", "scripts/verify.mjs"],
+      "suites": ["smoke", "settings", "plugin-runtime", "clipboard-ui", "preview", "agent"]
+    },
+    {
+      "paths": ["src/plugins/", "src/page-runtime/", "src/page-services/", "src/presenters/"],
+      "suites": ["smoke", "plugin-runtime"]
+    },
+    {
+      "paths": ["src/plugins/clipboard/", "src/page-services/clipboard/", "src/presenters/clipboard-list/", "src/presenters/clipboard-compact/"],
+      "suites": ["clipboard-ui"]
+    },
+    {
+      "paths": ["src/settings/", "src/skins/", "languages/"],
+      "suites": ["settings"]
+    },
+    {
+      "paths": ["src/launcher/previewHost.ts", "src-tauri/src/window.rs", "src/preview.tsx", "examples/plugins/host-tools/"],
+      "suites": ["preview", "smoke"]
+    },
+    {
+      "paths": ["src-tauri/src/plugin_", "src-tauri/src/plugins.rs", "public/pluginLogicFrame.js", "src/pluginLogic.tsx"],
+      "suites": ["plugin-runtime", "preview"]
+    },
+    {
+      "paths": ["src/settings/AutomationPane.tsx", "src/settings/SystemPane.tsx", "src-tauri/src/agent.rs"],
+      "suites": ["agent", "settings"]
+    }
+  ],
+  "fallbackSuites": ["smoke"],
+  "legacyGroups": {
+    "plugin-boundary": [
+      "scripts/cdp_plugin_nav_clipboard_fix_verify.mjs",
+      "scripts/cdp_audit_r2_verify.mjs"
+    ],
+    "settings-visual": [
+      "scripts/cdp_settings_skin_verify.mjs",
+      "scripts/cdp_settings_accent_verify.mjs",
+      "scripts/cdp_visual_audit_verify.mjs"
+    ],
+    "plugin-ui": [
+      "scripts/cdp_plugin_state_verify.mjs",
+      "scripts/cdp_plugin_lru_verify.mjs",
+      "scripts/cdp_plugin_theme_verify.mjs",
+      "scripts/cdp_mode_bar_icons_verify.mjs"
+    ],
+    "window-native": [
+      "scripts/cdp_window_position_verify.mjs",
+      "scripts/cdp_window_feature_verify.mjs"
+    ],
+    "agent": [
+      "scripts/cdp_agent_smoke.mjs",
+      "scripts/cdp_agent_verify.mjs"
+    ],
+    "release-core": [
+      "scripts/cdp_plugin_nav_clipboard_fix_verify.mjs",
+      "scripts/cdp_audit_r2_verify.mjs",
+      "scripts/cdp_settings_skin_verify.mjs",
+      "scripts/cdp_settings_accent_verify.mjs",
+      "scripts/cdp_visual_audit_verify.mjs"
+    ]
+  }
+}

@@ -210,7 +210,8 @@ tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
 Before making changes read [AGENTS.md](AGENTS.md), then the topic docs:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 [docs/UI_GUIDELINES.md](docs/UI_GUIDELINES.md),
-[docs/TESTING.md](docs/TESTING.md); for plugins
+[docs/TESTING.md](docs/TESTING.md) and the
+[manual checklist](docs/MANUAL_TESTING.md); for plugins
 [docs/PLUGIN_API.md](docs/PLUGIN_API.md) (reference) and
 [docs/PLUGINS.md](docs/PLUGINS.md) (getting started); settings in
 [docs/SETTINGS.md](docs/SETTINGS.md). Open work is listed in
@@ -224,11 +225,14 @@ Due to network problems, always use mirror sources to download required files.
 
 The frontend is managed with **pnpm** (`pnpm install`; see `.npmrc`,
 `pnpm-workspace.yaml`, `package.json` → `packageManager`). `pnpm run tauri dev`
-runs the dev loop; `pnpm run tauri build --debug --no-bundle` produces the
-embedded debug exe (CDP smoke tests use this); `pnpm run tauri build
---no-bundle` produces the standalone release exe
-(`src-tauri/target/release/lume.exe`, no console). Full verification matrix in
-[docs/TESTING.md](docs/TESTING.md).
+runs the dev loop. Use `pnpm verify:fast` for the normal code gate,
+`pnpm verify:ui` for the isolated CDP suites, and `pnpm verify:release` before a
+release. `pnpm run tauri build --debug --no-bundle` produces the embedded debug
+exe; `pnpm run tauri build --no-bundle` produces the standalone release exe
+(`src-tauri/target/release/lume.exe`, no console). The Tauri build already runs
+the frontend build through `beforeBuildCommand`. Full verification matrix in
+[docs/TESTING.md](docs/TESTING.md); desktop/UAC steps in
+[docs/MANUAL_TESTING.md](docs/MANUAL_TESTING.md).
 
 ## Package
 

@@ -9,6 +9,23 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Added
+- **分层验证体系与隔离 CDP harness（2026-10-29）** — 新增
+  `pnpm verify:docs` / `verify:fast` / `verify:ui` / `verify:ui:changed` /
+  `verify:legacy` / `verify:release` 统一入口。CDP harness 把 exe、语言、资源和
+  fixture 复制到 `test/verify/<run>/<suite>/runtime/`，使用空数据目录、动态端口、
+  debug-only `LUME_INSTANCE_ID` 和自有进程树清理，不再需要全局终止 Lume 或
+  WebView2。迁移 launcher、settings、plugin runtime、clipboard、preview、agent
+  六个套件，共 39 个断言；旧 `cdp_*.mjs` 按功能组显式运行，不再默认全量执行。
+  Tauri 构建只走一次 `beforeBuildCommand`，删除重复的前端预构建；新增 Windows
+  fast CI 与自托管 UI CI，并把当前测试契约、手工清单和旧版测试文档归档规则同步。
+  详细记录见 `docs/ROADMAP_HISTORY.md` #91。
+  验证：`pnpm verify:fast` PASS（docs 15 项、i18n 587 键 × 3 语言、Page Runtime
+  18/18、clipboard model 10/10、clipboard store 8/8、skin 11/11、前端生产构建、
+  Rust **281 passed / 9 ignored**）；`pnpm verify:release` PASS（6 个 harness
+  套件 **39/39**，约 11 秒；plugin runtime 竞态修复后连续 3 次通过；release-core
+  旧回归全部通过，含 settings skin **62/62**、settings accent **50/50**、
+  visual audit **28/28**、audit R2 **15/15**）；Rust clippy 通过，debug/release
+  embedded 构建通过。
 - **启动器窗口几何事务与显示时序修复（2026-10-29）** — 新增
   `window_geometry.rs`，以一次 `SetWindowPos` 原子提交客户区尺寸与位置；
   热键显示前由隐藏渲染器完成页面复位与测量，再按 generation 显示，固定高度页

@@ -5596,3 +5596,60 @@ Presenter 名称，值没有持久化或下发路径。
   新增工作区归一化/四角/居中单测 **3/3**。
 - 当前实测环境为 150% DPI 单显示器；几何脚本已内置 DPI-aware 多显示器遍历，
   100% / 200% 与混合 DPI 跨显示器的实际份额覆盖列为 `docs/TESTING.md` 实机验收项。
+
+## 91. 分层验证体系与隔离 CDP harness（2026-10-29）
+
+### 91.1 问题与边界
+
+旧的 CDP 验证以单个历史问题为脚本边界，多个脚本各自启动应用、固定端口、全局
+`taskkill` 并改写 `src-tauri/target/{debug,release}` 下的共享状态。验证入口只存在于
+`docs/TESTING.md` 的操作步骤中，构建前还会重复执行 `pnpm run build`。验证成本随历史
+脚本数量线性增长，且测试之间无法可靠隔离。
+
+新体系把验证分为文档/静态、前端单元、Rust 单元、隔离 UI harness、显式旧回归和手工
+桌面检查六层。自动化命令是 `verify:docs`、`verify:fast`、`verify:ui`、
+`verify:ui:changed`、`verify:legacy`、`verify:release`；变更矩阵和测试生命周期规则归
+`docs/TESTING.md`，真实 UAC、服务注册、拖拽和实机快捷键归 `docs/MANUAL_TESTING.md`。
+
+### 91.2 隔离与生命周期
+
+- `scripts/test-harness/cdp.mjs` 为每个套件建立独立运行目录，复制嵌入式 exe、语言、
+  资源和必要 helper/fixture；数据、设置和插件目录从空状态开始。
+- debug 构建支持 `LUME_INSTANCE_ID` 命名空间，测试副本不会触碰用户正在运行的
+  Lume；release 构建仍保持全局单实例行为。
+- 端口由操作系统动态分配；清理只针对本次启动的 PID 进程树，并注册
+  `SIGINT`/`SIGTERM`/进程退出兜底。失败保留运行目录、日志尾部和截图，通过套件只在
+  显式 `--keep-runtime` 或 `KEEP_TEST_RUN=1` 时保留；结果目录只保留最近 20 次。
+- `scripts/test-manifest.json` 登记套件、diff 映射和旧脚本分组。`verify:ui` 在源码
+  比 exe 新时构建一次，Tauri 的 `beforeBuildCommand` 负责前端构建，不再手工预构建。
+- CI 分为 Windows `verify:fast` 和带交互桌面的 self-hosted `verify:ui`；后者不占用
+  GitHub-hosted runner 的不可靠 GUI 假设。
+
+### 91.3 套件迁移
+
+新增六个 harness 套件：
+
+- `smoke`：启动器 shell、模式栏、Tab 切页、剪贴板表面和隐藏；
+- `settings`：九段导航、命令搜索、剪贴板设置面板和关闭路径；
+- `plugin-runtime`：插件注册、关键字入口、Presenter ready、CSP 和不透明 sandbox；
+- `clipboard-ui`：历史/空态、分类、暂停确认和清空确认；
+- `preview`：核心预览窗口、未声明插件拒绝和已声明插件复用；
+- `agent`：提权代理开关的 fail-closed 注册门、UIPI 文案、System 状态卡和隔离 helper
+  路径。
+
+旧 `cdp_*.mjs` 保留为显式回归组。`release-core` 选择插件边界、皮肤/强调色和视觉
+审计等高价值脚本；`plugin-ui`、`window-native`、`agent` 等组按变更面单独运行。
+
+### 91.4 验证
+
+- `pnpm verify:fast` PASS：docs 15 项、i18n 587 键 × 3 语言、Page Runtime 18/18、
+  clipboard model 10/10、clipboard store 8/8、skin 11/11、前端生产构建、Rust
+  **281 passed / 9 ignored**。
+- `pnpm verify:ui --no-build` PASS：6 个套件 **39/39**，约 11 秒；`plugin-runtime`
+  在等待 registry probe 后连续 3 次 6/6。
+- `pnpm verify:release` PASS：Rust clippy 通过；release-core 全部通过，含
+  plugin/nav/clipboard boundary、audit R2 **15/15**、settings skin **62/62**、
+  settings accent **50/50**、visual audit **28/28**；debug/release embedded 构建
+  通过，debug 构建约 23 秒，Release 构建约 40 秒。
+- 隔离运行确认不会遗留测试 Lume 进程；旧脚本仍可能全局清理，因此只在显式 legacy
+  命令和无人使用 Lume 时运行。

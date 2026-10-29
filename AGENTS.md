@@ -27,7 +27,8 @@ Windows 轻量启动器（Spotlight / uTools 式）。前端 SolidJS + TypeScrip
 - `docs/`（见上）、`languages/*.json`（en / zh-CN / zh-TW）、`res/`（只读资源）、
   `examples/plugins/`（插件示例，其 `dist/` 是源码的一部分，勿 gitignore）。
 - `docs/History/`：退出活跃文档集合的报告、审计与被取代方案；索引与归档规则见 `docs/History/README.md`。
-- `scripts/`：`cdp_*.mjs` = CDP 冒烟/验证脚本；`package-portable.mjs`、`package-zip.sh` = 打包。
+- `scripts/`：`test-harness/` = 分层 CDP 套件与隔离运行器；`cdp_*.mjs` = 尚未迁移的专项回归；
+  `verify.mjs` = 统一验证入口；`package-portable.mjs`、`package-zip.sh` = 打包。
 - `test/` = 本机 scratch（截图/日志，已 gitignore），临时产物都丢这里。
 
 ## 命令
@@ -36,6 +37,11 @@ Windows 轻量启动器（Spotlight / uTools 式）。前端 SolidJS + TypeScrip
 pnpm install                       # 前端依赖（.npmrc 已指 npmmirror 镜像）
 pnpm run build                     # 前端生产构建 → dist/（含 TS/SolidJS 报错）
 pnpm exec tsc --noEmit             # 单独类型检查
+pnpm verify:docs                   # 活跃文档链接、UTF-8 与测试清单
+pnpm verify:fast                   # 静态检查、前端单测/构建、Rust 单测
+pnpm verify:ui                     # 按需构建一次 debug exe，再跑隔离 UI 套件
+pnpm verify:ui:changed             # 按当前 diff 选择 UI 套件
+pnpm verify:release                # 发布前自动门禁
 cd src-tauri && cargo check        # Rust 类型检查
 cd src-tauri && cargo test         # Rust 单测（不碰注册表/服务/真实 UAC）
 pnpm run tauri dev                 # 开发（页面走 vite dev server :1420，需先启动；有控制台窗口）
@@ -46,10 +52,13 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
 
 - **pnpm 传参**：额外参数直接跟在脚本名后（`pnpm run tauri build --no-bundle`），
   **不要加 `--` 分隔符**——pnpm 会把它原样转发给 tauri 导致 `cargo: unexpected argument`。
-- **CDP 冒烟**：`node scripts/cdp_*.mjs`。脚本自己 `taskkill` 旧进程、拷贝示例插件到
-  `src-tauri/target/{debug,release}/plugins/`、以
-  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=NNNN` 拉起**已构建的 exe**
-  （不启动 vite），逐项打印 `PASS/FAIL`，有任何失败 `exit 1`。所以跑之前必须先构建（见「验证」）。
+- **CDP 冒烟**：优先 `pnpm verify:ui --suite ...`。新 harness 会把 exe、语言、资源和 fixture
+  复制到 `test/verify/<run>/<suite>/runtime/`，使用空数据目录、动态端口和 debug-only
+  `LUME_INSTANCE_ID`，只终止自己的进程树。源码比嵌入式 exe 新时自动构建一次；Tauri 的
+  `beforeBuildCommand` 已负责前端构建，不要再手工先跑 `pnpm run build`。
+- **旧 CDP 脚本**：`node scripts/cdp_*.mjs` 仍可用于专项回归，但它们可能全局 `taskkill`、
+  固定端口并改写 `src-tauri/target/*` 下的测试数据。通过 `pnpm verify:legacy --group ...`
+  显式运行，不要和用户正在使用的 Lume 并行。
 
 ## 硬性约定
 
@@ -73,6 +82,11 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
    更新所有入链、图片路径和代码注释，并在 `docs/History/README.md` 登记；历史档案
    只供追溯，不反向定义现状。
 
+10. **测试生命周期**：新回归优先加入现有 `scripts/test-harness/suites/`；只有生命周期、
+    fixture 或隔离边界确实不同才新增套件。临时 repro 留在 `test/`。永久套件必须登记
+    `scripts/test-manifest.json`，旧脚本在等价覆盖迁入后合并或删除。不要在每次改动时
+    默认全跑所有历史 CDP 脚本。
+
 ## 插件系统（改动前必读 `docs/PLUGIN_API.md`）
 
 - 插件 = `<base>/plugins/<id>/plugin.toml` 清单 + 贡献：`kind = provider | mode | service`；
@@ -88,22 +102,26 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
 
 - `paths::base_dir()` 判定：便携 = exe 同级目录；exe 在 Program Files 下 = `%LOCALAPPDATA%\Lume`
   （只拷不删地迁移）。`lume-svc` 从 `HKLM\Software\Lume\DataDir` 读同一目录。
-- **dev / 测试时 base = `src-tauri/target/{debug,release}/`**：`settings/settings.toml`、
-  `data/lume.db`、`plugins/` 都在那里——找设置/DB/插件不要去仓库根找。
+- **旧脚本的 dev / 测试 base = `src-tauri/target/{debug,release}/`**：`settings/settings.toml`、
+  `data/lume.db`、`plugins/` 都在那里。新 harness 的 base 是
+  `test/verify/<run>/<suite>/runtime/`，每次从空设置、空数据库、空插件目录开始。
 - `settings/` 三文件：`settings.toml` 唯一生效、`default.toml` 出厂只读、`backup.toml`
   每次保存/应用/导入前快照。`data/lume.db` 存用户数据（clipboard / pinned_apps /
   recent_apps），另有可随时重建的索引缓存 db；插件文档库在 `data/plugin_store.db`（独立文件）。
 - **新增 settings 字段**一律 `#[serde(default = "…")]`；注意「整张表缺失」会走字段自身
   `Default`——派生 `Default` 会把 bool 全关掉，需要就手写 `impl Default`（有回归测试钉住）。
 
-## 验证与交付（每次改动必编译）
+## 验证与交付
 
-- 前端：`pnpm run build`（必要时 `pnpm exec tsc --noEmit`）；Rust：`cd src-tauri && cargo check`
-  + `cargo test`。**编译或测试失败不允许声称完成**——如实报告失败输出，修复后再交付。
-- 改前端后跑 CDP 冒烟前：`pnpm run build` + `pnpm run tauri build --debug --no-bundle`
-  （或 release 版）重建 exe，否则测到的是上一版内嵌 bundle。
-- 手工项不要自动化：注册服务/代理、UAC、真实拖拽、实机快捷键等按 `docs/TESTING.md`
-  手工清单验证；`cargo test` 有意不碰这些。
+- 日常代码改动先跑 `pnpm verify:fast`；失败时如实报告输出，修复后再交付。
+  `pnpm verify:fast` 已包含 TypeScript、i18n、前端单测、前端构建和 Rust 单测。
+- UI/插件改动按 [docs/TESTING.md](docs/TESTING.md) 的变更矩阵跑对应
+  `pnpm verify:ui --suite ...`；`pnpm verify:ui:changed` 可用于按 diff 选套件。
+  旧的 `pnpm verify:legacy --group ...` 只在专项边界需要时运行。
+- 发布前跑 `pnpm verify:release`，再按 `docs/MANUAL_TESTING.md` 完成真实 UAC、服务注册、
+  真实拖拽、实机快捷键与原生窗口检查。`cargo test` 有意不碰这些。
+- 不要用“脚本数量”衡量覆盖。记录实际套件、断言数、耗时和产物路径；新测试必须能说明
+  它保护的契约和维护成本。
 - 每轮收尾同步文档：`docs/ROADMAP.md`（新功能先在此立项为开放事项；完成后从开放
   事项删除，实现/踩坑/验证写入 `docs/ROADMAP_HISTORY.md` 新条目——**迭代详情以
   归档为准**）+ `CHANGELOG.md` 的 `[Unreleased]`（按仓库条目风格带验证数据）+
@@ -147,9 +165,10 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
   返回 0），host→页面的 `postMessage` 也无法从探针伪造（`__lumeRpc` 是页面→宿主方向）。
   要断言页面真的变样了，用 1×1 `Page.captureScreenshot` clip + `zlib` 解 PNG 采像素
   （`scripts/cdp_plugin_theme_verify.mjs`），页面动作由示例页的 `on.query` 钩子驱动。
-- **CDP 冒烟必须用 `pnpm run tauri build --debug --no-bundle`**：直接 `cargo build`
-  出的是 dev 模式 exe（页面指 `http://localhost:1420`，无 vite 时白屏，探针找不到
-  `#search-input` 只会报「launcher window missing」）。
+- **CDP 冒烟必须使用嵌入式 build**：`pnpm verify:ui` 会在需要时执行
+  `pnpm run tauri build --debug --no-bundle`。直接 `cargo build` 出的是 dev 模式 exe
+  （页面指 `http://localhost:1420`，无 vite 时白屏）。
 - **CDP 调试**：对隐藏窗口（内存裁剪态）`evaluate` 可能挂起（先 `toggle_launcher` 再查）；
-  多轮 kill/spawn 后的僵尸 `msedgewebview2.exe` 会造成「数据加载不出」假象，对比前先
-  `taskkill /F /IM msedgewebview2.exe`。
+  旧脚本多轮 kill/spawn 后的僵尸 `msedgewebview2.exe` 会造成「数据加载不出」假象。
+  新 harness 通过独立运行目录和自有进程树避免这种污染；排查旧脚本时优先关闭对应测试实例，
+  不要默认全局清理所有 WebView2 进程。

@@ -49,8 +49,10 @@ fn build_tray(
                 ..
             } = event
             {
-                let app = tray.app_handle();
-                let _ = crate::window::toggle_launcher(app.clone());
+                let app = tray.app_handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::window::toggle_launcher(app).await;
+                });
             }
         })
         .on_menu_event(|app, event| match event.id().as_ref() {

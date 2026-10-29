@@ -12,7 +12,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { LogicalSize } from "@tauri-apps/api/dpi";
 import { Dynamic } from "solid-js/web";
 import { resolveLocale, setLocale, t, type Messages } from "./i18n";
 import { applyColorMode, currentThemeMode, normalizePluginColorMode } from "./theme";
@@ -22,7 +21,7 @@ import { pluginColorMode, pluginColorPref } from "./plugins/themePrefs";
 import type { SettingsData } from "./settings/types";
 import "./App.css";
 import type { ClipKind, MenuState } from "./launcher/types";
-import { MIN_WINDOW_H, SCREEN_MARGIN, TOAST_MS, TOAST_UNDO_MS } from "./launcher/types";
+import { MIN_WINDOW_H, TOAST_MS, TOAST_UNDO_MS } from "./launcher/types";
 import type { MenuStateLike, ModeId, PageRow, PluginServices } from "./plugins/types";
 import { createIconStore } from "./launcher/icons";
 import { pickIcon } from "./launcher/iconSpec";
@@ -86,6 +85,10 @@ function App() {
     w: _a?.window_width ?? 720,
     h: _a?.window_height ?? 520,
   });
+  /** Hidden-show preparation generation from Rust. A geometry call carrying
+   * it releases the show handshake; ordinary visible-page resizes pass null. */
+  let showPrepareGeneration: number | null = null;
+  const prepareGeneration = () => showPrepareGeneration;
   /** Key that switches pages (settings → 系统 → 快捷键). */
   const [switchKey, setSwitchKey] = createSignal(_cfg?.hotkeys?.switch_mode || "Tab");
   /** Settings-driven: 模式切换栏仅显示图标 (docs/ROADMAP_HISTORY.md #47, default off —
@@ -407,6 +410,7 @@ function App() {
     barCols,
     setBarCols,
     measureModeViewport: () => activeMode()?.measureViewport(),
+    prepareGeneration,
     // Page measurements are scoped to the active keep-alive host (#40).
     activeHost: () => document.querySelector<HTMLElement>(".mode-host.active"),
   });
@@ -531,23 +535,34 @@ const services: PluginServices = {
       });
     },
     resizeWindow: (size) => {
+      // A plugin resize originates from a visible page. It must never release
+      // a concurrently pending hidden-show handshake.
       // Logical px; omitted axes keep the current size. The sandbox already
-      // rejects non-finite values; clamp the remaining axes to the monitor's
+      // rejects non-finite values; Rust clamps the remaining axes to the current monitor's
       // work area so a Presenter cannot move the launcher off-screen.
       const cur = runtimeSize();
-      const maxW = Math.max(240, Math.floor(window.screen.availWidth || 4096));
-      const maxH = Math.max(
-        MIN_WINDOW_H,
-        Math.floor((window.screen.availHeight || 4096) - SCREEN_MARGIN)
-      );
-      const requestedW = typeof size.width === "number" && Number.isFinite(size.width) ? size.width : cur.w;
-      const requestedH = typeof size.height === "number" && Number.isFinite(size.height) ? size.height : cur.h;
-      const w = Math.min(maxW, Math.max(240, Math.round(requestedW)));
-      const h = Math.min(maxH, Math.max(MIN_WINDOW_H, Math.round(requestedH)));
-      setRuntimeSize({ w, h });
-      void getCurrentWindow()
-        .setSize(new LogicalSize(w, h))
-        .then(() => invoke("apply_position"))
+      const requestedW =
+        typeof size.width === "number" && Number.isFinite(size.width)
+          ? size.width
+          : cur.w;
+      const requestedH =
+        typeof size.height === "number" && Number.isFinite(size.height)
+          ? size.height
+          : cur.h;
+      // Rust is the authoritative work-area clamp and commits size + position
+      // atomically. Do not pre-clamp against the renderer's screen values.
+      const w = Math.max(240, Math.round(requestedW));
+      const h = Math.max(MIN_WINDOW_H, Math.round(requestedH));
+      void invoke<{ width: number; height: number }>("apply_launcher_geometry", {
+        request: { width: w, height: h, expanded: false },
+        generation: prepareGeneration(),
+      })
+        .then((applied) => {
+          setRuntimeSize({
+            w: Math.round(applied.width),
+            h: Math.round(applied.height),
+          });
+        })
         .catch((err) => console.error("resize failed:", err));
     },
     dragWindow: () => {
@@ -1201,6 +1216,34 @@ const services: PluginServices = {
     });
     onCleanup(() => unlistenDrag());
 
+    // Hidden-show preparation: reset the destination page and measure while
+    // the launcher is still invisible. Rust waits for the matching geometry
+    // generation, then commits size + position and reveals the window.
+    const unlistenPrepare = await getCurrentWindow().listen<{ generation: number }>(
+      "launcher-prepare-show",
+      async (event) => {
+        const generation = event.payload.generation;
+        try {
+          for (const p of allPlugins()) p.lifecycle?.onShow?.();
+          beginSummon();
+          sizer.invalidate();
+          await runSearch(query());
+          for (const p of modePlugins()) await p.instance.onShow?.();
+        } finally {
+          // Only the final measurement acknowledges the show generation.
+          // Incidental effects during page reset must not release the reveal
+          // with an earlier, partial target.
+          showPrepareGeneration = generation;
+          try {
+            await sizer.resizeToContent();
+          } finally {
+            if (showPrepareGeneration === generation) showPrepareGeneration = null;
+          }
+        }
+      }
+    );
+    onCleanup(() => unlistenPrepare());
+
     // The launcher stays hidden between toggles. On every fresh show (hotkey /
     // tray toggle) the session RESUMES (docs/ROADMAP_HISTORY.md #40): the last page, its
     // query and its page state stay; only summon-scoped bits are re-armed.
@@ -1208,18 +1251,12 @@ const services: PluginServices = {
     // dragging the frameless window briefly deactivates and refocuses it
     // (Rust `is_mid_drag` suppresses the hide on that side), and re-arming
     // there would clear summon-scoped state mid-drag.
-    const unlisten = await getCurrentWindow().listen("launcher-shown", async () => {
-      (window as unknown as { __summonStartedAt?: number }).__summonStartedAt = Date.now();
-      for (const p of allPlugins()) p.lifecycle?.onShow?.();
-      beginSummon();
-      await runSearch(query());
-      // Summon-scoped page refresh (bars, folder context, feature rows) and
-      // the empty-menu auto-select land after the summon search.
-      for (const p of modePlugins()) await p.instance.onShow?.();
+    const unlisten = await getCurrentWindow().listen("launcher-shown", () => {
       queueMicrotask(() => document.getElementById("search-input")?.focus());
       (window as unknown as { __summonCompletedAt?: number }).__summonCompletedAt = Date.now();
     });
     (window as unknown as { __summonListenerReadyAt?: number }).__summonListenerReadyAt = Date.now();
+    await invoke("launcher_renderer_ready").catch(() => {});
     onCleanup(() => unlisten());
 
     // Idle-reset anchor (docs/ROADMAP_HISTORY.md #46): every hide path in Rust funnels

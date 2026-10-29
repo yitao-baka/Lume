@@ -39,6 +39,7 @@ mod tray;
 pub mod usnidx;
 mod webview_guard;
 mod window;
+mod window_geometry;
 
 use tauri::{Emitter, Manager, WindowEvent};
 
@@ -95,6 +96,7 @@ pub fn run() {
         .manage(automation::AutomationState::default())
         .manage(window::FocusState::default())
         .manage(window::PlacementState::default())
+        .manage(window_geometry::GeometryState::default())
         .manage(dirwatch::DirWatchState::default())
         .manage(plugin_devwatch::DevWatchState::default())
         .manage(window::PreviewState::default())
@@ -149,8 +151,8 @@ pub fn run() {
             .center()
             .resizable(false)
             .decorations(false)
-            .transparent(true)
             .shadow(true)
+            .background_color(tauri::window::Color(30, 30, 32, 255))
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
@@ -173,6 +175,11 @@ pub fn run() {
             if let Some(mw) = app.get_webview_window("main") {
                 webview_guard::install(&mw);
                 window::set_panel_frame_border(
+                    &mw,
+                    current.appearance.skin(),
+                    &current.appearance.color_mode,
+                );
+                window_geometry::set_panel_background(
                     &mw,
                     current.appearance.skin(),
                     &current.appearance.color_mode,
@@ -351,6 +358,7 @@ pub fn run() {
                             })
                             .unwrap_or_else(|| ("quiet".into(), "system".into()));
                         window::set_panel_frame_border(&themed, &skin, &mode);
+                        window_geometry::set_panel_background(&themed, &skin, &mode);
                         appicon::apply(&app_handle, &mode);
                     }
                 });
@@ -407,6 +415,9 @@ pub fn run() {
             window::window_toggle_maximize,
             window::window_toggle_pin,
             window::apply_position,
+            window_geometry::apply_launcher_geometry,
+            window_geometry::launcher_renderer_ready,
+            window_geometry::launcher_geometry_diagnostics,
             window::get_work_area,
             window::show_preview,
             window::close_preview,

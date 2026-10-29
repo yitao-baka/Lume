@@ -11,6 +11,7 @@ Tauri IPC
         ▼
 Rust Core (src-tauri/src/)
   ├─ window.rs   — show / hide / toggle the launcher surface
+  ├─ window_geometry.rs — work-area clamp + atomic size/position transaction
   ├─ webview_guard.rs — native WebView2 frame navigation / new-window guard
   │                and the shared deny-only HTTP proxy
   ├─ plugins.rs  — plugin discovery (`<base>/plugins/*/plugin.toml`) +
@@ -71,14 +72,17 @@ medium integrity), `lume-svc.exe` (the SYSTEM file-index service) and
 ## Modules
 
 ### `window.rs`
-Owns the single frameless transparent webview window (label `main`, see
-`tauri.conf.json`). `show()` applies the configured width and placement
-policy: the 窗口位置 setting (center / corners / follow-mouse / custom)
-only positions the window on its FIRST appearance in a run — later shows
-inherit the spot the launcher was last closed at, and a manual drag stops
-automatic anchoring altogether (session-scoped `PlacementState`,
-docs/ROADMAP_HISTORY.md); `follow-mouse` is the exception and re-centers on the cursor
-on every show.
+Owns the single frameless, opaque webview window (label `main`, see
+`tauri.conf.json`). A shown window is revealed only after the hidden renderer
+has reset the destination page and submitted its measured geometry; the
+hotkey then waits for that matching generation (bounded fallback) before
+`window_geometry.rs` commits the client size and anchor in one `SetWindowPos`.
+The 窗口位置 setting (center / corners / follow-mouse / custom) positions the
+window on its first appearance in a run — later shows inherit the spot the
+launcher was last closed at, and a manual drag stops automatic anchoring
+altogether (session-scoped `PlacementState`, docs/ROADMAP_HISTORY.md);
+`follow-mouse` is the exception and re-centers on the cursor on every show.
+An explicit preset change clears the manual-spot identity and takes over.
 Called by the frontend (Esc) and by `hotkey.rs`. The launcher also **auto-hides
 on focus loss**: `lib.rs` registers a `WindowEvent::Focused(false)` handler
 that hides the window, so clicking elsewhere dismisses it. Elevated launches
@@ -541,9 +545,10 @@ before adding a field:
   (`src/launcher/types.ts`) is the fit-height slop for this geometry: changing
   one without the other leaves an empty strip under the content or clips the
   page. Two states have **no page area at all** — the window is the search row
-  alone: an empty home menu (no bar sections) and a page that is still
+  alone: an empty home menu (no bar sections) and a **fit page** that is still
   loading (the internal shell adapter's ready gate; the pill carries the
-  spinner meanwhile).
+  spinner meanwhile). A fixed page keeps its target height while loading and
+  only hides `.results`.
 - **Page canvas (disk plugin pages)**: a mode page is an opaque-origin iframe.
   With a dark `color-scheme` — every mirrored-palette plugin sets one —
   Chromium paints an **opaque #121212 canvas** for a transparent root
@@ -660,11 +665,14 @@ before adding a field:
   - `sizing.ts` — `createWindowSizer()`: the "拼接" height model (fit pages
     auto-size to content; fixed pages splice in under the search box at the
     manifest/`window_height` height), bar column measurement, work-area cap,
-    virtual-list viewport measurement. Two special cases: a **loading** page
-    (the shell adapter's ready gate is false) collapses the window to the search row alone,
-    and an **empty fit page** (no bar sections at all) is that same search-row
-    state — no reserved "empty-state" strip and no `WINDOW_PAD` below a page
-    that has no content.
+    virtual-list viewport measurement. Requests are serialized with
+    latest-wins coalescing and a renderer generation; only a successful
+    `apply_launcher_geometry` advances the runtime-size baseline. Two special
+    cases: a **loading fixed page** keeps its target height and only the
+    `.results` visibility gate hides content, while a **loading fit page**
+    collapses to the search row; an **empty fit page** (no bar sections at all)
+    is that same search-row state — no reserved "empty-state" strip and no
+    `WINDOW_PAD` below a page that has no content.
   - `menu.ts` — `buildMenuItems()`: right-click menu construction for
     app / folder / clipboard targets, over the narrow structural
     `NavMenuActions` / `ClipMenuActions` interfaces each page supplies through

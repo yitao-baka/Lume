@@ -95,7 +95,13 @@ const summon = async () => {
   await invoke("hide_launcher");
   await sleep(250);
   await invoke("toggle_launcher");
-  await sleep(900);
+  // toggle_launcher is async: wait for the geometry handshake to finish rather
+  // than assuming a fixed one-frame delay.
+  for (let i = 0; i < 30; i++) {
+    const diag = await invoke("launcher_geometry_diagnostics").catch(() => null);
+    if (diag?.visible) return;
+    await sleep(50);
+  }
 };
 const setCursor = (x, y) => {
   const code = [
@@ -162,8 +168,16 @@ await invoke("save_settings", { new: s2 });
 await sleep(700);
 const r6 = psRect();
 check("显式改预设立即生效（位置改变）", !!r6 && !eqPt(r6, r2, 8), JSON.stringify({ r2, r6 }));
-check("bottom-right 预设贴到屏幕右下角", !!r6 && r6.right >= sw - 20 && r6.bottom >= sh - 20,
-  JSON.stringify({ screen: `${sw}x${sh}`, r6 }));
+// `screen.height` includes the taskbar. The corner must stop at the work
+// area's bottom edge instead; use screen.avail* as the renderer-side floor.
+const availW = Math.round(await m.evalJs(`screen.availWidth`));
+const availH = Math.round(await m.evalJs(`screen.availHeight`));
+const availLeft = Math.round(await m.evalJs(`screen.availLeft ?? 0`));
+const availTop = Math.round(await m.evalJs(`screen.availTop ?? 0`));
+check("bottom-right 预设贴到工作区右下角（不进入任务栏）",
+  !!r6 && r6.right <= availLeft + availW + 2 && r6.bottom <= availTop + availH + 2 &&
+  r6.right >= availLeft + availW - 20 && r6.bottom >= availTop + availH - 20,
+  JSON.stringify({ screen: `${sw}x${sh}`, available: `${availLeft},${availTop},${availW}x${availH}`, r6 }));
 await summon();
 const r7 = psRect();
 check("改预设后呼出沿用新位置", sameRect(r7, r6), JSON.stringify({ r6, r7 }));

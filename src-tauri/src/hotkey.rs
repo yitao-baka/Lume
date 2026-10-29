@@ -52,7 +52,10 @@ pub fn build() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, shortcut, event| {
             if event.state() == ShortcutState::Pressed && is_active(app, shortcut) {
-                let _ = crate::window::toggle_launcher(app.clone());
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::window::toggle_launcher(app).await;
+                });
             }
         })
         .build()

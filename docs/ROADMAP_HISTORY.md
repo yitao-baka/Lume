@@ -5555,3 +5555,44 @@ Presenter 名称，值没有持久化或下发路径。
   `cdp_visual_audit_verify` 验证预览标题、窗内关闭与请求 teardown。剪贴板
   「开启预览」只控制内置页面的自动跟随；preview 渲染器的文本/视频缩略图读取
   由可信 preview 窗口单独放行。
+
+## 90. 主窗口几何事务与显示时序（2026-10-29）
+
+[修复前审计](History/WINDOW_GEOMETRY_AUDIT_2026-10-29.md)。
+
+### 90.1 显示握手
+
+- 新增 `window_geometry.rs`：渲染进程先在隐藏状态完成召唤复位、搜索与页面
+  测量，`launcher-prepare-show` 携带 generation；Rust 等匹配的
+  `apply_launcher_geometry` 后，以一次 `SetWindowPos` 提交客户区尺寸与外部位置，
+  再显示窗口。700 ms 超时回退到最近目标；首次热键在监听器注册前则直接使用
+  持久目标，不等待无法送达的事件。
+- 固定高度页的 loading gate 只隐藏 `.results`，不再把 HWND 收缩到搜索栏；
+  fit 页仍可在 loading 时收为搜索行。`runtimeSize` / 去重基线只在几何命令成功
+  后推进；前端 sizer 用串行 latest-wins 合并并带 generation 丢弃旧结果。
+
+### 90.2 不透明表面与统一边界
+
+- 主窗口移除 `transparent(true)`，构建时与主题变化时都设置相同的原生
+  WebView2 画布色；`html` / `body` / `#root` / `.launcher` 同用 `--surface`。
+- `window_width` / `window_height` 在设置读取、导入、备份恢复和保存边界统一限制
+  为 `240..4096` / `60..4096`；所有显示、fit、固定页与插件 `app.resize` 目标在
+  提交时再按当前 `work_area()` 钳制。前端不再用 `screen.avail*` 作为另一套
+  几何权威。
+- 四角与跟随鼠标改用 `work_area()`；配置切换重设自动锚点，普通保存/重呼出保留
+  手动拖拽位置。废除了旧的整屏四角与鼠标 clamp 路径。
+
+### 90.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test --lib`
+  **281 passed / 9 ignored**；debug `pnpm run tauri build --debug --no-bundle`
+  通过。
+- 新增 `scripts/cdp_window_geometry_verify.mjs`（约 1 ms HWND + 工作区 + 屏幕像素
+  + DPI-aware 多显示器遍历）：固定页只出现目标高度、中心尺寸变化同帧完成、
+  右下/跟随鼠标不进入任务栏、客户区像素为不透明 surface，**ALL PASS**（当前单屏
+  环境按设计跳过逐屏遍历；多屏设备会逐屏验证）。
+- `scripts/cdp_window_position_verify.mjs` 的右下断言改用 `screen.avail*`，并等待
+  异步呼出完成；拖拽记忆、预设接管、跟随鼠标全部 **ALL PASS**。`window_geometry`
+  新增工作区归一化/四角/居中单测 **3/3**。
+- 当前实测环境为 150% DPI 单显示器；几何脚本已内置 DPI-aware 多显示器遍历，
+  100% / 200% 与混合 DPI 跨显示器的实际份额覆盖列为 `docs/TESTING.md` 实机验收项。

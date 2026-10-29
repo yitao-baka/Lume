@@ -13,7 +13,7 @@ html {
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.4;
-  background-color: transparent;
+  background-color: var(--surface);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   color: var(--text);
@@ -22,13 +22,15 @@ html {
   --entry-size: 110px;
 }
 
-/* Transparent chrome so the Acrylic backdrop and CSS rounded corners show. */
+/* The native window and WebView canvas are opaque. Paint the same --surface
+   at every root layer so a pre-paint/compositor frame can never expose the
+   desktop through a resize. DWM owns the rounded outer corners. */
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
-  background: transparent;
+  background: var(--surface);
   overflow: hidden;
 }
 

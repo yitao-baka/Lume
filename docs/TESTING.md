@@ -272,7 +272,10 @@ dev URL instead.
 12. **Auto-sizing** — the window height fits the results: the full app grid
     caps at 520px (scrolls internally), a few results shrink it (e.g. "no" →
     ~300px), and it stays anchored (centered / cornered per the preset until
-    you drag it — see 13); the clipboard list sizes to its items.
+    you drag it — see 13). A fixed-height page keeps that height through its
+    loading gate; only fit pages may temporarily collapse to the search row.
+    Width/height submitted through settings, content measurement or
+    `app.resize` are clamped to the current monitor work area.
 13. **Fresh state** — re-showing the launcher clears the previous query and
     returns to the Navigate grid.
 14. **Position memory** — drag the launcher somewhere, then Esc + summon
@@ -281,7 +284,11 @@ dev URL instead.
     not move it either. Picking another preset in 设置 → 导航页 positions it
     immediately and takes over again; 跟随鼠标 re-centers on the cursor on
     EVERY summon. Automated:
-    `node scripts/cdp_window_position_verify.mjs`.
+    `node scripts/cdp_window_position_verify.mjs`（位置记忆/预设/跟随鼠标）与
+    `node scripts/cdp_window_geometry_verify.mjs`（1 ms HWND 轨迹、固定页
+    无搜索栏中间态、尺寸与锚点同帧、工作区边界、透明像素）。Native probes:
+    `scripts/ps_lume_geometry_probe.ps1` / `scripts/ps_lume_pixel_probe.ps1`.
+    DPI/多显示器验收：几何脚本用 DPI-aware 探针枚举各显示器，并把真实 HWND 移到每屏检查工作区；实际份额覆盖仍需在 100% / 150% / 200% 与混合缩放桌面分别运行。
 
 ### Clipboard mode
 

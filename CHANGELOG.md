@@ -9,6 +9,21 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Added
+- **启动器窗口几何事务与显示时序修复（2026-10-29）** — 新增
+  `window_geometry.rs`，以一次 `SetWindowPos` 原子提交客户区尺寸与位置；
+  热键显示前由隐藏渲染器完成页面复位与测量，再按 generation 显示，固定高度页
+  不再先缩成搜索栏。前端 sizer 改为串行 latest-wins，基线只在成功后推进；
+  宽度、高度、插件 `app.resize` 与内容 fit 统一按当前显示器 `work_area()`
+  钳制；四角/跟随鼠标不再进入任务栏。主窗口移除透明客户区，原生画布与
+  `html` / `body` / `#root` / `.launcher` 同用不透明 `--surface`，系统主题切换
+  同步重绘。修复前审计归档至
+  [窗口几何与尺寸时序审计（存档）](docs/History/WINDOW_GEOMETRY_AUDIT_2026-10-29.md)，
+  实现记录见 `docs/ROADMAP_HISTORY.md` #90。验证：`pnpm exec tsc --noEmit`、
+  `pnpm run build`、`cargo check`、`cargo test --lib` **281 passed / 9 ignored**、
+  debug `--no-bundle` 构建通过；新增 `cdp_window_geometry_verify`（约 1 ms
+  HWND + 工作区 + 屏幕像素采样）与更新后的 `cdp_window_position_verify`
+  均 **ALL PASS**。
+
 - **统一插件后端与贡献化权限设计（2026-10-29）** — 新增
   `docs/PLUGIN_UNIFIED_BACKEND.md`，定义 api 3 的单后端实例、可组合贡献、
   `contribute.*` / `event.*` / `host.*` 分层授权、页面键、多页面会话、Presenter

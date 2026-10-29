@@ -40,11 +40,11 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   sections) collapses the window to the search row — no reserved empty strip.
   A "no results" hint renders in its own `.page-hint` row (the fit window
   shrinks to search row + hint), never centered inside a tall empty page area.
-- **Loading gate**: a page that is not loaded yet is *not shown* — the window
-  collapses to the search row, `.results` is hidden, and the mode's pill
-  carries the feedback (label tinted to `--accent-text`, a spinner ring
-  over the icon). `ModeInstance.ready` decides; the home page is always ready.
-  See docs/ARCHITECTURE.md (sizing).
+- **Loading gate**: a page that is not loaded yet is *not shown* —
+  `.results` is hidden and the mode's pill carries the feedback (label tinted
+  to `--accent-text`, a spinner ring over the icon). A fit page collapses to
+  the search row; a fixed page keeps its target height. `ModeInstance.ready`
+  decides; the home page is always ready. See docs/ARCHITECTURE.md (sizing).
 - Font: `"Segoe UI Variable Text", "Segoe UI", system-ui`; base 16px;
   antialiased; `user-select: none`.
 

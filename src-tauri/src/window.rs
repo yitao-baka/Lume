@@ -1,8 +1,8 @@
 //! Launcher window management.
 //!
-//! The launcher surface is a single frameless, transparent webview window
+//! The launcher surface is a single frameless, opaque webview window
 //! (label: `"main"`, see `tauri.conf.json`). This module owns showing and
-//! hiding it.
+//! hiding it; `window_geometry` owns the size/position transaction.
 //!
 //! The commands below are the window API for the rest of the core: the
 //! Global hotkey module (v0.1) and the frontend Esc key both call them.
@@ -233,35 +233,13 @@ pub fn trim_main_when_idle(app: &AppHandle) {
 /// inherit the spot the launcher was last closed at, so a manual move is never
 /// reset. `follow-mouse` is the exception and re-positions on every show.
 fn apply_geometry(window: &WebviewWindow) -> tauri::Result<()> {
-    let app = window.app_handle();
-    let appearance = app
+    let appearance = window
+        .app_handle()
         .state::<crate::settings::SettingsState>()
         .current()
         .appearance;
-    // Width from settings; the frontend keeps the height content-adaptive.
-    // Read the INNER (client) height and feed it back: outer_size() includes
-    // the frameless window's non-client margins, and round-tripping the outer
-    // through set_size would inflate the height by those margins every show.
-    let sf = window.scale_factor()?;
-    let cur = window.inner_size()?.to_logical::<f64>(sf);
-    window.set_size(LogicalSize::new(appearance.window_width as f64, cur.height))?;
-
-    let state = app.state::<PlacementState>();
-    let first_show = state.mark_shown();
-    let cfg_changed = state.record_cfg(&appearance);
-    let follow_mouse = appearance.window_position == "follow-mouse";
-    // 记住位置 (自定义) opts out of automatic placement entirely, as before.
-    // Presets place the window on its first appearance / a config change and
-    // once recover a stale spot that fell off every monitor; otherwise the
-    // last close position wins (docs/ROADMAP_HISTORY.md #41).
-    let recovered = !appearance.remember_position && off_all_monitors(window);
-    if !appearance.remember_position && (first_show || cfg_changed || follow_mouse || recovered) {
-        if first_show || cfg_changed || recovered {
-            state.clear_user_placed();
-        }
-        apply_initial_position(window, &appearance)?;
-    }
-    Ok(())
+    crate::window_geometry::apply_show_geometry(window, &appearance)
+        .map_err(|error| tauri::Error::Anyhow(std::io::Error::other(error).into()))
 }
 
 /// Whether the launcher is currently being dragged with the mouse — the left
@@ -294,49 +272,6 @@ fn cursor_is_over(window: &WebviewWindow) -> bool {
     x >= pos.x && x < pos.x + size.width as i32 && y >= pos.y && y < pos.y + size.height as i32
 }
 
-/// Place the launcher at the chosen initial position (centered, flush to a
-/// monitor corner, or centered at the mouse cursor) and record where it landed
-/// as the automatic anchor.
-fn apply_initial_position(
-    window: &WebviewWindow,
-    appearance: &crate::settings::Appearance,
-) -> tauri::Result<()> {
-    place_initial_position(window, appearance)?;
-    record_anchor(window);
-    Ok(())
-}
-
-/// The raw placement (no anchor bookkeeping) — see `apply_initial_position`.
-fn place_initial_position(
-    window: &WebviewWindow,
-    appearance: &crate::settings::Appearance,
-) -> tauri::Result<()> {
-    if appearance.window_position == "center" {
-        return window.center();
-    }
-    if appearance.window_position == "follow-mouse" {
-        return position_at_mouse(window);
-    }
-    let Some(monitor) = window.current_monitor()? else {
-        return window.center();
-    };
-    let origin = monitor.position();
-    let area = monitor.size();
-    let size = window.outer_size()?;
-    let (x, y) = match appearance.window_position.as_str() {
-        "top-left" => (0, 0),
-        "top-right" => (area.width as i32 - size.width as i32, 0),
-        "bottom-left" => (0, area.height as i32 - size.height as i32),
-        "bottom-right" => (
-            area.width as i32 - size.width as i32,
-            area.height as i32 - size.height as i32,
-        ),
-        _ => return window.center(),
-    };
-    window.set_position(PhysicalPosition::new(origin.x + x, origin.y + y))?;
-    Ok(())
-}
-
 /// Read back the window's outer top-left (physical px) — the same coordinate
 /// space as `set_position` / `outer_position`.
 fn outer_pos(window: &WebviewWindow) -> Option<(i32, i32)> {
@@ -345,7 +280,7 @@ fn outer_pos(window: &WebviewWindow) -> Option<(i32, i32)> {
 
 /// Remember the position we just applied, read back from the OS so a later
 /// mismatch is a reliable "the user moved it by hand" signal.
-fn record_anchor(window: &WebviewWindow) {
+pub(crate) fn record_geometry_anchor(window: &WebviewWindow) {
     if let Some(pos) = outer_pos(window) {
         window
             .app_handle()
@@ -360,6 +295,22 @@ fn record_anchor(window: &WebviewWindow) {
 /// True when the launcher must keep its current spot instead of the preset
 /// anchor: either the user moved it earlier this session, or it no longer sits
 /// at the last position we applied — a sticky manual placement (docs/ROADMAP_HISTORY.md #41).
+pub(crate) fn preserve_manual_spot(
+    window: &WebviewWindow,
+    appearance: &crate::settings::Appearance,
+) -> bool {
+    if appearance.remember_position {
+        return true;
+    }
+    // 跟随鼠标 is the one policy that always re-anchors on summon, even after
+    // a drag. A fresh static preset also clears stale manual-drag memory in
+    // its caller before this decision.
+    if appearance.window_position == "follow-mouse" {
+        return false;
+    }
+    user_moved(window, &window.app_handle().state::<PlacementState>())
+}
+
 fn user_moved(window: &WebviewWindow, state: &PlacementState) -> bool {
     let mut inner = state.inner.lock().unwrap();
     if inner.user_placed {
@@ -374,88 +325,28 @@ fn user_moved(window: &WebviewWindow, state: &PlacementState) -> bool {
     false
 }
 
-/// True when the window's outer rect intersects no monitor at all — a
-/// remembered spot gone stale (display unplugged / resolution changed) that
-/// would leave the launcher invisible. Partially off-screen placements are
-/// respected, and a missing/empty monitor list never counts as "off".
-fn off_all_monitors(window: &WebviewWindow) -> bool {
-    let (Ok(pos), Ok(size), Ok(monitors)) = (
-        window.outer_position(),
-        window.outer_size(),
-        window.available_monitors(),
-    ) else {
-        return false;
-    };
-    if monitors.is_empty() {
-        return false;
-    }
-    !monitors.iter().any(|m| {
-        let mp = m.position();
-        let ms = m.size();
-        rect_intersects(
-            (pos.x, pos.y),
-            (size.width, size.height),
-            (mp.x, mp.y),
-            (ms.width, ms.height),
-        )
-    })
-}
-
-/// Half-open physical-px rect intersection (shared by `off_all_monitors`).
-fn rect_intersects(a: (i32, i32), a_size: (u32, u32), b: (i32, i32), b_size: (u32, u32)) -> bool {
-    a.0 < b.0 + b_size.0 as i32
-        && a.0 + a_size.0 as i32 > b.0
-        && a.1 < b.1 + b_size.1 as i32
-        && a.1 + a_size.1 as i32 > b.1
-}
-
-/// Position the launcher so its center is at the current mouse cursor,
-/// clamped to stay within the active monitor's work area.
-fn position_at_mouse(window: &WebviewWindow) -> tauri::Result<()> {
-    use windows_sys::Win32::Foundation::POINT;
-    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
-
-    let mut pt = POINT { x: 0, y: 0 };
-    if unsafe { GetCursorPos(&mut pt) } == 0 {
-        return window.center();
-    }
-    let size = window.outer_size()?;
-    let Some(monitor) = window.current_monitor()? else {
-        return window.center();
-    };
-    let origin = monitor.position();
-    let area = monitor.size();
-
-    // Center the window on the cursor.
-    let mut x = pt.x - size.width as i32 / 2;
-    let mut y = pt.y - size.height as i32 / 2;
-
-    // Clamp so the window never extends beyond the monitor edges.
-    let min_x = origin.x;
-    let min_y = origin.y;
-    let max_x = (origin.x + area.width as i32 - size.width as i32).max(min_x);
-    let max_y = (origin.y + area.height as i32 - size.height as i32).max(min_y);
-    x = x.clamp(min_x, max_x);
-    y = y.clamp(min_y, max_y);
-
-    window.set_position(PhysicalPosition::new(x, y))?;
-    Ok(())
-}
-
 /// Show and focus the launcher, applying its geometry per settings (width +
 /// the first-appearance position policy, see `docs/SETTINGS.md`).
-fn show(window: &WebviewWindow) -> tauri::Result<()> {
-    // Restore Normal BEFORE the show so the browser can swap the page memory
-    // back while the window is still hidden (the hotkey frame isn't stalled).
+async fn show(window: &WebviewWindow) -> tauri::Result<()> {
     restore_main(window.app_handle());
+    let app = window.app_handle();
+    let appearance = app
+        .state::<crate::settings::SettingsState>()
+        .current()
+        .appearance;
+    let placement = app.state::<PlacementState>();
+    // Preserve a manual spot across ordinary shows. A first show is already
+    // represented by the absence of an anchor, while `follow-mouse` is relaunched
+    // by `apply_settings` when its policy changes.
+    let _first_show = placement.mark_shown();
+    let cfg_changed = placement.record_cfg(&appearance);
+    if cfg_changed {
+        placement.clear_user_placed();
+    }
+    crate::window_geometry::prepare_show(window).await?;
     apply_geometry(window)?;
     window.show()?;
     window.set_focus()?;
-    // Fresh-show signal for the frontend: it re-arms summon-scoped state exactly
-    // on this event, NOT on every focus regain (session continuation keeps the
-    // page/query; a home-page entry clears the home query (docs/ROADMAP_HISTORY.md #40).
-    // Dragging the frameless window briefly deactivates + refocuses it (see
-    // `is_mid_drag`), and re-arming there would wipe summon state mid-drag.
     let _ = window.emit("launcher-shown", ());
     Ok(())
 }
@@ -466,7 +357,7 @@ fn show(window: &WebviewWindow) -> tauri::Result<()> {
 /// When about to show, records the current foreground window for
 /// clipboard auto-paste.
 #[tauri::command]
-pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
+pub async fn toggle_launcher(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window(MAIN_WINDOW)
         .ok_or_else(|| "main window not found".to_string())?;
@@ -478,7 +369,7 @@ pub fn toggle_launcher(app: AppHandle) -> Result<(), String> {
             let fg = unsafe { GetForegroundWindow() };
             *focus.last_hwnd.lock().unwrap() = Some(fg.0 as isize);
         }
-        show(&window).map_err(|e| e.to_string())?;
+        show(&window).await.map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -580,36 +471,31 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
         return Ok(());
     };
-    let sf = window.scale_factor().map_err(|e| e.to_string())?;
-    let cur = window
-        .inner_size()
-        .map_err(|e| e.to_string())?
-        .to_logical::<f64>(sf);
-    window
-        .set_size(LogicalSize::new(settings.appearance.window_width as f64, cur.height))
-        .map_err(|e| e.to_string())?;
-    // 颜色模式 selects the panel's solid color — the DWM frame border strip
-    // shows it, so a mode switch must repaint it (system mode also lands here:
-    // save/apply is the only path that re-reads the mode).
+    let placement = app.state::<PlacementState>();
+    let cfg_changed = placement.record_cfg(&settings.appearance);
+    if cfg_changed {
+        placement.clear_user_placed();
+        // Re-arm the preset identity before the geometry commit. Without this,
+        // the next preserve check would still interpret the prior drag offset
+        // against an anchor that belongs to the old policy.
+        placement.inner.lock().unwrap().anchor =
+            window.outer_position().ok().map(|p| (p.x, p.y));
+    }
+    // Only a dragged window without an explicit policy change keeps its spot.
+    // A preset switch (cfg_changed) always re-arms the anchor immediately.
+    let preserve = !cfg_changed && preserve_manual_spot(&window, &settings.appearance);
     set_panel_frame_border(
         &window,
         settings.appearance.skin(),
         &settings.appearance.color_mode,
     );
-    // Same mode drives the theme-matched app icon (taskbar + tray).
+    crate::window_geometry::set_panel_background(
+        &window,
+        settings.appearance.skin(),
+        &settings.appearance.color_mode,
+    );
+    crate::window_geometry::apply_settings(&window, &settings.appearance, preserve)?;
     crate::appicon::apply(app, &settings.appearance.color_mode);
-    let state = app.state::<PlacementState>();
-    let cfg_changed = state.record_cfg(&settings.appearance);
-    if !settings.appearance.remember_position {
-        if cfg_changed {
-            state.clear_user_placed();
-            apply_initial_position(&window, &settings.appearance).map_err(|e| e.to_string())?;
-        } else if !user_moved(&window, &state) {
-            // Unrelated save: keep a never-moved window on its preset anchor
-            // (the width may have changed); a manual spot stays put.
-            apply_initial_position(&window, &settings.appearance).map_err(|e| e.to_string())?;
-        }
-    }
     Ok(())
 }
 
@@ -627,15 +513,7 @@ pub fn apply_position(app: AppHandle) -> Result<(), String> {
         .state::<crate::settings::SettingsState>()
         .current()
         .appearance;
-    if appearance.window_position == "follow-mouse" || appearance.remember_position {
-        return Ok(());
-    }
-    let state = app.state::<PlacementState>();
-    if user_moved(&window, &state) {
-        return Ok(());
-    }
-    apply_initial_position(&window, &appearance).map_err(|e| e.to_string())?;
-    Ok(())
+    crate::window_geometry::apply_stored_geometry(&window, &appearance)
 }
 
 /// Logical height (CSS px) of the current monitor's work area — the screen
@@ -1471,31 +1349,6 @@ mod tests {
             &wa, // left = 200-320 = -120 < work_area.x = 100 → no room
         );
         assert_eq!(pos, None);
-    }
-
-    #[test]
-    fn rect_intersects_is_half_open() {
-        // A window whose right edge exactly touches a monitor's left edge
-        // shares no pixel with it.
-        assert!(!rect_intersects((100, 0), (50, 50), (150, 0), (100, 100)));
-        assert!(rect_intersects((149, 0), (50, 50), (150, 0), (100, 100)));
-    }
-
-    #[test]
-    fn rect_intersects_handles_negative_monitor_origins() {
-        // Secondary monitors can sit left of / above the primary one.
-        assert!(rect_intersects(
-            (-1920, -100),
-            (100, 100),
-            (-1920, -1080),
-            (1920, 1080)
-        ));
-        assert!(!rect_intersects(
-            (-2000, 0),
-            (50, 100),
-            (-1920, -1080),
-            (1920, 1080)
-        ));
     }
 
     #[test]

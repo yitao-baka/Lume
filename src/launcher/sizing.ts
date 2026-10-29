@@ -4,8 +4,6 @@
 //! global — one instance per launcher window).
 
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LogicalSize } from "@tauri-apps/api/dpi";
 import { MIN_WINDOW_H, SCREEN_MARGIN, WINDOW_PAD } from "./types";
 
 /** Everything the sizer reads from the composition root. Accessors are Solid
@@ -13,9 +11,9 @@ import { MIN_WINDOW_H, SCREEN_MARGIN, WINDOW_PAD } from "./types";
 export interface SizerDeps {
   /** Fixed-height model (plugin modes) vs auto-fit (Navigate). */
   fixedHeight: () => boolean;
-  /** The active page hasn't finished loading (`ModeInstance.ready` is false):
-   * the window is the search row alone — nothing of the page may be seen
-   * before it is loaded (the shell hides `.results` on the same signal). */
+  /** The active page has not finished loading (`ModeInstance.ready` is false).
+   * A fit page collapses to the search row; a fixed page keeps its target
+   * height and only the shell visibility gate hides content. */
   loading: () => boolean;
   windowHeight: () => number;
   windowWidth: () => number;
@@ -25,8 +23,8 @@ export interface SizerDeps {
   /** Presenter-reported page-area height for `heightPolicy() === "fit"`.
    * `null` falls back to DOM measurement for built-in fit pages. */
   fitContentHeight: () => number | null;
-  /** Every size we apply is reported back (logical px) — the composition root
-   * uses it as the "current size" baseline for plugin `app.resize` calls. */
+  /** A geometry command succeeded — this is the only place the composition
+   * root advances the plugin `app.resize` baseline. */
   setRuntimeSize: (w: number, h: number) => void;
   /** Whether any expandable Navigate bar is expanded (work-area cap). */
   anyExpanded: () => boolean;
@@ -36,6 +34,8 @@ export interface SizerDeps {
   setBarCols: (v: number) => void;
   /** Plugin modes measure their own viewport (the sizer only triggers it). */
   measureModeViewport: () => void;
+  /** The show handshake generation, when the caller is preparing a hidden show. */
+  prepareGeneration: () => number | null;
   /** The active keep-alive host element (docs/ROADMAP_HISTORY.md #40). Page-content queries
    * are scoped to it: hidden pages stay mounted, so a document-wide query
    * could measure the wrong (invisible) page. */
@@ -43,8 +43,6 @@ export interface SizerDeps {
 }
 
 export function createWindowSizer(deps: SizerDeps) {
-  /** Last height we set — avoids resize/center loops. */
-  let lastWindowH = 0;
   /** Query page content inside the ACTIVE host (fallback: document, for the
    * first frames before the host mounts). The search row stays global. */
   const pageQuery = <T extends Element>(sel: string): T | null =>
@@ -77,102 +75,64 @@ export function createWindowSizer(deps: SizerDeps) {
     return count || 6;
   }
 
-  /** Fetch the current monitor's logical work-area height once (0/unknown →
-   * `null`). Cached until an expand toggle clears it. */
+  /** Last successfully committed logical size. A failed command never advances
+   * this baseline, so the next identical request retries rather than skipping. */
+  let committed: { w: number; h: number } | null = null;
+  /** Renderer generation for the current page/monitor context. Any async
+   * measurement that captures an older value must not submit. */
+  let generation = 0;
+  let running: Promise<void> | null = null;
+  let pending = false;
+  let waiters: Array<() => void> = [];
+
+  /** Fetch the current monitor's logical work-area height without keeping a
+   * long-lived cache. The geometry command re-reads the authoritative Rust
+   * work area again for the final clamp. */
   async function ensureWorkArea() {
-    if (deps.workAreaH() != null) return;
     try {
       const h = await invoke<number>("get_work_area");
       deps.setWorkAreaH(h > 0 ? h : null);
+      return h > 0 ? h : null;
     } catch {
       deps.setWorkAreaH(null);
+      return null;
     }
   }
 
-  /** Fit the launcher window height to the current content, then re-center. */
-  async function resizeToContent() {
-    // Loading gate: a page that isn't ready yet shows nothing — the window IS
-    // the search row (the page area is hidden by the shell). Collapse before
-    // the height model below could expose an empty page area.
-    if (deps.loading()) {
-      const searchH =
-        (document.querySelector(".search") as HTMLElement | null)?.offsetHeight ?? 0;
-      if (!searchH || searchH === lastWindowH) return;
-      lastWindowH = searchH;
-      deps.setRuntimeSize(deps.windowWidth(), searchH);
-      await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), searchH));
-      await invoke("apply_position");
-      return;
-    }
-    // Plugin modes use a fixed height: the mode's manifest `height` when it
-    // declares one (clamped to the work area so a bad manifest can't overflow
-    // the screen), else the global 设置 → 窗口大小 → 高度. The list/page
-    // viewport scrolls internally, so no content-based fitting applies.
-    // Previews live in the satellite window now, so the launcher never widens.
+  function invalidate() {
+    generation++;
+  }
+
+  function targetFromDeps(): number {
     if (deps.fixedHeight()) {
       const declared = deps.modeHeight();
       const configured = Number.isFinite(deps.windowHeight()) ? deps.windowHeight() : 520;
-      let h = declared != null && Number.isFinite(declared) ? declared : configured;
-      if (declared != null) {
-        await ensureWorkArea();
-        const screen = deps.workAreaH();
-        if (screen) h = Math.min(h, screen - SCREEN_MARGIN);
-      }
-      h = Math.max(MIN_WINDOW_H, Math.round(h));
-      if (h !== lastWindowH) {
-        lastWindowH = h;
-        deps.setRuntimeSize(deps.windowWidth(), h);
-        await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), h));
-        await invoke("apply_position");
-      }
-      requestAnimationFrame(deps.measureModeViewport);
-      return;
+      return Math.max(MIN_WINDOW_H, Math.round(declared ?? configured));
+    }
+    if (deps.loading()) {
+      const searchH =
+        (document.querySelector(".search") as HTMLElement | null)?.offsetHeight ?? 0;
+      return Math.max(MIN_WINDOW_H, Math.round(searchH));
     }
     const reportedContentH = deps.fitContentHeight();
     if (reportedContentH != null && Number.isFinite(reportedContentH) && reportedContentH > 0) {
-      const search = document.querySelector(".search") as HTMLElement | null;
-      const searchH = search?.offsetHeight ?? 0;
-      await ensureWorkArea();
-      const screen = deps.workAreaH();
-      let cap = deps.windowHeight();
-      if (screen) {
-        cap = deps.anyExpanded()
-          ? Math.max(cap, screen - SCREEN_MARGIN)
-          : Math.min(cap, screen - SCREEN_MARGIN);
-      }
-      const targetH = Math.max(
+      const searchH =
+        (document.querySelector(".search") as HTMLElement | null)?.offsetHeight ?? 0;
+      return Math.max(
         MIN_WINDOW_H,
-        Math.min(searchH + reportedContentH + WINDOW_PAD, cap)
+        Math.round(searchH + reportedContentH + WINDOW_PAD),
       );
-      if (targetH !== lastWindowH) {
-        lastWindowH = targetH;
-        deps.setRuntimeSize(deps.windowWidth(), targetH);
-        await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), targetH));
-        await invoke("apply_position");
-      }
-      requestAnimationFrame(deps.measureModeViewport);
-      return;
     }
-    const search = document.querySelector(".search") as HTMLElement | null;
+    const searchH =
+      (document.querySelector(".search") as HTMLElement | null)?.offsetHeight ?? 0;
     const container =
       pageQuery<HTMLElement>(".result-grid") ??
       pageQuery<HTMLElement>(".result-list") ??
       pageQuery<HTMLElement>(".bar-list") ??
       pageQuery<HTMLElement>(".nav-list-scroll") ??
       pageQuery<HTMLElement>(".page-hint");
-    if (!container) return;
-
+    if (!container) return Math.max(MIN_WINDOW_H, Math.round(searchH));
     measureBarCols();
-
-    const searchH = search?.offsetHeight ?? 0;
-
-    // Measure the content's natural height from the last child (scrollHeight
-    // would clamp to the current viewport for short lists). Correct for any
-    // existing scroll so the measurement is scroll-independent. The bars live
-    // inside the container (bar-sections), so no separate bar height is added.
-    // No children = the home menu has nothing at all (no bars configured):
-    // contentH stays 0 and the window is the search row alone — no reserved
-    // "empty-state" strip below it.
     const last = container.lastElementChild as HTMLElement | null;
     let contentH = 0;
     if (last) {
@@ -181,42 +141,97 @@ export function createWindowSizer(deps: SizerDeps) {
       const padBottom = parseFloat(getComputedStyle(container).paddingBottom) || 0;
       contentH = lr.bottom - cr.top + container.scrollTop + padBottom;
     }
-
-    // Height cap: an expanded bar fills the screen (up to the work area, minus
-    // a margin); a collapsed bar stays under the configured window_height.
-    // The bar-expand cap only applies on the Navigate page — the Clipboard page
-    // must not inherit a bar's expanded size when switching modes.
-    let cap = deps.windowHeight();
-    if (!deps.fixedHeight() && deps.anyExpanded()) {
-      await ensureWorkArea();
-      const screen = deps.workAreaH();
-      if (screen) cap = Math.max(deps.windowHeight(), screen - SCREEN_MARGIN);
-    }
-    // WINDOW_PAD (the page's bottom-inset slop) only applies when there IS
-    // content — an empty home page ends exactly with the search row.
-    const targetH = Math.max(
+    return Math.max(
       MIN_WINDOW_H,
-      Math.min(searchH + (contentH > 0 ? contentH + WINDOW_PAD : 0), cap),
+      Math.round(searchH + (contentH > 0 ? contentH + WINDOW_PAD : 0)),
     );
-    if (targetH === lastWindowH) return;
-    lastWindowH = targetH;
-    // Set the configured width (from settings) rather than re-reading the
-    // current window width: a physical→logical→physical round trip drifts on
-    // DPI scaling and the window grows wider on every resize.
-    deps.setRuntimeSize(deps.windowWidth(), targetH);
-    await getCurrentWindow().setSize(new LogicalSize(deps.windowWidth(), targetH));
-    await invoke("apply_position");
+  }
+
+  /** One actual request. It reads the latest deps in one turn after the queue
+   * drains, so a burst of triggers collapses to the last page state. */
+  async function applyLatest(): Promise<void> {
+    const requestGeneration = generation;
+    const h = targetFromDeps();
+    let cap = deps.windowHeight();
+    if (!deps.fixedHeight()) {
+      const work = await ensureWorkArea();
+      if (requestGeneration !== generation) return;
+      if (work) {
+        cap = deps.anyExpanded()
+          ? Math.max(cap, work - SCREEN_MARGIN)
+          : Math.min(cap, work - SCREEN_MARGIN);
+      }
+    }
+    // A fixed page's declared height intentionally overrides the global
+    // window-height preference; Rust still clamps it to the live work area.
+    // Only fit pages use `window_height` as their content cap.
+    const targetH = deps.fixedHeight()
+      ? Math.max(MIN_WINDOW_H, Math.round(h))
+      : Math.max(MIN_WINDOW_H, Math.min(h, Math.round(cap)));
+    const width = Math.round(deps.windowWidth());
+    const prepareGeneration = deps.prepareGeneration();
+    // A hidden-show preparation MUST reach Rust even when the target equals the
+    // current size: the command is also the generation acknowledgement that
+    // releases the reveal. Only ordinary visible measurements may dedupe.
+    if (prepareGeneration == null && committed?.w === width && committed.h === targetH) {
+      requestAnimationFrame(deps.measureModeViewport);
+      return;
+    }
+    try {
+      const result = await invoke<{ width: number; height: number }>(
+        "apply_launcher_geometry",
+        {
+          request: {
+            width,
+            height: targetH,
+            expanded: deps.anyExpanded(),
+          },
+          generation: prepareGeneration,
+        },
+      );
+      if (requestGeneration !== generation) return;
+      committed = { w: Math.round(result.width), h: Math.round(result.height) };
+      deps.setRuntimeSize(committed.w, committed.h);
+      requestAnimationFrame(deps.measureModeViewport);
+    } catch (error) {
+      // A stale generation is expected during rapid page/monitor changes. A
+      // real failure leaves `committed` untouched so retrying is possible.
+      if (requestGeneration === generation) {
+        console.error("launcher geometry failed:", error);
+      }
+    }
+  }
+
+  /** Serialize geometry commands. While one is in flight, every additional
+   * trigger only marks a rerun; the rerun re-reads the latest page state.
+   * This is latest-wins coalescing, not an unbounded FIFO. */
+  function resizeToContent(): Promise<void> {
+    pending = true;
+    return new Promise<void>((resolve) => {
+      waiters.push(resolve);
+      if (!running) {
+        running = (async () => {
+          let first = true;
+          try {
+            while (first || pending) {
+              first = false;
+              pending = false;
+              await applyLatest();
+            }
+          } finally {
+            running = null;
+            const release = waiters;
+            waiters = [];
+            for (const resolve of release) resolve();
+          }
+        })();
+      }
+    });
   }
 
   /** Defer a resize to the next frame so the DOM has rendered first. */
   function scheduleResize() {
     requestAnimationFrame(() => void resizeToContent());
-  }
-
-  /** Force the next resize to apply even if the height matches (mode switches
-   * and fresh shows — the fixed-height model differs per mode). */
-  function invalidate() {
-    lastWindowH = 0;
   }
 
   return {

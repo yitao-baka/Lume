@@ -80,6 +80,12 @@ impl Settings {
         self.appearance.settings_skin = Some(settings_skin.to_string());
         self.appearance.accent = Some(normalize_accent(&accent));
         self.appearance.accent_custom = Some(normalize_accent(&accent_custom));
+        // Durable values are deliberately bounded before they reach any
+        // geometry transaction. The live target is additionally clamped to
+        // the current monitor's work area, so an import cannot create an
+        // off-screen launcher even before it is re-saved.
+        self.appearance.window_width = self.appearance.window_width.clamp(240, 4096);
+        self.appearance.window_height = self.appearance.window_height.clamp(60, 4096);
     }
 }
 
@@ -1755,6 +1761,21 @@ mod tests {
         assert_eq!(p.color_mode_for("other", "light"), "light");
         assert_eq!(p.color_mode_for("other", "system"), "system");
         assert_eq!(p.color_mode_for("junk", "light"), "light");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn imported_window_sizes_are_normalized_everywhere() {
+        let base = temp_base("window-size-normalize");
+        ensure_settings_files(&base).unwrap();
+        let text = fs::read_to_string(settings_path(&base))
+            .unwrap()
+            .replace("window_width = 720", "window_width = 1")
+            .replace("window_height = 520", "window_height = 99999");
+        fs::write(settings_path(&base), text).unwrap();
+        let loaded = read_settings(&base);
+        assert_eq!(loaded.appearance.window_width, 240);
+        assert_eq!(loaded.appearance.window_height, 4096);
         fs::remove_dir_all(&base).ok();
     }
 

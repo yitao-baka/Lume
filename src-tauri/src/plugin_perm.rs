@@ -28,7 +28,7 @@
 //! Manifests are cached per id and refreshed by `get_plugins` (startup +
 //! every settings-applied) and `reload_plugin`; a check for an unseen id
 //! reads that plugin's manifest from disk once. Unknown ids fail closed.
-//! Built-ins (clipboard/preview) are exempt — compiled into lume.exe.
+//! Built-ins (clipboard) are exempt — compiled into lume.exe.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -407,7 +407,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("lume-perm-builtin-{}", std::process::id()));
         let perms = PluginPermState::default();
         assert!(assert_capability(&perms, &plugins(), &root, "clipboard", "clipboard").is_ok());
-        assert!(assert_capability(&perms, &plugins(), &root, "preview", "fs.read").is_ok());
+        assert!(assert_capability(&perms, &plugins(), &root, "preview", "preview").is_err());
         std::fs::remove_dir_all(&root).ok();
     }
 

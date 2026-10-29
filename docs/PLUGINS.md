@@ -259,6 +259,7 @@ permissions = ["network", "clipboard", "fs.write"]
 | 任意路径写入 | `fs.write` |
 | 回收站删除 | `trash` |
 | 前台窗口信息 / Explorer 当前文件夹（`app.foreground`） | `window` |
+| 卫星预览内容显示 / 关闭（`preview.show/close`） | `preview` |
 
 不用声明的：`app.hide/toast/setQuery/openPath/…` 这类基础动作、插件自有数据
 （`storage`/`db`/`settings`）、私有目录 `files/`，以及 `theme.set`（让插件把
@@ -293,7 +294,7 @@ chrome，启动器不受影响；见 `docs/PLUGIN_API.md` §6C「插件自身颜
 
 残余边界（如实说）：跑在启动器窗口里的插件逻辑（provider/service）仍是
 同源代码，可冒用任意 plugin_id——这是「显式放置即信任」的既有决定。
-内置插件（clipboard/preview）编译进二进制，与磁盘插件走同一注册表与启停
+内置插件（clipboard）编译进二进制，与磁盘插件走同一注册表与启停
 路径，不参与权限表。
 
 ## 内置插件
@@ -302,7 +303,6 @@ chrome，启动器不受影响；见 `docs/PLUGIN_API.md` §6C「插件自身颜
 |---|---|---|
 | apps | mode | **导航首页**——启动器固有页面的插件化形态（`src/plugins/navigate/`）：栏目条 + 合并搜索网格，`home: true` 且不可禁用（id 持久化在 `last_page = "apps"`，永不改名） |
 | clipboard | mode | 剪贴板历史整页（`src/plugins/clipboard/`） |
-| preview | service | 卫星预览窗路由（`src/plugins/preview/`） |
 
 主窗口是 uTools 式拼接：`SearchBox` 部件在顶，活动 Page Session 的 Presenter
 拼接在其下。内置页面通过启动器内部的 `ModeInstance` shell adapter 接入同一

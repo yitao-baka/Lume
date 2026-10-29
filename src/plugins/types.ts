@@ -1,12 +1,9 @@
 //! Plugin contracts (api 2).
 //!
 //! A plugin pairs a manifest (Rust `plugins.rs`) with one or more
-//! *contributions* in the frontend registry. v1 ships two first-party
-//! plugins that exercise every contract:
-//! - `clipboard` — a **mode** contribution (a full launcher page with its
-//!   own query, view, key handling and search).
-//! - `preview` — a **service** contribution (the satellite preview window
-//!   routing, shared by every mode that exposes previewable rows).
+//! *contributions* in the frontend registry. First-party `clipboard` is a
+//! **mode** contribution; the satellite preview is a core host capability
+//! exposed to UI code and plugins through `PreviewHost`, not a contribution.
 //!
 //! Built-ins are compiled into the bundle; on-disk plugins under
 //! `<base>/plugins/<id>/` are discovered by the Rust side and surfaced
@@ -375,6 +372,14 @@ export interface PluginHostApi {
     cursor(): Promise<{ x: number; y: number }>;
     displays(): Promise<DisplayInfo[]>;
   };
+  /** Show text, a file or a multi-file list in the core satellite preview
+   * window. The renderer never injects HTML. Permission: `preview`. */
+  preview: {
+    show(request: PreviewReq): Promise<void>;
+    /** Hide the satellite and release its rendered content. Permission:
+     * `preview`. */
+    close(): Promise<void>;
+  };
   /** Plugin-scoped key/value store persisted to
    * `<base>/plugins/<id>/storage.json` (values are JSON-serialized). */
   storage: {
@@ -680,6 +685,13 @@ export interface PluginServices {
   /** `theme.get` bridge RPC — the caller's color-mode state (mirror + the
    * launcher's current effective mode). */
   pluginColorState(pluginId: string): PluginColorState;
+  /** Core preview host — external plugin RPC and first-party pages share the
+   * same window and validation boundary. The optional caller id is supplied
+   * by Page Runtime adapters so Presenter calls stay manifest-attributed. */
+  preview: {
+    show(request: PreviewReq, pluginId?: string): Promise<void>;
+    close(pluginId?: string): Promise<void>;
+  };
 }
 
 /** Structural subset of the shared MenuState (avoids a launcher import). */
@@ -744,6 +756,11 @@ export interface ModeInstance {
   /** The user changed this plugin's settings; disk mode pages get the
    * same values as a `lume.on.settings` event. */
   onSettings?(values: Record<string, unknown>): void;
+  /** First-party page selection source for the core preview host. This is an
+   * internal adapter hook, not a plugin contribution. */
+  previewTarget?(): PreviewReq | null;
+  /** First-party page gate for automatic preview following. */
+  previewEnabled?(): boolean;
   /** Consume Esc (e.g. leave multi-select); true = handled, root won't hide.
    * Presenter-backed pages may answer asynchronously while their sandboxed
    * `lume.on.key` handler decides. */
@@ -752,10 +769,6 @@ export interface ModeInstance {
    * the root suppresses mode-switch/shared bindings and delegates every key to
    * `onKey`, so background rows can never be activated. */
   modal?(): boolean;
-  /** Satellite preview request for the selected row (null = hide). */
-  previewTarget(): PreviewReq | null;
-  /** Whether this mode currently wants the satellite (设置 → 开启预览). */
-  previewEnabled(): boolean;
   /** Re-measure this mode's internal viewport (window sizer hook). */
   measureViewport(): void;
   /** Loading gate (reactive): whether this page has content to show *now*.
@@ -828,14 +841,6 @@ export interface ModeContribution {
   placeholderKey: string;
   icon: string;
   create(services: PluginServices): ModeInstance;
-}
-
-/** The satellite-preview service contributed by the preview plugin. */
-export interface PreviewService {
-  /** The pending (synchronously tracked) preview request — Esc priority. */
-  currentPreview: () => PreviewReq | null;
-  /** Clear without debounce (satellite × / Rust teardown). */
-  clear(): void;
 }
 
 /** A search result contributed by a provider. Plain `{name, path}` rows
@@ -933,7 +938,6 @@ export interface LauncherPlugin {
     label?: string;
   };
   mode?: ModeInstance;
-  preview?: PreviewService;
   provider?: ProviderInstance;
   /** Navigate-page bars (栏目) — optional, any plugin kind may contribute
    * them. Called by the host on every launcher show + plugin refresh; return

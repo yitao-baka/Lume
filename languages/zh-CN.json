@@ -327,7 +327,6 @@
   "pluginDetailFeatures": "进入规则",
   "pluginDetailDir": "位置",
   "pluginDescClipboard": "内置剪贴板管理页 —— 历史记录、分类浏览、多选合并粘贴与卫星预览窗口。",
-  "pluginDescPreview": "内置预览服务 —— 在独立的卫星窗口中渲染条目预览。",
   "pluginFeatureTypeText": "文本",
   "pluginFeatureTypeFiles": "文件",
   "pluginFeatureTypeImg": "图片",
@@ -552,7 +551,6 @@
   "pluginsConfirmTrustAllTitle": "信任全部磁盘插件？",
   "pluginsConfirmTrustAllHint": "在关闭全部授权或开发者模式前，所有磁盘插件的权限检查都会被跳过。",
   "pluginNameClipboard": "剪贴板",
-  "pluginNamePreview": "卫星预览",
   "pluginViewLoadFailed": "插件页面加载失败，详情见日志。",
   "pageModelInvalid": "页面模型加载失败。",
   "pageModelInvalidHint": "插件可能贡献了无效或超限的数据。打开设置检查插件后重试。",
@@ -585,5 +583,7 @@
   "clipPauseFailed": "无法更改剪贴板记录状态。",
   "clipClearFailed": "无法清空剪贴板历史。",
   "clipDeleteFailed": "无法删除该剪贴板条目。",
-  "clipRestoreFailed": "无法恢复该剪贴板条目。"
+  "clipRestoreFailed": "无法恢复该剪贴板条目。",
+  "permPreview": "预览",
+  "permPreviewDesc": "在卫星预览窗口中显示内容"
 }

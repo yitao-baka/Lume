@@ -284,6 +284,11 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       dragWindow: () => deps.services.dragWindow(),
       detach: () => deps.services.detachMode(m.id),
       setQuery: (q: string) => deps.services.setQuery(q),
+      preview: {
+        show: (request: Parameters<typeof deps.services.preview.show>[0]) =>
+          deps.services.preview.show(request, m.id),
+        close: () => deps.services.preview.close(m.id),
+      },
       themeGet: () => deps.services.pluginColorState(m.id),
       themeSet: async (mode: unknown) => {
         const pref = normalizePluginColorMode(mode);
@@ -495,8 +500,6 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       });
     },
     modal,
-    previewTarget: () => null,
-    previewEnabled: () => false,
     measureViewport: () => deps.services.scheduleResize(),
     ready,
     failed,

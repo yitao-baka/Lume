@@ -1,13 +1,12 @@
 //! The plugin registry — where launcher capabilities plug in.
 //!
 //! The composition root creates the shared `PluginServices`, then each
-//! first-party module registers itself: `definePlugin(clipboardPlugin)`,
-//! `definePlugin(previewPlugin)`. Modes are created eagerly (their signals
-//! must exist inside the component's reactive owner); the enabled set comes
-//! from the Rust `get_plugins` command (`settings.plugins.disabled`) and is
-//! refreshed on `settings-applied`. Disabled mode plugins vanish from the
-//! mode pills and Tab cycling; a disabled preview plugin never opens the
-//! satellite.
+//! first-party module registers itself (`definePlugin(...)`). Modes are created
+//! eagerly (their signals must exist inside the component's reactive owner);
+//! the enabled set comes from the Rust `get_plugins` command
+//! (`settings.plugins.disabled`) and is refreshed on `settings-applied`.
+//! Disabled mode plugins vanish from the mode pills and Tab cycling. The
+//! satellite preview is core host state, not a registered plugin.
 
 import { createSignal } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
@@ -84,7 +83,6 @@ export function definePlugin(plugin: LauncherPlugin) {
   plog.debug(plugin.id, "register:", [
     plugin.mode && "mode",
     plugin.provider && "provider",
-    plugin.preview && "preview",
     plugin.lifecycle && "lifecycle",
     plugin.navBars && "navBars",
   ]
@@ -1808,9 +1806,7 @@ export function modeById(id: ModeId): ModeInstance | undefined {
   return p && p.mode && isEnabled(p.id) ? p.mode : undefined;
 }
 
-export function previewPlugins(): LauncherPlugin[] {
-  return plugins.filter((p) => p.preview && isEnabled(p.id));
-}
+
 
 // CDP probe for plugin registration and logic-readiness state.
 (window as unknown as { __pluginRegistryProbe?: unknown }).__pluginRegistryProbe = {

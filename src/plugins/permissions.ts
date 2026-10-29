@@ -56,6 +56,8 @@ export const RPC_PERMISSION: Record<string, string> = {
   "fs.videoPoster": "fs.read",
   "fs.icon": "fs.read",
   "fs.writeFile": "fs.write",
+  "preview.show": "preview",
+  "preview.close": "preview",
 };
 
 /** How the ledger finds a plugin's manifest — wired by the registry (it owns

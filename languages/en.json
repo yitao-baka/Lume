@@ -327,7 +327,6 @@
   "pluginDetailFeatures": "Entry rules",
   "pluginDetailDir": "Location",
   "pluginDescClipboard": "Built-in clipboard manager page — history, categories, multi-select merge paste and the satellite preview.",
-  "pluginDescPreview": "Built-in preview service — renders entry previews in the satellite window.",
   "pluginFeatureTypeText": "Text",
   "pluginFeatureTypeFiles": "Files",
   "pluginFeatureTypeImg": "Image",
@@ -552,7 +551,6 @@
   "pluginsConfirmTrustAllTitle": "Trust every disk plugin?",
   "pluginsConfirmTrustAllHint": "Capability checks are skipped for every disk plugin until All trust or developer mode is turned off.",
   "pluginNameClipboard": "Clipboard",
-  "pluginNamePreview": "Satellite preview",
   "pluginViewLoadFailed": "This plugin's page failed to load. See the log for details.",
   "pageModelInvalid": "The page model could not be loaded.",
   "pageModelInvalidHint": "A plugin may have contributed invalid or oversized data. Open Settings to inspect plugins, then retry.",
@@ -585,5 +583,7 @@
   "clipPauseFailed": "Could not change clipboard recording.",
   "clipClearFailed": "Could not clear clipboard history.",
   "clipDeleteFailed": "Could not delete the clipboard entry.",
-  "clipRestoreFailed": "Could not restore the clipboard entry."
+  "clipRestoreFailed": "Could not restore the clipboard entry.",
+  "permPreview": "Preview",
+  "permPreviewDesc": "Show content in the satellite preview window"
 }

@@ -134,6 +134,14 @@ function makeServices(id: string, token: string): PluginServices {
     // `plugin-color-mode` and the launcher's mirror follows; the token keeps
     // the id attribution honest. `get` answers from this window's copy of the
     // same settings snapshot.
+    preview: {
+      show: async (request) => {
+        await invoke("show_preview", { req: request, hostToken: token });
+      },
+      close: async () => {
+        await invoke("close_preview", { hostToken: token });
+      },
+    },
     setPluginColorMode: async (pluginId, mode) => {
       await invoke("set_plugin_color_mode", { id: pluginId, mode, hostToken: token });
       setPluginColorPref(pluginId, mode, "window");

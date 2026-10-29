@@ -20,6 +20,7 @@ check(contract.honoredContributions.provider.searchMode === "concurrent", "provi
 check(contract.honoredContributions.provider.timeoutMsPerProvider === 6000, "provider timeout contract drifted");
 check(contract.honoredContributions.icons.httpSupported === false, "HTTP icons are not a supported surface");
 
+const appShell = read("src/App.tsx");
 const registry = read("src/plugins/registry.ts");
 const iconSpec = read("src/launcher/iconSpec.ts");
 const presenterHost = read("src/page-runtime/presenterHost.ts");
@@ -32,6 +33,7 @@ const pluginFs = read("src-tauri/src/plugin_fs.rs");
 const clipboard = read("src-tauri/src/clipboard.rs");
 const pluginGate = read("src-tauri/src/plugins.rs");
 
+check((appShell.match(/definePlugin\(/g) ?? []).length >= 2, "navigate/clipboard built-in registrations disappeared");
 check(registry.includes("logicLoadedIds.delete(id)"), "registry does not show the disable/unload boundary");
 check(registry.includes("sanitizeProviderRows"), "registry does not budget provider results");
 check(registry.includes("sanitizeNavBarContributions"), "registry does not budget navBars");
@@ -54,6 +56,17 @@ check(contract.privateFiles?.canonicalPluginDirectory === true, "Private-file di
 check(pluginFs.includes("plugin_dir_for_id"), "Private files do not use the canonical plugin directory");
 check(pluginGate.includes("MAX_FEATURES") && pluginGate.includes("MAX_REGEX_CHARS"), "Manifest fan-out/regex limits are missing");
 check(contract.clipboard?.ownWriteGuard === "clipboard-sequence", "Clipboard own-write contract drifted");
+check(!registry.includes("previewPlugins("), "preview must not be a plugin contribution");
+check(!read("src/plugins/types.ts").includes("preview?: PreviewService"), "preview service contract must be removed");
+check(!read("src/plugins/pluginName.ts").includes("preview"), "preview plugin name mapping must be removed");
+check(registry.includes("not a registered plugin"), "registry docs must name preview as core host state");
+check(read("src/launcher/previewHost.ts").includes("PREVIEW_DEBOUNCE_MS"), "core PreviewHost debounce missing");
+check(read("src/plugins/permissions.ts").includes('"preview.show": "preview"'), "preview RPC permission ledger missing");
+check(read("src-tauri/src/window.rs").includes("assert_preview_caller"), "Rust preview permission boundary missing");
+check(read("src-tauri/src/window.rs").includes("preview_follow_allowed"), "plugin preview must not be gated by the clipboard follow setting");
+check(read("src-tauri/src/window.rs").includes("window.label() == PREVIEW_WINDOW"), "preview window close capability is not trusted");
+check(read("src-tauri/src/clipboard.rs").includes("assert_preview_read_access"), "trusted preview file reads are not scoped");
+check(read("src-tauri/src/plugins.rs").includes('pub const BUILTIN_PLUGINS: &[(&str, &str, &str)] = &[("clipboard"'), "preview must not be a built-in plugin");
 check(clipboard.includes("self_write_seq") && clipboard.includes("retained_clipboard_text"), "Clipboard sequence/whitespace guard is missing");
 
 if (failures.length) {

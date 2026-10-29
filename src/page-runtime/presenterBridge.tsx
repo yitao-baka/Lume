@@ -7,7 +7,7 @@ import { currentSkin } from "../skins/runtime";
 import { currentAccent, normalizeAccent } from "../skins/accent";
 import { normalizeSkin, skinSurface } from "../skins/registry";
 import { createIframeView } from "../plugins/iframeBridge";
-import type { PageModel, PresenterDescriptor } from "./contracts";
+import type { PageModel, PagePreviewRequest, PresenterDescriptor } from "./contracts";
 import { normalizeLayoutReport, normalizeResizeRequest } from "./layout";
 import type { PageSession } from "./session";
 
@@ -198,6 +198,8 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       resize: function (size) { return rpc("app.resize", { width: size && size.width, height: size && size.height }); },
       dragWindow: function () { return rpc("app.dragWindow"); },
       detach: function () { return rpc("app.detach"); },
+      preview: function (request) { return rpc("app.preview.show", { req: request }); },
+      closePreview: function () { return rpc("app.preview.close"); },
       setQuery: function (q) { return rpc("app.setQuery", { q: q }); }
     },
     on: on
@@ -328,6 +330,11 @@ export interface PresenterBridgeOptions {
   dragWindow?(): void;
   detach?(): void;
   setQuery?(query: string): void;
+  /** Core satellite preview; Presenters still get no direct host capability. */
+  preview?: {
+    show(request: PagePreviewRequest): Promise<void>;
+    close(): Promise<void>;
+  };
   themeGet(): unknown;
   themeSet(mode: unknown): Promise<void>;
   settings?(): Record<string, unknown>;
@@ -392,6 +399,12 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
           if (!opts.detach) throw new Error("app.detach is unavailable in this host");
           opts.detach();
           return null;
+        case "app.preview.show":
+          if (!opts.preview) throw new Error("preview is unavailable in this host");
+          return opts.preview.show(args.req as PagePreviewRequest);
+        case "app.preview.close":
+          if (!opts.preview) throw new Error("preview is unavailable in this host");
+          return opts.preview.close();
         case "app.setQuery":
           if (!opts.setQuery) throw new Error("app.setQuery is unavailable in this host");
           opts.setQuery(String(args.q ?? ""));

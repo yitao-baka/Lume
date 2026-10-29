@@ -25,10 +25,10 @@ Lume 插件 = **一份清单**（`plugin.toml`）+ **零或多份贡献**（cont
 |---|---|---|---|---|
 | `provider` | `ProviderInstance` — 向 Navigate 搜索追加结果 | 支持 | `web-search`（examples/） | — |
 | `mode` | **Page Service + 一个或多个 Presenter**；内置页通过启动器内部的 shell adapter 接入 | 支持 | `clipboard` | `hello-mode`、`file-search`（examples/） |
-| `service` | `PreviewService`（内置）/ **生命周期钩子**（磁盘） | 支持 | `preview` | — |
+| `service` | **生命周期钩子**（磁盘） | 支持 | — | — |
 | `navBars` | `NavBarContribution[]` — 导航页栏目（§5.7，任意 kind 可选钩子） | 支持 | — | `nav-bar`（examples/） |
 
-内置插件（clipboard/preview/apps）走与磁盘插件相同的注册表与启停路径；区别
+内置插件（clipboard/apps）走与磁盘插件相同的注册表与启停路径；区别
 只在它们的代码编译进 lume.exe、不参与权限表（§14）。
 
 **生命周期**：
@@ -124,7 +124,7 @@ export default {
 - TOML 语法错误 → 该插件被**静默跳过**（stderr 记录 `[plugins] skipping …`），不影响其它插件。
 - 非 `plugin.toml` 的散文件、无清单的子目录一律忽略。
 - 清单里的字段拼错会被 toml 解析器**忽略**（不会报错）——拼写要对照上表。
-- 磁盘插件清单按 id 排序后合并进列表；内置插件（clipboard/preview）始终排在前面。
+- 磁盘插件清单按 id 排序后合并进列表；内置插件（clipboard）始终排在前面。
 
 **图标深/浅两套**：`icon_light` / `icon_dark`（以及运行时行上的
 `icon: { light, dark }`）由宿主决定显示哪一套 —— 按图标**所在表面**的当前
@@ -146,7 +146,7 @@ export default {
 ### 4.1 Rust 侧（`src-tauri/src/plugins.rs`）
 
 - 启动时不主动扫描——`get_plugins` 命令**每次调用都实时扫描**磁盘目录，
-  合并 `BUILTIN_PLUGINS`（clipboard/preview），并按
+  合并 `BUILTIN_PLUGINS`（clipboard），并按
   `settings.plugins.disabled` 计算每个插件的 `enabled`。
 - 返回结构（`PluginInfo`）：
 
@@ -449,13 +449,14 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 | 组 | 方法 | 说明 |
 |---|---|---|
 | `env` | `form: "launcher" \| "window"` | **宿主形态常量**：同步字符串，注入桥在页面脚本运行前钉死——`"launcher"` = 启动器主窗口内嵌页，`"window"` = 独立窗口内的 view/titlebar 帧；逻辑帧（§6.9）恒为 `"launcher"`。**判别宿主形态只用它**——不要数父文档 iframe 数：keep-alive 让启动器同时挂着多个已访问模式页（iframe 数 ≥ 2 是常态），数法会误判 |
-| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` / `detach()` | 与内置工厂 `ctx.app` 同面。`setPlaceholder` 自定本模式搜索框占位文字（§6.10）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（§8.1）；`setSubInput`/`removeSubInput` 接管/交还搜索框（§10.1）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（§10.3）；`detach()` 把本模式分离为独立窗口（§6.8）——`detachable` 插件自绘分离按钮（常驻/纯图标等形态自定）时调用它，快照/建窗/回放与宿主内置悬停按钮同一条路 |
+| `app` | `hide()` / `toast(text, opts?)` / `setQuery(q)` / `setPlaceholder(text)` / `openPath(path)` / `revealPath(path)` / `trash(paths)` / `resize({width?, height?})` / `notify(title, body)` / `setSubInput(opts?)` / `removeSubInput()` / `redirect(pluginId, opts?)` / `detach()` / `preview(request)` / `closePreview()` | 与内置工厂 `ctx.app` 同面。`setPlaceholder` 自定本模式搜索框占位文字（§6.10）；`openPath` 经 `launch_app`（文件/URL 均可）并标记「已使用条目」；`revealPath` 在 Explorer 中定位并选中目标（**不**标记「已使用条目」、**不**隐藏启动器——打开位置后用户通常还要继续搜，是否隐藏由插件自定）；`trash(paths)` 把文件/文件夹批量送入回收站（无永久删除回退，失败即 reject；宿主不做确认框，删除确认由插件自行用 toast/UI 二次确认实现）；`notify(title, body)` 系统通知（§8.1）；`setSubInput`/`removeSubInput` 接管/交还搜索框（§10.1）；`redirect(pluginId, {code?, payload?})` 跳到另一个插件（§10.3）；`detach()` 把本模式分离为独立窗口（§6.8）——`detachable` 插件自绘分离按钮（常驻/纯图标等形态自定）时调用它，快照/建窗/回放与宿主内置悬停按钮同一条路 |
 | `theme` | `set(mode)` / `get()` | **本插件自己的颜色模式**：`"system"`（跟随启动器）/ `"light"` / `"dark"`。只作用于本插件 —— 本模式页画布、独立窗口的 chrome 与任务栏图标一起切，**启动器自身主题不受影响**；宿主落盘（`settings.plugins.color_modes`），重启与独立窗口首帧即生效。`get()` 返回 `{pref, mode, host, skin, accent}`；`skin` 是主窗口视觉皮肤，`accent` 是全局主题色；两者均由宿主设置决定，插件只读。非法取值 reject。免权限（插件本地 UI，§8.2）。细节见 §6.7 |
 | `clipboard` | `readText()` / `writeText(text)` / `writeImage(data)` / `writeFiles(paths)` / `readFiles()` / `readImage()` / `paste({text?, image?, files?})` | 系统剪贴板：文本读写、图片（base64 或 `data:image/png;base64,…`）、文件列表（CF_HDROP，Explorer 式复制）、读回文件列表；`readImage()` 返回 PNG data URI（无图 = null；`img` feature 的取数路径，§9.3）；`paste` 写入单个载荷并 Ctrl+V 到启动器呼出前的前台窗口（§8.1） |
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated`（§8.1） |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
 | `screen` | `cursor()` / `displays()` | 光标位置与显示器列表，单位是**物理像素**；`displays()` 每项含 `x/y/width/height`、工作区 `workX/workY/workWidth/workHeight`、`primary` |
 | `fs` | `readText(path)` / `bytes(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` / `writeText(name, text)` / `writeBytes(name, base64)` / `readPrivate(name)` / `listPrivate()` / `privatePath(name)` / `removePrivate(name)` / `writeFile(path, text)` | 文件读写能力。读取与任意路径写入（`writeFile`）**需要声明**（`fs.read` / `fs.write`，§8.2）；`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`bytes` 返回**原始字节**（base64，≤ 32 MB，超出 reject）——沙箱后页面是 opaque origin，`fetch(asset://)` 被 CORS 拒绝，pdf.js/SheetJS 这类要在 JS 里解二进制的渲染器从这里取字节；`thumb` / `videoPoster` 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null）。`writeText`/`writeBytes`/`readPrivate`/`listPrivate`/`privatePath`/`removePrivate` 操作**插件私有目录** `<plugin>/files/`（无需权限，单文件 10 MiB，`name` 只能是文件名 —— 见 §11.2） |
+| `preview` | `show({kind, content?, path?, id?, paths?, checked?, remember_checks?})` / `close()` | **核心卫星预览宿主能力**：在启动器右侧独立窗渲染文本、文本文件、图片、音视频、PDF 或多文件列表；窗口生命周期、置顶、不抢焦点、贴边与 Esc 关闭均由宿主负责。`kind` 仅接受 `text/textfile/image/audio/video/pdf/filelist`，不注入 HTML；单条文本受 512 KiB、文件列表受 1024 项预算。外部插件须声明权限 `preview`。 |
 | `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV —— v1 契约的**兼容垫片**，内部就是文档库里的 `__storage` 文档（§11.1）；新代码请用 `db` |
 | `db` | `get(id)` / `put(doc)` / `remove(doc\|id, rev?)` / `allDocs({idStartsWith?, limit?})` / `bulkDocs(docs)` | **文档库**（§11.1）：uTools/CouchDB 形状的文档（`_id` + `_rev` 乐观锁），持久化在 `<base>/data/plugin_store.db`。冲突 reject，消息以 `conflict:` 开头 |
 | `settings` | `all()` / `get(key)` | 本插件声明式设置的**生效值**（manifest 默认值 ⊕ 用户改过的值，§11.3） |
@@ -500,6 +501,10 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 
 
 ### 6.3 状态重放与就绪握手
+
+Presenter 的 `window.lume.app.preview(request)` / `closePreview()` 与 Page Service 的
+`ctx.preview.show/close` 都落到同一 Rust 校验边界；Presenter 仍没有通用
+Tauri IPC、文件、剪贴板或网络能力。
 
 Page Service 在慢 `getModel()`/首次挂载期间收到的事件不会丢失：宿主按
 `query` → `settings` → `filesDropped` → `show`/`hide` → `enter` 顺序排队，
@@ -976,7 +981,7 @@ Presenter 设置；空白区域使用注入的 `app.dragWindow` 拖拽兜底，�
 
 ## 7. 内置插件开发 API（TypeScript 贡献）
 
-> 这一节面向**第一方/编译进二进制**的插件（clipboard/preview 即此形态）。
+> 这一节面向**第一方/编译进二进制**的插件（clipboard 即此形态）。
 > 磁盘 mode/service 同样走 registry 与启停路径（`kind = "mode"` +
 > `[[presenters]]` / `kind = "service"` + `entry`）；本节是内置贡献契约的
 > 权威描述。
@@ -993,7 +998,6 @@ interface LauncherPlugin {
     icon: string;                    //   SVG import 的 URL
   };
   mode?: ModeInstance;               // 内部 shell adapter（§7.2）
-  preview?: PreviewService;          // service 贡献（§7.2）
   provider?: ProviderInstance;       // provider 贡献（§5）
   clipMenuActions?: () => unknown;   // 共享右键菜单的剪贴板动作（§7.3）
 }
@@ -1051,7 +1055,9 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 - `rows()`：外壳键盘边界的快速视图；领域动作仍通过 Intent 执行。
 - `onKey(e, ctx)` / `onEscape()`：页面快捷键和 Esc 分层。
 - `modal()`：模态页面暂停全局快捷键。
-- `previewTarget()` / `previewEnabled()`：预览服务读取模型选择。
+- `previewTarget()` / `previewEnabled()`：**仅内置页面**的自动跟随源；核心
+  `PreviewHost` 读取它并在 100ms 去抖后调用 Rust。外部插件不使用这组
+  adapter，而是显式调用 `ctx.preview.show/close`。
 - `measureViewport()`、`heightPolicy()`、`anyExpanded()`、`desiredHeight()`：
   尺寸协议。
 - `ready()`：Presenter 就绪前的加载门控。
@@ -1087,16 +1093,6 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 `gridCols` 供网格页面计算上下移动；`editing` 表示按键来自文本编辑控件，
 页面不得抢走原生编辑语义。
 
-#### 7.2.4 `PreviewService`（内部）
-
-```ts
-{ currentPreview(): PreviewReq | null; clear(): void }
-```
-
-预览插件监听活动 Page Session 的模型选择并做约 100ms 防抖。`currentPreview`
-是同步信号，Esc 分层在预览窗口更新前也能正确判断。`clear()` 用于响应预览窗
-自身关闭或 Rust teardown 的 `preview-closed` 事件。
-
 ### 7.3 共享右键菜单
 
 右键菜单由外壳渲染。页面只提供 `NavMenuActions` / `ClipMenuActions` 窄接口，
@@ -1119,7 +1115,8 @@ src/plugins/clipboard/index.tsx
 
 - 内置 Presenter 切换不重建 `PageService`、模型或选择。
 - 剪贴板 Page Service 只把当前视口窗口内的历史行放进模型。
-- 预览由模型选择驱动，不读取 Presenter DOM。
+- 预览由内置页面的选择 adapter 驱动，不读取 Presenter DOM；核心主机不依赖
+  插件注册表。
 - 页面禁用不改变 Rust 剪贴板采集配置。
 
 ## 8. 宿主能力面
@@ -1148,6 +1145,27 @@ src/plugins/clipboard/index.tsx
 | `detach()` | 把本模式分离为独立窗口（§6.8）；快照/建窗/回放与宿主内置悬停按钮同一条路。 |
 | `dragWindow()` | 拖动窗口（标题栏槽位帧的空白区用，§6.8.4）。 |
 | `foreground()` | 前台窗口快照（见下）。 |
+| `preview(request)` / `closePreview()` | 核心卫星预览窗（权限 `preview`，见下）。Presenter 使用同一受限转发。 |
+
+#### `app.preview` — 卫星预览宿主能力（权限 `preview`）
+
+```js
+await ctx.preview.show({
+  kind: "text",
+  content: "第一行\n第二行",
+});
+await ctx.preview.show({ kind: "image", path: "C:\\Pictures\\shot.png" });
+await ctx.preview.show({ kind: "filelist", paths: ["C:\\a.txt", "C:\\b.md"] });
+await ctx.preview.close();
+```
+
+- 可用 `kind`：`text` / `textfile` / `image` / `audio` / `video` / `pdf` /
+  `filelist`。`text` 使用 `content`，文件类使用 `path`，多文件使用 `paths`；
+  `id` 只用于剪贴板图片行。渲染器不会注入 HTML。
+- 窗口生命周期（启动时创建、置顶、不抢焦点、贴边、隐藏时卸载页面）由宿主
+  统一管理；插件只选择内容。未声明 `preview` 时调用被拒。
+- 显式插件调用与内置页面共用窗口，但不受剪贴板的「开启预览」设置影响；
+  该设置只关闭内置页面的自动跟随。launcher 隐藏时 Rust 仍会统一 teardown。
 
 #### `app.notify` — 系统通知
 
@@ -1301,6 +1319,7 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 | 插件私有目录读写 | `fs.writeText/writeBytes/readPrivate/listPrivate/privatePath/removePrivate` | 无（属于插件自己） |
 | 回收站删除 | `app.trash` / `trash_to_recycle` | `trash` |
 | 前台窗口信息与 Explorer 当前文件夹 | `app.foreground` / `plugin_foreground_context` | `window` |
+| 卫星预览窗显示 / 关闭 | `preview.show/close` / `show_preview`、`close_preview` | `preview` |
 | 插件私有 KV / 文档库 / 设置 | `storage.*`、`db.*`、`settings.*` | 无（插件自有数据） |
 | 本插件自己的颜色模式 | `theme.set` / `theme.get` | 无（只改本插件的表面，启动器不受影响） |
 
@@ -1695,7 +1714,8 @@ permissions = ["network", "clipboard", "fs.write"]
   在开发者模式关闭时把所有插件上报为 `trusted=false`，残留的 trusted
   列表与 trust_all 都授予不了任何能力。逐插件的 `trusted` 列表仍被
   尊重（`set_plugin_trusted` 命令保留），只是设置页不再写入。内置插件
-  （clipboard/preview）编译进 lume.exe，不参与该表。
+  （clipboard）编译进 lume.exe，不参与该表；卫星预览是宿主能力，
+  插件必须声明 `preview`。
 
 
 ---
@@ -1757,7 +1777,8 @@ Rust 侧（`plugin_install.rs`）语义：
 - **关闭活动模式插件**：refresh 后校验当前模式仍然存在，不存在则自动切回
   导航页并清空搜索（见 §4.3）。
 - 关闭 provider：结果立即从合并中消失（模块驻留内存，重新启用即恢复）。
-- 关闭 preview 服务：卫星窗不再弹出（`enabled` 门控）。
+- `ctx.preview.show/close`：调用核心卫星预览窗；清单须声明 `preview`。
+  自动跟随开关仍由 设置 → 剪贴板 → 开启预览 控制。
 - 设置第 8 分区「插件」（`PluginsPane`）自动列出 `get_plugins` 的全部插件：
   显示名（回退 id）+ 类型/来源/版本 chips + 启停 toggle。无需为新插件写
   任何设置 UI 代码——清单字段齐了，面板就有了。设置搜索框可用关键词：
@@ -2011,6 +2032,8 @@ exe 把 `frontendDist` **编译期嵌进二进制**——改前端后要重新 b
   Rust `plugins.rs` 与前端 `types.ts` 双侧镜像）。清单必须显式声明
   `api = 2`；api 1、缺失版本和顶层旧页面字段都会被拒绝，不存在隐式兼容
   路径。破坏性变更必须 bump 版本；非破坏性新增不 bump。
+- **`preview` 宿主能力是增量契约**：新增 `ctx.preview.show/close` 与权限词，
+  未改变现有 RPC 签名，不 bump `HOST_PLUGIN_API`；旧插件忽略该字段即可。
 - **图标两套是增量字段**：`icon_light`/`icon_dark` 与运行时
   `icon: {light,dark}` 未 bump 版本；旧宿主忽略新字段后回退 `icon`（仍无则
   无图），需要兼容旧宿主的插件保留一个 `icon` 兜底即可。

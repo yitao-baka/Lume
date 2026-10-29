@@ -10,7 +10,6 @@ import { t, type Messages } from "../i18n";
 
 const BUILTIN_NAME: Record<string, keyof Messages> = {
   clipboard: "pluginNameClipboard",
-  preview: "pluginNamePreview",
 };
 
 /** Display name for a plugin id: the localized built-in name when there is

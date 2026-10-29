@@ -36,9 +36,9 @@ import {
   applyPluginColorPrefsFromSettings,
   applyPluginSettings,
   applyPluginPresenterSettings,
-  definePlugin,
   deliverFeature,
   deliverSubInput,
+  definePlugin,
   detachedPluginIds,
   isPluginDetached,
   showsBuiltinDetachButton,
@@ -57,7 +57,7 @@ import {
 import { createHostStack, dropSessionFrame, dropSessionFrames, putSessionFrame } from "./launcher/session";
 import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
 import { createClipboardPlugin } from "./plugins/clipboard";
-import { createPreviewPlugin } from "./plugins/preview";
+import { createPreviewHost } from "./launcher/previewHost";
 import { rasterizePluginIcon } from "./plugins/windowIcon";
 import { installPageRuntimeProbes } from "./page-runtime/diagnostics";
 
@@ -469,11 +469,25 @@ function App() {
   }
 
   // The services every plugin receives — late-bound like the sizer deps.
-  const services: PluginServices = {
+    // Core preview host: the window belongs to the launcher, not a plugin.
+  const previewHost = createPreviewHost({
+    target: () => activeMode()?.previewTarget?.() ?? null,
+    enabled: () => activeMode()?.previewEnabled?.() ?? true,
+  });
+
+const services: PluginServices = {
     showToast,
     markEntryOpened: () => markEntryOpened(),
     resetAndHide: () => void resetAndHide(),
     detachMode: (pluginId) => void detachMode(pluginId),
+    preview: {
+      show: (request, pluginId) =>
+        pluginId
+          ? invoke("show_preview", { req: request, pluginId })
+          : previewHost.show(request),
+      close: (pluginId) =>
+        pluginId ? invoke("close_preview", { pluginId }) : previewHost.close(),
+    },
     setPluginColorMode: async (pluginId, mode) => {
       // docs/ROADMAP_HISTORY.md #36 — the plugin pins its OWN color mode. Persist first (the
       // write is the contract: a resolved promise means the value survives a
@@ -597,7 +611,7 @@ function App() {
   };
   setPluginServices(services);
 
-  // Plugin registration — first-party plugins exercise every v1 contract. The
+  // Plugin registration — built-in pages use the same registry contracts. The
   // navigate home page registers first so it leads the pill/Tab order.
   const navigatePlugin = createNavigatePlugin(services, {
     icons,
@@ -609,13 +623,8 @@ function App() {
   });
   setNavigateBarsRefresh(() => navigatePlugin.refreshBars());
   const clipboardPlugin = createClipboardPlugin(services);
-  const preview = createPreviewPlugin({
-    previewTarget: () => activeMode()?.previewTarget() ?? null,
-    enabled: () => activeMode()?.previewEnabled() ?? true,
-  });
   definePlugin(navigatePlugin);
   definePlugin(clipboardPlugin);
-  definePlugin(preview);
 
   /** Context-menu rows for the current target. All labels/actions are rebuilt
    * from the same pure builder the view renders, so keyboard activation can
@@ -713,9 +722,9 @@ function App() {
     shiftEnterAdmin,
     menu,
     currentResults,
-    currentPreview: preview.preview!.currentPreview,
+    currentPreview: previewHost.current,
     setCurrentPreview: (v) => {
-      if (!v) preview.preview!.clear();
+      if (!v) previewHost.clear();
     },
     markKeyboard,
     handleMenuKey,
@@ -1227,9 +1236,17 @@ function App() {
     // Esc-priority state — without this, Esc would think the preview is still
     // open and close a window that is already gone.
     const unlistenPreviewClosed = await getCurrentWindow().listen("preview-closed", () => {
-      preview.preview?.clear();
+      previewHost.clear();
     });
     onCleanup(() => unlistenPreviewClosed());
+
+    // Plugin-initiated previews arrive through the same Rust command. Mirror
+    // them into PreviewHost so Esc closes the satellite before hiding the
+    // launcher regardless of the caller.
+    const unlistenPreviewOpened = await getCurrentWindow().listen("preview-opened", () => {
+      previewHost.remember();
+    });
+    onCleanup(() => unlistenPreviewOpened());
   });
 
   // Sync the entry-size CSS variable whenever the setting changes — decoupled

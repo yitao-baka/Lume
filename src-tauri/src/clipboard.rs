@@ -2122,6 +2122,30 @@ pub fn set_clipboard_paused(paused: bool, state: State<ClipboardState>) -> Resul
     Ok(paused)
 }
 
+/// The satellite preview renderer is a trusted first-party window: it may
+/// request the two read-only helpers needed to render a path that the core host
+/// has already accepted. Plugin logic/pages still go through the manifest
+/// capability check.
+fn assert_preview_read_access(
+    window: &tauri::WebviewWindow,
+    plugin_id: Option<&str>,
+    host_token: Option<&str>,
+    perms: &crate::plugin_perm::PluginPermState,
+    settings: &crate::settings::SettingsState,
+) -> Result<(), String> {
+    if window.label() == "preview" {
+        return Ok(());
+    }
+    crate::plugin_perm::assert_native_or_capability(
+        perms,
+        settings,
+        window,
+        plugin_id,
+        host_token,
+        "fs.read",
+    )
+}
+
 /// Read a text file's content for the preview pane (capped at 512 KB; binary
 /// content is lossy-decoded as UTF-8 so a stray .txt with a weird encoding
 /// still previews).
@@ -2134,13 +2158,12 @@ pub async fn get_file_text(
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<String, String> {
-    crate::plugin_perm::assert_native_or_capability(
-        &perms,
-        &settings,
+    assert_preview_read_access(
         &window,
         plugin_id.as_deref(),
         host_token.as_deref(),
-        "fs.read",
+        &perms,
+        &settings,
     )?;
     tauri::async_runtime::spawn_blocking(move || {
         let bytes = crate::bounded::read_file_bounded(Path::new(&path), 512 * 1024)?;
@@ -2229,13 +2252,12 @@ pub async fn get_video_thumb(
     perms: tauri::State<'_, crate::plugin_perm::PluginPermState>,
     settings: tauri::State<'_, crate::settings::SettingsState>,
 ) -> Result<String, String> {
-    crate::plugin_perm::assert_native_or_capability(
-        &perms,
-        &settings,
+    assert_preview_read_access(
         &window,
         plugin_id.as_deref(),
         host_token.as_deref(),
-        "fs.read",
+        &perms,
+        &settings,
     )?;
     // Run the shell extraction off the main thread: sync commands run on the
     // main (STA) thread where `CoInitializeEx(COINIT_MULTITHREADED)` fails with

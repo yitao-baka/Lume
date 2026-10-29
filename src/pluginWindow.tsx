@@ -132,6 +132,14 @@ function App() {
       // Already detached here: the caller IS the detached window — raise it.
       void getCurrentWindow().setFocus().catch((err) => plog.error(id, "focus failed:", err));
     },
+    preview: {
+      show: async (request) => {
+        await invoke("show_preview", { req: request, pluginId: id });
+      },
+      close: async () => {
+        await invoke("close_preview", { pluginId: id });
+      },
+    },
     setPluginColorMode: async (pluginId, mode) => {
       // Same contract as the launcher's services (docs/ROADMAP_HISTORY.md #36), but the
       // reconvergence differs: here the durable write also updates THIS

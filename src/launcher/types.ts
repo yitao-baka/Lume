@@ -205,15 +205,18 @@ export interface ClipboardSearchResult {
   categories: ClipboardCategoryCounts;
 }
 
-/** Payload pushed to the satellite preview window (mirrors the Rust
- * `PreviewRequest` in window.rs). */
+/** One request for the satellite preview host capability. The same shape is
+ * accepted by the internal host and the plugin bridge; only content the
+ * preview renderer can display is represented (never arbitrary HTML). */
 export interface PreviewReq {
   kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist";
-  content: string | null;
-  path: string | null;
-  id: number | null;
+  content?: string | null;
+  /** A file path for textfile/image/media/PDF previews. */
+  path?: string | null;
+  /** A clipboard row id for captured-image rows and file-list persistence. */
+  id?: number | null;
   /** Multi-file rows (`filelist`): every recorded path. */
-  paths?: string[];
+  paths?: string[] | null;
   /** Stored checked-file indices for the list (null = no override). */
   checked?: number[] | null;
   /** 记住勾选 at request time — the satellite shows the toggle state. */

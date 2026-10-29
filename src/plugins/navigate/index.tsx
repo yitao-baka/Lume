@@ -110,8 +110,6 @@ export function createNavigatePlugin(
       page.onKey(event, ctx, presenterId() === "navigate-list" ? "list" : "grid"),
     openContextMenu: page.openContextMenu,
     onEscape: () => page.search.popDrill(),
-    previewTarget: () => null,
-    previewEnabled: () => false,
     measureViewport: () => services.scheduleResize(),
     heightPolicy: () => "fit",
     anyExpanded: page.store.anyExpanded,

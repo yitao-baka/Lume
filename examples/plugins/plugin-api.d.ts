@@ -191,6 +191,26 @@ interface LumeSearchApi {
   }>;
 }
 
+/** Satellite preview host capability (permission `preview`). */
+interface LumePreviewApi {
+  /** Show text, a file, media or a multi-file list in the non-activating
+   * satellite window. The renderer accepts content kinds only; arbitrary
+   * HTML is never injected. */
+  show(request: LumePreviewRequest): Promise<void>;
+  /** Hide the satellite and release decoded image/media/PDF resources. */
+  close(): Promise<void>;
+}
+
+interface LumePreviewRequest {
+  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist";
+  content?: string | null;
+  path?: string | null;
+  id?: number | null;
+  paths?: string[] | null;
+  checked?: number[] | null;
+  remember_checks?: boolean;
+}
+
 /** 传给 `create(ctx)` 的宿主能力面（注入的 `window.lume`）。 */
 interface LumePluginCtx {
   theme: LumeThemeApi;
@@ -201,6 +221,7 @@ interface LumePluginCtx {
   settings: LumeSettingsApi;
   fs: LumeFsApi;
   search: LumeSearchApi;
+  preview: LumePreviewApi;
   on: LumeEvents;
 }
 
@@ -309,6 +330,9 @@ interface LumePagePresenterApi {
   }): Promise<void>;
   setModal(open: boolean): Promise<void>;
   requestSearchFocus(): Promise<void>;
+  /** Show the core satellite preview without gaining general host access. */
+  preview(request: LumePreviewRequest): Promise<void>;
+  closePreview(): Promise<void>;
 }
 
 /** Page-service publish surface. */

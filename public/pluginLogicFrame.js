@@ -93,6 +93,10 @@
       foreground: function () { return call("app.foreground"); },
       detach: function () { return call("app.detach"); },
     },
+    preview: {
+      show: function (request) { return call("preview.show", { req: request }); },
+      close: function () { return call("preview.close"); },
+    },
     fs: {
       readText: function (p) { return call("fs.readText", { path: p }); },
       bytes: function (p) { return call("fs.bytes", { path: p }); },

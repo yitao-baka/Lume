@@ -8,9 +8,9 @@
  * steals focus from the launcher). Closing tears the page down to `about:blank`
  * (frees the decoded resources; the renderer process stays for reuse).
  *
- * The payload (`PreviewRequest`) comes from the Rust side: read once on mount
- * via `get_preview_request`, then live-updated via the `preview-update` event
- * (selection changes don't reload the page — no flicker). Esc / close handling
+ * The payload (`PreviewReq`) is read once on mount via `get_preview_request`,
+ * then live-updated via the `preview-update` event (selection changes don't
+ * reload the page — no flicker). Esc / close handling
  * lives in the MAIN window (a non-activating window never receives keys); the
  * × button here is the in-window close affordance.
  *
@@ -25,21 +25,11 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { t, setLocale, resolveLocale } from "./i18n";
+import type { PreviewReq } from "./launcher/types";
 import "./preview.css";
 
 /** Mirrors the Rust `PreviewRequest` (window.rs). */
-interface PreviewRequest {
-  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist";
-  content: string | null;
-  path: string | null;
-  id: number | null;
-  /** Multi-file rows (`filelist`): every recorded path. */
-  paths?: string[] | null;
-  /** Stored checked-file indices (`filelist`); null = no override. */
-  checked?: number[] | null;
-  /** 记住勾选 at request time — the toggle state shown in the list header. */
-  remember_checks?: boolean;
-}
+type PreviewRequest = PreviewReq;
 
 /** Last path segment (handles both `/` and `\` separators). */
 function basename(p: string): string {
@@ -220,9 +210,11 @@ function PreviewApp() {
       prev.loadingTask.destroy().catch(() => {});
       setPdfDoc(null);
     }
-    if (r.kind === "textfile" && r.path) {
+    if (r.kind === "text") {
+      setText(r.content ?? "");
+    } else if (r.kind === "textfile" && r.path) {
       try {
-        const content = await invoke<string>("get_file_text", { path: r.path, pluginId: "preview" });
+        const content = await invoke<string>("get_file_text", { path: r.path });
         if (!isCurrentRequest(generation)) return;
         setText(content);
       } catch (e) {
@@ -233,7 +225,7 @@ function PreviewApp() {
     } else if (r.kind === "image") {
       try {
         // Image-file rows carry `path`; image-kind rows resolve via the id.
-        const path = r.path ?? (await invoke<string>("get_clipboard_image", { id: r.id }));
+        const path = r.path ?? (await invoke<string>("get_clipboard_image", { id: r.id ?? 0 }));
         if (!isCurrentRequest(generation)) return;
         const src = await allowedAssetUrl(path);
         if (!isCurrentRequest(generation)) return;
@@ -257,7 +249,7 @@ function PreviewApp() {
       // Shell thumbnail (a frame) as the player's poster — shown until play
       // (the player is preload="none", so without it the area is just black).
       if (r.kind === "video") {
-        void invoke<string>("get_video_thumb", { path: r.path, pluginId: "preview" })
+        void invoke<string>("get_video_thumb", { path: r.path })
           .then((value) => {
             if (isCurrentRequest(generation)) setPoster(value);
           })
@@ -336,8 +328,8 @@ function PreviewApp() {
         <Show when={req()} fallback={<div class="preview-empty">—</div>}>
           <Show when={!error()} fallback={<div class="preview-error">{t("previewLoadFailed")}</div>}>
             <Switch>
-              {/* Text file: content read on demand. */}
-              <Match when={req()!.kind === "textfile"}>
+              {/* Plain text or a text file read on demand. */}
+              <Match when={req()!.kind === "text" || req()!.kind === "textfile"}>
                 <Show when={text()} fallback={<span class="preview-placeholder">…</span>}>
                   <pre class="preview-text">{text()}</pre>
                 </Show>

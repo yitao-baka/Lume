@@ -194,8 +194,6 @@ export function createListTemplateMode(
     activate: () => activateRow(selected()),
     onKey: () => false,
     onEscape: () => false,
-    previewTarget: () => null,
-    previewEnabled: () => false,
     measureViewport: () => {},
     ready: loaded,
     desiredHeight: () => (m.height != null && m.height > 0 ? m.height : null),

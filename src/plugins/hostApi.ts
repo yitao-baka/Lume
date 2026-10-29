@@ -277,6 +277,10 @@ export function createHostApi(
         );
       },
     },
+    preview: {
+      show: (request) => inv<void>("show_preview", { req: request, pluginId: id }),
+      close: () => inv<void>("close_preview", { pluginId: id }),
+    },
     storage: {
       get: async <T,>(key: string) => {
         const raw = await inv<string | null>("plugin_storage_get", { id, key });

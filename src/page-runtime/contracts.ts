@@ -31,6 +31,18 @@ export interface ResourceRef {
   alt?: string;
 }
 
+/** The preview payload accepted by the core host. Content-only by design:
+ * the renderer never injects HTML. */
+export interface PagePreviewRequest {
+  kind: "text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist";
+  content?: string | null;
+  path?: string | null;
+  id?: number | null;
+  paths?: string[] | null;
+  checked?: number[] | null;
+  remember_checks?: boolean;
+}
+
 export interface PagePreview {
   kind: "text" | "textfile" | "image" | "file" | "filelist" | "audio" | "video" | "pdf";
   targetId: string;
@@ -107,6 +119,10 @@ export interface PresenterHostApi {
   reportLayout(report: PageLayoutReport): Promise<void>;
   setModal(open: boolean): Promise<void>;
   requestSearchFocus(): Promise<void>;
+  /** Show the core preview host / dismiss it. Presenters cannot reach the
+   * raw Tauri command surface. */
+  preview(request: PagePreviewRequest): Promise<void>;
+  closePreview(): Promise<void>;
 }
 
 /** The Page Service receives the service-only capabilities. The concrete

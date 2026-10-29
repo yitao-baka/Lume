@@ -3,7 +3,7 @@
 //! invokes Tauri commands.
 
 import { t } from "../../i18n";
-import type { ClipboardCategoryCounts, ClipboardItem, ClipKind } from "../../launcher/types";
+import type { ClipboardCategoryCounts, ClipboardItem, ClipKind, PreviewReq } from "../../launcher/types";
 import { basename, clipTitle, fileContent, previewTarget as clipPreviewTarget } from "../../launcher/clipData";
 import { CLIP_CATS } from "../../launcher/types";
 import type { IntentResult, JsonValue, PageIntent, PageModel, PageService, ResourceRef } from "../../page-runtime/contracts";
@@ -82,7 +82,8 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
   snapshot: () => PageModel;
   onKey: (event: KeyboardEvent, ctx: { editing: boolean; hasResults: boolean }) => boolean;
   openContextMenu: () => boolean;
-  previewTarget: () => unknown;
+  previewTarget: () => PreviewReq | null;
+  previewEnabled: () => boolean;
   ready: () => boolean;
   modal: () => boolean;
   applySettings: (settings: unknown) => void;
@@ -160,15 +161,6 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
           ...(selectedId ? { primaryId: selectedId } : {}),
           selectedIds,
         },
-        ...(preview && selectedId
-          ? {
-              preview: {
-                kind: preview.kind,
-                targetId: selectedId,
-                payload: preview as unknown as JsonValue,
-              },
-            }
-          : {}),
       };
     };
     const candidates = visible.map((item) => ({
@@ -341,13 +333,10 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
     snapshot,
     onKey,
     openContextMenu,
-    previewTarget: () => store.clips()[store.selected()] ? {
-      kind: store.clips()[store.selected()].kind,
-      content: store.clips()[store.selected()].content,
-      path: store.clips()[store.selected()].content,
-      id: store.clips()[store.selected()].id,
-      remember_checks: store.rememberChecks(),
-    } : null,
+    previewTarget: () => (store.previewEnabled()
+      ? clipPreviewTarget(store.clips()[store.selected()], store.rememberChecks())
+      : null),
+    previewEnabled: store.previewEnabled,
     ready: store.loaded,
     modal: store.clearOpen,
     applySettings: (settings) => store.applySettings(settings as never),

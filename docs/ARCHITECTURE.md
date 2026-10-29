@@ -100,6 +100,19 @@ read as one uniform surface, corners included (Win11 rounding is DWM's).
 windows use. `DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)`
 reports the strip; see docs/ROADMAP_HISTORY.md for the pixel measurements.
 
+### Satellite preview host
+
+The satellite preview is a core capability rather than a plugin contribution.
+`src/launcher/previewHost.ts` owns the explicit show/close state, the 100 ms
+selection-follow debounce and the Esc-priority signal; the renderer lives in
+`src/preview.tsx`. `window.rs` creates the non-activating, always-on-top
+window at startup, docks it flush to the launcher's client edge and tears it
+down to `about:blank` on close. Built-in pages call the host directly;
+external plugins reach the same commands through `ctx.preview.show/close` (and
+Presenters through `lume.app.preview/closePreview`). Rust re-checks the
+caller's `preview` permission and accepts only renderable content kinds,
+never arbitrary HTML. The clipboard setting remains the automatic-follow gate.
+
 ### `webview_guard.rs`
 Every launcher-owned host window (`main`, `plugin-logic-host` and each
 `plugin-<id>` detached window) installs the native WebView2 boundary after the
@@ -599,12 +612,10 @@ before adding a field:
     one visible row; the grid keeps two-dimensional arrow movement.
   - `clipboard/` — the clipboard-history contribution. Its `index.tsx`
     joins the clipboard Page Service to the history/compact Presenters and
-    retains the settings, preview, modal and keyboard lifecycle exposed by
-    `ModeInstance`. Each Presenter reports its painted row height with the
+    retains the settings, modal and keyboard lifecycle exposed by
+    `ModeInstance`; the core PreviewHost reads its first-party follow source. Each Presenter reports its painted row height with the
     viewport intent, so the Page Service can window the same authoritative
     list at either 52px or 44px rows.
-  - `preview/` — a service contribution (satellite-preview routing shared by
-    every page that exposes previewable rows).
   - `registry.ts` + `types.ts` — the registry all plugins plug into
     (`definePlugin` for built-ins, disk discovery + `createPageRuntimeMode`
     for on-disk page modes, plus list-template/provider/service adapters); the
@@ -698,7 +709,8 @@ before adding a field:
   skin's native accent metadata, so it stays the skin default instead of
   following the accent in use.
   The
-  satellite preview is its own entry (`src/preview.tsx`). Its compact header
+  satellite preview is its own entry (`src/preview.tsx`) owned by the core
+`PreviewHost` (`src/launcher/previewHost.ts`), not a plugin contribution. Its compact header
   names the current file/content type and owns the in-window `close_preview`
   action; the window itself stays non-activating.
 - Each keystroke invokes the active page's search command and drops stale

@@ -669,23 +669,29 @@ pub fn get_work_area(app: AppHandle) -> Result<f64, String> {
 pub struct PreviewState(pub Mutex<Option<PreviewRequest>>);
 
 /// What the satellite preview window renders.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PreviewRequest {
     /// `"text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist"`.
     pub kind: String,
-    /// The copied text itself (`kind == "text"`).
+    /// Plain text shown directly (`kind == "text"`).
+    #[serde(default)]
     pub content: Option<String>,
     /// A file path (`textfile` / `audio` / `video` / `pdf`, and image-*file* rows).
+    #[serde(default)]
     pub path: Option<String>,
     /// A clipboard row id (image-*kind* rows: resolved via `get_clipboard_image`;
     /// `filelist` rows: the target for `set_clipboard_checked`).
+    #[serde(default)]
     pub id: Option<u32>,
     /// Multi-file rows (`kind == "filelist"`): every recorded path.
+    #[serde(default)]
     pub paths: Option<Vec<String>>,
     /// Stored checked-file indices for the multi-file list (`None` = no override
     /// → every existing file is checked by default).
+    #[serde(default)]
     pub checked: Option<Vec<u32>>,
     /// 记住勾选 at request time — the satellite shows the toggle state.
+    #[serde(default)]
     pub remember_checks: Option<bool>,
 }
 
@@ -696,16 +702,130 @@ pub struct PreviewRequest {
 /// close). Re-docks on every call and shows without focusing (the window is
 /// `WS_EX_NOACTIVATE` — it must never steal focus from the launcher, whose
 /// blur-to-hide rule would otherwise fire).
+/// The satellite preview is a core host capability shared by first-party
+/// pages and external plugins. Commands accept the trusted main window (the
+/// in-process PreviewHost) and plugin callers; a plugin must declare the
+/// `preview` capability and may only use an explicitly renderable content kind.
+const PREVIEW_CAPABILITY: &str = "preview";
+
+fn assert_preview_caller(
+    perms: &crate::plugin_perm::PluginPermState,
+    settings: &crate::settings::SettingsState,
+    window: &WebviewWindow,
+    plugin_id: Option<&str>,
+    host_token: Option<&str>,
+) -> Result<Option<String>, String> {
+    // The satellite renderer is first-party core UI (the in-window × uses
+    // close_preview). External plugin callers never have this window label.
+    if window.label() == PREVIEW_WINDOW {
+        return Ok(None);
+    }
+    crate::plugin_perm::assert_native_or_capability_resolved(
+        perms,
+        settings,
+        window,
+        plugin_id,
+        host_token,
+        PREVIEW_CAPABILITY,
+    )
+}
+
+fn validate_preview_request(req: &PreviewRequest) -> Result<(), String> {
+    if !matches!(
+        req.kind.as_str(),
+        "text" | "textfile" | "image" | "audio" | "video" | "pdf" | "filelist"
+    ) {
+        return Err(format!(
+            "unsupported preview kind \"{}\" (expected text, textfile, image, audio, video, pdf or filelist)",
+            req.kind
+        ));
+    }
+    const MAX_TEXT_CHARS: usize = 512 * 1024;
+    const MAX_PATH_CHARS: usize = 32 * 1024;
+    const MAX_FILELIST_PATHS: usize = 1024;
+    if req.content.as_ref().is_some_and(|value| value.len() > MAX_TEXT_CHARS) {
+        return Err(format!("preview text exceeds {MAX_TEXT_CHARS} chars"));
+    }
+    if req.path.as_ref().is_some_and(|value| value.len() > MAX_PATH_CHARS || value.contains('\0')) {
+        return Err("preview path is invalid or too long".into());
+    }
+    if let Some(paths) = &req.paths {
+        if paths.len() > MAX_FILELIST_PATHS {
+            return Err(format!("preview file list exceeds {MAX_FILELIST_PATHS} paths"));
+        }
+        if paths.iter().any(|value| value.len() > MAX_PATH_CHARS || value.contains('\0')) {
+            return Err("preview file list contains an invalid path".into());
+        }
+    }
+    if req.checked.as_ref().is_some_and(|checked| checked.len() > MAX_FILELIST_PATHS) {
+        return Err(format!("preview checked list exceeds {MAX_FILELIST_PATHS} indices"));
+    }
+    match req.kind.as_str() {
+        "text" if req.content.is_none() => Err("text preview requires content".into()),
+        "textfile" | "audio" | "video" | "pdf" if req.path.is_none() => {
+            Err(format!("{} preview requires path", req.kind))
+        }
+        "image" if req.path.is_none() && req.id.is_none() => {
+            Err("image preview requires path or clipboard id".into())
+        }
+        "filelist" if req.paths.as_ref().is_none_or(Vec::is_empty) => {
+            Err("filelist preview requires paths".into())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn preview_follow_allowed(caller: Option<&str>, clipboard_setting: bool) -> bool {
+    // First-party follow obeys the clipboard setting; explicit plugin calls are
+    // governed by the preview manifest capability instead.
+    caller.is_some() || clipboard_setting
+}
+
+fn find_preview_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    app.get_webview_window(PREVIEW_WINDOW)
+        .ok_or_else(|| "preview window not found".to_string())
+}
+
+/// Wait briefly for startup window creation before failing. The hotkey and a
+/// plugin capability can race setup() on the first summon; a false "not found"
+/// makes a valid call indistinguishable from a denied one.
+async fn wait_for_preview_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    for _ in 0..20 {
+        if let Some(window) = app.get_webview_window(PREVIEW_WINDOW) {
+            return Ok(window);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    find_preview_window(app)
+}
+
 #[tauri::command]
-pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
-    // 设置/剪贴板 → 开启预览: when off, the satellite never shows. Idempotent
-    // teardown also reclaims any preview a toggle-off left on screen.
-    if !app
+pub async fn show_preview(
+    app: AppHandle,
+    req: PreviewRequest,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: WebviewWindow,
+    perms: State<'_, crate::plugin_perm::PluginPermState>,
+    settings: State<'_, crate::settings::SettingsState>,
+) -> Result<(), String> {
+    let caller = assert_preview_caller(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+    )?;
+    validate_preview_request(&req)?;
+    // The clipboard-specific setting only gates the internal selection
+    // follow source. An explicit plugin preview is its own host capability and
+    // must not disappear because clipboard previews were disabled.
+    let clipboard_preview = app
         .state::<crate::settings::SettingsState>()
         .current()
         .clipboard
-        .preview
-    {
+        .preview;
+    if !preview_follow_allowed(caller.as_deref(), clipboard_preview) {
         teardown_preview(&app);
         return Ok(());
     }
@@ -724,9 +844,7 @@ pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
         teardown_preview(&app);
         return Ok(());
     }
-    let preview = app
-        .get_webview_window(PREVIEW_WINDOW)
-        .ok_or_else(|| "preview window not found".to_string())?;
+    let preview = wait_for_preview_window(&app).await?;
     if let Some(state) = app.try_state::<PreviewState>() {
         *state.0.lock().unwrap() = Some(req.clone());
     }
@@ -756,6 +874,9 @@ pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
         let hwnd = preview.hwnd().map_err(|e| e.to_string())?;
         let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
     }
+    // Arm the launcher's Esc-priority state for every preview caller.
+    // The preview renderer reads the full request from its own window.
+    let _ = app.emit_to(MAIN_WINDOW, "preview-opened", ());
     // Preview visible → Normal; the hidden settings stays Low.
     sync_aux_memory_targets(&app);
     Ok(())
@@ -765,11 +886,22 @@ pub fn show_preview(app: AppHandle, req: PreviewRequest) -> Result<(), String> {
 /// releases decoded bitmaps / media buffers (the renderer process stays
 /// resident ~15MB for reuse).
 #[tauri::command]
-pub fn close_preview(app: AppHandle) -> Result<(), String> {
+pub fn close_preview(
+    app: AppHandle,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: WebviewWindow,
+    perms: State<'_, crate::plugin_perm::PluginPermState>,
+    settings: State<'_, crate::settings::SettingsState>,
+) -> Result<(), String> {
+    assert_preview_caller(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+    )?;
     teardown_preview(&app);
-    // Let the launcher drop its Esc-priority state even when the X button (not
-    // Esc) closed it.
-    let _ = app.emit_to(MAIN_WINDOW, "preview-closed", ());
     Ok(())
 }
 
@@ -778,7 +910,12 @@ pub fn close_preview(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn get_preview_request(
     state: State<'_, PreviewState>,
+    window: WebviewWindow,
 ) -> Result<Option<PreviewRequest>, String> {
+    let label = window.label();
+    if label != MAIN_WINDOW && label != PREVIEW_WINDOW {
+        return Err("get_preview_request: trusted launcher window required".into());
+    }
     Ok(state.0.lock().unwrap().clone())
 }
 
@@ -813,25 +950,31 @@ pub async fn allow_asset_path(
 /// merely hidden window could keep playing media and would never reclaim
 /// memory. Idempotent.
 pub fn teardown_preview(app: &AppHandle) {
-    let Some(preview) = app.get_webview_window(PREVIEW_WINDOW) else {
-        return;
-    };
-    // Tear the page down first, then hide synchronously via Win32. Tauri's
-    // `hide()` is queued on the thread executor and can race the navigation —
-    // the page unload can re-show the window, leaving it visible after teardown.
-    let _ = preview.navigate(tauri::Url::parse("about:blank").unwrap());
-    if let Ok(hwnd) = preview.hwnd() {
-        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_HIDE);
+    let had_window = if let Some(preview) = app.get_webview_window(PREVIEW_WINDOW) {
+        // Tear the page down first, then hide synchronously via Win32. Tauri's
+        // `hide()` is queued on the thread executor and can race navigation —
+        // the page unload can re-show the window, leaving it visible after
+        // teardown.
+        let _ = preview.navigate(tauri::Url::parse("about:blank").unwrap());
+        if let Ok(hwnd) = preview.hwnd() {
+            use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
         }
-    }
+        true
+    } else {
+        false
+    };
     if let Some(state) = app.try_state::<PreviewState>() {
         *state.0.lock().unwrap() = None;
     }
-    // Preview hidden → Low (settings too, per its own visibility). Covers every
-    // launcher-hide path that funnels through teardown.
+    // Preview hidden → Low (settings too, per its own visibility).
     sync_aux_memory_targets(app);
+    if had_window {
+        // Every teardown path clears the launcher's Esc-priority mirror.
+        let _ = app.emit_to(MAIN_WINDOW, "preview-closed", ());
+    }
 }
 
 /// True when the mouse cursor sits over the *visible* satellite preview — used
@@ -1124,6 +1267,85 @@ mod tests {
         assert!(is_hide_suppressed(&focus));
         clear_hide_suppression(&focus);
         assert!(!is_hide_suppressed(&focus));
+    }
+
+    #[test]
+    fn preview_request_gate_accepts_supported_shapes() {
+        for value in [
+            serde_json::json!({"kind":"text","content":"hello"}),
+            serde_json::json!({"kind":"textfile","path":"C:\\a.txt"}),
+            serde_json::json!({"kind":"image","path":"C:\\a.png"}),
+            serde_json::json!({"kind":"image","id":7}),
+            serde_json::json!({"kind":"audio","path":"C:\\a.mp3"}),
+            serde_json::json!({"kind":"video","path":"C:\\a.mp4"}),
+            serde_json::json!({"kind":"pdf","path":"C:\\a.pdf"}),
+            serde_json::json!({"kind":"filelist","paths":["C:\\a.txt","C:\\b.txt"]}),
+        ] {
+            let req: PreviewRequest = serde_json::from_value(value).unwrap();
+            assert!(validate_preview_request(&req).is_ok(), "rejected {req:?}");
+        }
+    }
+
+    #[test]
+    fn preview_request_gate_rejects_missing_payload_and_unknown_kind() {
+        let no_text: PreviewRequest = serde_json::from_value(serde_json::json!({"kind":"text"})).unwrap();
+        assert!(validate_preview_request(&no_text).is_err());
+        let no_path: PreviewRequest = serde_json::from_value(serde_json::json!({"kind":"pdf"})).unwrap();
+        assert!(validate_preview_request(&no_path).is_err());
+        let no_image: PreviewRequest = serde_json::from_value(serde_json::json!({"kind":"image"})).unwrap();
+        assert!(validate_preview_request(&no_image).is_err());
+        let unknown: PreviewRequest = serde_json::from_value(serde_json::json!({"kind":"html","content":"x"})).unwrap();
+        assert!(validate_preview_request(&unknown).is_err());
+    }
+
+    #[test]
+    fn preview_setting_only_gates_internal_follow() {
+        assert!(preview_follow_allowed(None, true));
+        assert!(!preview_follow_allowed(None, false));
+        assert!(preview_follow_allowed(Some("plugin"), false));
+        assert!(preview_follow_allowed(Some("plugin"), true));
+    }
+
+    #[test]
+    fn preview_clone_preserves_payload() {
+        let req = PreviewRequest {
+            kind: "filelist".into(),
+            content: None,
+            path: None,
+            id: Some(7),
+            paths: Some(vec!["C:\\a.txt".into()]),
+            checked: Some(vec![0]),
+            remember_checks: Some(true),
+        };
+        let clone = req.clone();
+        assert_eq!(clone.id, Some(7));
+        assert_eq!(clone.checked, Some(vec![0]));
+        assert_eq!(clone.remember_checks, Some(true));
+    }
+
+    #[test]
+    fn preview_request_defaults_optional_fields() {
+        let req: PreviewRequest = serde_json::from_value(serde_json::json!({
+            "kind": "text",
+            "content": "hello"
+        }))
+        .expect("plugin preview requests need only kind + content/path");
+        assert_eq!(req.kind, "text");
+        assert_eq!(req.content.as_deref(), Some("hello"));
+        assert_eq!(req.id, None);
+        assert_eq!(req.paths, None);
+    }
+
+    #[test]
+    fn preview_request_rejects_unknown_kind_only_at_the_boundary() {
+        // Unknown kinds are shaped like any other request; the renderer fails
+        // closed with its generic load error rather than exposing raw HTML.
+        let req: PreviewRequest = serde_json::from_value(serde_json::json!({
+            "kind": "html",
+            "content": "<script>alert(1)</script>"
+        }))
+        .unwrap();
+        assert_eq!(req.kind, "html");
     }
 
     fn wa() -> PhysicalRect<i32, u32> {

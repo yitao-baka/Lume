@@ -3,7 +3,7 @@
 // 输入「h:」前缀进入本插件的动作面板：
 //   h:                     列出全部动作
 //   h:https://example.com  经宿主 HTTP 拉取该 URL（无 CORS 限制）
-//   h:通知 / h:文件 / h:图片 / h:粘贴 / h:屏幕 / h:文件列表
+//   h:通知 / h:文件 / h:图片 / h:粘贴 / h:屏幕 / h:文件列表 / h:预览
 //
 // 覆盖的宿主能力：
 //   ctx.http.request        宿主 HTTP（WinHTTP，绕过 CORS；text()/json() 便利方法）
@@ -11,6 +11,7 @@
 //   ctx.dialog.open/save    原生文件选择 / 保存对话框
 //   ctx.clipboard.writeImage / writeFiles / readFiles / paste
 //   ctx.screen.cursor/displays
+//   ctx.preview.show/close
 
 /** A 64×64 gradient PNG as a data URI — generated at runtime with a canvas. */
 function makePng() {
@@ -47,6 +48,10 @@ const ACTIONS = [
   { key: "文件列表", desc: "读取剪贴板中的文件列表", run: async (ctx) => {
       const files = await ctx.clipboard.readFiles();
       ctx.app.toast(files.length ? `剪贴板里有 ${files.length} 个文件：${files[0]}` : "剪贴板里没有文件");
+    } },
+  { key: "预览", desc: "在卫星预览窗中显示一段文本", run: async (ctx) => {
+      await ctx.preview.show({ kind: "text", content: "来自 host-tools 的卫星预览\n外部插件与内置页面使用同一个窗口。" });
+      ctx.app.toast("预览已打开；Esc 或在预览窗内关闭");
     } },
   { key: "屏幕", desc: "光标位置与显示器信息", run: async (ctx) => {
       const pos = await ctx.screen.cursor();

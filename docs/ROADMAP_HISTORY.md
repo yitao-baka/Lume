@@ -5521,3 +5521,37 @@ Presenter 名称，值没有持久化或下发路径。
 - `cdp_plugin_nav_clipboard_fix_verify` 全部 PASS（含插件写回、分类元数据与
   mutation 错误语义），`cdp_audit_r2_verify` **15/15**，
   `cdp_page_runtime_verify` 全部 PASS。
+
+
+## 89. 卫星预览去插件化（2026-10-29）
+
+### 89.1 归属
+
+- 删除内置 `preview` service、它的插件 id/清单/描述/名称和设置条目。卫星预览
+  现在属于核心宿主：Rust `window.rs` 持有窗口、贴边、不抢焦点、资源回收与
+  设置门控；前端 `src/launcher/previewHost.ts` 持有显式 show/close、选择
+  跟随去抖和 Esc 优先级状态。
+- `ModeInstance.previewTarget/previewEnabled` 仅保留为内置页面的内部跟随
+  adapter，不再是插件贡献契约；剪贴板的选择目标在宿主侧直接转成
+  `PreviewReq`。
+
+### 89.2 开放能力
+
+- `ctx.preview.show(request)` / `close()` 供插件逻辑、沙箱 Presenter 与内置
+  页面共用；Presenter 走 `lume.app.preview/closePreview` 的受限转发。
+- 前端 `RPC_PERMISSION` 与 Rust `assert_native_or_capability` 都要求清单声明
+  `preview`；Rust 另校验 kind、payload 形状、文本 512 KiB、路径 1024 项预算。
+  不注入 HTML。
+- 禁用任意插件不再影响预览；`launcher-hidden` 与显式 close 统一 teardown。
+  设置「开启预览」只控制内置页面的自动跟随，外部插件的显式预览不受影响。
+
+### 89.3 验证
+
+- `pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test`
+  **279 passed / 9 ignored**、i18n **587 键 × 3 语言**、plugin contract PASS、
+  `cdp_preview_capability_verify` PASS、`cdp_visual_audit_verify` **28/28**。
+- Rust 新增 6 条 preview request/克隆/设置边界测试；外部能力由 host-tools 示例的
+  `h:预览` 动作和 `cdp_preview_capability_verify` 覆盖；
+  `cdp_visual_audit_verify` 验证预览标题、窗内关闭与请求 teardown。剪贴板
+  「开启预览」只控制内置页面的自动跟随；preview 渲染器的文本/视频缩略图读取
+  由可信 preview 窗口单独放行。

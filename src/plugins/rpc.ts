@@ -63,6 +63,10 @@ export async function execHostRpc(
       });
     case "app.foreground":
       return api.app.foreground();
+    case "preview.show":
+      return api.preview.show(args.req as never);
+    case "preview.close":
+      return api.preview.close();
     case "app.detach":
       return api.app.detach();
     case "theme.set":

@@ -8,6 +8,7 @@ import { CLIPBOARD_SCHEMA, type ClipboardModel } from "../../page-runtime/schema
 import { PageSession } from "../../page-runtime/session";
 import type { PageIntent, PageModel, PresenterDescriptor } from "../../page-runtime/contracts";
 import { pushDiagnostic } from "../../page-runtime/diagnostics";
+import type { PreviewReq } from "../../launcher/types";
 import type { LauncherPlugin, ModeInstance, ModeKeyContext, PageRow, PluginServices } from "../types";
 import { createClipboardPageService } from "../../page-services/clipboard/service";
 import { rememberPageModel } from "../registry";
@@ -51,8 +52,8 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
     openContextMenu: page.openContextMenu,
     onEscape: page.store.onEscape,
     modal: page.modal,
-    previewTarget: () => (model()?.preview?.payload as never) ?? null,
-    previewEnabled: page.store.previewEnabled,
+    previewTarget: page.previewTarget as () => PreviewReq | null,
+    previewEnabled: page.previewEnabled,
     measureViewport: page.store.measureViewport,
     ready: page.ready,
     placeholder: page.store.placeholder,

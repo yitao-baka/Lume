@@ -6,11 +6,17 @@
 //   preview-closed  — Esc → about:blank, preview renderer back to baseline
 // Usage: node scripts/cdp_preview_memtest.mjs
 import { spawn, execSync } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 
 const CDP_PORT = 9222;
 const APP = "src-tauri/target/debug/lume.exe";
-const IMG = "E:\\SoftwareDevelopment\\Projects\\LumeLauncher\\test\\PixPin_2026-08-06_22-03-20.png";
+const IMG = "E:\\SoftwareDevelopment\\Projects\\LumeLauncher\\test\\preview-smoke-fixture.png";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+mkdirSync("test", { recursive: true });
+if (!existsSync(IMG)) {
+  execSync(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; $bmp = New-Object System.Drawing.Bitmap 32,32; $bmp.Save('E:\\SoftwareDevelopment\\Projects\\LumeLauncher\\test\\preview-smoke-fixture.png', [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()"`);
+}
 
 const snap = (label) => {
   const out = execSync(

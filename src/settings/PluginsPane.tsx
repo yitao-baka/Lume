@@ -164,6 +164,7 @@ const PERM_INFO: Record<string, { label: keyof Messages; desc: keyof Messages }>
   "fs.write": { label: "permFsWrite", desc: "permFsWriteDesc" },
   trash: { label: "permTrash", desc: "permTrashDesc" },
   window: { label: "permWindow", desc: "permWindowDesc" },
+  preview: { label: "permPreview", desc: "permPreviewDesc" },
 };
 
 function permLabel(perm: string): string {
@@ -183,11 +184,10 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Built-ins ship with an empty manifest description — give the two of them
- * a localized one so the cards self-explain like disk plugins do. */
+/** Built-ins ship with an empty manifest description — give them a localized
+ * one so the cards self-explain like disk plugins do. */
 const BUILTIN_DESC: Record<string, keyof Messages> = {
   clipboard: "pluginDescClipboard",
-  preview: "pluginDescPreview",
 };
 
 function pluginDescription(p: PluginManifest): string {

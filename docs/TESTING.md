@@ -126,7 +126,15 @@ its Intent reaches the same session, switches Presenter without replacing the
 session, and confirms Esc close re-docks the same model/service.
 
 The Windows/WebView2 behavior is verified with `scripts/cdp_*.mjs`. Those
-scripts launch an already built exe, so rebuild first:
+scripts launch an already built exe, so rebuild first. The focused satellite
+preview probe checks the core host, declared/undeclared plugin permissions and
+native window visibility:
+
+```bash
+node scripts/cdp_preview_capability_verify.mjs
+```
+
+
 
 ```bash
 pnpm run tauri build --debug --no-bundle

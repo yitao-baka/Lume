@@ -3,10 +3,10 @@
 //! A plugin is a manifest (`plugin.toml`) plus one or more *contributions*.
 //! Contributions live in the frontend registry (`src/plugins/`): a `mode`
 //! contribution owns a Page Service and one or more Presenters; the
-//! clipboard is the first migrated page. A `preview` service owns the satellite
-//! preview window routing.
+//! clipboard is the first migrated page. The satellite preview is a core
+//! host window/capability, not a plugin contribution.
 //!
-//! Built-in plugins (clipboard, preview) are compiled into lume.exe but go
+//! Built-in plugins (clipboard) are compiled into lume.exe but go
 //! through the same registry/enabled-set path as on-disk plugins: every
 //! subdirectory of `<base>/plugins/` holding a `plugin.toml` is discovered
 //! and merged here. The manifest's `permissions` field is reserved (v1 does
@@ -492,10 +492,7 @@ pub struct PluginInfo {
 
 /// The compiled-in first-party plugins. Their UI/logic lives under
 /// `src/plugins/<id>/` in the frontend; the ids are the stable contract.
-pub const BUILTIN_PLUGINS: &[(&str, &str, &str)] = &[
-    ("clipboard", "剪贴板历史", "mode"),
-    ("preview", "卫星预览", "service"),
-];
+pub const BUILTIN_PLUGINS: &[(&str, &str, &str)] = &[("clipboard", "剪贴板历史", "mode")];
 
 /// Plugins directory: `<base>/plugins/`.
 fn plugins_dir(base: &Path) -> std::path::PathBuf {
@@ -1542,12 +1539,13 @@ entry = \"view.html\"
         let demo_dir = base.join("demo");
         fs::create_dir_all(&demo_dir).unwrap();
         fs::write(demo_dir.join("plugin.toml"), "id = \"demo\"\nname = \"Demo\"\n").unwrap();
-        let disabled = vec!["preview".to_string()];
+        let disabled = vec!["clipboard".to_string()];
         let all = list_plugins(&root, &disabled, &[], false);
         let ids: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
-        assert!(ids.contains(&"clipboard") && ids.contains(&"preview") && ids.contains(&"demo"));
-        let preview = all.iter().find(|p| p.id == "preview").unwrap();
-        assert!(preview.builtin && !preview.enabled);
+        assert!(ids.contains(&"clipboard") && ids.contains(&"demo"));
+        assert!(!ids.contains(&"preview"), "preview is a host capability, not a plugin");
+        let clipboard = all.iter().find(|p| p.id == "clipboard").unwrap();
+        assert!(clipboard.builtin && !clipboard.enabled);
         let demo = all.iter().find(|p| p.id == "demo").unwrap();
         assert!(!demo.builtin && demo.enabled && demo.name == "Demo");
         assert!(!demo.hidden, "hidden defaults to false (pill visible)");

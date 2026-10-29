@@ -8,8 +8,24 @@ All notable changes to Lume are documented here. Format based on
 > `docs/RULES.md`、`docs/NORMS.md`、`docs/PLUGIN_GAP_ANALYSIS.md` 已合并或删除，现状见 `docs/` 下各活跃文档。
 
 ## [Unreleased]
-
 ### Added
+- **统一插件后端与贡献化权限设计（2026-10-29）** — 新增
+  `docs/PLUGIN_UNIFIED_BACKEND.md`，定义 api 3 的单后端实例、可组合贡献、
+  `contribute.*` / `event.*` / `host.*` 分层授权、页面键、多页面会话、Presenter
+  边界、设置与安装迁移、实现映射和验收矩阵；路线图同步登记为开放事项。当前仅
+  交付设计，不改变现有 api 2 运行时。验证：文档内 9 个 TOML 示例均通过标准
+  TOML 解析，围栏配对与活跃文档规范检查通过。
+
+- **卫星预览去插件化（2026-10-29）** — 删除内置 `preview` service 及其插件清单/
+  启停/描述入口。窗口、贴边、不抢焦点、资源回收、设置门控与 Esc 优先级现由核心
+  `PreviewHost` + Rust `window.rs` 持有；内置页面走内部跟随 adapter，外部插件
+  统一通过 `ctx.preview.show/close`（Presenter 用 `lume.app.preview/closePreview`）
+  调用。前后端两层权限台账新增 `preview`，Rust 校验 kind/payload 及文本 512 KiB、
+  路径 1024 项预算，不注入 HTML；禁用插件不再关闭预览。host-tools 示例增加
+  `h:预览`。详细记录见 `docs/ROADMAP_HISTORY.md` #89。验证：`pnpm exec tsc
+  --noEmit`、`pnpm run build`、`cargo check`、`cargo test` **279 passed / 9
+  ignored**、i18n **587 键 × 3 语言**、plugin contract PASS、
+  `cdp_preview_capability_verify` PASS、`cdp_visual_audit_verify` **28/28**。
 
 - **插件、导航与剪贴板专项审计修复（2026-10-28）** — 插件 writeText/writeImage/writeFiles 统一经 self-write sequence 抑制，生成内容不进入剪贴板历史；插件可触发的剪贴板读写、检查与 mutation 移出主线程。`search_clipboard` 返回 `{ items, total, categories }`，内容分类过滤发生在历史上限之前，收藏不占普通上限，分类计数由同一查询的独立聚合产生。卫星预览的文本/图片/媒体海报/文件列表/PDF 加载增加请求代际，迟到结果不会覆盖新选择。navBars 在 sanitize、整页预算与导航 store 三层拒绝重复 id；pin/checked 对不存在的 id 报错，clear 返回实际删除数。详细记录见 `docs/ROADMAP_HISTORY.md` #88。验证：`pnpm exec tsc --noEmit`、`pnpm run build`、`cargo check`、`cargo test` **273 passed / 9 ignored**、`cargo clippy --all-targets --message-format=short` **0 warning**、Page Runtime 18/18、clipboard model 10/10、clipboard store 8/8、plugin contract PASS、i18n 587 键 × 3 语言、debug `--no-bundle` 构建通过；`cdp_plugin_nav_clipboard_fix_verify`、`cdp_audit_r2_verify` **15/15**、`cdp_page_runtime_verify` 全部通过。
 - **专项审计 R2 修复（插件、导航与剪贴板）** — Page Service 在慢

@@ -14,6 +14,11 @@ Lume 的开放事项清单：**只记录尚未开始或尚未收尾的工作**�
 
 ### 插件生态后续
 
+- **统一插件后端与贡献化权限** — 每个插件只保留一个后端入口，搜索、页面、
+  导航栏目与动作改为可组合贡献，`contribute.*` / `event.*` / `host.*` 分层授权；
+  Page Service 与隔离 Presenter 保持不变。设计见
+  [PLUGIN_UNIFIED_BACKEND.md](PLUGIN_UNIFIED_BACKEND.md)
+
 - **`.lupx` 市场源** — 静态 JSON 索引（名称/版本/下载 URL/SHA-256）+ 应用内
   安装 + 启动时版本比对提示；受仓库网络约束须可配镜像
 - **浏览器 URL 获取与划词捕获** — 前台浏览器地址栏（UIA）与选中文本捕获，

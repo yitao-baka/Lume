@@ -209,6 +209,7 @@ pub async fn plugin_window_open(
     .decorations(false)
     .shadow(true)
     .background_color(tauri::window::Color(r, g, b, 255))
+    .focused(false)
     .visible(false)
     .initialization_script(format!("window.__LUME_CONFIG__ = {config_json};"));
     builder = match remembered {

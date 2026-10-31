@@ -54,6 +54,7 @@ pub async fn plugin_logic_host_ensure(
     .resizable(false)
     .decorations(false)
     .skip_taskbar(true)
+    .focused(false)
     .visible(false)
     .initialization_script(format!("window.__LUME_CONFIG__ = {config_json};"));
     let win = builder.build().map_err(|e| e.to_string())?;

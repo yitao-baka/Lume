@@ -59,8 +59,10 @@ fn build_tray(
             "settings" => {
                 let _ = crate::window::open_settings(app.clone());
             }
-            // `request_restart` / `exit` are built-in AppHandle methods.
-            "restart" => app.request_restart(),
+            // Release the single-instance guard before Tauri spawns the
+            // replacement process; the reverse order makes the new instance
+            // lose the mutex and exit silently.
+            "restart" => crate::restart_app(app),
             "exit" => app.exit(0),
             _ => {}
         })

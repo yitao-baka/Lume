@@ -446,6 +446,20 @@ All notable changes to Lume are documented here. Format based on
 
 ### Fixed
 
+- **启动焦点与托盘重启交接（2026-10-31）** — 启动时创建的 launcher / settings /
+  preview WebView 现在把 `visible(false)` 与 `focused(false)` 配对，preview 还在
+  构建器内直接应用 `focusable(false)`。WinForms 前台探针在修复前复现了约
+  294 / 413 / 539 ms 的三次隐藏窗口抢焦；修复后启动 8 秒内前台保持不动。隐藏
+  主页面不再在 mount 时聚焦搜索框，呼出焦点统一由 `launcher-shown` 负责。
+  单实例互斥量改为由托盘重启路径在 Tauri spawn 替代进程之前幂等释放，消除
+  重启新进程可能输给旧进程 guard 后静默退出的竞态。
+  验证：`pnpm verify:fast` PASS（docs 15 项、i18n 587 键 × 3 语言、Page Runtime
+  18/18、clipboard model 10/10、clipboard store 8/8、skin 11/11、前端生产构建、
+  Rust **281 passed / 9 ignored**）；release `--no-bundle` 构建通过；前台锚点探针
+  启动后 8 秒无切换；隔离 release 托盘重启 **6/6**，重启前后 8 秒前台始终停在
+  锚点窗口；定向 UI `smoke` **8/8**、`settings` **6/6**、`plugin-runtime`
+  **6/6**、`preview` **5/5**。
+
 - **插件系统、导航页与剪贴板专项审计修复** — 按
   [归档专项审计](docs/History/AUDIT_PLUGIN_NAV_CLIPBOARD_2026-10-25.md)
   收口 F-01–F-14：主窗、逻辑宿主与分离窗口统一安装 WebView2 顶层/子帧导航及

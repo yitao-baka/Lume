@@ -5653,3 +5653,44 @@ Presenter 名称，值没有持久化或下发路径。
   通过，debug 构建约 23 秒，Release 构建约 40 秒。
 - 隔离运行确认不会遗留测试 Lume 进程；旧脚本仍可能全局清理，因此只在显式 legacy
   命令和无人使用 Lume 时运行。
+
+## 92. 启动焦点与托盘重启交接（2026-10-31）
+
+### 92.1 问题
+
+- Tauri 的 `WebviewWindowBuilder` 默认同时聚焦原生窗口与 WebView2；
+  `visible(false)` 只隐藏顶层 HWND，不会关闭创建阶段的 `MoveFocus`。主窗口、
+  设置窗、预览窗依次启动时，会把前台切到不可见窗口。
+- 启动后的隐藏主页面还会主动聚焦搜索框，与真实的 `launcher-shown` 呼出路径
+  重复。启动阶段不应持有用户焦点。
+- Tauri 的 `request_restart()` 先 spawn 替代进程，再让旧进程退出；Lume 的
+  single-instance 命名互斥量由旧进程持有到进程终止。两者之间没有交接，替代
+  进程可能抢先检查互斥量并静默退出。
+
+### 92.2 修复
+
+- launcher、settings、preview、logic host 与 detached plugin window 的构建器
+  统一加 `focused(false)`；preview 在构建器内直接设 `focusable(false)`，不再
+  等 build 完成后再改窗口样式。
+- 删除隐藏主页面的 mount-time 搜索框聚焦；`launcher-shown` 继续负责每次真实
+  呼出后的输入焦点。
+- 单实例 HANDLE 移到受控原子存储；托盘重启统一走 `restart_app`，在 Tauri
+  通过 `request_restart` spawn 替代进程之前幂等释放它。正常退出的 guard
+  仍由进程句柄生命周期持有。
+
+### 92.3 验证
+
+- WinForms 固定前台窗口 + 1 ms `GetForegroundWindow` 采样：修复前在前台窗口
+  之后观察到 Lume、Lume 设置、Lume 预览三个隐藏 HWND 依次成为前台；修复后
+  release 构建启动 8 秒内前台始终停留在锚点窗口。
+- 修复前隔离 debug / release 实例通过托盘 `restart` 菜单事件各连续重启 6 次，
+  每次旧 PID 退出且恰好留下一个新 PID；空闲环境下未触发锁竞态，但源码仍存在
+  无同步的 spawn-before-exit 窗口，因此改为显式释放。
+- `pnpm verify:fast` PASS：docs 15 项、i18n 587 键 × 3 语言、Page Runtime
+  **18/18**、clipboard model **10/10**、clipboard store **8/8**、skin **11/11**、
+  前端生产构建、Rust **281 passed / 9 ignored**；release `--no-bundle` 构建通过。
+- 修复后 release 前台锚点探针 8 秒无切换；隔离 release 托盘重启 **6/6**，
+  重启前后 8 秒前台始终停在锚点窗口；
+  `pnpm verify:ui --suite smoke,settings,plugin-runtime,preview --no-build`
+  依次 **8/8**、**6/6**、**6/6**、**5/5**。`smoke` 新增两条断言：隐藏挂载不得
+  聚焦搜索框，真实呼出必须把焦点交还搜索框。

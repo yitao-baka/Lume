@@ -41,22 +41,22 @@ mod webview_guard;
 mod window;
 mod window_geometry;
 
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicPtr, Ordering};
+
 use tauri::{Emitter, Manager, WindowEvent};
 
-/// Result of the single-instance check.
-enum InstanceGuard {
-    /// This is the first instance — hold the mutex until the process exits.
-    Held(windows::Win32::Foundation::HANDLE),
-    /// Another instance holds the mutex — this process must exit.
-    Exit,
-}
+/// The held single-instance mutex handle. Keeping the handle here rather than in
+/// a stack local lets the tray restart path release it before Tauri spawns the
+/// replacement process.
+static INSTANCE_MUTEX: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// Single-instance guard: a per-session named mutex held for the process
 /// lifetime. A second launch fails to acquire it and exits immediately, so
 /// Lume never multi-opens. The handle must stay alive for the whole run.
-fn acquire_single_instance() -> InstanceGuard {
+fn acquire_single_instance() -> bool {
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
 
     // The verification harness runs isolated copies of the debug executable
@@ -82,31 +82,51 @@ fn acquire_single_instance() -> InstanceGuard {
         .chain(std::iter::once(0))
         .collect();
     let handle = match unsafe { CreateMutexW(None, true, PCWSTR(name.as_ptr())) } {
-        Ok(h) => h,
+        Ok(handle) => handle,
         Err(e) => {
             // Can't acquire the mutex — fail open so a mutex fault never
             // blocks the app from starting.
             eprintln!("[lume] single-instance mutex error: {e}");
-            return InstanceGuard::Held(HANDLE(std::ptr::null_mut()));
+            return true;
         }
     };
     if handle.0.is_null() || unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         if !handle.0.is_null() {
             let _ = unsafe { CloseHandle(handle) };
         }
-        return InstanceGuard::Exit;
+        return false;
     }
-    InstanceGuard::Held(handle)
+    INSTANCE_MUTEX.store(handle.0, Ordering::SeqCst);
+    true
+}
+
+/// Drop the process-lifetime single-instance guard. Tauri restarts by spawning
+/// the new process before the old process exits, so the replacement otherwise
+/// races this mutex and exits silently.
+fn release_single_instance() {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+
+    let handle = INSTANCE_MUTEX.swap(std::ptr::null_mut(), Ordering::SeqCst);
+    if !handle.is_null() {
+        let _ = unsafe { CloseHandle(HANDLE(handle)) };
+    }
+}
+
+/// Restart through Tauri after handing the single-instance mutex to the new
+/// process. The release must happen before `request_restart` because Tauri's
+/// request-exit failure fallback also spawns directly.
+pub(crate) fn restart_app(app: &tauri::AppHandle) {
+    release_single_instance();
+    app.request_restart();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Single instance: hold a named mutex for the process lifetime; a second
     // launch exits immediately (docs/ARCHITECTURE.md).
-    let _guard = match acquire_single_instance() {
-        InstanceGuard::Held(h) => h,
-        InstanceGuard::Exit => return,
-    };
+    if !acquire_single_instance() {
+        return;
+    }
 
     tauri::Builder::default()
         .manage(apps::AppIndex::default())
@@ -158,7 +178,12 @@ pub fn run() {
             // Must run before the first WebView2 environment is created.
             webview_guard::configure_browser_environment();
 
-            // Main launcher window (replaces tauri.conf.json windows[0]).
+            // All startup webviews are hidden, but Tauri focuses both the
+            // native window and WebView2 by default. `visible(false)` only
+            // hides the top-level HWND, so it must be paired with
+            // `focused(false)` (which propagates to the WebView controller) or
+            // startup steals the foreground three times while the windows are
+            // still invisible. Show paths focus explicitly after `show()`.
             tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -173,6 +198,7 @@ pub fn run() {
             .background_color(tauri::window::Color(30, 30, 32, 255))
             .always_on_top(true)
             .skip_taskbar(true)
+            .focused(false)
             .visible(false)
             // : the Tauri drag-drop handler is ENABLED here (the only
             // window) so OS file drags arrive as `tauri://drag-drop` with real
@@ -223,6 +249,7 @@ pub fn run() {
             .resizable(true)
             .decorations(false)
             .shadow(true)
+            .focused(false)
             .visible(false)
             .initialization_script(&init_script)
             .build()?;
@@ -251,8 +278,9 @@ pub fn run() {
             // (text / text files / images / audio / video) render here, docked
             // flush to the launcher's right edge. Created at startup (hidden)
             // like the settings window to avoid runtime window creation;
-            // non-activating (`WS_EX_NOACTIVATE` via set_focusable) so clicking
-            // it never steals focus from the launcher.
+            // non-activating from creation (`focused(false)` plus
+            // `focusable(false)` → WS_EX_NOACTIVATE), so it neither steals
+            // startup focus nor takes focus when clicked later.
             tauri::WebviewWindowBuilder::new(
                 app,
                 "preview",
@@ -264,13 +292,13 @@ pub fn run() {
             .decorations(false)
             .always_on_top(true)
             .skip_taskbar(true)
+            .focused(false)
+            .focusable(false)
             .visible(false)
             .background_color(tauri::window::Color(30, 30, 32, 255))
             .disable_drag_drop_handler()
             .build()?;
             if let Some(pv) = app.get_webview_window("preview") {
-                // tao maps focusable(false) → WS_EX_NOACTIVATE on Windows.
-                let _ = pv.set_focusable(false);
                 // suppress the documented 1px DWM white border.
                 window::clear_dwm_border(&pv);
             }

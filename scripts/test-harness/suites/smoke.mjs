@@ -3,7 +3,15 @@ export default {
   description: "Launcher shell, mode switching and basic clipboard surface",
   tags: ["ui", "smoke"],
   async run(t) {
+    const hiddenFocus = await t.evaluate('document.activeElement?.id ?? ""');
+    t.check(
+      "hidden launcher does not focus the search input",
+      hiddenFocus !== "search-input",
+      hiddenFocus,
+    );
     await t.ensureLauncherVisible();
+    const summonFocus = await t.waitFor('document.activeElement?.id === "search-input"', 2000);
+    t.check("summon returns focus to the search input", summonFocus);
 
     t.check("launcher exposes the search input", await t.evaluate('!!document.getElementById("search-input")'));
     const modes = await t.evaluate(

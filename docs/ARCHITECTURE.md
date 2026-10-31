@@ -110,8 +110,9 @@ The satellite preview is a core capability rather than a plugin contribution.
 `src/launcher/previewHost.ts` owns the explicit show/close state, the 100 ms
 selection-follow debounce and the Esc-priority signal; the renderer lives in
 `src/preview.tsx`. `window.rs` creates the non-activating, always-on-top
-window at startup, docks it flush to the launcher's client edge and tears it
-down to `about:blank` on close. Built-in pages call the host directly;
+window at startup with `focused(false)` and `focusable(false)` applied in the
+builder, docks it flush to the launcher's client edge and tears it down to
+`about:blank` on close. Built-in pages call the host directly;
 external plugins reach the same commands through `ctx.preview.show/close` (and
 Presenters through `lume.app.preview/closePreview`). Rust re-checks the
 caller's `preview` permission and accepts only renderable content kinds,
@@ -252,6 +253,9 @@ launcher (reuses `window::toggle_launcher`); the right-click menu has Restart
 wording itself comes from `languages/*.json` through `texts::tray` (compiled
 fallbacks in `texts.rs`), so a language-file override reaches the tray too. The
 menu is rebuilt on every settings apply so a language change is immediate.
+The restart path releases the process-lifetime single-instance mutex before
+Tauri spawns the replacement process; otherwise the new instance can see the
+old guard and exit silently.
 
 ### `pins.rs`
 Persists the Navigate **已固定 bar** in a `pinned_apps` table (`path` unique,
@@ -770,8 +774,11 @@ before adding a field:
 
 ## State & lifecycle
 
-- Window starts hidden (`"visible": false`), first shown by the hotkey, and
-  auto-hides on focus loss (`lib.rs` window-event handler).
+- Every startup-created webview pairs `visible(false)` with `focused(false)`;
+  Tauri otherwise focuses the native window and WebView2 during construction
+  even though the HWND is hidden. The launcher is first shown by the hotkey,
+  focused explicitly on every show, and auto-hides on focus loss (`lib.rs`
+  window-event handler).
 - 会话续存：隐藏 / 呼出 / 模式切换都不再清 query / results / mode，
   热键重呼出恢复上次页面与状态；只有「打开首页条目后的下次呼出」（首次打开条目后的下次呼出）
   与闲置重置清空查询并回导航页。搜索框默认是一份全局共享值（共享单值，

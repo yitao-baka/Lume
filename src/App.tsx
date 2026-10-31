@@ -1099,7 +1099,6 @@ const services: PluginServices = {
     // first show may restore a remembered page).
     for (const p of modePlugins()) void p.instance.onShow?.();
     sizer.scheduleResize();
-    document.getElementById("search-input")?.focus();
 
     const unlistenSettings = await listen("settings-applied", () => {
       void applyRuntimeSettings();

@@ -435,6 +435,11 @@ export interface PluginHostApi {
      * there and `<img>`/`<video>` (which bypass CORS) cannot hand bytes to
      * JS. Permission: `fs.read`. */
     bytes(path: string): Promise<string>;
+    /** Grant one exact file to the sandboxed asset protocol and return its
+     * URL for `<img>`, `<audio>` or `<video>`. The static asset scope only
+     * covers Lume's own trees; this call asks Rust to whitelist the canonical
+     * file after checking `fs.read`. */
+    assetUrl(path: string): Promise<string>;
     /** Shell thumbnail as a base64 PNG data URI (usable in `<img src>`).
      * Rejects when the shell has no thumbnail provider for the file. */
     thumb(path: string): Promise<string>;

@@ -28,6 +28,9 @@ const clipboardService = read("src/page-services/clipboard/service.ts");
 const navigateSearch = read("src/plugins/navigate/search.ts");
 const pageRuntime = read("src/plugins/pageRuntimeMode.tsx");
 const presenterBridge = read("src/page-runtime/presenterBridge.tsx");
+const hostApi = read("src/plugins/hostApi.ts");
+const permissionLedger = read("src/plugins/permissions.ts");
+const logicFrame = read("public/pluginLogicFrame.js");
 const listTemplate = read("src/plugins/listTemplate.tsx");
 const pluginFs = read("src-tauri/src/plugin_fs.rs");
 const clipboard = read("src-tauri/src/clipboard.rs");
@@ -61,7 +64,13 @@ check(!read("src/plugins/types.ts").includes("preview?: PreviewService"), "previ
 check(!read("src/plugins/pluginName.ts").includes("preview"), "preview plugin name mapping must be removed");
 check(registry.includes("not a registered plugin"), "registry docs must name preview as core host state");
 check(read("src/launcher/previewHost.ts").includes("PREVIEW_DEBOUNCE_MS"), "core PreviewHost debounce missing");
-check(read("src/plugins/permissions.ts").includes('"preview.show": "preview"'), "preview RPC permission ledger missing");
+check(permissionLedger.includes('"preview.show": "preview"'), "preview RPC permission ledger missing");
+check(
+  hostApi.includes("plugin_allow_asset_path") &&
+    permissionLedger.includes('"fs.assetUrl": "fs.read"') &&
+    logicFrame.includes('"fs.assetUrl"'),
+  "plugin asset URL grant is not bound to the fs.read permission",
+);
 check(read("src-tauri/src/window.rs").includes("assert_preview_caller"), "Rust preview permission boundary missing");
 check(read("src-tauri/src/window.rs").includes("preview_follow_allowed"), "plugin preview must not be gated by the clipboard follow setting");
 check(read("src-tauri/src/window.rs").includes("window.label() == PREVIEW_WINDOW"), "preview window close capability is not trusted");

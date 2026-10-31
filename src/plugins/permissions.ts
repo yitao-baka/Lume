@@ -52,6 +52,7 @@ export const RPC_PERMISSION: Record<string, string> = {
   "search.status": "search.files",
   "fs.readText": "fs.read",
   "fs.bytes": "fs.read",
+  "fs.assetUrl": "fs.read",
   "fs.thumb": "fs.read",
   "fs.videoPoster": "fs.read",
   "fs.icon": "fs.read",

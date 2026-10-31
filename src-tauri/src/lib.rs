@@ -469,6 +469,7 @@ pub fn run() {
             window::close_preview,
             window::get_preview_request,
             window::allow_asset_path,
+            window::plugin_allow_asset_path,
             explorer::get_foreground_context,
             explorer::plugin_foreground_context,
             explorer::open_terminal_in_folder,

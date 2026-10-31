@@ -90,6 +90,12 @@ that hides the window, so clicking elsewhere dismisses it. Elevated launches
 blur-hide suppression while the UAC prompt owns the foreground, so cancelling
 UAC leaves the launcher visible with its error toast.
 
+User-preview assets use a narrow capability boundary: the static asset scope
+covers only Lume's own trees, while `plugin_allow_asset_path` checks the
+caller's `fs.read` declaration and adds exactly one canonical file selected by
+a plugin. The trusted main/preview renderer keeps its native `allow_asset_path`
+entry point for core previews.
+
 Window frame: the launcher panel is opaque (src/App.css `.launcher`, solid
 `--surface`) — the window has **no Acrylic backdrop** (deliberately removed;
 see docs/ROADMAP_HISTORY.md). DWM's visible frame border strip (the ~2px non-client ring
@@ -236,13 +242,18 @@ backends have timeouts).
 - **Extraction**: `extract_icon_png` calls `IShellItemImageFactory` (via
   `SHCreateItemFromParsingName`) to get a 64px icon for a `.lnk`, then
   converts the `HBITMAP` to PNG (`GetDIBits` → BGRA → RGBA → PNG).
-- **Cache**: `IconCache` is an in-memory `path → data URI` map — **never
-  written to SQL**. The frontend keeps a parallel `Map` and only requests
-  icons it hasn't seen.
+- **Cache**: resolved icons use a bounded in-memory `path → data URI` map.
+  Extracted PNGs also share the rebuildable `data/icons.db` blob store; the
+  path cache covers file-search hits that are absent from the app index, so
+  repeated previews do not invoke the Shell again.
 - **Loading**: the `get_app_icons` command runs extraction on a blocking
-  thread (async command) and returns cached hits immediately; the frontend
+  thread (async command) and returns memory/DB hits immediately; the frontend
   loads icons in batches of 20. Missing/failed artwork uses the shared
   `unknow_universal.svg` fallback until a real icon arrives.
+- **Thumbnails**: `get_file_thumb` requests a real Shell thumbnail on an STA
+  worker (`SIIGBF_THUMBNAILONLY`, so a file icon is never treated as content).
+  It retains the bounded PNG decoder as a fallback; providers may be absent
+  for formats such as Office or PDF.
 
 ### `tray.rs`
 Creates the system tray icon (`TrayIconBuilder`). Left-click toggles the

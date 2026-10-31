@@ -456,7 +456,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated`（§8.1） |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
 | `screen` | `cursor()` / `displays()` | 光标位置与显示器列表，单位是**物理像素**；`displays()` 每项含 `x/y/width/height`、工作区 `workX/workY/workWidth/workHeight`、`primary` |
-| `fs` | `readText(path)` / `bytes(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` / `writeText(name, text)` / `writeBytes(name, base64)` / `readPrivate(name)` / `listPrivate()` / `privatePath(name)` / `removePrivate(name)` / `writeFile(path, text)` | 文件读写能力。读取与任意路径写入（`writeFile`）**需要声明**（`fs.read` / `fs.write`，§8.2）；`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`bytes` 返回**原始字节**（base64，≤ 32 MB，超出 reject）——沙箱后页面是 opaque origin，`fetch(asset://)` 被 CORS 拒绝，pdf.js/SheetJS 这类要在 JS 里解二进制的渲染器从这里取字节；`thumb` / `videoPoster` 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null）。`writeText`/`writeBytes`/`readPrivate`/`listPrivate`/`privatePath`/`removePrivate` 操作**插件私有目录** `<plugin>/files/`（无需权限，单文件 10 MiB，`name` 只能是文件名 —— 见 §11.2） |
+| `fs` | `readText(path)` / `bytes(path)` / `assetUrl(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` / `writeText(name, text)` / `writeBytes(name, base64)` / `readPrivate(name)` / `listPrivate()` / `privatePath(name)` / `removePrivate(name)` / `writeFile(path, text)` | 文件读写能力。读取与任意路径写入（`writeFile`）**需要声明**（`fs.read` / `fs.write`，§8.2）；`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`bytes` 返回**原始字节**（base64，≤ 32 MB，超出 reject）——沙箱后页面是 opaque origin，`fetch(asset://)` 被 CORS 拒绝，pdf.js/SheetJS 这类要在 JS 里解二进制的渲染器从这里取字节；`assetUrl` 在 Rust 侧校验 `fs.read` 后把**这一个规范化文件**加入 asset scope 并返回 URL，供 `<img>` / `<audio>` / `<video>` 直接加载；`thumb` / `videoPoster` 通过 Windows Shell 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null）。`writeText`/`writeBytes`/`readPrivate`/`listPrivate`/`privatePath`/`removePrivate` 操作**插件私有目录** `<plugin>/files/`（无需权限，单文件 10 MiB，`name` 只能是文件名 —— 见 §11.2） |
 | `preview` | `show({kind, content?, path?, id?, paths?, checked?, remember_checks?})` / `close()` | **核心卫星预览宿主能力**：在启动器右侧独立窗渲染文本、文本文件、图片、音视频、PDF 或多文件列表；窗口生命周期、置顶、不抢焦点、贴边与 Esc 关闭均由宿主负责。`kind` 仅接受 `text/textfile/image/audio/video/pdf/filelist`，不注入 HTML；单条文本受 512 KiB、文件列表受 1024 项预算。外部插件须声明权限 `preview`。 |
 | `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV —— v1 契约的**兼容垫片**，内部就是文档库里的 `__storage` 文档（§11.1）；新代码请用 `db` |
 | `db` | `get(id)` / `put(doc)` / `remove(doc\|id, rev?)` / `allDocs({idStartsWith?, limit?})` / `bulkDocs(docs)` | **文档库**（§11.1）：uTools/CouchDB 形状的文档（`_id` + `_rev` 乐观锁），持久化在 `<base>/data/plugin_store.db`。冲突 reject，消息以 `conflict:` 开头 |
@@ -1315,7 +1315,7 @@ const ds = await ctx.screen.displays();         // [{x,y,width,height,workX,work
 | 光标与显示器 | `screen.*` / `plugin_cursor_pos`、`plugin_displays` | `screen` |
 | 全盘文件搜索 | `search.files` / `file_search` | `search.files` |
 | 文件搜索后端就绪探测 | `search.status` / `file_search_status` | `search.files` |
-| 文件读取（文本/字节/缩略图/图标） | `fs.readText/bytes/thumb/videoPoster/icon` | `fs.read` |
+| 文件读取（文本/字节/预览授权/缩略图/图标） | `fs.readText/bytes/assetUrl/thumb/videoPoster/icon` | `fs.read` |
 | 任意路径写入 | `fs.writeFile` | `fs.write` |
 | 插件私有目录读写 | `fs.writeText/writeBytes/readPrivate/listPrivate/privatePath/removePrivate` | 无（属于插件自己） |
 | 回收站删除 | `app.trash` / `trash_to_recycle` | `trash` |
@@ -1698,7 +1698,7 @@ permissions = ["network", "clipboard", "fs.write"]
 - **台账**（单一事实源 = §8.2 表）：`app.notify→notify`、`app.trash→trash`、
   `clipboard.*→clipboard`、`http.request→network`、`dialog.*→dialog`、
   `screen.*→screen`、`search.files`/`search.status→search.files`、
-  `fs.readText/bytes/thumb/
+  `fs.readText/bytes/assetUrl/thumb/
   videoPoster/icon→fs.read`、`fs.writeFile→fs.write`。
 - **无需声明**：基础动作（`app.hide/toast/setQuery/setPlaceholder/openPath/
   revealPath/resize/setSubInput/redirect/detach`）、插件自有数据（`storage.*`、`db.*`、
@@ -1818,7 +1818,7 @@ valid URL"），fail-closed。
 逃逸沙箱后的裸 `invoke` 沿用既有白名单规则（main 直通）；db/storage/
 settings 类无权限命令对 main 窗口内的帧仍按声称 id 计——彻底关闭它需要
 给视图帧也发令牌。跑在逻辑宿主里的插件逻辑已由令牌归属强制（上段）。
-`fs.readText`/`thumb`/`icon`（及 `app.trash`）暴露任意路径的读取与删除能力，
+`fs.readText`/`bytes`/`assetUrl`/`thumb`/`videoPoster`/`icon`（及 `app.trash`）暴露任意路径的读取、预览授权与删除能力，
 现已被 `fs.read` / `trash` 声明覆盖。内置插件与磁盘插件在注册表/启停上无
 差别，但内置代码经编译审计随包发布且不参与权限表。
 

@@ -2,7 +2,7 @@
 //! id. First-party factories receive it as their `ctx`; disk plugin iframe
 //! pages reach the same surface through the postMessage bridge (§ iframe).
 
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { t } from "../i18n";
 import { normalizePluginColorMode } from "../theme";
 import type {
@@ -370,6 +370,14 @@ export function createHostApi(
         // pages opaque origins, so fetch(asset://) is CORS-refused there —
         // binary preview renderers (pdf.js / SheetJS) get their bytes here.
         return inv<string>("get_file_bytes", { path, pluginId: id });
+      },
+      assetUrl: async (path: string) => {
+        plog.debug(id, "fs.assetUrl:", path);
+        // The static asset scope covers Lume's own trees only. The Rust side
+        // checks fs.read and adds exactly this canonical file before the
+        // Presenter receives the URL.
+        await inv("plugin_allow_asset_path", { path, pluginId: id });
+        return convertFileSrc(path);
       },
       thumb: (path: string) => {
         plog.debug(id, "fs.thumb:", path);

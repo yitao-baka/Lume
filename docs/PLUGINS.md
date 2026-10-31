@@ -255,7 +255,7 @@ permissions = ["network", "clipboard", "fs.write"]
 | 文件对话框 | `dialog` |
 | 光标 / 显示器 | `screen` |
 | 全盘文件搜索 / 就绪探测 | `search.files`（`search.status` 同词） |
-| 文件读取（文本/缩略图/图标） | `fs.read` |
+| 文件读取（文本/缩略图/图标）与单文件 asset 授权 | `fs.read` |
 | 任意路径写入 | `fs.write` |
 | 回收站删除 | `trash` |
 | 前台窗口信息 / Explorer 当前文件夹（`app.foreground`） | `window` |

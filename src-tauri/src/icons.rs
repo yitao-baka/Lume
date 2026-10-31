@@ -5,6 +5,9 @@
 //! Extraction uses `IShellItemImageFactory`, which resolves the shortcut and
 //! returns a correctly-sized icon.
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
 use serde::Serialize;
 
 use crate::cache;
@@ -18,13 +21,34 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED};
 use windows::Win32::UI::Shell::{
     IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_ICONONLY,
-    SIIGBF_SCALEUP, SIIGBF_THUMBNAILONLY,
+    SIIGBF_BIGGERSIZEOK, SIIGBF_SCALEUP, SIIGBF_THUMBNAILONLY,
 };
 
 /// Icon extraction size (px). 64px stays crisp on HiDPI grids.
 const ICON_SIZE: i32 = 64;
 /// Video poster size (px) — wide enough to fill the 320px preview pane.
 const VIDEO_THUMB_SIZE: i32 = 320;
+/// General file/document thumbnail size for the 320px preview pane.
+const FILE_THUMB_SIZE: i32 = 400;
+
+/// Process-local path → data-URI cache. The SQLite store can only resolve a
+/// path through the app index; plugin searches also return arbitrary files
+/// that are never inserted there, so without this cache those paths would be
+/// re-extracted through the shell on every selection.
+static ICON_MEMORY: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn icon_memory() -> &'static Mutex<HashMap<String, String>> {
+    ICON_MEMORY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_icon(path: &str, uri: &str) {
+    let mut cache = icon_memory().lock().unwrap();
+    // Start over rather than grow without bound for a long-lived launcher.
+    if cache.len() >= 2048 && !cache.contains_key(path) {
+        cache.clear();
+    }
+    cache.insert(path.to_string(), uri.to_string());
+}
 
 /// An extracted icon, as sent to the frontend.
 #[derive(Debug, Clone, Serialize)]
@@ -80,20 +104,31 @@ pub(crate) fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
     result
 }
 
-/// Extract a video thumbnail (a frame) via the shell, for the preview player's
-/// `<video poster>`. `SIIGBF_THUMBNAILONLY` requests the real thumbnail and
-/// does not fall back to the file-type icon when the shell has no provider.
-/// Thumbnail providers commonly require **STA** (icons tolerate MTA but video
-/// thumbnails often fail there), so this runs on a dedicated STA thread.
-pub fn extract_video_thumb_png(path: &str) -> Option<Vec<u8>> {
+/// Extract a real shell thumbnail (never the file-type icon) on a dedicated
+/// STA thread. Thumbnail providers commonly require STA; video and document
+/// providers both follow this path.
+fn extract_shell_thumb_png(path: &str, size: i32) -> Option<Vec<u8>> {
     let owned = path.to_string();
     let result = std::thread::spawn(move || {
-        extract_shell_png(
-            &owned,
-            VIDEO_THUMB_SIZE,
-            SIIGBF_THUMBNAILONLY | SIIGBF_SCALEUP,
-            COINIT_APARTMENTTHREADED,
-        )
+        // Providers disagree on sizing flags. Prefer the provider's native
+        // larger size, then fall back to a scaled square and the classic
+        // thumbnail call. THUMBNAILONLY is fixed so an icon is never mistaken
+        // for document content.
+        for (requested, flags) in [
+            (size, SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK),
+            (
+                size,
+                SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK | SIIGBF_SCALEUP,
+            ),
+            (256, SIIGBF_THUMBNAILONLY),
+        ] {
+            if let Some(png) =
+                extract_shell_png(&owned, requested, flags, COINIT_APARTMENTTHREADED)
+            {
+                return Some(png);
+            }
+        }
+        None
     })
     .join()
     .ok()
@@ -102,6 +137,16 @@ pub fn extract_video_thumb_png(path: &str) -> Option<Vec<u8>> {
         eprintln!("[icons] no shell thumbnail for {path}");
     }
     result
+}
+
+/// Document/image preview thumbnail used by `fs.thumb`.
+pub fn extract_file_thumb_png(path: &str) -> Option<Vec<u8>> {
+    extract_shell_thumb_png(path, FILE_THUMB_SIZE)
+}
+
+/// Video poster frame used by `fs.videoPoster`.
+pub fn extract_video_thumb_png(path: &str) -> Option<Vec<u8>> {
+    extract_shell_thumb_png(path, VIDEO_THUMB_SIZE)
 }
 
 /// Convert an `HBITMAP` to PNG bytes (32-bit BGRA → RGBA → PNG).
@@ -188,16 +233,34 @@ pub async fn get_app_icons(
 /// Internal first-party icon lookup (clipboard ignore-list resolution uses
 /// this without manufacturing a webview caller identity).
 pub(crate) async fn get_app_icons_inner(paths: Vec<String>) -> Result<Vec<IconData>, String> {
-    let cached = cache::icons_for(&paths);
-    let mut result = Vec::with_capacity(paths.len());
+    let mut by_path: HashMap<String, Option<String>> = HashMap::new();
+
+    for path in &paths {
+        if let Some(uri) = icon_memory().lock().unwrap().get(path).cloned() {
+            by_path.insert(path.clone(), Some(uri));
+        }
+    }
+
+    let unresolved: Vec<String> = paths
+        .iter()
+        .filter(|path| !by_path.contains_key(*path))
+        .cloned()
+        .collect();
+    let db_cached = cache::icons_for(&unresolved);
+
+    for (path, icon) in db_cached {
+        if let Some(uri) = &icon {
+            remember_icon(&path, uri);
+        }
+        by_path.insert(path, icon);
+    }
+
     let mut missing: Vec<String> = Vec::new();
     for path in &paths {
-        match cached.get(path) {
-            Some(Some(uri)) => result.push(IconData {
-                path: path.clone(),
-                icon: Some(uri.clone()),
-            }),
-            _ => missing.push(path.clone()),
+        if by_path.get(path).and_then(Option::as_ref).is_none()
+            && !missing.iter().any(|candidate| candidate == path)
+        {
+            missing.push(path.clone());
         }
     }
 
@@ -220,10 +283,26 @@ pub(crate) async fn get_app_icons_inner(paths: Vec<String>) -> Result<Vec<IconDa
         .unwrap_or_default();
 
         for (path, icon) in extracted {
-            result.push(IconData { path, icon });
+            if let Some(uri) = &icon {
+                remember_icon(&path, uri);
+            }
+            by_path.insert(path, icon);
         }
     }
-    Ok(result)
+
+    for path in &paths {
+        if let Some(Some(uri)) = by_path.get(path) {
+            remember_icon(path, uri);
+        }
+    }
+
+    Ok(paths
+        .into_iter()
+        .map(|path| IconData {
+            icon: by_path.get(&path).cloned().flatten(),
+            path,
+        })
+        .collect())
 }
 
 #[cfg(test)]

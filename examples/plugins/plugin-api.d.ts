@@ -114,6 +114,8 @@ interface LumeSettingsApi {
 interface LumeFsApi {
   /** 任意路径读（权限 `fs.read`）。 */
   readText(path: string): Promise<string>;
+  /** Grant one exact file to the sandboxed asset protocol (权限 `fs.read`). */
+  assetUrl(path: string): Promise<string>;
   writeFile(path: string, text: string): Promise<void>;
   /** 私有目录（`<plugin>/files/`，无需权限）。 */
   writeText(name: string, text: string): Promise<string>;

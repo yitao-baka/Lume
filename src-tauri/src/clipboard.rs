@@ -1060,6 +1060,21 @@ fn decode_image_bounded(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     reader.decode().map_err(|e| format!("decode image: {e}"))
 }
 
+/// Extract a document/image thumbnail for the preview pane. The Windows shell
+/// is authoritative for JPEG, Office, PDF and format-provider thumbnails; the
+/// bounded PNG decoder remains as a fallback for files without a shell
+/// thumbnail provider.
+fn file_thumb_uri(path: &str) -> Result<String, String> {
+    if let Some(png) = crate::icons::extract_file_thumb_png(path) {
+        return Ok(format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png)
+        ));
+    }
+    let bytes = crate::bounded::read_file_bounded(Path::new(path), 50 * 1024 * 1024)?;
+    make_thumb(&bytes).ok_or_else(|| "no shell thumbnail or decodable image".into())
+}
+
 /// Downscale a stored PNG to a small base64 data URI for the frontend.
 fn make_thumb(png: &[u8]) -> Option<String> {
     let img = decode_image_bounded(png).ok()?.to_rgba8();
@@ -2205,11 +2220,9 @@ pub async fn get_file_bytes(
     .map_err(|e| e.to_string())?
 }
 
-/// Downscale an image file to a small base64 thumbnail for the preview pane.
-/// The webview decodes only a ≤`THUMB_MAX`-px PNG here — never the full-size
-/// image — so a large screenshot doesn't leave a huge decoded bitmap sitting
-/// in the renderer's image cache after the preview closes (same pipeline the
-/// clipboard image rows use for their `thumb`).
+/// Resolve a file thumbnail through the Windows shell, falling back to the
+/// bounded PNG decoder. The webview receives a small PNG data URI, never a
+/// full-size decoded bitmap.
 #[tauri::command]
 pub async fn get_file_thumb(
     path: String,
@@ -2227,15 +2240,11 @@ pub async fn get_file_thumb(
         host_token.as_deref(),
         "fs.read",
     )?;
-    // Off the main thread (`get_video_thumb` has the same rationale): sync
-    // commands run on the main (UI) thread, and decoding a multi-megabyte image
-    // there would stall every other IPC for the duration.
-    tauri::async_runtime::spawn_blocking(move || {
-        let bytes = crate::bounded::read_file_bounded(Path::new(&path), 50 * 1024 * 1024)?;
-        make_thumb(&bytes).ok_or_else(|| "not a readable image".into())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    // Shell thumbnail providers require STA. Run on a blocking worker, which
+    // also keeps image reads and PNG encoding off the UI thread.
+    tauri::async_runtime::spawn_blocking(move || file_thumb_uri(&path))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Extract a video thumbnail (a frame) via the Windows shell, for the preview

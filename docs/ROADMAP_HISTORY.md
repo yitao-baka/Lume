@@ -5734,3 +5734,45 @@ Presenter 名称，值没有持久化或下发路径。
 - `pnpm verify:ui --suite smoke` PASS，**12/12**、约 1.6 秒；新增空导航
   收缩基线、错误探针挂载、错误页可读高度、搜索行不可收缩且错误区位于其下方
   四条断言。产出的 `page-error-sizing.png` 确认页面区域完整、无搜索框叠字。
+
+## 94. 文件秒搜预览与图标链路修复（2026-10-31）
+
+### 94.1 问题
+
+- Page Runtime 的静态 asset scope 只覆盖 exe、`%LOCALAPPDATA%\Lume` 与资源目录。
+  `file-search` 对图片、音频和视频使用 `convertFileSrc(path)`，任意盘符文件
+  不在 scope 中，Presenter 收到 URL 后解码宽度为 0。
+- `PluginHostApi.fs.thumb` 的公开契约是 Windows Shell 缩略图，实际命令却读取
+  文件并用只启用 PNG feature 的 `image` 解码器缩放。JPEG、PDF、Excel、CSV
+  因此必然返回 `not a readable image`。
+- 插件先 `await ctx.fs.icon(path)` 再读取预览内容，把 Shell 图标放到内容准备的
+  关键路径；任意索引外的文件路径又无法写回 app index，重复选择会再次做 Shell
+  提取。
+
+### 94.2 修复
+
+- 新增 `fs.assetUrl(path)` RPC：前端台账与 Rust 侧都要求 `fs.read`；Rust
+  `plugin_allow_asset_path` 规范化并确认目标是文件后，只把该文件加入本次
+  进程的 asset scope，再由 `convertFileSrc` 生成 URL。静态 scope 不扩大。
+- `get_file_thumb` 先在 STA 工作线程调用 `IShellItemImageFactory`
+  (`SIIGBF_THUMBNAILONLY`，兼容 provider 的尺寸 flag)，失败后才回退到原来的
+  有界 PNG 解码；Shell 的 file-type icon 不会被冒充为内容缩略图。
+- `icons.rs` 增加 2048 项有界进程内路径缓存。缓存命中不再查询 SQLite，也不再
+  调用 Shell；批量结果按输入路径重建，修复缓存命中与未命中混合时的顺序漂移。
+- 正式 `file-search` 插件 4.0.1 改用 `ctx.fs.assetUrl`；图标读取与正文/媒体
+  读取解耦，图标晚到只刷新头部，不阻塞内容。PDF/Excel/CSV 的缩略图拒绝被
+  视为 provider 不可用，保留元数据并提示打开查看。
+
+### 94.3 验证
+
+- `pnpm verify:fast` PASS：docs 15 项、i18n 587 键 × 3 语言、Page Runtime
+  **18/18**、clipboard model 10/10、clipboard store 8/8、skin 11/11、前端
+  生产构建、Rust **281 passed / 9 ignored**；release `--no-bundle` 构建通过。
+- `pnpm verify:ui --suite "preview,plugin-runtime"` PASS：`preview` **10/10**
+  （新增外部文件授权前拒绝、无 `fs.read` 拒绝、授权后图片加载、JPEG Shell
+  缩略图四项）、`plugin-runtime` **6/6**；正式插件源码 `npm run verify`
+  PASS（**48/48** + build）。
+- 正式插件隔离实测：D 盘 1920×1080 JPG 在未授权时加载失败，经插件
+  `fs.assetUrl` 授权后正常解码；文本内容预览正常；重复图标请求首轮约 19ms，
+  后续 1.6–2ms。测试机没有 PDF/XLSX Shell 缩略图 provider，插件稳定显示
+  「缩略图不可用，请打开文件查看完整内容」，不再整块报错。

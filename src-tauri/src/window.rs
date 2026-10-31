@@ -797,6 +797,19 @@ pub fn get_preview_request(
     Ok(state.0.lock().unwrap().clone())
 }
 
+async fn grant_asset_file(path: String, app: AppHandle) -> Result<(), String> {
+    let canonical = tauri::async_runtime::spawn_blocking(move || std::fs::canonicalize(path))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("asset path is unavailable: {error}"))?;
+    if !canonical.is_file() {
+        return Err("asset path is not a file".into());
+    }
+    app.asset_protocol_scope()
+        .allow_file(&canonical)
+        .map_err(|error| error.to_string())
+}
+
 /// Grant the asset protocol access to one user-selected preview file. The
 /// static scope covers Lume's own data/resource trees; arbitrary pictures,
 /// videos and PDFs are allowed only after the trusted main/preview renderer
@@ -810,17 +823,32 @@ pub async fn allow_asset_path(
     if window.label() != MAIN_WINDOW && window.label() != PREVIEW_WINDOW {
         return Err("allow_asset_path: trusted preview caller required".into());
     }
-    let requested = path.clone();
-    let canonical = tauri::async_runtime::spawn_blocking(move || std::fs::canonicalize(requested))
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| format!("asset path is unavailable: {error}"))?;
-    if !canonical.is_file() {
-        return Err("asset path is not a file".into());
-    }
-    app.asset_protocol_scope()
-        .allow_file(&canonical)
-        .map_err(|error| error.to_string())
+    grant_asset_file(path, app).await
+}
+
+/// Plugin-facing asset grant. Unlike the trusted renderer command above, this
+/// path re-checks the caller's manifest and requires the `fs.read` capability,
+/// then whitelists exactly the requested file. The service converts the path
+/// with `convertFileSrc` only after this succeeds.
+#[tauri::command]
+pub async fn plugin_allow_asset_path(
+    path: String,
+    plugin_id: Option<String>,
+    host_token: Option<String>,
+    window: WebviewWindow,
+    perms: State<'_, crate::plugin_perm::PluginPermState>,
+    settings: State<'_, crate::settings::SettingsState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    crate::plugin_perm::assert_native_or_capability(
+        &perms,
+        &settings,
+        &window,
+        plugin_id.as_deref(),
+        host_token.as_deref(),
+        "fs.read",
+    )?;
+    grant_asset_file(path, app).await
 }
 
 /// Hide the preview and navigate it to `about:blank`. Used by `close_preview`

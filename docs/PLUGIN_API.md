@@ -420,7 +420,8 @@ export default function create(ctx) {
   URL 都可以）→ 启动器隐藏；右键 → 共享 app 菜单（固定/启动/打开位置/管理
   员启动）。
 - **图标**：`icon` 可省 — 文件路径走 `get_app_icons` 管线（取不到 → 未知图
-  标回退）；`data:`/`asset:`/`blob:` URI 直接使用，`http(s):` 被拒绝，其它字符串按
+  标回退）；`data:`/`asset:`/`blob:` URI 直接使用（含 Vite 生成的无参数
+  `data:image/svg+xml,...`），`http(s):` 被拒绝，其它字符串按
   文件路径经 asset 协议解析（相对路径相对插件目录）。也可给
   `{ light, dark }` 两套，宿主按所在表面主题选一套、显式变体按原样渲染。
 - **调用时机**：组合时、每次呼出（`launcher-shown`）、每次插件刷新

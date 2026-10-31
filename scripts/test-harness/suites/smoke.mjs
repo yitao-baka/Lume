@@ -31,6 +31,58 @@ export default {
     t.check("Clipboard page renders its status bar", await t.evaluate('!!document.querySelector(".clip-statusbar")'));
     await t.screenshot("clipboard-shell");
 
+    await t.evaluate('document.querySelectorAll(".mode-switch-item")[0]?.click(); true');
+    await t.waitFor('document.querySelector(".mode-host.active")?.dataset.mode === "apps"', 3000);
+    await t.setQuery("");
+    const collapsedForError = await t.waitFor("window.innerHeight < 180", 3000);
+    t.check("empty Navigate collapses to the search row before the error probe", collapsedForError);
+
+    const probeMounted = await t.evaluate(`(() => {
+      const host = document.querySelector(".mode-host.active");
+      if (!host) return false;
+      const error = document.createElement("div");
+      error.className = "presenter-error";
+      error.dataset.sizingProbe = "true";
+      error.innerHTML =
+        '<div class="presenter-error-title">Page model sizing probe</div>' +
+        '<div class="presenter-error-detail">The terminal error must keep the fixed search row and a readable page area.</div>' +
+        '<button class="presenter-error-retry" type="button">Open Settings</button>';
+      host.append(error);
+      return true;
+    })()`);
+    t.check("page-error sizing probe mounts", probeMounted);
+
+    await t.invoke("hide_launcher");
+    await t.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" }).then((visible) => !visible)',
+      5000,
+    );
+    await t.invoke("toggle_launcher");
+    const readableErrorArea = await t.waitFor(
+      'window.innerHeight >= (document.querySelector(".search")?.getBoundingClientRect().bottom ?? 0) + 200',
+      4000,
+    );
+    const errorLayout = await t.evaluate(`(() => {
+      const search = document.querySelector(".search");
+      const error = document.querySelector("[data-sizing-probe]");
+      const searchRect = search?.getBoundingClientRect();
+      const errorRect = error?.getBoundingClientRect();
+      return {
+        windowHeight: window.innerHeight,
+        searchBottom: searchRect?.bottom ?? -1,
+        errorTop: errorRect?.top ?? -1,
+        searchFlexShrink: search ? getComputedStyle(search).flexShrink : "",
+      };
+    })()`);
+    t.check("terminal page error keeps a readable page area", readableErrorArea, errorLayout);
+    t.check(
+      "terminal page error stays below the non-shrinking search row",
+      errorLayout.searchFlexShrink === "0" && errorLayout.errorTop >= errorLayout.searchBottom - 1,
+      errorLayout,
+    );
+    await t.screenshot("page-error-sizing");
+    await t.evaluate('document.querySelector("[data-sizing-probe]")?.remove(); true');
+
     await t.invoke("hide_launcher");
     await t.waitFor(
       'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" }).then((visible) => !visible)',

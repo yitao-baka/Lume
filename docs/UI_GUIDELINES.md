@@ -45,6 +45,11 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   to `--accent-text`, a spinner ring over the icon). A fit page collapses to
   the search row; a fixed page keeps its target height. `ModeInstance.ready`
   decides; the home page is always ready. See docs/ARCHITECTURE.md (sizing).
+- **Terminal page errors are content, not loading**: the search row stays a
+  non-shrinking header, and an error page keeps the current fit-page height or
+  grows enough to show its title, hint, detail and action. It must never collapse
+  back to the loading gate's search-row-only geometry or paint over the search
+  controls during a resize.
 - Font: `"Segoe UI Variable Text", "Segoe UI", system-ui`; base 16px;
   antialiased; `user-select: none`.
 

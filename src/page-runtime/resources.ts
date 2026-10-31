@@ -6,7 +6,7 @@ import type { ResourceRef } from "./contracts";
 import { pushDiagnostic } from "./diagnostics";
 
 const DATA_IMAGE =
-  /^(?:data:image\/(?:png|jpe?g|gif|webp);(?:[^,]*;)?base64|data:image\/svg\+xml;(?:[^,]*;)?(?:base64|utf8)),/i;
+  /^data:image\/(?:(?:png|jpe?g|gif|webp)(?:;[^,]*)?;base64|svg\+xml(?:;[^,]*)?),/i;
 const SAFE_URL = /^(?:https?:|asset:|lume-resource:)/i;
 
 export interface ResolvedResource {

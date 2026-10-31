@@ -577,7 +577,10 @@ before adding a field:
   routing, Presenter compatibility/fallback and built-in model schemas.
   `PageSession.publish` validates every service snapshot; a malformed or
   oversized model becomes a visible `model.invalid` page error instead of an
-  empty/crashed Presenter. Page Service lifecycle events queue across slow
+  empty/crashed Presenter. Resource refs must use a WebView-safe image URL
+  (`http(s):`, `asset:`, `lume-resource:` or an image `data:` URL, including
+  Vite's parameterless `data:image/svg+xml,...` form); another scheme rejects
+  the whole snapshot. Page Service lifecycle events queue across slow
   startup and replay as query → settings → files → show/hide → enter.
   Presenter mounts reset modal/layout ownership, buffer events until ready,
   then replay model/query/show before enter. Auto snapshots never read

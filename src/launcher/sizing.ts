@@ -6,6 +6,29 @@
 import { invoke } from "@tauri-apps/api/core";
 import { MIN_WINDOW_H, SCREEN_MARGIN, WINDOW_PAD } from "./types";
 
+const ERROR_PAGE_MIN_CONTENT_H = 220;
+
+/** A terminal page error must not reuse the loading gate's search-row-only
+ * height. Preserve the current page size when possible; if the preceding fit
+ * page was shorter, leave enough room for the title, hint, detail and action. */
+export function errorPageTargetHeight(
+  searchH: number,
+  currentH: number,
+  maxH: number
+): number {
+  const safeSearchH = Number.isFinite(searchH) ? Math.max(0, searchH) : 0;
+  const minimum = Math.max(
+    MIN_WINDOW_H,
+    Math.round(safeSearchH + ERROR_PAGE_MIN_CONTENT_H + WINDOW_PAD)
+  );
+  const current = Number.isFinite(currentH) ? Math.round(currentH) : minimum;
+  const cap = Math.max(
+    MIN_WINDOW_H,
+    Number.isFinite(maxH) ? Math.round(maxH) : minimum
+  );
+  return Math.min(Math.max(current, minimum), cap);
+}
+
 /** Everything the sizer reads from the composition root. Accessors are Solid
  * signal getters; the whole object is read at call time (late-bound deps). */
 export interface SizerDeps {
@@ -113,6 +136,11 @@ export function createWindowSizer(deps: SizerDeps) {
       const searchH =
         (document.querySelector(".search") as HTMLElement | null)?.offsetHeight ?? 0;
       return Math.max(MIN_WINDOW_H, Math.round(searchH));
+    }
+    if (pageQuery<HTMLElement>(".presenter-error")) {
+      const searchH =
+        (document.querySelector(".search") as HTMLElement | null)?.offsetHeight ?? 0;
+      return errorPageTargetHeight(searchH, window.innerHeight, deps.windowHeight());
     }
     const reportedContentH = deps.fitContentHeight();
     if (reportedContentH != null && Number.isFinite(reportedContentH) && reportedContentH > 0) {

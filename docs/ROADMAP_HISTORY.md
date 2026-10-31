@@ -5694,3 +5694,43 @@ Presenter 名称，值没有持久化或下发路径。
   `pnpm verify:ui --suite smoke,settings,plugin-runtime,preview --no-build`
   依次 **8/8**、**6/6**、**6/6**、**5/5**。`smoke` 新增两条断言：隐藏挂载不得
   聚焦搜索框，真实呼出必须把焦点交还搜索框。
+
+## 93. 导航图标 data URL 与错误页尺寸修复（2026-10-31）
+
+### 93.1 问题
+
+- Vite 会把较小或内联的 SVG 导入编译成无参数的
+  `data:image/svg+xml,%3c...` URL。Page Runtime 的资源白名单只接受
+  `data:image/svg+xml;base64,...` 或 `data:image/svg+xml;utf8,...`，于是
+  合法的内置图标使整个导航 Page Model 被拒绝。资源管理器栏的“复制路径”
+  图标正好命中该格式；存在最近使用/已固定栏时，报错路径表现为
+  `$.data.sections[2].items[2].icon.src`。
+- 自适应高度只识别结果网格、列表与空态，不识别 `.presenter-error`。
+  导航错误页在后续尺寸测量时被当成无内容页，窗口退回搜索行高度。
+- 搜索行是允许收缩的 flex 子项。原生窗口尚未完成高度恢复时，错误标题会
+  与搜索框占用同一段纵向空间。截图中的两种提示是同一个错误页的正常完整态
+  和错误尺寸瞬态，不是两条独立错误。
+
+### 93.2 修复
+
+- 资源白名单允许标准无参数 SVG data URL，同时继续要求 PNG/JPEG/GIF/WebP
+  data URL 使用 base64，并保留单资源长度与 Page Model 总字节上限。
+- sizer 检测当前 Presenter 内的 `.presenter-error`：优先保留当前页面高度；
+  若前一个 fit 页已缩到搜索行，则至少留出 220px 页面内容区，仍受
+  `window_height` 与工作区上限约束。
+- 搜索行改为 `flex: none`，始终作为不可收缩的固定头部；窗口高度过渡期间
+  只显示搜索行，不再把页面错误内容叠到搜索控件上。
+
+### 93.3 验证
+
+- `pnpm test:page-runtime` PASS，Page Runtime **18/18**；新增无参数 SVG
+  data URL 通过白名单的断言。
+- `pnpm exec tsc --noEmit`、`pnpm run build` PASS。
+- `pnpm verify:fast` PASS：docs 15 项、i18n 587 键 × 3 语言、Page Runtime
+  **18/18**、clipboard model 10/10、clipboard store 8/8、skin 11/11、前端
+  生产构建、Rust **281 passed / 9 ignored**。
+- `pnpm verify:ui --suite plugin-runtime` 首次隔离启动在 keyword row 等待处
+  超时（插件已注册且启用），随后连续 3 次 **6/6**。
+- `pnpm verify:ui --suite smoke` PASS，**12/12**、约 1.6 秒；新增空导航
+  收缩基线、错误探针挂载、错误页可读高度、搜索行不可收缩且错误区位于其下方
+  四条断言。产出的 `page-error-sizing.png` 确认页面区域完整、无搜索框叠字。

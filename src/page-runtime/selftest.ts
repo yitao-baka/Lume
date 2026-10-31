@@ -108,6 +108,15 @@ export function runPageRuntimeSelfTests(): string[] {
     })(),
     "UTF-8 SVG data URLs used by navBars must pass the resource whitelist"
   );
+  expect(
+    (() => {
+      validatePageModel(model(1, {
+        icon: { kind: "url", src: "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E" },
+      }));
+      return true;
+    })(),
+    "parameterless SVG data URLs emitted by bundled Vite assets must pass the resource whitelist"
+  );
   passed.push("resource scheme whitelist and selection");
 
   const intentModel = model(1, {

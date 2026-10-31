@@ -1936,6 +1936,19 @@ cargo test **198**；`test/_harden_probe.mjs` **8/8**（api 契约拒绝 / 私�
   `legacy_user_dirs_migrate_to_key_value_index`）；`tsc --noEmit` +
   `vite build` 通过。
 
+### Fixed
+
+- **导航页内联 SVG 图标被拒绝与错误页退回搜索行（2026-10-31）** —
+  Page Runtime 现在接受 Vite 生成的无参数 `data:image/svg+xml,...` 资源，
+  修复资源管理器栏“复制路径”等内置图标导致整个导航 Page Model 报
+  `resource scheme refused` 的问题；PNG/JPEG/GIF/WebP 仍要求 base64，单资源
+  与模型总字节限制不变。导航错误页不再被自适应高度当作空页缩回搜索行，
+  搜索行固定为不可收缩头部，错误内容不会在窗口过渡时叠到搜索框上。详细记录
+  见 `docs/ROADMAP_HISTORY.md` #93。验证：`pnpm test:page-runtime`
+  **18/18**、`pnpm exec tsc --noEmit`、`pnpm run build`、
+  `pnpm verify:ui --suite smoke` **12/12**；`pnpm verify:fast` PASS
+  （docs 15 项、i18n 587 键 × 3 语言、Rust **281 passed / 9 ignored**）。
+
 ## [Pre-26.8] — 2026-08-24
 
 ### Changed

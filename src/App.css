@@ -64,6 +64,7 @@ body,
    拼接处不再出现横线；14px 的底部内边距就是页面内容与输入框之间的呼吸空隙。 */
 .search {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 12px;
   padding: 18px 20px 14px;

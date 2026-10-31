@@ -71,6 +71,12 @@ check(
     logicFrame.includes('"fs.assetUrl"'),
   "plugin asset URL grant is not bound to the fs.read permission",
 );
+check(
+  presenterBridge.includes('rpc("fs.bytes"') &&
+    pageRuntime.includes('assertPermission(m.id, "fs.bytes")') &&
+    pageRuntime.includes('invoke<string>("get_file_bytes"'),
+  "Presenter byte reads are not bound to the fs.read permission",
+);
 check(read("src-tauri/src/window.rs").includes("assert_preview_caller"), "Rust preview permission boundary missing");
 check(read("src-tauri/src/window.rs").includes("preview_follow_allowed"), "plugin preview must not be gated by the clipboard follow setting");
 check(read("src-tauri/src/window.rs").includes("window.label() == PREVIEW_WINDOW"), "preview window close capability is not trusted");

@@ -10,21 +10,20 @@ All notable changes to Lume are documented here. Format based on
 ## [Unreleased]
 ### Fixed
 - **文件秒搜预览与图标缓存（2026-10-31）** — 图片/音视频的任意盘符路径此前被
-  静态 asset scope 拒绝，PDF/Excel/JPEG 又因 `fs.thumb` 只解码 PNG 而失败。
-  新增 `fs.assetUrl`：Rust 按调用插件声明的 `fs.read` 校验后，仅把当前规范化
-  文件加入 asset scope；`fs.thumb` 改为在 STA 工作线程请求 Windows Shell 真实
-  缩略图（`SIIGBF_THUMBNAILONLY`），保留有界 PNG 解码兜底；图标解析增加
-  2048 项进程内路径缓存，并修正批量结果顺序。正式 `file-search` 插件升至
-  4.0.1，图标与内容读取解耦，文档缩略图 provider 缺失时保留文件信息并提示
-  打开查看，不再把整块预览置为错误。
+  静态 asset scope 拒绝；Page Runtime 迁移又把旧 API 1 的 Presenter 文件读取
+  改成系统缩略图，导致插件原有 PDF.js / SheetJS 预览被错误移除。新增
+  `fs.assetUrl` 单文件媒体授权，并给声明 `fs.read` 的 Presenter 恢复
+  `lume.fs.readText/bytes` 只读桥（前端台账 + Rust 清单门双层校验，CSP 放行
+  内嵌 PDF worker 的 blob URL）。`fs.thumb` 改为 STA Shell 缩略图并保留 PNG
+  兜底；图标增加 2048 项进程内缓存。正式 `file-search` 插件升至 4.0.2，
+  恢复 PDF.js 前 5 页、SheetJS 首表预览，图标与正文读取解耦。
   验证：`pnpm verify:fast` PASS（docs 15 项、i18n 587 键 × 3 语言、Page Runtime
   18/18、clipboard model 10/10、clipboard store 8/8、skin 11/11、前端生产构建、
   Rust **281 passed / 9 ignored**，release `--no-bundle` 构建通过）；`pnpm verify:ui --suite "preview,plugin-runtime"`
-  PASS（preview **10/10**、plugin-runtime **6/6**）；正式插件源码 `npm run verify`
-  PASS（**48/48** + build）。正式插件隔离实测：D 盘
-  1920×1080 JPG 正常解码，文本预览正常；重复图标请求由首轮约 19ms 降至
-  1.6–2ms。测试机未安装 PDF/XLSX Shell 缩略图 provider，插件现在显示
-  「缩略图不可用，请打开文件查看完整内容」。
+  PASS（preview **14/14**、plugin-runtime **6/6**）；正式插件源码 `npm run verify`
+  PASS（**48/48** + build）。正式插件隔离实测：D 盘 1920×1080 JPG、真实 PDF
+  （436×617 canvas）和真实 XLSX（表格 + 单元格文本）均正常；重复图标请求由
+  首轮约 19ms 降至 1.6–2ms。
 ### Added
 - **分层验证体系与隔离 CDP harness（2026-10-29）** — 新增
   `pnpm verify:docs` / `verify:fast` / `verify:ui` / `verify:ui:changed` /

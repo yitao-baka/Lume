@@ -38,7 +38,8 @@ export default {
       "Presenter srcdoc carries the strict CSP",
       !!frame?.srcdoc.includes("Content-Security-Policy") &&
         frame.srcdoc.includes("connect-src 'none'") &&
-        frame.srcdoc.includes("form-action 'none'"),
+        frame.srcdoc.includes("form-action 'none'") &&
+        frame.srcdoc.includes("worker-src blob:"),
     );
     t.check(
       "Presenter sandbox is opaque and has no popup/form escape hatch",
@@ -48,8 +49,11 @@ export default {
         !frame.sandbox.includes("allow-forms"),
     );
     t.check(
-      "Presenter bridge exposes only the page surface",
-      !!frame?.srcdoc.includes("lume.page") && !frame.srcdoc.includes("__TAURI_INTERNALS__"),
+      "Presenter bridge exposes the page surface plus fs.read-gated bytes only",
+      !!frame?.srcdoc.includes("lume.page") &&
+        frame.srcdoc.includes("fs.bytes") &&
+        frame.srcdoc.includes("fs.readText") &&
+        !frame.srcdoc.includes("__TAURI_INTERNALS__"),
     );
     await t.screenshot("hello-mode");
   },

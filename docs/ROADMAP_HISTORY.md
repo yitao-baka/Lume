@@ -5748,6 +5748,9 @@ Presenter 名称，值没有持久化或下发路径。
 - 插件先 `await ctx.fs.icon(path)` 再读取预览内容，把 Shell 图标放到内容准备的
   关键路径；任意索引外的文件路径又无法写回 app index，重复选择会再次做 Shell
   提取。
+- Page Runtime 的 Presenter 在迁移后没有文件读取面，插件原有 PDF.js / SheetJS
+  因而被系统缩略图替代；系统未安装 Office/PDF provider 时，插件主动内容预览
+  完全退化。
 
 ### 94.2 修复
 
@@ -5759,20 +5762,21 @@ Presenter 名称，值没有持久化或下发路径。
   有界 PNG 解码；Shell 的 file-type icon 不会被冒充为内容缩略图。
 - `icons.rs` 增加 2048 项有界进程内路径缓存。缓存命中不再查询 SQLite，也不再
   调用 Shell；批量结果按输入路径重建，修复缓存命中与未命中混合时的顺序漂移。
-- 正式 `file-search` 插件 4.0.1 改用 `ctx.fs.assetUrl`；图标读取与正文/媒体
-  读取解耦，图标晚到只刷新头部，不阻塞内容。PDF/Excel/CSV 的缩略图拒绝被
-  视为 provider 不可用，保留元数据并提示打开查看。
+- Presenter bridge 新增按 manifest `fs.read` 授权的只读
+  `lume.fs.readText/bytes`：前端台账先拒绝未声明调用，主窗口/分离窗口随后由
+  Rust 按插件身份复查；CSP 仅放行内嵌 PDF.js worker 所需的 `worker-src blob:`。
+- 正式 `file-search` 插件 4.0.2 恢复内嵌 PDF.js / SheetJS：PDF 渲染前 5 页，
+  Excel/CSV 安全渲染首个工作表的前 40×20 单元格；字节通过 `lume.fs.bytes`
+  读取，图标读取与正文/媒体读取解耦。PDF 内嵌失败可回退到宿主卫星预览。
 
 ### 94.3 验证
 
 - `pnpm verify:fast` PASS：docs 15 项、i18n 587 键 × 3 语言、Page Runtime
   **18/18**、clipboard model 10/10、clipboard store 8/8、skin 11/11、前端
   生产构建、Rust **281 passed / 9 ignored**；release `--no-bundle` 构建通过。
-- `pnpm verify:ui --suite "preview,plugin-runtime"` PASS：`preview` **10/10**
-  （新增外部文件授权前拒绝、无 `fs.read` 拒绝、授权后图片加载、JPEG Shell
-  缩略图四项）、`plugin-runtime` **6/6**；正式插件源码 `npm run verify`
-  PASS（**48/48** + build）。
-- 正式插件隔离实测：D 盘 1920×1080 JPG 在未授权时加载失败，经插件
-  `fs.assetUrl` 授权后正常解码；文本内容预览正常；重复图标请求首轮约 19ms，
-  后续 1.6–2ms。测试机没有 PDF/XLSX Shell 缩略图 provider，插件稳定显示
-  「缩略图不可用，请打开文件查看完整内容」，不再整块报错。
+- `pnpm verify:ui --suite "preview,plugin-runtime"` PASS：`preview` **14/14**
+  （外部文件授权前后、无 `fs.read` 拒绝、Presenter 字节读取、JPEG Shell 缩略图
+  与宿主 PDF 首页 canvas 渲染）、`plugin-runtime` **6/6**；正式插件源码
+  `npm run verify` PASS（**48/48** + build）。
+- 正式插件隔离实测：D 盘 1920×1080 JPG、真实 PDF（436×617 canvas）和真实
+  XLSX（表格 + 单元格文本）均正常；重复图标请求首轮约 19ms，后续 1.6–2ms。

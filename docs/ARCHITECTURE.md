@@ -596,6 +596,11 @@ before adding a field:
   Presenter mounts reset modal/layout ownership, buffer events until ready,
   then replay model/query/show before enter. Auto snapshots never read
   password values (fields carry `secret`; the host clears them again).
+  Presenter bridges expose only `fs.readText` / `fs.bytes` as an optional file
+  exception; the manifest must declare `fs.read`, `assertPermission` checks the
+  frontend ledger, and the Rust command resolves the caller again. The CSP keeps
+  network/frame/object disabled while allowing blob scripts and the embedded
+  PDF.js worker (`worker-src blob:`).
 - `src/page-services/` — built-in pages' logic layer. `navigate/service.ts`
   owns the bar registry, merged search pipeline, actions and drag-reorder;
   `clipboard/service.ts` wraps the Rust-backed clipboard store and publishes

@@ -456,7 +456,8 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 | `http` | `request({url, method?, headers?, body?, bodyBase64?, timeoutMs?})` | **宿主 HTTP**——请求在 Rust 侧经 WinHTTP 发出（Schannel TLS + 系统代理），**不受页面 CORS 限制**；返回 `{status, headers, body(base64), truncated, text(), json()}`。仅 http/https；默认超时 10s（钳制 1–60s）；响应体 4MiB 截断并置 `truncated`（§8.1） |
 | `dialog` | `open({title?, defaultPath?, fileName?, filters?, multiple?, folder?})` / `save({…})` | 原生文件选择/保存对话框。`open` 返回选中路径数组，`save` 返回路径或 `null`；**取消不是错误**（`[]` / `null`），由插件决定提示文案 |
 | `screen` | `cursor()` / `displays()` | 光标位置与显示器列表，单位是**物理像素**；`displays()` 每项含 `x/y/width/height`、工作区 `workX/workY/workWidth/workHeight`、`primary` |
-| `fs` | `readText(path)` / `bytes(path)` / `assetUrl(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` / `writeText(name, text)` / `writeBytes(name, base64)` / `readPrivate(name)` / `listPrivate()` / `privatePath(name)` / `removePrivate(name)` / `writeFile(path, text)` | 文件读写能力。读取与任意路径写入（`writeFile`）**需要声明**（`fs.read` / `fs.write`，§8.2）；`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`bytes` 返回**原始字节**（base64，≤ 32 MB，超出 reject）——沙箱后页面是 opaque origin，`fetch(asset://)` 被 CORS 拒绝，pdf.js/SheetJS 这类要在 JS 里解二进制的渲染器从这里取字节；`assetUrl` 在 Rust 侧校验 `fs.read` 后把**这一个规范化文件**加入 asset scope 并返回 URL，供 `<img>` / `<audio>` / `<video>` 直接加载；`thumb` / `videoPoster` 通过 Windows Shell 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null）。`writeText`/`writeBytes`/`readPrivate`/`listPrivate`/`privatePath`/`removePrivate` 操作**插件私有目录** `<plugin>/files/`（无需权限，单文件 10 MiB，`name` 只能是文件名 —— 见 §11.2） |
+| `fs`（Presenter） | `readText(path)` / `bytes(path)` | Presenter 的按需文件读取，同样只接受 manifest 中的 `fs.read`：前端桥先查台账，Rust 命令再按插件身份复查。`readText` 为 lossy UTF-8（≤512KB），`bytes` 返回 base64 原始字节（≤32MB），供 PDF.js / SheetJS 等内嵌渲染器使用；Presenter 仍没有写入、剪贴板、网络或裸 Tauri 能力 |
+| `fs`（Page Service / logic） | `readText(path)` / `bytes(path)` / `assetUrl(path)` / `thumb(path)` / `videoPoster(path)` / `icon(paths)` / `writeText(name, text)` / `writeBytes(name, base64)` / `readPrivate(name)` / `listPrivate()` / `privatePath(name)` / `removePrivate(name)` / `writeFile(path, text)` | 文件读写能力。读取与任意路径写入（`writeFile`）**需要声明**（`fs.read` / `fs.write`，§8.2）；`readText` 返回文本内容（lossy-UTF8 解码；**> 512KB reject**——插件自行显示「预览前 512KB」类提示）；`bytes` 返回**原始字节**（base64，≤ 32 MB，超出 reject）——沙箱后页面是 opaque origin，`fetch(asset://)` 被 CORS 拒绝，pdf.js/SheetJS 这类要在 JS 里解二进制的渲染器从这里取字节；`assetUrl` 在 Rust 侧校验 `fs.read` 后把**这一个规范化文件**加入 asset scope 并返回 URL，供 `<img>` / `<audio>` / `<video>` 直接加载；`thumb` / `videoPoster` 通过 Windows Shell 返回 base64 PNG data URI（可直接进 `<img src>` / `poster`；shell 无缩略图提供者时 reject）；`icon` 返回与 `get_app_icons` 同形的 `{path, icon}[]`（icon 为 data/asset URI 或 null）。`writeText`/`writeBytes`/`readPrivate`/`listPrivate`/`privatePath`/`removePrivate` 操作**插件私有目录** `<plugin>/files/`（无需权限，单文件 10 MiB，`name` 只能是文件名 —— 见 §11.2） |
 | `preview` | `show({kind, content?, path?, id?, paths?, checked?, remember_checks?})` / `close()` | **核心卫星预览宿主能力**：在启动器右侧独立窗渲染文本、文本文件、图片、音视频、PDF 或多文件列表；窗口生命周期、置顶、不抢焦点、贴边与 Esc 关闭均由宿主负责。`kind` 仅接受 `text/textfile/image/audio/video/pdf/filelist`，不注入 HTML；单条文本受 512 KiB、文件列表受 1024 项预算。外部插件须声明权限 `preview`。 |
 | `storage` | `get(key)` / `set(key, value)` / `remove(key)` | 插件私有 KV —— v1 契约的**兼容垫片**，内部就是文档库里的 `__storage` 文档（§11.1）；新代码请用 `db` |
 | `db` | `get(id)` / `put(doc)` / `remove(doc\|id, rev?)` / `allDocs({idStartsWith?, limit?})` / `bulkDocs(docs)` | **文档库**（§11.1）：uTools/CouchDB 形状的文档（`_id` + `_rev` 乐观锁），持久化在 `<base>/data/plugin_store.db`。冲突 reject，消息以 `conflict:` 开头 |
@@ -504,8 +505,7 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 ### 6.3 状态重放与就绪握手
 
 Presenter 的 `window.lume.app.preview(request)` / `closePreview()` 与 Page Service 的
-`ctx.preview.show/close` 都落到同一 Rust 校验边界；Presenter 仍没有通用
-Tauri IPC、文件、剪贴板或网络能力。
+`ctx.preview.show/close` 都落到同一 Rust 校验边界；Presenter 的 `window.lume.fs.readText/bytes` 是唯一文件读取例外，仍按 manifest 的 `fs.read` 双层校验；除此之外没有通用 Tauri IPC、剪贴板或网络能力。
 
 Page Service 在慢 `getModel()`/首次挂载期间收到的事件不会丢失：宿主按
 `query` → `settings` → `filesDropped` → `show`/`hide` → `enter` 顺序排队，
@@ -939,8 +939,8 @@ Presenter 的 `lume.page`：
   `requestSearchFocus()`。
 - 安全外壳动作仅限 `app.toast/resize/dragWindow/detach/setQuery` 与
   `theme.get/set`。
-- `lume.http/storage/db/fs/clipboard/dialog/screen/search/secrets` 均不存在；
-  任何其它 RPC 都会被拒绝。Presenter 不能直接调用 Tauri 命令。
+- `lume.http/storage/db/clipboard/dialog/screen/search/secrets` 均不存在。
+  `lume.fs` 仅提供 `readText/bytes`，并要求 manifest 声明 `fs.read`；写入、缩略图、图标和私有目录方法不暴露。任何其它 RPC 都会被拒绝，Presenter 不能直接调用 Tauri 命令。
 
 同一模型可声明多个 Presenter，切换只替换 iframe，不重建 Page Service。
 连续切换使用单调 mount generation：旧 factory / `ready()` 迟到完成后直接

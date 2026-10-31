@@ -5,7 +5,12 @@ const JPEG_PROBE = Buffer.from(
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDEooor7s+PP//Z",
   "base64",
 );
+const PDF_PROBE = Buffer.from(
+  "JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAzMDAgMjAwXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA1MyA+PgpzdHJlYW0KQlQgL0YxIDEyIFRmIDIwIDEwMCBUZCAoTHVtZSBQREYgcHJldmlldyBwcm9iZSkgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDE1IDAwMDAwIG4gCjAwMDAwMDAwNjQgMDAwMDAgbiAKMDAwMDAwMDEyMSAwMDAwMCBuIAowMDAwMDAwMjQ3IDAwMDAwIG4gCjAwMDAwMDAzNTAgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0MjAKJSVFT0YK",
+  "base64",
+);
 let externalPreviewPath = "";
+let externalPdfPath = "";
 
 export default {
   id: "preview",
@@ -35,6 +40,8 @@ export default {
     // static asset scope, so only a per-file grant can make this image load.
     externalPreviewPath = join(runtimeDir, "..", "asset-preview-probe.jpg");
     writeFileSync(externalPreviewPath, JPEG_PROBE);
+    externalPdfPath = join(runtimeDir, "..", "asset-preview-probe.pdf");
+    writeFileSync(externalPdfPath, PDF_PROBE);
   },
   async run(t) {
     await t.ensureLauncherVisible();
@@ -100,6 +107,22 @@ export default {
       assetDenied,
     );
 
+    const bytesDenied = await t.evaluate(`window.__TAURI_INTERNALS__.invoke("get_file_bytes", {
+      pluginId: "preview-denied",
+      path: ${JSON.stringify(externalPreviewPath)},
+    }).then(() => "").catch((error) => String(error))`);
+    t.check(
+      "Presenter file bytes require the declared fs.read capability",
+      bytesDenied.includes("permission denied") && bytesDenied.includes("fs.read"),
+      bytesDenied,
+    );
+    const bytesAllowed = await t.evaluate(`window.__TAURI_INTERNALS__.invoke("get_file_bytes", {
+      pluginId: "asset-probe",
+      path: ${JSON.stringify(externalPreviewPath)},
+    }).then((value) => ({ ok: typeof value === "string" && value.length > 0, length: String(value).length }))
+      .catch((error) => ({ ok: false, error: String(error) }))`);
+    t.check("declared fs.read returns raw file bytes", bytesAllowed.ok === true, bytesAllowed);
+
     const assetGranted = await t.evaluate(`window.__TAURI_INTERNALS__.invoke("plugin_allow_asset_path", {
       pluginId: "asset-probe",
       path: ${JSON.stringify(externalPreviewPath)},
@@ -127,5 +150,19 @@ export default {
       "plugin preview closes cleanly",
       (await t.invoke("plugin:window|is_visible", { label: "preview" })) === false,
     );
+
+    const pdfVisible = await showPreview({
+      pluginId: "host-tools",
+      req: { kind: "pdf", path: externalPdfPath },
+    });
+    t.check("core PDF preview accepts a granted external file", pdfVisible === true, pdfVisible);
+    const pdfPreview = await t.session.preview();
+    const pdfCanvas = await pdfPreview.connection.waitFor(
+      `(() => { const c = document.querySelector(".preview-pdf-canvas"); return c && c.width > 0 && c.height > 0 ? { width: c.width, height: c.height } : null; })()`,
+      12000,
+    );
+    t.check("core PDF preview renders the first page", pdfCanvas.width > 0 && pdfCanvas.height > 0, pdfCanvas);
+    await t.screenshot("preview-pdf", pdfPreview.connection);
+    await t.invoke("close_preview");
   },
 };

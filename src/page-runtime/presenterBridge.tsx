@@ -1,6 +1,7 @@
 //! Restricted Presenter bridge. Model reads/intents and shell-safe actions are
-//! the only RPCs this iframe can reach; there is no http/storage/db/fs/
-//! clipboard/dialog/screen/search/secrets or arbitrary Tauri command surface.
+//! the only general RPCs this iframe can reach. The sole filesystem exception
+//! is `fs.readText/bytes`, re-checked against the plugin's declared `fs.read`
+//! and the Rust manifest gate; there is still no raw Tauri command surface.
 
 import { currentThemeMode } from "../theme";
 import { currentSkin } from "../skins/runtime";
@@ -193,6 +194,10 @@ const PRESENTER_BRIDGE_SCRIPT = `(function () {
       get: function () { return rpc("theme.get"); },
       set: function (mode) { return rpc("theme.set", { mode: mode }); }
     },
+    fs: {
+      readText: function (path) { return rpc("fs.readText", { path: path }); },
+      bytes: function (path) { return rpc("fs.bytes", { path: path }); }
+    },
     app: {
       toast: function (text, opts) { return rpc("app.toast", { text: text, opts: opts }); },
       resize: function (size) { return rpc("app.resize", { width: size && size.width, height: size && size.height }); },
@@ -295,7 +300,7 @@ const PRESENTER_CSP = [
   "img-src data: blob: asset: lume-resource: http://asset.localhost https://asset.localhost",
   "media-src data: blob: asset: lume-resource: http://asset.localhost https://asset.localhost",
   "font-src data:",
-  "worker-src 'none'",
+  "worker-src blob:",
   "manifest-src 'none'",
 ].join("; ");
 
@@ -330,6 +335,11 @@ export interface PresenterBridgeOptions {
   dragWindow?(): void;
   detach?(): void;
   setQuery?(query: string): void;
+  /** Presenter-facing file reads. Both calls are gated twice: the frontend
+   * ledger checks the manifest's `fs.read`, then the Rust command checks the
+   * caller's plugin identity/capability again. */
+  readFileText?(path: string): Promise<string>;
+  readFileBytes?(path: string): Promise<string>;
   /** Core satellite preview; Presenters still get no direct host capability. */
   preview?: {
     show(request: PagePreviewRequest): Promise<void>;
@@ -409,6 +419,12 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
           if (!opts.setQuery) throw new Error("app.setQuery is unavailable in this host");
           opts.setQuery(String(args.q ?? ""));
           return null;
+        case "fs.readText":
+          if (!opts.readFileText) throw new Error("fs.readText is unavailable in this host");
+          return opts.readFileText(String(args.path ?? ""));
+        case "fs.bytes":
+          if (!opts.readFileBytes) throw new Error("fs.bytes is unavailable in this host");
+          return opts.readFileBytes(String(args.path ?? ""));
         default:
           throw new Error("permission denied: Presenter capability not available: " + method);
       }

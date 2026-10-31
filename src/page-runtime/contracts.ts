@@ -109,8 +109,9 @@ export interface PresenterDescriptor {
   builtin?: boolean;
 }
 
-/** Presenter-safe surface. Network, storage, DB, filesystem, clipboard,
- * dialogs, search and secrets are deliberately absent. */
+/** Presenter-safe surface. Network, storage, DB, clipboard, dialogs, search
+ * and secrets are deliberately absent. `fs.readText/bytes` is the only file
+ * exception and remains gated by the manifest `fs.read` capability. */
 export interface PresenterHostApi {
   ready(): Promise<void>;
   getModel(): Promise<PageModel>;

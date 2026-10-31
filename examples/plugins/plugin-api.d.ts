@@ -318,7 +318,15 @@ interface LumeIntentResult {
   value?: LumeJsonValue;
 }
 
-/** Presenter-only surface; sensitive host capabilities are absent. */
+/** Presenter 的按需文件读取面；权限 `fs.read`，仅允许读取，不允许写入。 */
+interface LumePresenterFsApi {
+  readText(path: string): Promise<string>;
+  /** 原始字节的 base64；≤32MB。供 PDF.js / SheetJS 等内嵌渲染器使用。 */
+  bytes(path: string): Promise<string>;
+}
+
+/** Presenter-only surface; general host capabilities are absent. The only
+ * filesystem exception is `window.lume.fs.readText/bytes`, gated by `fs.read`. */
 interface LumePagePresenterApi {
   ready(): Promise<void>;
   getModel(): Promise<LumePageModel>;
@@ -332,6 +340,8 @@ interface LumePagePresenterApi {
   }): Promise<void>;
   setModal(open: boolean): Promise<void>;
   requestSearchFocus(): Promise<void>;
+  /** Presenter frame additionally exposes `window.lume.fs`, typed by
+   * LumePresenterFsApi above; manifests without `fs.read` fail closed. */
   /** Show the core satellite preview without gaining general host access. */
   preview(request: LumePreviewRequest): Promise<void>;
   closePreview(): Promise<void>;

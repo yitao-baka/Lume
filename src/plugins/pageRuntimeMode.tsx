@@ -3,6 +3,7 @@
 //! host; the Presenter never receives its token or sensitive capabilities.
 
 import { createSignal, onMount, Show, type Component } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import { Dynamic } from "solid-js/web";
 import type { PageIntent, PageModel, PageService, PresenterDescriptor } from "../page-runtime/contracts";
 import { COLLECTION_SCHEMA, type CollectionModel } from "../page-runtime/schemas";
@@ -15,6 +16,7 @@ import { currentSkin } from "../skins/runtime";
 import { currentAccent } from "../skins/accent";
 import { skinSurface } from "../skins/registry";
 import { t } from "../i18n";
+import { assertPermission } from "./permissions";
 import type {
   ModeInstance,
   ModeKeyContext,
@@ -284,6 +286,14 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       dragWindow: () => deps.services.dragWindow(),
       detach: () => deps.services.detachMode(m.id),
       setQuery: (q: string) => deps.services.setQuery(q),
+      readFileText: async (path: string) => {
+        assertPermission(m.id, "fs.readText");
+        return invoke<string>("get_file_text", { path, pluginId: m.id });
+      },
+      readFileBytes: async (path: string) => {
+        assertPermission(m.id, "fs.bytes");
+        return invoke<string>("get_file_bytes", { path, pluginId: m.id });
+      },
       preview: {
         show: (request: Parameters<typeof deps.services.preview.show>[0]) =>
           deps.services.preview.show(request, m.id),

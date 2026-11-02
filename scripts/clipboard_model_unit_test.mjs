@@ -19,6 +19,7 @@ const check = (name, ok, extra = "") => {
 
 try {
   const budget = await server.ssrLoadModule("/src/page-services/clipboard/modelBudget.ts");
+  const clipData = await server.ssrLoadModule("/src/launcher/clipData.ts");
   const runtime = await server.ssrLoadModule("/src/page-runtime/modelStore.ts");
   const scroll = await server.ssrLoadModule("/src/presenters/clipboard-scroll.ts");
   const makeModel = (rows, revision = 1) => ({
@@ -82,6 +83,38 @@ try {
   check("budget keeps a non-empty contiguous window", fitted.items.length > 0, String(fitted.items.length));
   check("budget drops oversized visual resources before dropping rows", thumbCount > 0 && thumbCount < rows.length, `${thumbCount}/${rows.length}`);
   check("budgeted model validates below the hard cap", fittedBytes <= runtime.DEFAULT_MODEL_MAX_BYTES, String(fittedBytes));
+
+  const clip = (patch) => ({
+    id: 1,
+    kind: "text",
+    content: "",
+    pinned: false,
+    created_at: 0,
+    thumb: null,
+    source_app: "",
+    has_html: false,
+    merged_count: 1,
+    valid: true,
+    checked: null,
+    ...patch,
+  });
+  check(
+    "single-file rows resolve their own icon path",
+    clipData.clipboardIconSource(clip({ kind: "file", content: "C:\\Docs\\report.pdf" })) === "C:\\Docs\\report.pdf",
+  );
+  check(
+    "multi-file rows keep the aggregate glyph",
+    clipData.clipboardIconSource(clip({ kind: "file", content: "C:\\a.txt\nC:\\b.txt" })) === null,
+  );
+  check(
+    "URL text resolves the default-browser icon key",
+    clipData.clipboardIconSource(clip({ content: " https://example.com/docs " })) === "https://example.com/docs",
+  );
+  check(
+    "plain and merged text do not request file icons",
+    clipData.clipboardIconSource(clip({ content: "hello" })) === null &&
+      clipData.clipboardIconSource(clip({ content: "https://example.com", merged_count: 2 })) === null,
+  );
 
   const giant = "x".repeat(2 * 1024 * 1024);
   const preview = budget.clipContentPreview(giant);

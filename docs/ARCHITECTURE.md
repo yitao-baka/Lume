@@ -149,6 +149,9 @@ browser arguments.
   Manual `refresh_index` is an async command using `spawn_blocking`; it
   resolves only after the scan/cache write and returns the real error, so the
   settings button cannot report success at task start.
+  `rebuild_index` is the destructive counterpart: it clears both in-memory
+  mirrors, removes `user_cache.db`, `system32_cache.db`, `icons.db` and their
+  SQLite sidecars, recreates the schemas, then scans and reloads from scratch.
 - **Search**: `search_apps(query)` scores each entry with a case-insensitive
   fuzzy subsequence matcher (`fuzzy_score`). Rewards prefix, word-boundary and
   consecutive-run matches; penalizes name length. Chinese names additionally
@@ -172,6 +175,13 @@ backends have timeouts).
   backend enters a process-wide 10s cooldown so per-keystroke typing never
   pays repeated timeouts. Returns `{backend, status, entries}` in `AppEntry`
   shape.
+- **Navigate scope**: the native Navigate call (no `plugin_id`) is gated by
+  `index.full_drive_search`, which defaults off, and by an actual LumeSVC
+  registration checked through SCM. With either condition false, Navigate only
+  receives `search_apps` results from the configured index DBs; plugin
+  `search.files` callers keep their separate opt-in capability path. Turning
+  the setting on after service registration lets Navigate merge Everything /
+  LumeSVC hits.
 - **Readiness probe** (`file_search_status`, plugin RPC `search.status`): "is
   Everything running / is the LumeSVC index ready" without running a query —
   Everything by its cheap IPC-window probe, the service by one `status` round
@@ -242,6 +252,9 @@ backends have timeouts).
 - **Extraction**: `extract_icon_png` calls `IShellItemImageFactory` (via
   `SHCreateItemFromParsingName`) to get a 64px icon for a `.lnk`, then
   converts the `HBITMAP` to PNG (`GetDIBits` → BGRA → RGBA → PNG).
+- **URL artwork**: URL clipboard rows resolve the default HTTP handler through
+  `AssocQueryStringW` and extract that browser executable's Shell icon. This
+  keeps links visually tied to the browser instead of using a decorative arrow.
 - **Cache**: resolved icons use a bounded in-memory `path → data URI` map.
   Extracted PNGs also share the rebuildable `data/icons.db` blob store; the
   path cache covers file-search hits that are absent from the app index, so
@@ -353,6 +366,10 @@ environment.
   copy/paste/delete/clear/exists commands and every plugin-facing clipboard
   read/write/probe follow the same rule; image decode, file probes and cache
   cleanup never run on Tauri's main thread.
+- **Row artwork**: single-file rows request the file/folder's own Shell icon;
+  URL rows request the default browser icon; multi-file rows keep the aggregate
+  multi-file glyph. The Page Model passes the resolved image as a `file-icon`
+  resource so both built-in Presenters render the same artwork.
 
 - **Copy back**: `copy_clipboard(id)` looks up the row — text via
   `arboard::set_text`, images via PNG-decode → `set_image`. Auto-paste writes

@@ -23,6 +23,7 @@ export interface NavigatePageDeps {
   invalidateWorkArea: () => void;
   placeholderApps: () => string;
   expandPinned: () => boolean;
+  fullDriveSearch: () => boolean;
   navBarPlugins: () => { id: string; navBars: () => Promise<ContributedBar[]> | ContributedBar[] }[];
 }
 
@@ -120,6 +121,7 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
     services: deps.services,
     nav,
     icons: deps.icons,
+    fullDriveSearch: deps.fullDriveSearch,
   });
 
   let revision = 0;

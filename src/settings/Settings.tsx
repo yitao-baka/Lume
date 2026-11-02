@@ -1174,7 +1174,12 @@ function SectionBody(props: {
         />
       </Match>
       <Match when={props.section === "search"}>
-        <SearchPane settings={props.settings} onChangeIndex={props.onUpdateIndex} />
+        <SearchPane
+          settings={props.settings}
+          onChangeIndex={props.onUpdateIndex}
+          requestConfirm={props.requestConfirm}
+          onOpenSystem={() => props.onNavigate("system")}
+        />
       </Match>
       <Match when={props.section === "hotkeys"}>
         <HotkeysPane settings={props.settings} onChangeHotkeys={props.onUpdateHotkeys} />

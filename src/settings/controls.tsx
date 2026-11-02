@@ -410,7 +410,7 @@ export function SettingRow(props: {
           </Show>
         </div>
         <Show when={props.summary}>
-          <span class="settings-row-summary">{props.summary}</span>
+          <span class="settings-row-summary" title={props.summary}>{props.summary}</span>
         </Show>
       </div>
       <div class="settings-setting-control">{props.children}</div>

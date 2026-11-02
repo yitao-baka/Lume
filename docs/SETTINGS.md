@@ -272,15 +272,26 @@ id，值为 Presenter id。缺省或未知值回落到页面清单声明的默�
 
 页面说明：选择应用与文件搜索覆盖的目录并维护索引缓存。
 
-- **系统索引** `index.system_dirs`：桌面、System32、开始菜单逐项开关；三行分别
-  说明桌面文件/快捷方式、Windows 系统工具与开始菜单已安装应用，不复用同一句
-  摘要。
-- **用户索引** `index.user_index`：每项包含名称、路径、是否索引文件、修复路径与
-  删除。新增前由 `validate_index_dir` 校验存在性、目录类型、可访问性与重复项。
-- **索引维护** `index.cache_refresh_interval_minutes`：5–1440 分钟，启动时仍会
-  刷新一次。
-- 页面动作 `refresh_index`：只重建可重建缓存；运行中显示旋转图标与
-  `aria-busy`，结果或错误留在页面内。
+- **系统索引 04.1** `index.system_dirs`：桌面、System32、开始菜单逐项开关；
+  三行分别说明桌面文件/快捷方式、Windows 系统工具与开始菜单已安装应用，不复用
+  同一句摘要。
+- **用户索引 04.2** `index.user_index`：每项包含名称、路径、是否索引文件、修复
+  路径与删除。新增前由 `validate_index_dir` 校验存在性、目录类型、可访问性与
+  重复项。
+- **全盘索引 04.3**：`index.full_drive_search` 位于用户索引下方并使用独立分组，
+  行内开关写作「在导航页启用」。摘要固定单行并在空间不足时省略；默认关闭，
+  关闭时导航页只搜索本地索引库，打开后才合并 Everything / LumeSVC 的全盘文件
+  结果。开启前用 `svc_status` 检查服务注册；未注册时弹窗提示并把主按钮留给
+  「系统」页，开关保持关闭。Rust 对原生导航文件搜索再次检查服务注册，
+  `agent_status` 式 fail-closed；该设置不改变插件通过 `search.files` 使用文件
+  搜索能力的权限边界。
+- **索引维护 04.4** `index.cache_refresh_interval_minutes`：5–1440 分钟，启动时
+  仍会刷新一次。
+- 页面动作 `refresh_index`：文字按钮「刷新索引」，只增量刷新发生变化的文件；
+  运行中显示进行中文案与 `aria-busy`，结果或错误留在页面内。
+- 页面动作 `rebuild_index`：文字按钮「重建索引」。确认后彻底删除
+  `user_cache.db`、`system32_cache.db`、`icons.db` 及 SQLite sidecar，重新创建
+  数据库并扫描当前索引目录；取消不会改动文件，失败留在页面与确认框内。
 
 ### 05 快捷键（`hotkeys`）
 

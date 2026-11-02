@@ -596,6 +596,16 @@ export function buildSettingsCatalog(
       value: String(i.system_dirs?.filter((dir) => dir.enabled).length ?? 0),
     }),
     descriptor({
+      id: "index.full_drive_search",
+      section: "search",
+      labelKey: "settingsFullDriveIndex",
+      summaryKey: "settingsFullDriveIndexHint",
+      groupKey: "settingsFullDriveIndex",
+      kind: "switch",
+      keywords: ["whole drive", "file search", "everything", "service", "全盘", "全盤", "文件", "檔案", "服务", "服務"],
+      value: onOff(i.full_drive_search),
+    }),
+    descriptor({
       id: "index.user_index",
       section: "search",
       labelKey: "settingsUserIndex",
@@ -622,6 +632,16 @@ export function buildSettingsCatalog(
       groupKey: "groupIndexCache",
       kind: "action",
       keywords: ["refresh", "rebuild", "scan", "刷新", "重建"],
+      value: t("settingsPageAction"),
+    }),
+    descriptor({
+      id: "action.rebuild_index",
+      section: "search",
+      labelKey: "settingsRebuildIndex",
+      summaryKey: "settingsRebuildIndexHint",
+      groupKey: "groupIndexCache",
+      kind: "action",
+      keywords: ["rebuild", "delete", "reinitialize", "重建", "删除", "刪除", "初始化"],
       value: t("settingsPageAction"),
     }),
 

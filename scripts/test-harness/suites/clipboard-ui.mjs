@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 export default {
   id: "clipboard-ui",
   description: "Clipboard surface, pause acknowledgement and clear confirmation",
@@ -22,6 +24,15 @@ export default {
       "history surface renders rows or the empty state",
       initialSurface.rows > 0 || initialSurface.empty,
       initialSurface,
+    );
+    const iconProbe = await t.invoke("get_app_icons", {
+      paths: [join(t.runtimeDir, "lume.exe"), "https://example.com/"],
+    });
+    t.check(
+      "file and URL rows resolve native PNG icons",
+      iconProbe.length === 2 &&
+        iconProbe.every((entry) => entry.icon?.startsWith("data:image/png;base64,")),
+      iconProbe.map((entry) => ({ path: entry.path, icon: entry.icon?.slice(0, 24) })),
     );
 
     const pauseBefore = await t.evaluate('document.querySelector(".clip-status-btn")?.classList.contains("paused") === true');

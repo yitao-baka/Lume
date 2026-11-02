@@ -494,6 +494,12 @@ body,
   height: 18px;
 }
 
+.clip-row-file-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
 .clip-row-tile-text {
   font-size: 15px;
   font-weight: 700;
@@ -783,6 +789,12 @@ body,
 .clip-compact-tile-icon {
   width: 16px;
   height: 16px;
+}
+
+.clip-compact-file-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
 }
 
 .clip-compact-color {
@@ -1800,6 +1812,14 @@ body.settings-window #root {
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
+}
+
+.settings-page-inline-action {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 4px 12px;
 }
 
 .settings-action:hover:not(:disabled) {

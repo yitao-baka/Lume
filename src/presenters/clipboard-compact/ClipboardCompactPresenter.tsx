@@ -11,6 +11,7 @@ import { clipboardRowHeight } from "../../skins/registry";
 import type { ClipboardRowModel } from "../../page-runtime/schemas";
 import type { ClipboardListProps } from "../clipboard-list/ClipboardListPresenter";
 import { clipboardScrollFades } from "../clipboard-scroll";
+import browserIcon from "../../../res/icons/browser.svg";
 import clipboardIcon from "../../../res/icons/clipboard.svg";
 import multifilesIcon from "../../../res/icons/multifiles.svg";
 
@@ -61,6 +62,13 @@ function CompactTile(props: { row: ClipboardRowModel }) {
     if ((props.row.fileCount ?? paths.length) >= 2) {
       return <span class="clip-compact-tile"><img class="clip-compact-tile-icon" src={multifilesIcon} alt="" /></span>;
     }
+    if (props.row.icon) {
+      return (
+        <span class="clip-compact-tile">
+          <img class="clip-compact-tile-icon clip-compact-file-icon" src={props.row.icon.src} alt="" draggable={false} />
+        </span>
+      );
+    }
     const name = basename(paths[0] ?? "");
     const kind = props.row.fileKind ?? fileContent(name);
     const glyph = kind === "audio" ? "♪" : kind === "video" ? "▷" : kind === "image" ? "▧" : kind === "text" ? "≡" : kind === "pdf" ? "PDF" : (name.split(".").pop() || "FILE").slice(0, 4).toUpperCase();
@@ -69,7 +77,11 @@ function CompactTile(props: { row: ClipboardRowModel }) {
   const color = props.row.kind === "text" ? detectColor(props.row.content) : null;
   if (color) return <span class="clip-compact-tile clip-compact-color" style={{ background: color }} />;
   if (props.row.kind === "text" && isUrl(props.row.content)) {
-    return <span class="clip-compact-tile"><span class="clip-compact-glyph">↗</span></span>;
+    return (
+      <span class="clip-compact-tile">
+        <img class="clip-compact-tile-icon clip-compact-file-icon" src={props.row.icon?.src ?? browserIcon} alt="" draggable={false} />
+      </span>
+    );
   }
   return <span class="clip-compact-tile"><span class="clip-compact-glyph text">T</span></span>;
 }

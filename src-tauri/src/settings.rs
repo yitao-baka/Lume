@@ -425,6 +425,11 @@ pub struct Hotkeys {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Index {
     pub system_dirs: Vec<SystemDir>,
+    /// Include the whole-drive file-search backends in the Navigate page.
+    /// Off by default: Navigate must stay limited to the configured index DBs
+    /// unless the user explicitly opts into Everything / LumeSVC results.
+    #[serde(default)]
+    pub full_drive_search: bool,
     /// Named user-index entries (key-value, like Windows env vars): a display
     /// `name` per indexed `path`. `no_files` = index only openable files in it.
     #[serde(default)]
@@ -708,6 +713,7 @@ impl Default for Settings {
                         enabled: false,
                     },
                 ],
+                full_drive_search: false,
                 user_index: Vec::new(),
                 user_dirs: Vec::new(),
                 user_dirs_no_files: Vec::new(),
@@ -1799,6 +1805,7 @@ mod tests {
             .system_dirs
             .iter()
             .any(|d| d.path == "Desktop" && d.enabled));
+        assert!(!s.index.full_drive_search, "whole-drive navigation defaults off");
         fs::remove_dir_all(&base).ok();
     }
 

@@ -1,22 +1,26 @@
 //! 「搜索」页 — index directories (system index rows + the key-value user
 //! index editor) and the index-cache refresh interval (docs/SETTINGS.md).
 
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { t, type Messages } from "../i18n";
-import type { SettingsData } from "./types";
+import type { ConfirmState, SettingsData } from "./types";
 import { SettingGroup, SettingRow, Toggle } from "./controls";
 import { settingsError } from "./errors";
 import folderOpenIcon from "../../res/icons/folder_open.svg";
 import folderPlusIcon from "../../res/icons/folder_plus.svg";
 import deleteIcon from "../../res/icons/delete.svg";
-import refreshIcon from "../../res/icons/refresh.svg";
 
 interface IndexDirValidation {
   ok: boolean;
   path: string;
   reason: "missing" | "not_dir" | "inaccessible" | "invalid" | null;
+}
+
+interface SvcStatus {
+  installed: boolean;
+  running: boolean;
 }
 
 const PATH_REASON_KEY: Record<string, keyof Messages> = {
@@ -53,6 +57,8 @@ function reasonText(reason: string | null): string {
 export default function SearchPane(props: {
   settings: SettingsData;
   onChangeIndex: (patch: Partial<SettingsData["index"]>) => void;
+  requestConfirm: (state: ConfirmState) => void;
+  onOpenSystem: () => void;
 }) {
   const idx = () => props.settings.index;
   const [name, setName] = createSignal("");
@@ -61,8 +67,63 @@ export default function SearchPane(props: {
   const [entryErrors, setEntryErrors] = createSignal<Record<string, string>>({});
   const [validating, setValidating] = createSignal(false);
   const [refreshing, setRefreshing] = createSignal(false);
+  const [rebuilding, setRebuilding] = createSignal(false);
+  const [fullDriveBusy, setFullDriveBusy] = createSignal(false);
+  const [svcInstalled, setSvcInstalled] = createSignal<boolean | null>(null);
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
   let validationSeq = 0;
+
+  const fullDriveEnabled = () =>
+    svcInstalled() === true && (idx().full_drive_search ?? false);
+
+  /** The service is the source of truth, matching the agent switch: unknown or
+   * unregistered states keep the option fail-closed. */
+  async function refreshServiceInstalled(): Promise<boolean | null> {
+    try {
+      const next = await invoke<SvcStatus>("svc_status");
+      setSvcInstalled(next.installed);
+      if (!next.installed && (idx().full_drive_search ?? false)) {
+        props.onChangeIndex({ full_drive_search: false });
+      }
+      return next.installed;
+    } catch (err) {
+      setSvcInstalled(null);
+      setStatus({ ok: false, text: settingsError(err, "settingsFullDriveCheckFailed") });
+      return null;
+    }
+  }
+
+  onMount(() => {
+    void refreshServiceInstalled();
+  });
+
+  async function toggleFullDrive(value: boolean) {
+    if (!value) {
+      props.onChangeIndex({ full_drive_search: false });
+      return;
+    }
+    if (fullDriveBusy()) return;
+    setFullDriveBusy(true);
+    try {
+      const installed = await refreshServiceInstalled();
+      if (installed !== true) {
+        if (installed === false) {
+          props.requestConfirm({
+            title: t("settingsFullDriveServiceRequiredTitle"),
+            hint: t("settingsFullDriveServiceRequiredHint"),
+            confirmLabel: t("settingsFullDriveOpenSystem"),
+            action: async () => {
+              props.onOpenSystem();
+            },
+          });
+        }
+        return;
+      }
+      props.onChangeIndex({ full_drive_search: true });
+    } finally {
+      setFullDriveBusy(false);
+    }
+  }
 
   async function validate(raw: string): Promise<IndexDirValidation> {
     return invoke<IndexDirValidation>("validate_index_dir", { path: raw });
@@ -208,7 +269,7 @@ export default function SearchPane(props: {
   }
 
   async function refreshIndexNow() {
-    if (refreshing()) return;
+    if (refreshing() || rebuilding()) return;
     setRefreshing(true);
     setStatus({ ok: true, text: t("settingsRefreshRunning") });
     try {
@@ -221,20 +282,48 @@ export default function SearchPane(props: {
     }
   }
 
+  function rebuildIndexNow() {
+    if (refreshing() || rebuilding()) return;
+    props.requestConfirm({
+      title: t("settingsRebuildIndexConfirmTitle"),
+      hint: t("settingsRebuildIndexConfirmHint"),
+      confirmLabel: t("settingsRebuildIndex"),
+      action: async () => {
+        setRebuilding(true);
+        setStatus({ ok: true, text: t("settingsRebuildRunning") });
+        try {
+          await invoke("rebuild_index");
+          setStatus({ ok: true, text: t("settingsRebuilt") });
+        } catch (err) {
+          setStatus({ ok: false, text: settingsError(err, "settingsRebuildFailed") });
+          throw err;
+        } finally {
+          setRebuilding(false);
+        }
+      },
+    });
+  }
+
   return (
     <>
-      <div class="settings-page-inline-action">
+      <div class="settings-page-inline-action settings-index-maintenance">
         <button
-          class="settings-action settings-refresh-action"
+          class="settings-action"
           data-setting-id="action.refresh_index"
-          classList={{ refreshing: refreshing() }}
-          title={t(refreshing() ? "settingsRefreshRunning" : "settingsRefreshIndex")}
-          aria-label={t(refreshing() ? "settingsRefreshRunning" : "settingsRefreshIndex")}
           aria-busy={refreshing()}
-          disabled={refreshing()}
+          disabled={refreshing() || rebuilding()}
           onClick={() => void refreshIndexNow()}
         >
-          <img class="settings-icon-btn-icon" src={refreshIcon} alt="" draggable={false} />
+          {t(refreshing() ? "settingsRefreshRunning" : "settingsRefreshIndex")}
+        </button>
+        <button
+          class="settings-action"
+          data-setting-id="action.rebuild_index"
+          aria-busy={rebuilding()}
+          disabled={refreshing() || rebuilding()}
+          onClick={rebuildIndexNow}
+        >
+          {t(rebuilding() ? "settingsRebuildRunning" : "settingsRebuildIndex")}
         </button>
       </div>
       <SettingGroup id="index.system_dirs" title={t("settingsSystemIndex")} number="04.1">
@@ -263,7 +352,7 @@ export default function SearchPane(props: {
         </For>
       </SettingGroup>
 
-      <SettingGroup title={t("settingsUserIndex")} number="04.2">
+      <SettingGroup id="index.user_index_group" title={t("settingsUserIndex")} number="04.2">
         <SettingRow
           id="index.user_index"
           label={t("settingsIndexDirs")}
@@ -370,7 +459,31 @@ export default function SearchPane(props: {
         </SettingRow>
       </SettingGroup>
 
-      <SettingGroup title={t("groupIndexCache")} number="04.3">
+      <SettingGroup
+        id="index.full_drive_group"
+        title={t("settingsFullDriveIndex")}
+        number="04.3"
+      >
+        <SettingRow
+          id="index.full_drive_search"
+          label={t("settingsFullDriveIndexToggle")}
+          summary={
+            svcInstalled() === false
+              ? t("settingsFullDriveServiceRequiredSummary")
+              : t("settingsFullDriveIndexHint")
+          }
+          class="settings-single-line-summary"
+        >
+          <Toggle
+            checked={fullDriveEnabled()}
+            label={t("settingsFullDriveIndex")}
+            disabled={fullDriveBusy()}
+            onChange={(v) => void toggleFullDrive(v)}
+          />
+        </SettingRow>
+      </SettingGroup>
+
+      <SettingGroup title={t("groupIndexCache")} number="04.4">
         <SettingRow
           id="index.cache_refresh_interval_minutes"
           label={t("settingsCacheRefresh")}

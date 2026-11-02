@@ -85,6 +85,9 @@ export interface SettingsData {
   hotkeys: { toggle: string; switch_mode: string };
   index: {
     system_dirs: { path: string; enabled: boolean }[];
+    /** Include Everything / LumeSVC whole-drive hits in Navigate. Off by
+     * default so Navigate only searches the configured index DBs. */
+    full_drive_search: boolean;
     /** Named user-index entries (key-value, like Windows env vars). */
     user_index: { name: string; path: string; no_files: boolean }[];
     /** Legacy path list — migration only, always empty after a read. */
@@ -212,6 +215,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
       { path: "System32", enabled: true },
       { path: "StartMenu", enabled: false },
     ],
+    full_drive_search: false,
     user_index: [],
     user_dirs: [],
     user_dirs_no_files: [],

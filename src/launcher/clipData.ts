@@ -30,6 +30,21 @@ export function detectColor(text: string): string | null {
   return null;
 }
 
+/** The path whose shell icon represents a clipboard row. Single-file rows use
+ * their own file/folder icon; URL text uses the default browser icon. Multi-
+ * file rows keep the aggregate file-list glyph because there is no single
+ * owned icon. */
+export function clipboardIconSource(item: ClipboardItem): string | null {
+  if (item.kind === "file") {
+    const paths = item.content.split(/\r?\n/).filter(Boolean);
+    return paths.length === 1 ? paths[0].trim() || null : null;
+  }
+  if (item.kind === "text" && item.merged_count < 2 && isUrl(item.content)) {
+    return item.content.trim();
+  }
+  return null;
+}
+
 /** First line of a clipboard row: image/file label, a merged-copy title, the
  * color value, or text/URL. */
 export function clipTitle(item: ClipboardItem): string {

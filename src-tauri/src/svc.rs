@@ -218,6 +218,12 @@ pub fn svc_status() -> Result<SvcStatus, String> {
     }
 }
 
+/// Native Navigate's full-drive search requires an actual service
+/// registration. Unknown/SCM errors are fail-closed.
+pub(crate) fn service_installed() -> bool {
+    svc_status().map(|status| status.installed).unwrap_or(false)
+}
+
 /// The service binary's configured image path (two-call `QueryServiceConfigW`).
 fn query_bin_path(hservice: windows::Win32::System::Services::SC_HANDLE) -> Option<String> {
     use windows::Win32::System::Services::{QueryServiceConfigW, QUERY_SERVICE_CONFIGW};

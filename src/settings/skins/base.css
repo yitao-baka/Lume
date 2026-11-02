@@ -748,6 +748,13 @@ html[data-skin] body.settings-window #root {
   line-height: 1.45;
 }
 
+.settings-single-line-summary .settings-row-summary {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .settings-setting-control {
   min-width: 0;
   flex: 0 1 auto;

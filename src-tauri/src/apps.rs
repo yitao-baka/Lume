@@ -27,6 +27,10 @@ const BROWSE_CAP: usize = 200;
 
 /// Search caches (in-memory mirrors of `cache.rs` DBs), managed by Tauri.
 pub struct AppIndex {
+    /// Serializes every DB mutation (startup/hourly refresh and destructive
+    /// rebuild). Without this, a startup System32 scan can still hold an open
+    /// SQLite connection while the rebuild deletes the same files.
+    db_mutation: Mutex<()>,
     /// System32 executable entries (loaded from `system32_cache.db`).
     sys32: Mutex<Option<Vec<AppEntry>>>,
     /// Desktop + user entries (loaded from `user_cache.db`).
@@ -36,6 +40,7 @@ pub struct AppIndex {
 impl Default for AppIndex {
     fn default() -> Self {
         Self {
+            db_mutation: Mutex::new(()),
             sys32: Mutex::new(None),
             user: Mutex::new(None),
         }
@@ -66,6 +71,7 @@ impl AppIndex {
     /// Rebuild the System32 preset DB (once) and reload its entries. Called on
     /// a background thread at startup.
     pub fn refresh_sys32(&self) {
+        let _guard = self.db_mutation.lock().unwrap();
         let _ = cache::ensure_sys32_db();
         if let Ok(entries) = cache::load_sys32_entries() {
             *self.sys32.lock().unwrap() = Some(entries);
@@ -76,6 +82,7 @@ impl AppIndex {
     /// the actual scan/write result so the settings button can report success
     /// only after the background work really finished.
     pub fn refresh_user_checked(&self, settings: &Settings) -> Result<(), String> {
+        let _guard = self.db_mutation.lock().unwrap();
         match cache::refresh_user_db(settings) {
             Ok(entries) => {
                 *self.user.lock().unwrap() = Some(entries);
@@ -101,6 +108,27 @@ impl AppIndex {
                 *self.user.lock().unwrap() = Some(entries);
             }
         }
+    }
+
+    /// Clear both in-memory mirrors. Used before deleting the SQLite files so
+    /// no search can keep serving entries from the discarded index.
+    fn clear(&self) {
+        *self.sys32.lock().unwrap() = None;
+        *self.user.lock().unwrap() = None;
+    }
+
+    /// Destructively remove the local index and icon databases, recreate their
+    /// schemas, then run a fresh System32/user scan and reload both mirrors.
+    pub fn rebuild_checked(&self, settings: &Settings) -> Result<(), String> {
+        let _guard = self.db_mutation.lock().unwrap();
+        self.clear();
+        crate::icons::clear_icon_memory();
+        cache::delete_index_databases()?;
+        cache::initialize_index_databases()?;
+        cache::ensure_sys32_db().map_err(|e| e.to_string())?;
+        *self.sys32.lock().unwrap() = Some(cache::load_sys32_entries()?);
+        *self.user.lock().unwrap() = Some(cache::refresh_user_db(settings)?);
+        Ok(())
     }
 }
 
@@ -204,6 +232,23 @@ pub async fn refresh_index(app: tauri::AppHandle) -> Result<(), String> {
     })
     .await
     .map_err(|e| format!("index refresh worker panicked: {e}"))?
+}
+
+/// Destructively rebuild every local search index database. This is separate
+/// from `refresh_index`: it removes user_cache.db, system32_cache.db and
+/// icons.db (plus SQLite sidecars), recreates their schemas, scans again and
+/// reloads both in-memory mirrors before reporting success.
+#[tauri::command]
+pub async fn rebuild_index(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let index = app.state::<AppIndex>();
+        let settings = app.state::<SettingsState>().current();
+        index.rebuild_checked(&settings)?;
+        crate::dirwatch::rebuild(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("index rebuild worker panicked: {e}"))?
 }
 
 /// Search the enabled index directories for files matching `query`.

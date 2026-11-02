@@ -56,6 +56,10 @@ const SORTS: &[&str] = &[
     "name", "path", "size", "mtime", "name_desc", "path_desc", "size_desc", "mtime_desc",
 ];
 
+fn native_full_drive_allowed(enabled: bool, service_installed: impl FnOnce() -> bool) -> bool {
+    enabled && service_installed()
+}
+
 #[derive(Serialize)]
 pub struct FileSearchOut {
     /// `"everything" | "svc" | "none"` — which backend answered.
@@ -200,6 +204,12 @@ pub async fn file_search(
         eprintln!("[filesearch] denied: {err}");
         return Err(err);
     }
+    // Native Navigate calls carry no plugin id. Keep them scoped to the
+    // configured index DBs unless the user explicitly opts into whole-drive
+    // results and the LumeSVC registration is real; plugin search.files callers
+    // keep their own capability path.
+    let native = plugin_id.is_none();
+    let full_drive_enabled = settings.current().index.full_drive_search;
     let max = max.unwrap_or(FILE_RESULTS_MAX).clamp(1, 100);
     let offset = offset.unwrap_or(0);
     // 'static: only the known sort names survive (invalid → engine default),
@@ -210,6 +220,11 @@ pub async fn file_search(
     let (filter, filter_echo) = NameFilter::from_parts(exts.as_deref(), folder.unwrap_or(false));
     // Blocking waits are fine here: this runs on the async runtime's workers.
     tauri::async_runtime::spawn_blocking(move || {
+        if native
+            && !native_full_drive_allowed(full_drive_enabled, crate::svc::service_installed)
+        {
+            return unavailable();
+        }
         run_search(&query, max, offset, sort, &filter, filter_echo)
     })
     .await
@@ -614,6 +629,15 @@ fn cooldown_active(map: &HashMap<&'static str, Instant>, backend: &str, now: Ins
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_navigation_file_search_requires_explicit_opt_in() {
+        assert!(!native_full_drive_allowed(false, || {
+            panic!("service status must not be queried while the setting is off")
+        }));
+        assert!(!native_full_drive_allowed(true, || false));
+        assert!(native_full_drive_allowed(true, || true));
+    }
 
     #[test]
     fn status_backend_selection_follows_search_preference() {

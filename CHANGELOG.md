@@ -25,6 +25,23 @@ All notable changes to Lume are documented here. Format based on
   （436×617 canvas）和真实 XLSX（表格 + 单元格文本）均正常；重复图标请求由
   首轮约 19ms 降至 1.6–2ms。
 ### Added
+- **索引维护、全盘索引与剪贴板原生图标（2026-11-02）** — 搜索页把「刷新索引」
+  改为文字按钮，并新增破坏性「重建索引」：确认后删除 `user_cache.db`、
+  `system32_cache.db`、`icons.db` 及 SQLite sidecar，重建 schema 后重新扫描；
+  数据库变更加入单一互斥门，避免启动扫描与重建同时持有同一 SQLite 文件。
+  「全盘索引」是用户索引下方的独立分组，行内文案为「在导航页启用」，摘要固定
+  单行省略；默认关闭。开启前检查 `svc_status`，未注册时弹窗引导到系统页并保持
+  关闭；Rust 原生命令还复查服务注册，与前端一起 fail-closed。导航页在关闭时只
+  合并本地索引库结果，插件的 `search.files` 能力不受影响。
+  剪贴板单文件行改用文件自身 Shell 图标，URL 文本通过默认浏览器关联提取浏览器
+  图标，多文件行保留聚合图标。验证：`pnpm verify:fast` PASS（docs 15 项、
+  i18n 602 键 × 3 语言、Page Runtime 18/18、clipboard model 14/14、
+  clipboard store 8/8、skin 11/11、前端生产构建、Rust **285 passed /
+  9 ignored**）；debug embedded 构建通过；`pnpm verify:ui --suite settings
+  --no-build` **14/14**（9.9s，含分组顺序、摘要单行、服务注册拦截/放行、
+  重建数据库实文件断言与默认全盘关闭断言）、
+  `pnpm verify:ui --suite clipboard-ui --no-build` **7/7**（1.8s，含文件与
+  URL 的原生 PNG 图标探针）。
 - **分层验证体系与隔离 CDP harness（2026-10-29）** — 新增
   `pnpm verify:docs` / `verify:fast` / `verify:ui` / `verify:ui:changed` /
   `verify:legacy` / `verify:release` 统一入口。CDP harness 把 exe、语言、资源和

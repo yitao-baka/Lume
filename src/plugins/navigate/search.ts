@@ -37,6 +37,8 @@ export interface NavigateSearchDeps {
   services: PluginServices;
   nav: NavigateStore;
   icons: { loadIcons(apps: AppEntry[]): Promise<void> };
+  /** Include whole-drive Everything / LumeSVC hits in this page. */
+  fullDriveSearch: () => boolean;
 }
 
 export function createNavigateSearch(deps: NavigateSearchDeps) {
@@ -246,10 +248,12 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
     nav.setRecommended(null);
     const [res, files] = (await Promise.all([
       invoke("search_apps", { query: q }),
-      invoke<FileSearchOut>("file_search", { query: q }).catch((err) => {
-        console.error("file_search failed:", err);
-        return null;
-      }),
+      deps.fullDriveSearch()
+        ? invoke<FileSearchOut>("file_search", { query: q }).catch((err) => {
+            console.error("file_search failed:", err);
+            return null;
+          })
+        : Promise.resolve(null),
     ])) as [AppEntry[], FileSearchOut | null];
     if (!requestCurrent(token, generation)) return;
 

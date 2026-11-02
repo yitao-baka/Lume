@@ -147,6 +147,9 @@ dev URL instead.
     gone), Enter copies the entry and keeps the launcher open with
     「已复制 — 没有可粘贴的目标窗口」; a paste failure keeps it open with an
     error toast instead of hiding.
+14. **Native row icons** — copy one file/folder and one `http(s)` URL. The
+    single-file row shows that file's Shell icon and the URL row shows the
+    default browser's icon; a multi-file row keeps the aggregate file glyph.
 
 ### Satellite preview
 
@@ -193,6 +196,13 @@ dev URL instead.
    a disk plugin's declarative label (e.g. 「列表前缀」): each row-level setting
    appears once; Enter jumps to the exact row and focuses its container. A
    nonsense query shows the localized no-match suggestions. Esc clears the overlay.
+9. **Index scope and maintenance** — 搜索 shows text buttons 「刷新索引」 /
+   「重建索引」 and a standalone 「全盘索引」 group below 用户索引 whose switch
+   defaults off and whose hint stays on one line. With the switch off, typing in
+   Navigate must not append whole-drive files even while Everything or LumeSVC is
+   running. With the service unregistered, turning the switch on must show the
+   registration modal and leave it off. Rebuild asks for confirmation, then
+   recreates the local index/icon databases and resumes indexed searches.
 9. **Skins and accent** — in 外观, choose Quiet ↔ Chromatic separately for the
    launcher and settings window. Focus stays on the active skin radio and scroll
    position is preserved; changing either window's skin leaves the other

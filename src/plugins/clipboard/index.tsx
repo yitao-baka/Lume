@@ -8,7 +8,8 @@ import { CLIPBOARD_SCHEMA, type ClipboardModel } from "../../page-runtime/schema
 import { PageSession } from "../../page-runtime/session";
 import type { PageIntent, PageModel, PresenterDescriptor } from "../../page-runtime/contracts";
 import { pushDiagnostic } from "../../page-runtime/diagnostics";
-import type { PreviewReq } from "../../launcher/types";
+import type { AppEntry, PreviewReq } from "../../launcher/types";
+import { clipboardIconSource } from "../../launcher/clipData";
 import type { LauncherPlugin, ModeInstance, ModeKeyContext, PageRow, PluginServices } from "../types";
 import { createClipboardPageService } from "../../page-services/clipboard/service";
 import { rememberPageModel } from "../registry";
@@ -20,11 +21,18 @@ const CLIPBOARD_PRESENTERS: PresenterDescriptor[] = [
   { id: "clipboard-compact", name: "Compact history", models: [CLIPBOARD_SCHEMA], builtin: true },
 ];
 
-export function createClipboardPlugin(services: PluginServices): LauncherPlugin {
+export interface ClipboardHost {
+  icons: {
+    loadIcons(apps: AppEntry[]): Promise<void>;
+    iconFor(path: string): string | undefined;
+  };
+}
+
+export function createClipboardPlugin(services: PluginServices, host: ClipboardHost): LauncherPlugin {
   const cfg = (window as any).__LUME_CONFIG__ as SettingsData | undefined;
   const [presenterId, setPresenterId] = createSignal(cfg?.pages?.presenters?.clipboard || "clipboard-list");
   const [model, setModel] = createSignal<PageModel>();
-  const page = createClipboardPageService({ services });
+  const page = createClipboardPageService({ services, icons: host.icons });
   const session = new PageSession({
     pageId: "clipboard",
     schema: CLIPBOARD_SCHEMA,
@@ -34,6 +42,19 @@ export function createClipboardPlugin(services: PluginServices): LauncherPlugin 
   });
   void session.start(page.service);
   createEffect(() => session.publish(page.snapshot()));
+  createEffect(() => {
+    const start = Math.max(0, page.store.clipStart());
+    const end = Math.max(start, page.store.clipEnd());
+    const paths = [...new Set(
+      page.store.clips()
+        .slice(start, end)
+        .map(clipboardIconSource)
+        .filter((path): path is string => !!path),
+    )];
+    if (paths.length > 0) {
+      void host.icons.loadIcons(paths.map((path, index) => ({ id: -index - 1, name: "", path })));
+    }
+  });
   createEffect(() => pushDiagnostic("__presenterStates", { pageId: "clipboard", presenterId: presenterId(), status: "ready" }));
 
   const instance: ModeInstance = {

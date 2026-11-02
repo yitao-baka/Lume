@@ -39,6 +39,7 @@ export function createTestContext({ suiteId, resultDir, main, session }) {
   const context = {
     suiteId,
     resultDir,
+    runtimeDir: join(resultDir, "runtime"),
     session,
     main: main.connection,
     checks,

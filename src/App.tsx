@@ -637,7 +637,7 @@ const services: PluginServices = {
     },
   });
   setNavigateBarsRefresh(() => navigatePlugin.refreshBars());
-  const clipboardPlugin = createClipboardPlugin(services);
+  const clipboardPlugin = createClipboardPlugin(services, { icons });
   definePlugin(navigatePlugin);
   definePlugin(clipboardPlugin);
 

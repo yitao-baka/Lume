@@ -54,6 +54,50 @@ pub fn icons_db_path() -> PathBuf {
     paths::data_dir().join("icons.db")
 }
 
+fn database_sidecar(path: &Path, suffix: &str) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
+}
+
+fn remove_database_family(path: &Path) -> Result<(), String> {
+    for candidate in [
+        path.to_path_buf(),
+        database_sidecar(path, "-wal"),
+        database_sidecar(path, "-shm"),
+        database_sidecar(path, "-journal"),
+    ] {
+        for attempt in 0..6 {
+            match std::fs::remove_file(&candidate) {
+                Ok(()) => break,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::PermissionDenied && attempt < 5 =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(40));
+                }
+                Err(err) => {
+                    return Err(format!(
+                        "failed to delete index database {}: {err}",
+                        candidate.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Delete the complete local search index, including extracted icon data and
+/// SQLite sidecars. The caller reinitializes the databases before scanning so
+/// a rebuild never silently reuses stale rows.
+pub fn delete_index_databases() -> Result<(), String> {
+    for path in [user_db_path(), sys32_db_path(), icons_db_path()] {
+        remove_database_family(&path)?;
+    }
+    Ok(())
+}
+
 fn ensure_dir_for(path: &Path) -> rusqlite::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(io_err)?;
@@ -72,6 +116,27 @@ fn init_files_schema(conn: &Connection) -> rusqlite::Result<()> {
         );
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
     )
+}
+
+fn init_icons_schema(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS icons (
+            icon_hash TEXT PRIMARY KEY,
+            data      BLOB NOT NULL
+        );",
+    )
+}
+
+/// Recreate empty index and icon schemas after [`delete_index_databases`].
+pub fn initialize_index_databases() -> Result<(), String> {
+    for path in [user_db_path(), sys32_db_path()] {
+        ensure_dir_for(&path).map_err(|e| e.to_string())?;
+        let conn = Connection::open(path).map_err(|e| e.to_string())?;
+        init_files_schema(&conn).map_err(|e| e.to_string())?;
+    }
+    ensure_dir_for(&icons_db_path()).map_err(|e| e.to_string())?;
+    let conn = Connection::open(icons_db_path()).map_err(|e| e.to_string())?;
+    init_icons_schema(&conn).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -517,12 +582,7 @@ pub fn encode_png_uri(png: &[u8]) -> String {
 pub fn store_icon(hash: &str, data: &[u8]) -> rusqlite::Result<()> {
     ensure_dir_for(&icons_db_path())?;
     let conn = Connection::open(icons_db_path())?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS icons (
-            icon_hash TEXT PRIMARY KEY,
-            data      BLOB NOT NULL
-        );",
-    )?;
+    init_icons_schema(&conn)?;
     conn.execute(
         "INSERT OR IGNORE INTO icons(icon_hash, data) VALUES (?1, ?2)",
         params![hash, data],
@@ -590,5 +650,28 @@ mod tests {
         let (full, initials) = pinyin_for("Firefox");
         assert_eq!(full, "firefox");
         assert_eq!(initials, "firefox");
+    }
+
+    #[test]
+    fn database_family_removes_sqlite_sidecars_and_tolerates_missing_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "lume-index-delete-{}-{}",
+            std::process::id(),
+            now_millis()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("user_cache.db");
+        std::fs::write(&db, b"db").unwrap();
+        std::fs::write(database_sidecar(&db, "-wal"), b"wal").unwrap();
+        std::fs::write(database_sidecar(&db, "-shm"), b"shm").unwrap();
+        std::fs::write(database_sidecar(&db, "-journal"), b"journal").unwrap();
+
+        remove_database_family(&db).unwrap();
+        assert!(!db.exists());
+        assert!(!database_sidecar(&db, "-wal").exists());
+        assert!(!database_sidecar(&db, "-shm").exists());
+        assert!(!database_sidecar(&db, "-journal").exists());
+        remove_database_family(&db).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

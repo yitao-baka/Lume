@@ -478,6 +478,7 @@ pub fn run() {
             explorer::get_terminal_icons,
             apps::search_apps,
             apps::refresh_index,
+            apps::rebuild_index,
             apps::launch_app,
             apps::reveal_in_folder,
             filesearch::file_search,

@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use crate::cache;
 
-use windows::core::{HSTRING, Interface};
+use windows::core::{HSTRING, Interface, PCWSTR, PWSTR};
 use windows::Win32::Foundation::SIZE;
 use windows::Win32::Graphics::Gdi::{
     GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
@@ -20,8 +20,9 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT, COINIT_APARTMENTTHREADED, COINIT_MULTITHREADED};
 use windows::Win32::UI::Shell::{
-    IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_ICONONLY,
-    SIIGBF_BIGGERSIZEOK, SIIGBF_SCALEUP, SIIGBF_THUMBNAILONLY,
+    AssocQueryStringW, IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, ASSOCF_NONE,
+    ASSOCSTR_EXECUTABLE, SIIGBF, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, SIIGBF_SCALEUP,
+    SIIGBF_THUMBNAILONLY,
 };
 
 /// Icon extraction size (px). 64px stays crisp on HiDPI grids.
@@ -36,6 +37,7 @@ const FILE_THUMB_SIZE: i32 = 400;
 /// that are never inserted there, so without this cache those paths would be
 /// re-extracted through the shell on every selection.
 static ICON_MEMORY: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+static DEFAULT_BROWSER: OnceLock<Option<String>> = OnceLock::new();
 
 fn icon_memory() -> &'static Mutex<HashMap<String, String>> {
     ICON_MEMORY.get_or_init(|| Mutex::new(HashMap::new()))
@@ -48,6 +50,77 @@ fn remember_icon(path: &str, uri: &str) {
         cache.clear();
     }
     cache.insert(path.to_string(), uri.to_string());
+}
+
+/// Clear the process-local icon cache after the persisted icon store is
+/// deleted, so a rebuilt index cannot revive an icon URI that no longer has a
+/// backing row.
+pub(crate) fn clear_icon_memory() {
+    icon_memory().lock().unwrap().clear();
+}
+
+fn is_web_url(value: &str) -> bool {
+    let value = value.trim();
+    value.get(..7).is_some_and(|head| head.eq_ignore_ascii_case("http://"))
+        || value.get(..8).is_some_and(|head| head.eq_ignore_ascii_case("https://"))
+        || value.get(..4).is_some_and(|head| head.eq_ignore_ascii_case("www."))
+}
+
+/// Resolve the default URL handler through the Windows association store.
+/// `ASSOCSTR_EXECUTABLE` returns the browser executable itself, which then
+/// goes through the same shell icon extractor as files and shortcuts.
+fn associated_executable(protocol: &str) -> Option<String> {
+    let protocol: Vec<u16> = protocol.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut len = 0u32;
+    let probe = unsafe {
+        AssocQueryStringW(
+            ASSOCF_NONE,
+            ASSOCSTR_EXECUTABLE,
+            PCWSTR(protocol.as_ptr()),
+            PCWSTR::null(),
+            None,
+            &mut len,
+        )
+    };
+    if probe.is_err() || len == 0 {
+        return None;
+    }
+    let mut output = vec![0u16; len as usize];
+    let result = unsafe {
+        AssocQueryStringW(
+            ASSOCF_NONE,
+            ASSOCSTR_EXECUTABLE,
+            PCWSTR(protocol.as_ptr()),
+            PCWSTR::null(),
+            Some(PWSTR(output.as_mut_ptr())),
+            &mut len,
+        )
+    };
+    if result.is_err() {
+        return None;
+    }
+    let end = output.iter().position(|value| *value == 0).unwrap_or(len as usize);
+    let executable = String::from_utf16_lossy(&output[..end]);
+    (!executable.trim().is_empty()).then_some(executable)
+}
+
+fn browser_icon_source() -> Option<String> {
+    DEFAULT_BROWSER
+        .get_or_init(|| {
+            associated_executable("http").or_else(|| associated_executable("https"))
+        })
+        .clone()
+}
+
+/// A URL row has no file path whose shell icon can be queried directly. Use
+/// the default browser's executable as the icon source instead; ordinary file
+/// rows use their own path.
+fn icon_source(path: &str) -> Option<String> {
+    if is_web_url(path) {
+        browser_icon_source()
+    } else {
+        Some(path.to_string())
+    }
 }
 
 /// An extracted icon, as sent to the frontend.
@@ -234,33 +307,39 @@ pub async fn get_app_icons(
 /// this without manufacturing a webview caller identity).
 pub(crate) async fn get_app_icons_inner(paths: Vec<String>) -> Result<Vec<IconData>, String> {
     let mut by_path: HashMap<String, Option<String>> = HashMap::new();
+    let mut pending: Vec<(String, String, bool)> = Vec::new();
 
     for path in &paths {
         if let Some(uri) = icon_memory().lock().unwrap().get(path).cloned() {
             by_path.insert(path.clone(), Some(uri));
+            continue;
         }
+        let Some(source) = icon_source(path) else {
+            by_path.insert(path.clone(), None);
+            continue;
+        };
+        pending.push((path.clone(), source.clone(), source.as_str() == path.as_str()));
     }
 
-    let unresolved: Vec<String> = paths
+    // URL keys are synthetic; only real file paths can resolve through the
+    // index → icon-hash store.
+    let db_paths: Vec<String> = pending
         .iter()
-        .filter(|path| !by_path.contains_key(*path))
-        .cloned()
+        .filter(|(_, _, cacheable)| *cacheable)
+        .map(|(_, source, _)| source.clone())
         .collect();
-    let db_cached = cache::icons_for(&unresolved);
-
-    for (path, icon) in db_cached {
-        if let Some(uri) = &icon {
-            remember_icon(&path, uri);
+    let db_cached = cache::icons_for(&db_paths);
+    let mut missing: Vec<(String, String, bool)> = Vec::new();
+    for (original, source, cacheable) in pending {
+        if cacheable {
+            if let Some(Some(uri)) = db_cached.get(&source) {
+                remember_icon(&original, uri);
+                by_path.insert(original, Some(uri.clone()));
+                continue;
+            }
         }
-        by_path.insert(path, icon);
-    }
-
-    let mut missing: Vec<String> = Vec::new();
-    for path in &paths {
-        if by_path.get(path).and_then(Option::as_ref).is_none()
-            && !missing.iter().any(|candidate| candidate == path)
-        {
-            missing.push(path.clone());
+        if !missing.iter().any(|(path, _, _)| path == &original) {
+            missing.push((original, source, cacheable));
         }
     }
 
@@ -268,11 +347,13 @@ pub(crate) async fn get_app_icons_inner(paths: Vec<String>) -> Result<Vec<IconDa
         let extracted = tauri::async_runtime::spawn_blocking(move || {
             missing
                 .into_iter()
-                .map(|path| {
-                    let icon = extract_icon_png(&path).map(|png| {
+                .map(|(path, source, cacheable)| {
+                    let icon = extract_icon_png(&source).map(|png| {
                         let hash = stable_hash(&png);
                         let _ = cache::store_icon(&hash, &png);
-                        let _ = cache::set_file_icon_hash(&path, &hash);
+                        if cacheable {
+                            let _ = cache::set_file_icon_hash(&source, &hash);
+                        }
                         cache::encode_png_uri(&png)
                     });
                     (path, icon)
@@ -362,5 +443,22 @@ mod tests {
         assert_eq!(stable_hash(data), stable_hash(data));
         assert_ne!(stable_hash(data), stable_hash(b"different"));
         assert!(stable_hash(data).chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn web_url_detection_is_case_insensitive_and_narrow() {
+        assert!(is_web_url("https://example.com/a"));
+        assert!(is_web_url("HTTP://example.com"));
+        assert!(is_web_url("www.example.com"));
+        assert!(!is_web_url("C:\\notes\\https.txt"));
+        assert!(!is_web_url("mailto:user@example.com"));
+    }
+
+    #[test]
+    fn default_browser_executable_yields_a_png_icon() {
+        let browser = browser_icon_source().expect("Windows should resolve an HTTP handler");
+        assert!(std::path::Path::new(&browser).is_file(), "browser path: {browser}");
+        let png = extract_icon_png(&browser).expect("default browser should expose a shell icon");
+        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
     }
 }

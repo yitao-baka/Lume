@@ -9,6 +9,7 @@ import { currentSkin } from "../../skins/runtime";
 import { clipboardRowHeight } from "../../skins/registry";
 import type { ClipboardModel, ClipboardRowModel } from "../../page-runtime/schemas";
 import { clipboardScrollFades } from "../clipboard-scroll";
+import browserIcon from "../../../res/icons/browser.svg";
 import clipboardIcon from "../../../res/icons/clipboard.svg";
 import multifilesIcon from "../../../res/icons/multifiles.svg";
 
@@ -44,6 +45,13 @@ function tile(row: ClipboardRowModel) {
     const paths = row.content.split("\n").filter(Boolean);
     const count = row.fileCount ?? paths.length;
     if (count >= 2) return <span class="clip-row-tile"><img class="clip-row-tile-icon" src={multifilesIcon} alt="" /></span>;
+    if (row.icon) {
+      return (
+        <span class="clip-row-tile">
+          <img class="clip-row-tile-icon clip-row-file-icon" src={row.icon.src} alt="" draggable={false} />
+        </span>
+      );
+    }
     const kind = row.fileKind ?? fileContent(basename(paths[0] ?? ""));
     if (kind === "audio") return <span class="clip-row-tile"><span class="clip-row-emoji">♪</span></span>;
     if (kind === "video") return <span class="clip-row-tile"><span class="clip-row-emoji">▷</span></span>;
@@ -52,7 +60,13 @@ function tile(row: ClipboardRowModel) {
   }
   const color = row.kind === "text" ? detectColor(row.content) : null;
   if (color) return <span class="clip-row-tile clip-row-tile-color" style={{ background: color }} />;
-  if (row.kind === "text" && isUrl(row.content)) return <span class="clip-row-tile"><span class="clip-row-emoji">↗</span></span>;
+  if (row.kind === "text" && isUrl(row.content)) {
+    return (
+      <span class="clip-row-tile">
+        <img class="clip-row-tile-icon clip-row-file-icon" src={row.icon?.src ?? browserIcon} alt="" draggable={false} />
+      </span>
+    );
+  }
   return <span class="clip-row-tile clip-row-tile-text">T</span>;
 }
 

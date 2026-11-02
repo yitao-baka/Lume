@@ -38,6 +38,7 @@ export function createNavigatePlugin(
   const [showExplorerBar, setShowExplorerBar] = createSignal(cfg?.appearance?.show_explorer_bar ?? true);
   const [expandPinned, setExpandPinned] = createSignal(cfg?.appearance?.expand_pinned ?? false);
   const [placeholderApps, setPlaceholderApps] = createSignal(cfg?.appearance?.search_placeholder_apps || "");
+  const [fullDriveSearch, setFullDriveSearch] = createSignal(cfg?.index?.full_drive_search ?? false);
   const [presenterId, setPresenterId] = createSignal(cfg?.pages?.presenters?.apps || "navigate-grid");
   const [model, setModel] = createSignal<PageModel>();
 
@@ -51,6 +52,7 @@ export function createNavigatePlugin(
     invalidateWorkArea: host.invalidateWorkArea,
     placeholderApps,
     expandPinned,
+    fullDriveSearch,
     navBarPlugins,
   });
 
@@ -124,6 +126,12 @@ export function createNavigatePlugin(
       setShowExplorerBar(a.show_explorer_bar ?? true);
       setExpandPinned(a.expand_pinned || false);
       setPlaceholderApps(a.search_placeholder_apps || "");
+      const nextFullDrive = next.index?.full_drive_search ?? false;
+      const fullDriveChanged = nextFullDrive !== fullDriveSearch();
+      setFullDriveSearch(nextFullDrive);
+      if (fullDriveChanged && services.mode() === NAVIGATE_MODE_ID) {
+        void services.runSearch(page.search.appsQuery());
+      }
       const chosen = next.pages?.presenters?.apps;
       if (chosen && NAVIGATE_PRESENTERS.some((p) => p.id === chosen)) setPresenterId(chosen);
     },

@@ -119,7 +119,8 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
   single-instance mutex; auto-start at logon
 - Navigate main menu — 最近使用 + 已固定 bars (both titled + expandable),
   continuous grid navigation, arrow + mouse navigation, click to launch; typing
-  shows the search grid (settings 系统索引)
+  shows the search grid from the configured index DBs; whole-drive file hits
+  require the opt-in 全盘索引 setting
 - Explorer-folder context bar — summoned while an Explorer window is focused,
   Lume resolves the folder it shows and adds 「CMD 中打开」/「PowerShell 中打开」/
   「复制路径」 (gated by the 显示资源管理器栏 setting)
@@ -139,7 +140,8 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
 - Clipboard settings — a 「剪贴板」 pane (history limit 100/200/500/1000,
   record images / files, close-after-paste, show source app, relative /
   absolute time, ignored apps, auto-merge window, 内容去重, 开启预览,
-  记住勾选)
+  记住勾选); file rows use their own Shell icons and URL rows use the default
+  browser icon
 - Satellite preview — text / text-file / image / audio / video previews render
   in a separate non-activating window docked to the launcher's right edge (the
   main renderer never holds decoded bitmaps / media buffers); PDF preview via
@@ -160,7 +162,8 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
 - Whole-drive file search — `file_search` prefers a running Everything
   instance, then falls back to the self-hosted USN/MFT index in
   `lume-svc.exe`; the service is registered through UAC and answers over a
-  scoped named pipe
+  scoped named pipe; Navigate only includes these results when 全盘索引 is on
+  and the service registration is present
 - Plugin platform — first-party pages and disk plugins share one registry:
   `provider` contributes search rows, `mode` contributes a Page Service plus
   one or more Presenters (detached windows, titlebar Presenter and list

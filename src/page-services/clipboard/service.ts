@@ -4,7 +4,13 @@
 
 import { t } from "../../i18n";
 import type { ClipboardCategoryCounts, ClipboardItem, ClipKind, PreviewReq } from "../../launcher/types";
-import { basename, clipTitle, fileContent, previewTarget as clipPreviewTarget } from "../../launcher/clipData";
+import {
+  basename,
+  clipTitle,
+  clipboardIconSource,
+  fileContent,
+  previewTarget as clipPreviewTarget,
+} from "../../launcher/clipData";
 import { CLIP_CATS } from "../../launcher/types";
 import type { IntentResult, JsonValue, PageIntent, PageModel, PageService, ResourceRef } from "../../page-runtime/contracts";
 import { CLIPBOARD_SCHEMA, type ClipboardCategory, type ClipboardModel, type ClipboardRowModel } from "../../page-runtime/schemas";
@@ -14,6 +20,7 @@ import { clipContentPreview, fitClipboardFileListPreview, fitClipboardModelWindo
 
 export interface ClipboardPageDeps {
   services: PluginServices;
+  icons: { iconFor(path: string): string | undefined };
 }
 
 /** Native Space activation belongs to the focused control. The page-level
@@ -32,15 +39,22 @@ function thumbRef(item: ClipboardItem): ResourceRef | undefined {
   return item.thumb ? { kind: "thumbnail", src: item.thumb } : undefined;
 }
 
+function fileIconRef(src: string | undefined): ResourceRef | undefined {
+  return src ? { kind: "file-icon", src } : undefined;
+}
+
 function row(
   item: ClipboardItem,
   timeAbsolute: boolean,
   showSource: boolean,
   includeThumb: boolean,
+  iconFor: (path: string) => string | undefined,
 ): ClipboardRowModel {
   const paths = item.kind === "file" ? item.content.split(/\r?\n/).filter(Boolean) : [];
   const firstPath = paths[0] ?? "";
   const preview = clipContentPreview(item.content);
+  const iconSource = clipboardIconSource(item);
+  const icon = iconSource ? fileIconRef(iconFor(iconSource)) : undefined;
   return {
     id: clipTargetId(item),
     numericId: item.id,
@@ -48,6 +62,7 @@ function row(
     title: clipTitle(item).split(/\r?\n/)[0].slice(0, 160),
     ...(showSource && item.source_app ? { description: item.source_app } : {}),
     content: preview,
+    ...(icon ? { icon } : {}),
     createdAt: item.created_at,
     ...(includeThumb && thumbRef(item) ? { thumb: thumbRef(item) } : {}),
     pinned: item.pinned,
@@ -164,8 +179,8 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
       };
     };
     const candidates = visible.map((item) => ({
-      full: row(item, store.timeDisplayAbs(), store.showSourceApp(), true),
-      compact: row(item, store.timeDisplayAbs(), store.showSourceApp(), false),
+      full: row(item, store.timeDisplayAbs(), store.showSourceApp(), true, deps.icons.iconFor),
+      compact: row(item, store.timeDisplayAbs(), store.showSourceApp(), false, deps.icons.iconFor),
     }));
     const fitted = fitClipboardModelWindow(candidates, buildModel);
     revision = nextRevision;

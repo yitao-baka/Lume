@@ -5780,3 +5780,52 @@ Presenter 名称，值没有持久化或下发路径。
   `npm run verify` PASS（**48/48** + build）。
 - 正式插件隔离实测：D 盘 1920×1080 JPG、真实 PDF（436×617 canvas）和真实
   XLSX（表格 + 单元格文本）均正常；重复图标请求首轮约 19ms，后续 1.6–2ms。
+
+## 95. 索引范围、重建与剪贴板原生图标（2026-11-02）
+
+### 95.1 背景
+
+- 搜索页的索引维护只有一个刷新图标，无法明确区分增量刷新与彻底重建。
+- 注册 LumeSVC 或运行 Everything 后，原生的 `file_search` 会自动并入 Navigate，
+  使导航页在用户未选择全盘搜索时也出现任意盘符文件。
+- 剪贴板文件行只显示应用自绘的类型字形，URL 文本使用箭头；两者都没有表达
+  文件自身的 Shell 身份或默认浏览器。
+
+### 95.2 实现
+
+- 搜索页把刷新动作改为文字按钮，并新增「重建索引」确认命令。Rust 命令删除
+  `user_cache.db`、`system32_cache.db`、`icons.db`（含 `-wal` / `-shm` /
+  `-journal`），重新创建 schema、扫描配置目录并重载内存镜像；同时清空图标
+  内存缓存。
+- `AppIndex` 增加数据库变更互斥门，启动/定时增量刷新与破坏性重建串行执行。
+  首次 UI 自动化在启动扫描尚未结束时重建，暴露了 SQLite 文件竞争；互斥门
+  消除了该时序问题，也保证重建完成后不会再被启动刷新覆盖。
+- `index.full_drive_search` 默认关闭。前端 Navigate 管线只在开启时调用
+  `file_search`，Rust 对无 `plugin_id` 的原生命令再次检查该字段；带插件身份
+  的 `search.files` 路径保持原能力，不因导航设置被禁用。该开关位于用户索引
+  下方的独立「全盘索引」分组，摘要缩短并固定单行省略。开启前查询
+  `svc_status`，服务未注册时复用设置窗模态框引导到系统页并保持关闭；Rust
+  `file_search` 对原生调用再次查询服务注册，未知/错误状态 fail-closed。
+- 剪贴板单文件行通过现有 `get_app_icons` Shell 管线请求文件/文件夹自身图标；
+  URL 文本以 URL 作为行级缓存键，后端用 `AssocQueryStringW` 解析默认 HTTP
+  处理器并提取浏览器 exe 图标；多文件行仍使用聚合图标，解析失败时用新增的
+  `browser.svg` 兜底。两个内置 Presenter 都只消费 Page Model 的 `file-icon`
+  资源，不直接访问 Tauri。
+
+### 95.3 验证
+
+- `pnpm verify:fast` PASS：docs 15 项、i18n 602 键 × 3 语言、Page Runtime
+  **18/18**、clipboard model **14/14**、clipboard store 8/8、skin 11/11、
+  前端生产构建、Rust **285 passed / 9 ignored**。
+- debug embedded `--no-bundle` 构建通过；`pnpm verify:ui --suite settings
+  --no-build` **14/14**（9.9s，产物
+  `test/verify/2026-11-02T14-14-40-806Z/summary.json`），覆盖两个文字按钮、
+  无图标断言、全盘分组位于用户索引之后、摘要单行、服务注册后的开关放行、
+  默认关闭、原生 `file_search` 返回 `unavailable`、重建确认框以及三个索引库的
+  实文件重建。
+- `pnpm verify:ui --suite clipboard-ui --no-build` **7/7**，保留分类、暂停确认、
+  清空确认和空态/历史面回归，并新增真实 exe 与 HTTPS URL 均返回 PNG 图标的
+  端到端探针（1.8s，产物
+  `test/verify/2026-11-02T13-56-26-765Z/summary.json`）。Rust
+  单测另覆盖 SQLite sidecar 删除、Web URL 识别及默认浏览器 exe 的 64px PNG
+  提取。

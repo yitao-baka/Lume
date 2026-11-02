@@ -9,6 +9,17 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Fixed
+- **剪贴板「全部」首屏缩略图懒加载（2026-11-02）** — `search_clipboard` 此前
+  会在加载门内为命中历史的每张图片立即读取并解码缩略图；安装版数据含 201 行、
+  83 张图片时，「全部」查询稳定耗时约 302–312ms、返回约 1.0MB 数据，图片更多
+  或更大时首屏会长时间空白。现在查询只用一个 SQLite 扫描返回行与分类计数，
+  不再携带缩略图；剪贴板 Page Service 先发布可见行窗口，再按图片 id 分批请求
+  当前窗口的缩略图（每批最多 32 个、缓存上限 64 个）。同一数据下查询降至
+  7.5–11ms、返回约 58.7KB，切页到可见行的加载门耗时由约 346ms 降至约 104ms，
+  缩略图随后增量出现。验证：`pnpm verify:fast` PASS（docs 15 项、i18n 602 键 ×
+  3 语言、Page Runtime 18/18、clipboard model 16/16、clipboard store 8/8、
+  skin 11/11、前端生产构建、Rust **286 passed / 9 ignored**）；
+  `pnpm verify:ui --suite clipboard-ui` PASS（**7/7**，2.0s）。
 - **文件秒搜预览与图标缓存（2026-10-31）** — 图片/音视频的任意盘符路径此前被
   静态 asset scope 拒绝；Page Runtime 迁移又把旧 API 1 的 Presenter 文件读取
   改成系统缩略图，导致插件原有 PDF.js / SheetJS 预览被错误移除。新增

@@ -84,6 +84,7 @@ try {
   check("budget drops oversized visual resources before dropping rows", thumbCount > 0 && thumbCount < rows.length, `${thumbCount}/${rows.length}`);
   check("budgeted model validates below the hard cap", fittedBytes <= runtime.DEFAULT_MODEL_MAX_BYTES, String(fittedBytes));
 
+  const thumbnails = await server.ssrLoadModule("/src/page-services/clipboard/thumbnails.ts");
   const clip = (patch) => ({
     id: 1,
     kind: "text",
@@ -98,6 +99,37 @@ try {
     checked: null,
     ...patch,
   });
+  const imageRows = [
+    clip({ id: 1, kind: "text", content: "text" }),
+    clip({ id: 2, kind: "image", content: "Image", thumb: null }),
+    clip({ id: 3, kind: "image", content: "Image", thumb: null }),
+    clip({ id: 4, kind: "image", content: "Image", thumb: "data:image/png;base64,AA==" }),
+    clip({ id: 5, kind: "image", content: "Image", thumb: null }),
+  ];
+  const requestIds = thumbnails.clipboardThumbnailRequestIds(
+    imageRows,
+    0,
+    imageRows.length,
+    new Map([[2, null]]),
+    new Set([3]),
+  );
+  check(
+    "lazy thumbnails request only uncached visible image rows",
+    JSON.stringify(requestIds) === JSON.stringify([5]),
+    JSON.stringify(requestIds),
+  );
+  const mergedThumbs = thumbnails.mergeClipboardThumbnails(
+    new Map([[1, "a"], [2, "b"], [3, "c"]]),
+    [{ id: 2, thumb: "B" }, { id: 4, thumb: "d" }],
+    new Set([3, 4]),
+    3,
+  );
+  check(
+    "lazy thumbnail cache is bounded and keeps the visible window",
+    JSON.stringify([...mergedThumbs]) === JSON.stringify([[3, "c"], [2, "B"], [4, "d"]]),
+    JSON.stringify([...mergedThumbs]),
+  );
+
   check(
     "single-file rows resolve their own icon path",
     clipData.clipboardIconSource(clip({ kind: "file", content: "C:\\Docs\\report.pdf" })) === "C:\\Docs\\report.pdf",

@@ -491,6 +491,7 @@ pub fn run() {
             automation::test_automation_rule,
             i18n::load_language_files,
             clipboard::search_clipboard,
+            clipboard::get_clipboard_thumbnails,
             clipboard::copy_clipboard,
             clipboard::paste_clipboard,
             clipboard::paste_clipboard_multi,

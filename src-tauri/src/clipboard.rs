@@ -29,7 +29,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use base64::Engine;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 use windows::core::BOOL;
@@ -67,6 +67,8 @@ const IMAGE_LABEL: &str = "Image";
 const PICTURE_CACHE: &str = "PictureCache";
 /// Longest edge of the thumbnail sent to the frontend (pixels).
 const THUMB_MAX: u32 = 200;
+/// The visible clipboard window asks for thumbnails in one bounded batch.
+const MAX_CLIPBOARD_THUMBNAIL_BATCH: usize = 32;
 /// Upper bound on stored HTML per row (keeps the DB lean).
 const HTML_CAP: usize = 64 * 1024;
 /// Compressed clipboard-image formats are copied out only within this bound.
@@ -95,7 +97,8 @@ pub struct ClipboardItem {
     pub content: String,
     pub pinned: bool,
     pub created_at: i64,
-    /// Base64 PNG data URI for image items.
+    /// Base64 PNG data URI for image items. Search leaves this empty; the
+    /// frontend fills the visible window through `get_clipboard_thumbnails`.
     pub thumb: Option<String>,
     /// Display name of the app that owned the foreground window at capture
     /// time (empty when unknown / unavailable).
@@ -137,6 +140,13 @@ pub struct ClipboardSearchResult {
     pub items: Vec<ClipboardItem>,
     pub total: u32,
     pub categories: ClipboardCategoryCounts,
+}
+
+/// One lazily resolved image-row thumbnail.
+#[derive(Debug, Clone, Serialize)]
+pub struct ClipboardThumbnail {
+    pub id: u32,
+    pub thumb: Option<String>,
 }
 
 /// A row as stored in SQLite.
@@ -639,6 +649,20 @@ fn category_matches(category: &str, content_category: &str) -> bool {
     }
 }
 
+fn row_matches_category(row: &Row, category: &str) -> bool {
+    match category {
+        "all" => true,
+        "favorites" => row.pinned,
+        // “文本” is plain copied text only; text files belong to “文本文件”.
+        "text" => row.kind == "text",
+        "textfile" => row.kind == "file" && category_matches(category, content_category(row)),
+        "image" => category_matches(category, content_category(row)),
+        "music" => row.kind == "file" && category_matches(category, content_category(row)),
+        "video" => row.kind == "file" && category_matches(category, content_category(row)),
+        _ => true,
+    }
+}
+
 /// Rows matching a search query and category, newest first. Category filtering
 /// happens before the cap: file content types are resolved from the path in
 /// Rust, and only then does the caller clamp the number of unpinned rows.
@@ -676,11 +700,7 @@ fn matching_rows(conn: &Connection, query: &str, category: &str) -> rusqlite::Re
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows
         .into_iter()
-        .filter(|row| {
-            category == "all"
-                || (category == "favorites" && row.pinned)
-                || (category != "favorites" && category_matches(category, content_category(row)))
-        })
+        .filter(|row| row_matches_category(row, category))
         .collect())
 }
 
@@ -727,9 +747,16 @@ fn search_history_result(
     base: &Path,
     favorites_top: bool,
 ) -> rusqlite::Result<ClipboardSearchResult> {
-    let rows = matching_rows(conn, query, kind)?;
-    let categories = category_counts(&matching_rows(conn, query, "all")?, limit);
-    let mut selected = capped_rows(rows, limit);
+    // One query supplies both the active category and every count. The rows
+    // are capped only after category filtering, and thumbnails are resolved
+    // later for the visible window, so opening “All” no longer decodes the
+    // whole image history before the page can paint.
+    let rows = matching_rows(conn, query, "all")?;
+    let categories = category_counts(&rows, limit);
+    let mut selected = capped_rows(
+        rows.into_iter().filter(|row| row_matches_category(row, kind)),
+        limit,
+    );
     if favorites_top {
         selected.sort_by(|a, b| {
             b.pinned
@@ -773,11 +800,6 @@ fn thumb_for_file(base: &Path, rel: &str) -> Option<String> {
 }
 
 fn row_to_item(row: Row, base: &Path) -> ClipboardItem {
-    let thumb = if row.kind == "image" {
-        row.path.as_deref().and_then(|p| thumb_for_file(base, p))
-    } else {
-        None
-    };
     // A row is valid when its content is still usable: text always is; an image
     // needs its PNG; a file row needs at least one surviving path.
     let valid = match row.kind.as_str() {
@@ -796,7 +818,7 @@ fn row_to_item(row: Row, base: &Path) -> ClipboardItem {
         content: row.content,
         pinned: row.pinned,
         created_at: row.created_at,
-        thumb,
+        thumb: None,
         source_app: row.source_app,
         has_html: row.html.is_some(),
         merged_count: row.merged_count,
@@ -809,6 +831,42 @@ fn row_to_item(row: Row, base: &Path) -> ClipboardItem {
 /// or legacy values are treated as "no override".
 fn parse_checked_json(s: &str) -> Option<Vec<u32>> {
     serde_json::from_str(s).ok()
+}
+
+/// Paths for one bounded thumbnail batch. Every unique requested id receives
+/// an update, including missing/non-image rows as `None`, so the frontend can
+/// cache the negative result instead of retrying the same id forever.
+fn thumbnail_sources(
+    conn: &Connection,
+    ids: &[u32],
+) -> rusqlite::Result<Vec<(u32, Option<String>)>> {
+    let mut stmt = conn.prepare("SELECT path FROM clipboard WHERE id = ?1")?;
+    let mut seen = HashSet::new();
+    let mut sources = Vec::new();
+    for &id in ids {
+        if !seen.insert(id) {
+            continue;
+        }
+        let path = stmt
+            .query_row(params![id], |row| row.get::<_, Option<String>>(0))
+            .optional()?
+            .flatten();
+        sources.push((id, path));
+    }
+    Ok(sources)
+}
+
+fn thumbnails_for_sources(
+    base: &Path,
+    sources: Vec<(u32, Option<String>)>,
+) -> Vec<ClipboardThumbnail> {
+    sources
+        .into_iter()
+        .map(|(id, rel)| ClipboardThumbnail {
+            id,
+            thumb: rel.as_deref().and_then(|rel| thumb_for_file(base, rel)),
+        })
+        .collect()
 }
 
 /// Whether a row's content is gone and copy/paste must be blocked: a text row
@@ -2080,22 +2138,62 @@ pub async fn plugin_clipboard_paste(
 pub async fn search_clipboard(
     query: String,
     kind: Option<String>,
-    state: State<'_, ClipboardState>,
-    settings: State<'_, crate::settings::SettingsState>,
+    app: AppHandle,
 ) -> Result<ClipboardSearchResult, String> {
     let kind = kind.unwrap_or_else(|| "all".into());
-    let clip = settings.current().clipboard;
+    let clip = app
+        .state::<crate::settings::SettingsState>()
+        .current()
+        .clipboard;
     let limit = clip.history_cap.max(1) as u32;
-    let conn = state.db.lock().unwrap();
-    search_history_result(
-        &conn,
-        query.trim(),
-        &kind,
-        limit,
-        &crate::paths::data_dir(),
-        clip.favorites_top,
-    )
-    .map_err(|e| e.to_string())
+    // Keep the SQLite scan and row mapping off the async runtime workers too:
+    // a large history still performs filesystem validity probes for file/image
+    // rows. Thumbnail decoding is no longer part of this command.
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<ClipboardState>();
+        let conn = state.db.lock().unwrap();
+        search_history_result(
+            &conn,
+            query.trim(),
+            &kind,
+            limit,
+            &crate::paths::data_dir(),
+            clip.favorites_top,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Resolve thumbnails for the image rows currently inside the Presenter's
+/// visible window. Search deliberately returns rows without thumbnails so the
+/// loading gate opens immediately even when the “All” tab contains hundreds of
+/// full-size screenshots; this command decodes only the requested batch.
+#[tauri::command]
+pub async fn get_clipboard_thumbnails(
+    ids: Vec<u32>,
+    app: AppHandle,
+) -> Result<Vec<ClipboardThumbnail>, String> {
+    if ids.len() > MAX_CLIPBOARD_THUMBNAIL_BATCH {
+        return Err(format!(
+            "too many clipboard thumbnails requested: {} (max {MAX_CLIPBOARD_THUMBNAIL_BATCH})",
+            ids.len()
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<ClipboardThumbnail>, String> {
+        let sources = {
+            let state = app.state::<ClipboardState>();
+            let conn = state.db.lock().unwrap();
+            thumbnail_sources(&conn, &ids).map_err(|e| e.to_string())?
+        };
+        // The DB lock is released before file reads, PNG decoding and base64
+        // encoding; clipboard capture and the next search never queue behind
+        // thumbnail rendering.
+        Ok(thumbnails_for_sources(&crate::paths::data_dir(), sources))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Write the entry `id` back to the system clipboard (text or image). `plain`
@@ -3190,14 +3288,45 @@ mod tests {
         assert_eq!(rel, "PictureCache/1.png");
         assert!(base.join(rel).exists(), "PNG file must exist on disk");
         assert_eq!(row.data, None, "DB must not hold image bytes");
-        // The thumbnail is derived from the file.
-        assert!(hits[0]
+        assert_eq!(
+            hits[0].thumb, None,
+            "search must not decode thumbnails before the page can paint"
+        );
+        let sources = thumbnail_sources(&conn, &[hits[0].id]).unwrap();
+        let thumbs = thumbnails_for_sources(&base, sources);
+        assert_eq!(thumbs.len(), 1);
+        assert!(thumbs[0]
             .thumb
             .as_deref()
             .map(|t| t.starts_with("data:image/png;base64,"))
             .unwrap_or(false));
         // Images are findable by their label.
         assert_eq!(search_history(&conn, "image", "all", 20, &base, false).unwrap().len(), 1);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn lazy_thumbnails_resolve_every_unique_requested_row() {
+        let conn = memory_db();
+        let base = temp_base("lazy-thumbs");
+        insert_text_history(&conn, "not an image", TEST_SRC, None, TEST_CAP, &base, &no_merge(), true)
+            .unwrap();
+        insert_image_history(&conn, &sample_png(), TEST_SRC, TEST_CAP, &base).unwrap();
+        let text_id = search_history(&conn, "not an image", "all", 20, &base, false).unwrap()[0].id;
+        let image_id = search_history(&conn, "Image", "all", 20, &base, false).unwrap()[0].id;
+
+        let sources = thumbnail_sources(&conn, &[text_id, image_id, image_id]).unwrap();
+        assert_eq!(sources.len(), 2, "duplicate ids are resolved once");
+        let thumbs = thumbnails_for_sources(&base, sources);
+        assert_eq!(thumbs.len(), 2);
+        assert!(thumbs.iter().find(|thumb| thumb.id == text_id).unwrap().thumb.is_none());
+        assert!(thumbs
+            .iter()
+            .find(|thumb| thumb.id == image_id)
+            .unwrap()
+            .thumb
+            .as_deref()
+            .is_some_and(|thumb| thumb.starts_with("data:image/png;base64,")));
         fs::remove_dir_all(&base).ok();
     }
 
@@ -3291,7 +3420,12 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].kind, "image");
         assert_eq!(hits[0].source_app, TEST_SRC, "restored row keeps its source app");
-        assert!(hits[0].thumb.is_some(), "restored image thumb is readable from its file");
+        assert_eq!(hits[0].thumb, None, "search stays thumbnail-free");
+        let sources = thumbnail_sources(&conn, &[hits[0].id]).unwrap();
+        assert!(
+            thumbnails_for_sources(&base, sources)[0].thumb.is_some(),
+            "restored image thumb is readable from its file"
+        );
         fs::remove_dir_all(&base).ok();
     }
 

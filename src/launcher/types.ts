@@ -151,6 +151,8 @@ export interface ClipboardItem {
   content: string;
   pinned: boolean;
   created_at: number;
+  /** Search returns null; the clipboard Page Service fills this lazily for
+   * the visible row window. */
   thumb: string | null;
   /** Display name of the app that owned the foreground window at capture. */
   source_app: string;

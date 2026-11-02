@@ -5829,3 +5829,39 @@ Presenter 名称，值没有持久化或下发路径。
   `test/verify/2026-11-02T13-56-26-765Z/summary.json`）。Rust
   单测另覆盖 SQLite sidecar 删除、Web URL 识别及默认浏览器 exe 的 64px PNG
   提取。
+## 96. 剪贴板全部分类缩略图懒加载（2026-11-02）
+
+### 96.1 背景
+
+- 「全部」分类会返回完整查询历史。安装版数据中 201 行包含 83 张图片，单次
+  `search_clipboard` 需要读取并解码所有这些 PNG，稳定耗时约 302–312ms，
+  序列化结果约 1.0MB；更大的截图历史会把剪贴板页挡在加载门后更久。
+- 实际 Presenter 使用虚拟列表，同一时刻只渲染视口附近十余行，整段历史的
+  缩略图在首屏请求中没有任何收益。
+
+### 96.2 实现
+
+- `search_clipboard` 只执行一次全量匹配，在内存中同时生成当前分类行和所有分类
+  计数；返回的 `ClipboardItem` 不再携带缩略图。数据库扫描、文件存在性探测和
+  行映射统一放到 `spawn_blocking`。
+- 新增 `get_clipboard_thumbnails(ids)`：单批最多 32 个 id，只接受 `kind =
+  'image'` 的行；先在锁内解析图片路径，释放 SQLite 锁后再读取、解码、缩放和
+  base64 编码，避免剪贴板监听与下一次搜索排队在缩略图工作上。
+- 剪贴板 Page Service 先发布含行数据与分类计数的 Page Model；可见窗口变化时
+  只请求尚未缓存的图片 id，结果到达后增量重发模型。缓存上限 64 项，优先保留
+  当前可见行；旧版后端仍携带的 `item.thumb` 继续兼容。
+- 纯前端 helper 统一负责窗口内 id 选择与有界缓存，避免 Presenter 直接调用
+  Tauri，也避免滚动时重复请求同一张图。
+
+### 96.3 验证
+
+- 安装版副本实测：旧构建 `search_clipboard("", "all")` 连续三次为
+  312.3ms / 309.1ms / 302.0ms，返回 83 个缩略图、约 1.01MB；新构建同数据为
+  11.0ms / 7.5ms / 7.5ms，零缩略图、约 58.7KB。
+- 可见页切换实测：旧构建从 Tab 切到「全部」约 346ms 后出现 8 行；新构建约
+  104ms 后出现 12 行，加载门已关闭，随后按可见窗口补齐 10 张图片缩略图。
+- `pnpm verify:fast` PASS：docs 15 项、i18n 602 键 × 3 语言、Page Runtime
+  18/18、clipboard model **16/16**、clipboard store 8/8、skin 11/11、前端生产
+  构建、Rust **286 passed / 9 ignored**；其中剪贴板单测 **53/53**。
+- `pnpm verify:ui --suite clipboard-ui` PASS：**7/7**（2.0s，产物
+  `test/verify/2026-11-02T15-00-21-179Z/summary.json`）。

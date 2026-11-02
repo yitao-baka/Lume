@@ -41,6 +41,10 @@ function tile(row: ClipboardRowModel) {
   if (row.kind === "image" && row.thumb) {
     return <span class="clip-row-tile"><img class="clip-row-img" src={row.thumb.src} alt="" draggable={false} /></span>;
   }
+  if (row.kind === "image" && !row.thumb) {
+    // Search publishes the row before the viewport thumbnail batch lands.
+    return <span class="clip-row-tile"><span class="clip-row-emoji">▧</span></span>;
+  }
   if (row.kind === "file") {
     const paths = row.content.split("\n").filter(Boolean);
     const count = row.fileCount ?? paths.length;

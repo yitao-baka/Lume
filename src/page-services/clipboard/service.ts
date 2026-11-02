@@ -2,6 +2,8 @@
 //! windowed lume.clipboard/v1 model. The Presenter never receives the store or
 //! invokes Tauri commands.
 
+import { createEffect, createSignal, onCleanup } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import { t } from "../../i18n";
 import type { ClipboardCategoryCounts, ClipboardItem, ClipKind, PreviewReq } from "../../launcher/types";
 import {
@@ -17,6 +19,12 @@ import { CLIPBOARD_SCHEMA, type ClipboardCategory, type ClipboardModel, type Cli
 import type { PluginServices } from "../../plugins/types";
 import { createClipboardStore, type ClipboardStore } from "../../plugins/clipboard/store";
 import { clipContentPreview, fitClipboardFileListPreview, fitClipboardModelWindow } from "./modelBudget";
+import {
+  clipboardThumbnailRequestIds,
+  mergeClipboardThumbnails,
+  type ClipboardThumbnailUpdate,
+  type ClipboardThumbCache,
+} from "./thumbnails";
 
 export interface ClipboardPageDeps {
   services: PluginServices;
@@ -35,8 +43,8 @@ function clipTargetId(item: ClipboardItem): string {
   return "clip:" + item.id;
 }
 
-function thumbRef(item: ClipboardItem): ResourceRef | undefined {
-  return item.thumb ? { kind: "thumbnail", src: item.thumb } : undefined;
+function thumbRef(src: string | null | undefined): ResourceRef | undefined {
+  return src ? { kind: "thumbnail", src } : undefined;
 }
 
 function fileIconRef(src: string | undefined): ResourceRef | undefined {
@@ -49,12 +57,14 @@ function row(
   showSource: boolean,
   includeThumb: boolean,
   iconFor: (path: string) => string | undefined,
+  thumbForId: (id: number) => string | null | undefined,
 ): ClipboardRowModel {
   const paths = item.kind === "file" ? item.content.split(/\r?\n/).filter(Boolean) : [];
   const firstPath = paths[0] ?? "";
   const preview = clipContentPreview(item.content);
   const iconSource = clipboardIconSource(item);
   const icon = iconSource ? fileIconRef(iconFor(iconSource)) : undefined;
+  const thumb = thumbRef(item.thumb ?? thumbForId(item.id));
   return {
     id: clipTargetId(item),
     numericId: item.id,
@@ -64,7 +74,7 @@ function row(
     content: preview,
     ...(icon ? { icon } : {}),
     createdAt: item.created_at,
-    ...(includeThumb && thumbRef(item) ? { thumb: thumbRef(item) } : {}),
+    ...(includeThumb && thumb ? { thumb } : {}),
     pinned: item.pinned,
     ...(showSource ? { sourceApp: item.source_app } : {}),
     timeLabel: timeAbsolute ? new Date(item.created_at).toLocaleString() : new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -105,8 +115,58 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
 } {
   const store = createClipboardStore(deps.services);
   let revision = 0;
+  const [thumbnails, setThumbnails] = createSignal<ClipboardThumbCache>(new Map());
+  const pendingThumbIds = new Set<number>();
+  let disposed = false;
+
+  const visibleImageIds = (items: ClipboardItem[], start: number, end: number): Set<number> => {
+    const ids = new Set<number>();
+    for (const item of items.slice(start, end)) {
+      if (item.kind === "image") ids.add(item.id);
+    }
+    return ids;
+  };
+
+  // The row list publishes before any PNG is decoded. This effect asks only
+  // for image thumbnails in the current virtual window and republishes the
+  // Page Model when the bounded batch lands.
+  createEffect(() => {
+    const all = store.clips();
+    const start = Math.max(0, store.clipStart());
+    const end = Math.min(all.length, Math.max(start, store.clipEnd()));
+    const cache = thumbnails();
+    const ids = clipboardThumbnailRequestIds(all, start, end, cache, pendingThumbIds);
+    if (ids.length === 0 || disposed) return;
+    for (const id of ids) pendingThumbIds.add(id);
+    void invoke<ClipboardThumbnailUpdate[]>("get_clipboard_thumbnails", { ids })
+      .then((updates) => {
+        if (disposed) return;
+        const current = store.clips();
+        const currentStart = Math.max(0, store.clipStart());
+        const currentEnd = Math.min(current.length, Math.max(currentStart, store.clipEnd()));
+        setThumbnails((previous) =>
+          mergeClipboardThumbnails(
+            previous,
+            updates,
+            visibleImageIds(current, currentStart, currentEnd),
+          ),
+        );
+      })
+      .catch((error) => {
+        console.warn("clipboard thumbnail batch failed:", error);
+      })
+      .finally(() => {
+        for (const id of ids) pendingThumbIds.delete(id);
+      });
+  });
+  onCleanup(() => {
+    disposed = true;
+    pendingThumbIds.clear();
+  });
 
   function snapshot(): PageModel {
+    // Subscribe this snapshot to lazy thumbnail arrivals.
+    const thumbCache = thumbnails();
     const all = store.clips();
     const start = Math.max(0, store.clipStart());
     const end = Math.min(all.length, Math.max(start + 1, store.clipEnd()));
@@ -179,8 +239,22 @@ export function createClipboardPageService(deps: ClipboardPageDeps): {
       };
     };
     const candidates = visible.map((item) => ({
-      full: row(item, store.timeDisplayAbs(), store.showSourceApp(), true, deps.icons.iconFor),
-      compact: row(item, store.timeDisplayAbs(), store.showSourceApp(), false, deps.icons.iconFor),
+      full: row(
+        item,
+        store.timeDisplayAbs(),
+        store.showSourceApp(),
+        true,
+        deps.icons.iconFor,
+        (id) => thumbCache.get(id),
+      ),
+      compact: row(
+        item,
+        store.timeDisplayAbs(),
+        store.showSourceApp(),
+        false,
+        deps.icons.iconFor,
+        (id) => thumbCache.get(id),
+      ),
     }));
     const fitted = fitClipboardModelWindow(candidates, buildModel);
     revision = nextRevision;

@@ -3,7 +3,8 @@
 ```
 SolidJS UI (src/App.tsx, src/i18n.ts)
   ├─ src/skins/ — shared skin metadata + data-skin / --surface / accent runtime
-        │  invoke("search_apps" | "search_clipboard" | "get_app_icons"
+        │  invoke("search_apps" | "search_clipboard" | "get_clipboard_thumbnails"
+        │        | "get_app_icons"
         │        | "launch_app" | "copy_clipboard" | "delete_clipboard"
         │        | "pin_clipboard" | "hide_launcher" | "get_hotkey")
         ▼
@@ -350,13 +351,15 @@ environment.
   rebuilds it in place, preserving existing text history.
 - **Search**: `search_clipboard(query, kind)` runs a case-insensitive
   **literal** substring match (`instr(lower(...))`, not SQL `LIKE` wildcards).
-  The reply is `{ items, total, categories }`: content type is resolved from the
-  row (file rows use their first path) before `history_cap` is applied, and each
-  category caps its own unpinned rows. Pinned rows stay outside that cap, so an
-  old favorite remains visible even when newer unpinned rows exceed the cap.
-  Counts aggregate the same query independently of the active category, so tab
-  badges do not shrink when the user switches tabs. Image rows carry a downscaled
-  base64 thumbnail.
+  The reply is `{ items, total, categories }`: one query supplies both the active
+  category and every count. Content type is resolved from the row (file rows use
+  their first path) before `history_cap` is applied, and each category caps its
+  own unpinned rows. Pinned rows stay outside that cap, so an old favorite
+  remains visible even when newer unpinned rows exceed the cap. Counts aggregate
+  the same query independently of the active category, so tab badges do not
+  shrink when the user switches tabs. Search rows never decode image files;
+  `get_clipboard_thumbnails(ids)` resolves at most 32 thumbnails for the
+  currently visible image rows and returns them as base64 PNG data URIs.
   **Async on purpose**: Tauri runs *sync* commands on the main (UI) thread —
   a full-history load blocked every other IPC for seconds in a debug build,
   stalling the frontend's window resizes (the loading gate's collapse among
@@ -620,13 +623,15 @@ before adding a field:
   PDF.js worker (`worker-src blob:`).
 - `src/page-services/` — built-in pages' logic layer. `navigate/service.ts`
   owns the bar registry, merged search pipeline, actions and drag-reorder;
-  `clipboard/service.ts` wraps the Rust-backed clipboard store and publishes
-  only the visible row window. `clipboard/modelBudget.ts` keeps that window
-  under the 1 MiB Page Model limit: text rows carry a 4,096-character display
-  preview, oversized thumbnails are dropped before rows, multi-file previews
-  stop at 256 entries and shrink further to their serialized-byte budget, and
-  the longest contiguous row window that fits is published. Full values remain
-  addressable through Page Intents instead of riding in the model.
+  `clipboard/service.ts` wraps the Rust-backed clipboard store, publishes the
+  visible row window before any image decode, then requests thumbnails only for
+  the visible image ids (max 32 per batch, 64 cached). `clipboard/modelBudget.ts`
+  keeps that window under the 1 MiB Page Model limit: text rows carry a
+  4,096-character display preview, oversized thumbnails are dropped before rows,
+  multi-file previews stop at 256 entries and shrink further to their
+  serialized-byte budget, and the longest contiguous row window that fits is
+  published. Full values remain addressable through Page Intents instead of
+  riding in the model.
 - `src/presenters/` — replaceable page renderers. Navigation has the default
   grid and a compact list; clipboard has the full history list and a compact
   history. Each Presenter consumes only the model plus a `dispatch` function.

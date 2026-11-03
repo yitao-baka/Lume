@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件是 ZCode agent 在本仓库（Lume 启动器）的工作守则。
+本文件是本仓库（Lume 启动器）的工作守则。
 改代码前至少过一遍 `docs/ARCHITECTURE.md`、`docs/UI_GUIDELINES.md`；
 插件相关再加 `docs/PLUGIN_API.md`（API 参考）与 `docs/PLUGINS.md`（上手）；
 设置相关看 `docs/SETTINGS.md`。功能现状见 `README.md` 的 Status；
@@ -14,8 +14,8 @@ Windows 轻量启动器（Spotlight / uTools 式）。前端 SolidJS + TypeScrip
 - **三个二进制**（便携布局，都在 exe 同级）：`lume.exe`（启动器，中完整性）、
   `lume-svc.exe`（SYSTEM 文件索引服务）、`lume-agent.exe`（提权按键注入代理）。
 - **双版本号**：对外标签 `src/appVersion.ts` 的 `APP_VERSION_LABEL`（About 页渲染，
-  如 `Pre-26.10.1`）；内部 semver 在 `package.json` / `src-tauri/tauri.conf.json` /
-  `src-tauri/Cargo.toml`（当前 `3.2.0`，tauri 构建强校验 semver）。发布时两处手动同步。
+  如 `26.11`）；内部 semver 在 `package.json` / `src-tauri/tauri.conf.json` /
+  `src-tauri/Cargo.toml`（当前 `3.5.0`，tauri 构建强校验 semver）。发布时两处手动同步。
 
 ## 目录
 
@@ -63,15 +63,22 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
 ## 硬性约定
 
 1. **业务逻辑属于 Rust**，webview 只是视图层：只 `invoke` + 渲染，**前端不碰数据库**。
+
 2. 所有 UI 字符串走 `t()`（`src/i18n.ts` + `languages/*.json`）；三语键必须同步，
    `Messages` 类型以 en.json 为准，缺键会导致 `tsc` 报错。
+
 3. Windows-only：优先原生 API（`ShellExecuteW`、`RegisterHotKey`…），不要绕 shell。
+
 4. 最小化：每个新功能都要能回答「是否让用户更快」；能删的功能不维护。
+
 5. 网络不可靠：**一律用镜像源**（npm → `.npmrc`；crates 同理），不要引入需直连被墙端点的依赖。
+
 6. UI 视觉契约见 `docs/UI_GUIDELINES.md`：面板 / DWM 边框 / 插件页画布同为 `--surface`
    （一块连续面板，uTools 式拼接）——不给 `.launcher` 加 border / radius / 半透明。
+
 7. WebView2 内建快捷键（Find / Print / Reload / DevTools / 历史导航）在
    `src/launcher/keyboard.ts` 统一屏蔽；只有 Lume 自己的键与搜索框文本编辑放行。
+
 8. **文档规范**：任何文档（docs/、README、代码注释中的文档性引用）**不得出现阶段性
    分期编号**（P0/P1/P2/P3/P4/P5/P6、Phase 1、阶段名）与完成状态标志
    （✅、"已实现"、"已完成"）；文档只描述当前契约或开放事项，历史进度一律归

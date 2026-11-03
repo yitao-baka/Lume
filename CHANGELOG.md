@@ -8,6 +8,12 @@ All notable changes to Lume are documented here. Format based on
 > `docs/RULES.md`、`docs/NORMS.md`、`docs/PLUGIN_GAP_ANALYSIS.md` 已合并或删除，现状见 `docs/` 下各活跃文档。
 
 ## [Unreleased]
+### Changed
+- **版本号切换（2026-11-03）** — 内部 semver `3.2.0` → `3.5.0`（`package.json` /
+  `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`，并同步 `Cargo.lock`）；About 外部
+  标签 `Pre-26.10.1` → `26.11`，`AGENTS.md` 的双版本说明同步更新。验证：`pnpm verify:fast`
+  PASS（docs 15、i18n 605 键 × 3 语言、Page Runtime 18/18、clipboard model 16/16、
+  clipboard store 8/8、skin 11/11、前端生产构建、Rust 287 passed / 9 ignored）。
 ### Fixed
 - **剪贴板「全部」首屏缩略图懒加载（2026-11-02）** — `search_clipboard` 此前
   会在加载门内为命中历史的每张图片立即读取并解码缩略图；安装版数据含 201 行、

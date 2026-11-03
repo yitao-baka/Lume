@@ -69,6 +69,7 @@ body,
   gap: 12px;
   padding: 18px 20px 14px;
   min-width: 0;
+  position: relative;
 }
 
 .search-icon {
@@ -94,6 +95,30 @@ body,
 .search-input::placeholder {
   color: var(--text-muted);
   text-overflow: ellipsis;
+}
+
+.search-caret {
+  position: absolute;
+  z-index: 2;
+  width: 1.5px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  opacity: 0;
+}
+
+.search-caret.visible {
+  animation: search-caret-blink 1s step-end infinite;
+}
+
+.search-caret.visible.typing {
+  opacity: 1;
+  animation: none;
+}
+
+@keyframes search-caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
 }
 
 /* 拼接下半部：页面直贴搜索行与窗口三边（无外框内衬）。内衬由各页面自己给

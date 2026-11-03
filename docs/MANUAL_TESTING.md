@@ -102,6 +102,16 @@ dev URL instead.
     无搜索栏中间态、尺寸与锚点同帧、工作区边界、透明像素）。Native probes:
     `scripts/ps_lume_geometry_probe.ps1` / `scripts/ps_lume_pixel_probe.ps1`.
     DPI/多显示器验收：几何脚本用 DPI-aware 探针枚举各显示器，并把真实 HWND 移到每屏检查工作区；实际份额覆盖仍需在 100% / 150% / 200% 与混合缩放桌面分别运行。
+15. **Navigate IME** — switch Windows to a Chinese IME, then enable
+    设置 → 启动器 → 「导航页禁用输入法」. On Navigate, typing pinyin must insert
+    raw Latin letters with no candidate window; switch to Clipboard or a plugin
+    page and the same typing must show the normal IME candidates. Turn the
+    setting off or open the settings window: IME input is available again. While
+    enabled, the search field must show a blinking accent caret that follows
+    arrow keys, Home/End, mouse selection and horizontal scrolling; rapid typing
+    must update the text immediately without running a backend search for every
+    key. The system IME selection must not change, and other applications must
+    keep working normally.
 
 ### Clipboard mode
 

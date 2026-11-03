@@ -2,7 +2,7 @@
   "suites": {
     "smoke": {
       "module": "suites/smoke.mjs",
-      "description": "Launcher shell, mode switching and basic clipboard surface"
+      "description": "Launcher shell, direct Navigate input, mode switching and basic clipboard surface"
     },
     "settings": {
       "module": "suites/settings.mjs",
@@ -41,6 +41,10 @@
     {
       "paths": ["src/settings/", "src/skins/", "languages/"],
       "suites": ["settings"]
+    },
+    {
+      "paths": ["src/shell/"],
+      "suites": ["smoke", "settings"]
     },
     {
       "paths": ["src/launcher/previewHost.ts", "src-tauri/src/window.rs", "src/preview.tsx", "examples/plugins/host-tools/"],

@@ -237,6 +237,18 @@ export default function LauncherPane(props: {
           />
         </SettingRow>
         <SettingRow
+          id="appearance.disable_ime_on_navigate"
+          label={t("disableImeOnNavigate")}
+          summary={t("settingsDisableImeSummary")}
+          details={[t("settingsDisableImeHint")]}
+        >
+          <Toggle
+            checked={a().disable_ime_on_navigate}
+            label={t("disableImeOnNavigate")}
+            onChange={(v) => props.onChange({ disable_ime_on_navigate: v })}
+          />
+        </SettingRow>
+        <SettingRow
           id="appearance.idle_reset_enabled"
           label={t("idleReset")}
           summary={t("settingsIdleResetSummary")}

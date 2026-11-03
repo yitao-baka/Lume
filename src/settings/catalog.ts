@@ -358,6 +358,17 @@ export function buildSettingsCatalog(
       value: onOff(a.per_mode_query),
     }),
     descriptor({
+      id: "appearance.disable_ime_on_navigate",
+      section: "launcher",
+      labelKey: "disableImeOnNavigate",
+      summaryKey: "settingsDisableImeSummary",
+      groupKey: "groupSession",
+      detailKeys: ["settingsDisableImeHint"],
+      kind: "switch",
+      keywords: ["ime", "input method", "keyboard", "输入法", "輸入法"],
+      value: onOff(a.disable_ime_on_navigate),
+    }),
+    descriptor({
       id: "appearance.idle_reset_enabled",
       section: "launcher",
       labelKey: "idleReset",

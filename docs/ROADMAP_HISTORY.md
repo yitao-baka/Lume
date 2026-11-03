@@ -5865,3 +5865,55 @@ Presenter 名称，值没有持久化或下发路径。
   构建、Rust **286 passed / 9 ignored**；其中剪贴板单测 **53/53**。
 - `pnpm verify:ui --suite clipboard-ui` PASS：**7/7**（2.0s，产物
   `test/verify/2026-11-02T15-00-21-179Z/summary.json`）。
+
+## 97. 导航页输入法开关（2026-11-03）
+
+### 97.1 背景
+
+- 导航页以应用名、文件路径和英文关键词输入为主；中文输入法常驻时，用户每次
+  呼出后都要手动切回英文，增加高频启动路径的一次操作。
+- 插件页仍需完整输入法支持。该能力只能是启动器主窗口内、导航页期间的局部
+  状态，不能切换系统输入法，也不能影响设置窗或其他应用。
+
+### 97.2 实现
+
+- `appearance.disable_ime_on_navigate` 默认 `false`；旧配置缺键由 serde
+  default 保持关闭。设置页把开关放在「启动器 → 会话与搜索」，三语文案和设置
+  搜索目录同步。
+- 首个实现尝试对主窗口和 WebView2 子窗口调用
+  `ImmAssociateContextEx(..., NULL, ...)`。真实微软拼音下调用返回成功，但
+  Chromium/WebView2 的 TSF 输入链仍显示候选窗；`inputmode="none"`、
+  `type=email`、`lang="en-US"` 与 CSS `ime-mode` 同样无效。
+- 最终方案由 `SearchBox` 在导航页把输入框设为 `readOnly`。真实探针确认只读
+  控件不会产生 `compositionstart`，按键以普通 `keydown` 到达页面；组件随后
+  自行维护单行编辑：插入、选区替换、Backspace/Delete、Ctrl+Backspace/Delete
+  按词删除、Ctrl+A/C 原生选择复制、Ctrl+X 剪切、Ctrl/Shift+Insert 粘贴，
+  并将粘贴文本中的换行折叠为空格。
+- 只读原生输入框不绘制插入点。`SearchBox` 用 Canvas 按当前字体测量文本宽度，
+  绘制主题色自绘光标；光标在失焦或存在选区时隐藏，并跟随鼠标、方向键、
+  Home/End、输入框水平滚动和窗口缩放。快速输入时保持 500ms 常亮，随后恢复
+  闪烁。
+- `App.tsx` 把击键驱动的 `runSearch` 合并为 80ms 尾触发：查询文本和光标仍逐键
+  即时更新，后端只搜索最后一次输入。模式切换、呼出准备、页面重置等生命周期
+  搜索会取消尚未触发的输入 debounce，避免迟到查询覆盖当前页面。按下 Enter
+  若 debounce 尚未触发，会先解析最新文本再激活，避免快速输入后启动旧结果。
+- 开关关闭或离开导航页时移除 `readOnly`，插件页继续使用原生编辑控件与输入法。
+  系统输入法选择、设置窗与其它应用均不改动。
+
+### 97.3 验证
+
+- `pnpm verify:fast` PASS：docs 15 项、i18n **605 键 × 3 语言**、Page Runtime
+  18/18、clipboard model 16/16、clipboard store 8/8、skin 11/11、前端生产
+  构建、Rust **287 passed / 9 ignored**。
+- debug embedded 构建通过；`pnpm verify:ui --suite smoke,settings --no-build`
+  PASS（smoke **19/19** / 2.2s、settings **19/19** / 7.9s，产物
+  `test/verify/2026-11-02T17-21-49-435Z/summary.json`），覆盖开关默认关闭、
+  持久化、导航页只读切换、手动输入/选区删除、插件页恢复原生输入框与关闭开关
+  恢复、自绘光标可见性，以及快速输入只产生一次搜索。
+- 搜索框相关回归：clipboard-ui **7/7**、preview **14/14**、
+  plugin-runtime **6/6**（产物
+  `test/verify/2026-11-02T17-13-59-486Z/summary.json`）。
+- 真实微软拼音物理键盘探针：开启后导航页输入 `nihao` 直接显示普通文本、
+  无 `compositionstart` 且无候选窗；同一设置在插件页和关闭后的导航页均恢复
+  `Process`/`compositionstart` 与候选窗（**4/4**，产物
+  `test/verify/2026-11-02T17-15-19-317Z/ime-feature-probe/`）。

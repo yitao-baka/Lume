@@ -61,6 +61,9 @@ export interface SettingsData {
      * search-box value (the latest input wins; in-session only, never written
      * to disk). On: each mode remembers its own query like before. */
     per_mode_query: boolean;
+    /** Navigate uses direct text entry that cannot start IME composition
+     * (default off). Plugin pages keep the user's normal input method. */
+    disable_ime_on_navigate: boolean;
     /** Shift+Enter launches the selected app with administrator privileges. */
     shift_enter_admin: boolean;
     /** Cap for the recent-opens list. */
@@ -198,6 +201,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
     expand_pinned: false,
     mode_switch_icons_only: false,
     per_mode_query: false,
+    disable_ime_on_navigate: false,
     shift_enter_admin: true,
     recent_count: 20,
     search_placeholder_apps: "",

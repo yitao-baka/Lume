@@ -36,6 +36,22 @@ All notable changes to Lume are documented here. Format based on
   （436×617 canvas）和真实 XLSX（表格 + 单元格文本）均正常；重复图标请求由
   首轮约 19ms 降至 1.6–2ms。
 ### Added
+- **导航页输入法开关（2026-11-03）** — 启动器设置新增「导航页禁用输入法」开关，
+  默认关闭。开启后仅在导航页激活时把搜索框切为只读，由 `SearchBox` 接管
+  单行文字编辑；只读控件不会启动 Windows TSF 组合态，因此中文输入法候选窗
+  不再弹出，同时保留选择、删除、复制、剪切和粘贴。只读框没有原生插入点，
+  因此增加主题色自绘光标，跟随鼠标、方向键、Home/End、选择和水平滚动；击键
+  文本即时显示，后端搜索按 80ms 空闲窗口合并，快速输入不再逐键搜索。切换到
+  插件页或关闭开关会恢复原生输入框与正常输入法，不改变系统输入法选择。验证：
+  `pnpm verify:fast` PASS（docs 15 项、i18n 605 键 × 3 语言、Page Runtime
+  18/18、clipboard model 16/16、clipboard store 8/8、skin 11/11、前端生产
+  构建、Rust **287 passed / 9 ignored**）；debug embedded 构建通过；
+  `pnpm verify:ui --suite smoke,settings --no-build` PASS（smoke **19/19** /
+  2.2s、settings **19/19** / 7.9s，产物
+  `test/verify/2026-11-02T17-21-49-435Z/summary.json`）；clipboard-ui
+  **7/7**、preview **14/14**、plugin-runtime **6/6**。并在真实微软拼音下
+  确认导航页直输 `nihao` 无候选窗、插件页与关闭设置后候选窗恢复（真实键盘
+  探针 **4/4**）。
 - **索引维护、全盘索引与剪贴板原生图标（2026-11-02）** — 搜索页把「刷新索引」
   改为文字按钮，并新增破坏性「重建索引」：确认后删除 `user_cache.db`、
   `system32_cache.db`、`icons.db` 及 SQLite sidecar，重建 schema 后重新扫描；

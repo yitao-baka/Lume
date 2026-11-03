@@ -60,6 +60,9 @@ import { createPreviewHost } from "./launcher/previewHost";
 import { rasterizePluginIcon } from "./plugins/windowIcon";
 import { installPageRuntimeProbes } from "./page-runtime/diagnostics";
 
+/** Coalesce keystroke-driven searches; query text still updates immediately. */
+const INPUT_SEARCH_DEBOUNCE_MS = 80;
+
 function App() {
   installPageRuntimeProbes();
   const [mode, setMode] = createSignal<ModeId>(NAVIGATE_MODE_ID);
@@ -97,6 +100,10 @@ function App() {
   /** Settings-driven: 各模式使用独立搜索词 (docs/ROADMAP_HISTORY.md #48, default off — every
    * mode shares one search-box value and the latest input wins). */
   const [perModeQuery, setPerModeQuery] = createSignal(_a?.per_mode_query ?? false);
+  /** Settings-driven: disable the launcher window's IME on Navigate only. */
+  const [disableImeOnNavigate, setDisableImeOnNavigate] = createSignal(
+    _a?.disable_ime_on_navigate ?? false
+  );
   /** Settings-driven: Shift+Enter launches with administrator privileges. */
   const [shiftEnterAdmin, setShiftEnterAdmin] = createSignal(_a?.shift_enter_admin !== false);
   /** Settings-driven: grid-cell edge length (a CSS var — mirrored as a signal
@@ -422,14 +429,40 @@ function App() {
     selectionSource = "mouse";
   }
 
+  let inputSearchTimer = 0;
+  let pendingInputSearch = "";
+
+  function cancelPendingInputSearch() {
+    if (inputSearchTimer) window.clearTimeout(inputSearchTimer);
+    inputSearchTimer = 0;
+    pendingInputSearch = "";
+  }
+
   /** Search the active page's index, dropping stale responses (the token
    * bumps on every dispatch; pages compare against `services.searchToken()`). */
   async function runSearch(q: string) {
+    // A direct page lifecycle search supersedes an un-fired typing burst.
+    cancelPendingInputSearch();
     activeMode()?.setSelected(0);
     requestSeq++;
     queryRoute({ ev: "search", q });
     await activeMode()?.search(q);
   }
+
+  /** Debounce only keystroke-driven searches. Typing stays visually immediate,
+   * while a fast burst produces one backend query after the user pauses. */
+  function scheduleInputSearch(q: string) {
+    pendingInputSearch = q;
+    if (inputSearchTimer) window.clearTimeout(inputSearchTimer);
+    inputSearchTimer = window.setTimeout(() => {
+      inputSearchTimer = 0;
+      const pending = pendingInputSearch;
+      pendingInputSearch = "";
+      void runSearch(pending);
+    }, INPUT_SEARCH_DEBOUNCE_MS);
+  }
+
+  onCleanup(cancelPendingInputSearch);
 
   // CDP probe for flows that need a deterministic query dispatch while the
   // native window is hidden or focus is owned by the automation harness.
@@ -468,6 +501,7 @@ function App() {
 
   async function resetAndHide() {
     // Lifecycle first, then hide — no mode/query/page reset (session keep).
+    cancelPendingInputSearch();
     endSummon();
     await invoke("hide_launcher");
   }
@@ -797,7 +831,7 @@ const services: PluginServices = {
     }
     // Disk service plugins see every Navigate keystroke (non-empty).
     if (text.trim()) for (const p of allPlugins()) p.lifecycle?.onQuery?.(text);
-    await runSearch(text);
+    scheduleInputSearch(text);
   }
 
   // CDP smoke tap: exercises the exact input pipeline even when the launcher
@@ -837,6 +871,7 @@ const services: PluginServices = {
       setCircleAppIcons(s.appearance.round_app_icons ?? false);
       setShiftEnterAdmin(s.appearance.shift_enter_admin !== false);
       setModeIconsOnly(s.appearance.mode_switch_icons_only);
+      setDisableImeOnNavigate(s.appearance.disable_ime_on_navigate ?? false);
       // #48: toggling 各模式独立搜索词 keeps the on-screen text stable.
       // off→on: seed every loaded page with the current shared text (they
       // diverge from there); on→off: the active page's text becomes the one
@@ -980,6 +1015,20 @@ const services: PluginServices = {
 
   /** Activate the selected entry via the active page (Shift+Enter = admin). */
   function activate(opts?: { elevated?: boolean }) {
+    if (inputSearchTimer) {
+      // Enter can arrive inside the typing debounce window. Resolve the latest
+      // text before activating so a fast query can never launch a stale row.
+      const pending = pendingInputSearch;
+      const target = activeMode();
+      cancelPendingInputSearch();
+      void runSearch(pending).then(() => {
+        if (activeMode() === target) {
+          markEntryOpened(); // D1: 只有首页会在下次呼出清空自己的查询
+          target?.activate(opts);
+        }
+      });
+      return;
+    }
     markEntryOpened(); // D1: 只有首页会在下次呼出清空自己的查询
     activeMode()?.activate(opts);
   }
@@ -1320,6 +1369,7 @@ const services: PluginServices = {
         placeholder={placeholder}
         pages={pages}
         iconsOnly={modeIconsOnly}
+        imeDisabled={() => disableImeOnNavigate() && mode() === NAVIGATE_MODE_ID}
         onInput={(text) => void handleInput(text)}
         onSwitchPage={(id) => void switchMode(id)}
         onOpenSettings={() => void openSettings()}

@@ -111,8 +111,8 @@ Review the selected list instead of assuming every change needs every suite.
 
 | Suite | Contract |
 | --- | --- |
-| `smoke` | Launcher shell, mode bar, Tab mode switch, clipboard surface, hiding |
-| `settings` | Settings navigation, command search, index actions/opt-in, clipboard pane, close path |
+| `smoke` | Launcher shell, direct Navigate input, mode bar, Tab mode switch, clipboard surface, hiding |
+| `settings` | Settings navigation, command search, index actions/opt-in, Navigate IME opt-in, clipboard pane, close path |
 | `plugin-runtime` | API 2 keyword entry, Presenter readiness, strict CSP and sandbox |
 | `clipboard-ui` | History/empty surface, categories, row artwork, pause acknowledgement, clear confirmation |
 | `preview` | Core preview window, undeclared-plugin denial, declared-plugin reuse |

@@ -564,6 +564,19 @@ before adding a field:
   the search input; wheel/trackpad scrolling remains available without edge
   controls, and the input swaps to the short localized placeholder below
   160px.
+- **Navigate direct input mode** — `appearance.disable_ime_on_navigate` (default
+  off) makes `SearchBox` render the search field `readOnly` only while Navigate
+  is active. A read-only field does not start a Windows TSF editing session, so
+  IME candidate windows cannot enter composition. `SearchBox` then owns the
+  standard single-line edit operations: printable key insertion,
+  selection/backspace/delete, Ctrl/Shift+Insert paste, Ctrl+X cut and
+  newline-to-space normalization. Because read-only native inputs do not paint
+  a caret, a theme-colored overlay follows the collapsed selection, mouse and
+  keyboard navigation, and scroll offset. Keystroke-driven search dispatches
+  are debounced for 80ms by `App.tsx`; direct lifecycle searches cancel the
+  pending debounce. Plugin pages and the setting-off state return to the
+  ordinary editable input and native IME path. System input-method selection
+  and other windows are untouched.
 - **Navigate result artwork** — `NavigateView` renders extracted icons without
   a mask by default and uses `unknow_universal.svg` when no icon exists.
   `appearance.round_app_icons` (default off) toggles the launcher's

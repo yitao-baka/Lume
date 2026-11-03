@@ -42,6 +42,53 @@ export default {
       "about",
     );
 
+    await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="launcher"]\').click()');
+    await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "launcher"', 5000);
+    const navigateIme = await settingsContext.evaluate(`(() => {
+      const row = document.querySelector('[data-setting-id="appearance.disable_ime_on_navigate"]');
+      const toggle = row?.querySelector('button[role="switch"]');
+      return {
+        present: !!toggle,
+        checked: toggle?.getAttribute("aria-checked"),
+        summary: row?.querySelector(".settings-row-summary")?.textContent.trim() ?? "",
+      };
+    })()`);
+    t.check(
+      "Navigate IME opt-in is visible and defaults off",
+      navigateIme.present && navigateIme.checked === "false" && navigateIme.summary.length > 0,
+      navigateIme,
+    );
+    await settingsContext.evaluate(
+      'document.querySelector(\'[data-setting-id="appearance.disable_ime_on_navigate"] button[role="switch"]\')?.click()',
+    );
+    await settingsContext.waitFor(
+      'document.querySelector(\'[data-setting-id="appearance.disable_ime_on_navigate"] button[role="switch"]\')?.getAttribute("aria-checked") === "true"',
+      5000,
+    );
+    const navigateImeOn = await settingsContext.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("get_settings").then((s) => s.appearance.disable_ime_on_navigate === true)',
+      5000,
+    );
+    t.check("Navigate IME setting persists when enabled", navigateImeOn);
+    const directInput = await t.waitFor(
+      'document.getElementById("search-input")?.readOnly === true',
+      5000,
+    );
+    t.check("Navigate search uses direct input while IME is disabled", directInput);
+    await settingsContext.evaluate(
+      'document.querySelector(\'[data-setting-id="appearance.disable_ime_on_navigate"] button[role="switch"]\')?.click()',
+    );
+    const navigateImeOff = await settingsContext.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("get_settings").then((s) => s.appearance.disable_ime_on_navigate === false)',
+      5000,
+    );
+    t.check("Navigate IME setting restores the default-off state", navigateImeOff);
+    const nativeImeRestored = await t.waitFor(
+      'document.getElementById("search-input")?.readOnly === false',
+      5000,
+    );
+    t.check("turning the setting off restores the native input field", nativeImeRestored);
+
     await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="clipboard"]\').click()');
     await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "clipboard"', 5000);
     const clipboardGroups = await settingsContext.evaluate(

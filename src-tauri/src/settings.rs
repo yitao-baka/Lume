@@ -268,6 +268,11 @@ pub struct Appearance {
     /// 不保留；查询从不落盘）。
     #[serde(default)]
     pub per_mode_query: bool,
+    /// Use Navigate's direct text-entry mode, which keeps the search field
+    /// read-only so Windows IMEs cannot open a composition. Missing/legacy
+    /// settings default off; plugin pages restore the native editable field.
+    #[serde(default)]
+    pub disable_ime_on_navigate: bool,
     /// Shift+Enter launches the selected app with administrator privileges.
     #[serde(default = "default_shift_enter_admin")]
     pub shift_enter_admin: bool,
@@ -684,6 +689,7 @@ impl Default for Settings {
                 expand_pinned: false,
                 mode_switch_icons_only: false,
                 per_mode_query: false,
+                disable_ime_on_navigate: false,
                 shift_enter_admin: true,
                 recent_count: 20,
                 search_placeholder_apps: String::new(),
@@ -1884,6 +1890,31 @@ mod tests {
         next.appearance.per_mode_query = true;
         write_settings_light(&base, &next).unwrap();
         assert!(read_settings(&base).appearance.per_mode_query);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// Disabling IME on Navigate is opt-in. Older settings files without the
+    /// key must keep the launcher's normal input context untouched.
+    #[test]
+    fn disable_ime_on_navigate_defaults_off_and_round_trips() {
+        let base = temp_base("navigate-ime");
+        ensure_settings_files(&base).unwrap();
+        assert!(
+            !read_settings(&base).appearance.disable_ime_on_navigate,
+            "default off"
+        );
+        let text = fs::read_to_string(settings_path(&base)).unwrap();
+        let stripped = text
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("disable_ime_on_navigate"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(settings_path(&base), stripped).unwrap();
+        assert!(!read_settings(&base).appearance.disable_ime_on_navigate);
+        let mut next = read_settings(&base);
+        next.appearance.disable_ime_on_navigate = true;
+        write_settings_light(&base, &next).unwrap();
+        assert!(read_settings(&base).appearance.disable_ime_on_navigate);
         fs::remove_dir_all(&base).ok();
     }
 

@@ -5,7 +5,7 @@
     "quiet": {
       "surfaces": {
         "dark": "#1e1e20",
-        "light": "#fbfbfd"
+        "light": "#f7f3e8"
       },
       "accentAnchors": {
         "dark": "#574e52",

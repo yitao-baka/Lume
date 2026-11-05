@@ -495,8 +495,8 @@ mode 页是 srcdoc iframe，运行在 **opaque-origin 沙箱**里（iframe 带
 | `enter` | `{code, type, payload}` | 声明式进入规则命中本模式或别的插件 `app.redirect` 过来（§9）。`type` = `"regex" \| "over" \| "redirect"`，`payload` = 命中的查询文本（redirect 时为发送方给的 payload）。**页面在 `load` 之后才会收到状态重放**（§6.3）。`files`/`img`/`window` 规则同样经此送达（类型与 payload 见 §9） |
 | `subInput` | `string` | 本模式调 `app.setSubInput` 接管搜索框后，每一次按键（§10.1） |
 | `settings` | `Record<string, unknown>` | 用户在设置页改动了本插件的声明式设置（§11.3）；页面 `load` 后的握手会重放当前值 |
-| `theme` | `"light" \| "dark"` | 颜色模式推送。沙箱后页面读不到宿主文档，宿主在就绪握手重放当前值，并在变化时推给本模式页与分离窗口。**载荷是本插件「生效」的明暗**：`theme.set` 定过 light/dark 就是它（此时启动器翻转不再影响本插件），否则＝启动器的有效模式——页面按它切换自己的明暗即可 |
-| `skin` | `{id, accent, surface}` | 主窗口视觉状态推送。`id` 是主窗口 `appearance.skin`（`quiet` / `chromatic`），`accent` 是当前全局自定义色（空值表示跟随皮肤），`surface` 是本插件生效明暗与主窗皮肤下的实色画布。宿主在 ready 握手、皮肤/主题色变化、系统明暗变化与插件颜色模式切换后推送；旧插件可以忽略。桥接同时把 `--lume-page-bg`、`--lume-page-accent` 和 `document.documentElement.dataset.lumeSkin` 更新为同一状态 |
+| `theme` | `"light" \| "dark"` | 颜色模式推送。沙箱后页面读不到宿主文档，宿主在就绪握手重放当前值，并在变化时推给本模式页与分离窗口。**载荷是本插件画布实际可读的明暗**：通常等于 `theme.set` 定过的 light/dark（此时启动器翻转不再影响本插件），否则＝启动器的有效模式；若主窗 `window_color` 与这些模式的色调冲突，宿主按实际表面色返回匹配色调，页面按它切换自己的明暗即可 |
+| `skin` | `{id, accent, surface}` | 主窗口视觉状态推送。`id` 是主窗口 `appearance.skin`（`quiet` / `chromatic`），`accent` 是当前全局自定义色（空值表示跟随皮肤），`surface` 是主窗当前有效表面色：`appearance.window_color` 非空时为该覆盖色，否则为本插件生效明暗与主窗皮肤下的实色画布。宿主在 ready 握手、皮肤/主题色变化、系统明暗变化与插件颜色模式切换后推送；旧插件可以忽略。桥接同时把 `--lume-page-bg`、`--lume-page-accent` 和 `document.documentElement.dataset.lumeSkin` 更新为同一状态 |
 | `key` | `{key, code, ctrlKey, shiftKey, altKey, metaKey}` | 模式激活时转发非编辑目标的 keydown。桥接在事件分发后一个任务才转发，因此页面自己的冒泡监听可先用 `preventDefault` 消费。`lume.on.key` 返回 `true`（或 Promise<true>）表示页面已消费；未消费的 Esc 才会关闭预览、独立窗口或启动器。 |
 | `snapshot` | — | 宿主索取快照时调用 `lume.on.snapshot = () => state`（§6.4） |
 | `restore` | `state` | 跨窗口/重挂载恢复时调用 `lume.on.restore = (state) => {}`（§6.4） |
@@ -1072,7 +1072,7 @@ Solid `createEffect/createSignal` 因此拥有正确的响应式 owner。
 
 **拼接面**：
 
-1. 搜索行与页面共用不透明 `--surface`；页面不自带额外边框、圆角或底色。
+1. 搜索行与页面共用主窗有效 `--surface`；整窗透明度只由 `appearance.window_opacity` 统一控制，页面不自带额外边框、圆角或底色。
 2. Presenter 运行在 opaque-origin iframe；Presenter bridge 注入
    `html{background:var(--lume-page-bg,<surface>)}`、`--lume-page-accent` 与
    `data-lume-skin`，并在 `theme` / `skin` 事件中更新同一组变量。

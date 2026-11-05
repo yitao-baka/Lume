@@ -1,7 +1,7 @@
 //! Launcher window management.
 //!
-//! The launcher surface is a single frameless, opaque webview window
-//! (label: `"main"`, see `tauri.conf.json`). This module owns showing and
+//! The launcher surface is a single frameless webview window with a
+//! configurable CSS surface and opacity (label: `"main"`). This module owns showing and
 //! hiding it; `window_geometry` owns the size/position transaction.
 //!
 //! The commands below are the window API for the rest of the core: the
@@ -484,16 +484,7 @@ pub fn apply_settings(app: &AppHandle, settings: &crate::settings::Settings) -> 
     // Only a dragged window without an explicit policy change keeps its spot.
     // A preset switch (cfg_changed) always re-arms the anchor immediately.
     let preserve = !cfg_changed && preserve_manual_spot(&window, &settings.appearance);
-    set_panel_frame_border(
-        &window,
-        settings.appearance.skin(),
-        &settings.appearance.color_mode,
-    );
-    crate::window_geometry::set_panel_background(
-        &window,
-        settings.appearance.skin(),
-        &settings.appearance.color_mode,
-    );
+    apply_launcher_chrome(&window, &settings.appearance);
     crate::window_geometry::apply_settings(&window, &settings.appearance, preserve)?;
     crate::appicon::apply(app, &settings.appearance.color_mode);
     Ok(())
@@ -1027,27 +1018,29 @@ pub fn clear_dwm_border(win: &WebviewWindow) {
     set_dwm_border(win, None)
 }
 
-/// Paint DWM's visible frame border in the launcher's panel color.
-///
-/// The ~2px visible-frame border *area* is a non-client strip the webview
-/// cannot cover; left at the default (or `DWMWA_COLOR_NONE`) it shows as a
-/// light-gray ring around the whole window (historically the Acrylic backdrop,
-/// nowadays the desktop shining through the transparent window). The launcher
-/// panel is opaque `--surface` (src/App.css `.launcher`) and so is the default
-/// plugin-page canvas (the Presenter bridge), so painting the strip in that same
-/// value makes panel, strip and page read as one uniform surface — corners
-/// included, since DWM rounds them. Do not give the strip its own color or
-/// make the panel translucent: the two can never match over an arbitrary
-/// wallpaper (docs/ROADMAP_HISTORY.md #30.5).
-pub fn set_panel_frame_border(win: &WebviewWindow, skin: &str, color_mode: &str) {
-    set_dwm_border(win, Some(panel_surface_rgb(win, skin, color_mode)))
+/// Apply the launcher-specific surface chrome. The native window stays
+/// transparent so CSS can render the configured opacity over the desktop;
+/// only the DWM strip needs host painting. At full opacity the strip uses the
+/// same color as the panel; a translucent window cannot be represented by a
+/// DWM color without alpha, so the strip is cleared below 100%.
+pub fn apply_launcher_chrome(
+    win: &WebviewWindow,
+    appearance: &crate::settings::Appearance,
+) {
+    let rgb = parse_hex_rgb(&appearance.window_color)
+        .unwrap_or_else(|| panel_surface_rgb(win, appearance.skin(), &appearance.color_mode));
+    if appearance.window_opacity >= crate::settings::WINDOW_OPACITY_MAX {
+        set_dwm_border(win, Some(rgb));
+    } else {
+        set_dwm_border(win, None);
+    }
 }
 
 /// Fallback values if the generated registry is unreadable. Keep these equal
 /// to the Quiet entries in `src/skins/skins.json`; the registry remains the
 /// authority whenever parsing succeeds.
 pub(crate) const PANEL_SURFACE_DARK: (u8, u8, u8) = (30, 30, 32);
-pub(crate) const PANEL_SURFACE_LIGHT: (u8, u8, u8) = (251, 251, 253);
+pub(crate) const PANEL_SURFACE_LIGHT: (u8, u8, u8) = (247, 243, 232);
 
 #[derive(Debug, Deserialize)]
 struct SkinDefinition {
@@ -1382,12 +1375,12 @@ mod tests {
     #[test]
     fn shared_skin_registry_drives_surfaces_and_unknown_falls_back() {
         assert_eq!(skin_surface_rgb("quiet", true), (30, 30, 32));
-        assert_eq!(skin_surface_rgb("quiet", false), (251, 251, 253));
+        assert_eq!(skin_surface_rgb("quiet", false), (247, 243, 232));
         assert_eq!(skin_surface_rgb("chromatic", true), (30, 30, 32));
         assert_eq!(skin_surface_rgb("chromatic", false), (243, 239, 230));
         assert_eq!(
             skin_surface_rgb("neon-from-the-future", false),
-            (251, 251, 253)
+            (247, 243, 232)
         );
     }
 

@@ -15,6 +15,11 @@ All notable changes to Lume are documented here. Format based on
   PASS（docs 15、i18n 605 键 × 3 语言、Page Runtime 18/18、clipboard model 16/16、
   clipboard store 8/8、skin 11/11、前端生产构建、Rust 287 passed / 9 ignored）。
 ### Fixed
+- **UI harness 的 WebView2 进程隔离（2026-11-05）** — 隔离运行器此前只分配
+  `LUME_INSTANCE_ID`、动态 CDP 端口和独立数据目录；已运行的安装版 Lume 仍可
+  占用默认 WebView2 用户目录，使测试进程复用没有调试端口的浏览器进程并导致
+  CDP 启动超时。现在每个套件同时使用私有 `WEBVIEW2_USER_DATA_FOLDER`。
+  验证：`pnpm verify:ui --suite settings --no-build` PASS（**24/24**，10.3s）。
 - **剪贴板「全部」首屏缩略图懒加载（2026-11-02）** — `search_clipboard` 此前
   会在加载门内为命中历史的每张图片立即读取并解码缩略图；安装版数据含 201 行、
   83 张图片时，「全部」查询稳定耗时约 302–312ms、返回约 1.0MB 数据，图片更多
@@ -42,6 +47,19 @@ All notable changes to Lume are documented here. Format based on
   （436×617 canvas）和真实 XLSX（表格 + 单元格文本）均正常；重复图标请求由
   首轮约 19ms 降至 1.6–2ms。
 ### Added
+- **主窗口米白表面、颜色与不透明度（2026-11-05）** — Quiet 浅色主窗表面改为
+  米白 `#f7f3e8`。外观页新增「主窗口」组：`appearance.window_color` 可用原生
+  取色器覆盖表面色，空值跟随皮肤；`appearance.window_opacity` 以 `70–100%`
+  滑杆控制整窗不透明度，并通过透明 WebView 真实透出桌面。自定义表面会按明暗
+  自动切换文字 token 并重算主题色对比度；嵌入插件画布及其 `theme` / `theme.get`
+  同步有效表面色调，设置窗口和分离插件窗口保持各自表面。`100%` 时 DWM 边框条使用有效表面色，低于 `100%`
+  时清除。验证：`pnpm verify:fast` PASS（docs 15 项、i18n 613 键 × 3 语言、
+  Page Runtime 18/18、clipboard model 16/16、clipboard store 8/8、skin
+  13/13、前端生产构建、Rust **288 passed / 9 ignored**）；
+  `pnpm verify:ui --suite settings --no-build` PASS（**24/24**，10.3s）；
+  `pnpm verify:ui --suite plugin-runtime --no-build` PASS（**6/6**，3.5s；产物
+  `test/verify/2026-11-05T14-01-42-819Z/summary.json` 与
+  `test/verify/2026-11-05T14-02-15-228Z/summary.json`）。
 - **导航页输入法开关（2026-11-03）** — 启动器设置新增「导航页禁用输入法」开关，
   默认关闭。开启后仅在导航页激活时把搜索框切为只读，由 `SearchBox` 接管
   单行文字编辑；只读控件不会启动 Windows TSF 组合态，因此中文输入法候选窗

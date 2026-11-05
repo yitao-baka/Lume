@@ -1,7 +1,7 @@
 //! Color-mode application (docs/SETTINGS.md 界面页 颜色模式).
 //!
 //! The palette lives in CSS custom properties under the default `:root` (dark)
-//! and `:root[data-theme="light"]` (src/theme.css). This module sets that
+//! and the light palette selectors in `src/theme.css`. This module sets the
 //! attribute per the setting (`"system" | "dark" | "light"`); `"system"`
 //! follows the OS `prefers-color-scheme` live.
 //!

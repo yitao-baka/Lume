@@ -6,19 +6,20 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
 
 ## Surface
 
-- **Opaque panel, one color**: `.launcher` fills the client area edge to edge
-  with the active skin's solid `--surface` — Quiet is `#1e1e20` dark /
-  `#fbfbfd` light, Chromatic is `#1e1e20` dark / `#f3efe6` light. There is
-  **no** border, **no** `border-radius`, **no** translucent fill and no
-  backdrop effect (Acrylic was removed in `lib.rs`). The same value comes from
-  `src/skins/skins.json` and paints the DWM visible-frame strip
-  (`window::set_panel_frame_border`), the default plugin-page canvas
-  (`presenterBridge`) and detached plugin-window background, so panel / strip /
-  page / four corners are exactly one surface: no ring, no hairline, no tint
-  step. A CSS radius only exposes the window backdrop in the crescent
-  outside its arc, and a translucent panel can never be reproduced by the
-  opaque strip over an arbitrary wallpaper. The other windows are opaque and
-  clear their DWM border (`clear_dwm_border`).
+- **One-color launcher surface**: `.launcher` fills the client area edge to
+  edge with the active skin's `--surface` — Quiet is `#1e1e20` dark /
+  `#f7f3e8` light, Chromatic is `#1e1e20` dark / `#f3efe6` light. A custom
+  `appearance.window_color` replaces that color in both tones; empty follows
+  the active skin. There is **no** border, **no** `border-radius` and no
+  backdrop blur. `appearance.window_opacity` applies one uniform opacity to the
+  whole launcher window, including embedded plugin pages, in the `70–100%`
+  range. Settings and detached plugin windows remain opaque and keep their own
+  skin surface.
+- **Native transparency and DWM**: the main WebView is created transparent so
+  the CSS opacity can reveal the desktop. At `100%` the DWM visible-frame strip
+  (`window::apply_launcher_chrome`) is painted the effective surface color; at
+  lower opacity it is cleared because DWM border colors cannot carry alpha.
+  The shadow and Win11 rounded corners stay OS-owned either way.
 - No gutter: the panel reaches the window's client edge (`#root` padding 0) —
   any transparent inset would show as a ring around the launcher.
 - No hairline: the panel used to draw `border: 1px solid
@@ -31,11 +32,12 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   and runs to the panel border on the left/right/bottom; inner padding belongs
   to the page (see ARCHITECTURE 拼接几何). A frame or tint step at that seam
   is a bug, not a style.
-- **Plugin surfaces**: Presenter iframes receive `--lume-page-bg`,
-  `--lume-page-accent` and `data-lume-skin`; the legacy `theme` event remains a
-  `"light" | "dark"` string and the additive `skin` event carries
-  `{id, accent, surface}`. Detached plugin windows use the same `--surface` for
-  chrome and canvas. A plugin that paints its own background still wins.
+- **Plugin surfaces**: embedded Presenter iframes receive the launcher's
+  effective `--lume-page-bg`, `--lume-page-accent` and `data-lume-skin`; the
+  legacy `theme` event remains a `"light" | "dark"` string and the additive
+  `skin` event carries `{id, accent, surface}`. Detached plugin windows use
+  their skin surface for chrome and canvas. A plugin that paints its own
+  background still wins.
 - **Nothing to show = the search row alone**: an empty home menu (no bar
   sections) collapses the window to the search row — no reserved empty strip.
   A "no results" hint renders in its own `.page-hint` row (the fit window
@@ -64,7 +66,7 @@ indicators get their own contrast-safe tiers.
 
 | Role | Quiet dark / light | Chromatic dark / light |
 |---|---|---|
-| Surface | `#1e1e20` / `#fbfbfd` | `#1e1e20` / `#f3efe6` |
+| Surface | `#1e1e20` / `#f7f3e8` | `#1e1e20` / `#f3efe6` |
 | Native accent decoration | `#5ac8fa` / `#0969da` | `#5ac8fa` / `#64796d` |
 | Native accent text | `#5ac8fa` / `#0757b8` | `#5ac8fa` / `#52675b` |
 | Focus ring | `#5ac8fa` / `#0969da` | `#5ac8fa` / `#64796d` |
@@ -176,8 +178,8 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
   controls, 1.5px structural rules and numbered settings pages. Both skins share
   the same semantic components, DOM identity and responsive layout. Switching a
   window's skin preserves its focus, selection and scroll position, and never
-  adds a CSS border, radius, translucent fill or shadow to the launcher's outer
-  window.
+  adds a CSS border, radius, extra translucency or shadow to the launcher's
+  outer window. Whole-window opacity only comes from `appearance.window_opacity`.
 - The launcher inner rhythm is skin-owned: Quiet keeps rounded result/clipboard
   rows; Chromatic uses near-square controls, stronger rules and editorial
   section titles. Search row, page and iframe remain one `--surface`; no skin

@@ -12,9 +12,9 @@ import { createPresenterBridge, type PresenterBridge } from "../page-runtime/pre
 import type { PageLayoutReport } from "../page-runtime/contracts";
 import { dropSessionFrames, takeSessionFrames } from "../launcher/session";
 import { normalizePluginColorMode } from "../theme";
-import { currentSkin } from "../skins/runtime";
+import { currentSkin, currentSurface, currentSurfaceToneFor } from "../skins/runtime";
 import { currentAccent } from "../skins/accent";
-import { skinSurface } from "../skins/registry";
+
 import { t } from "../i18n";
 import { assertPermission } from "./permissions";
 import type {
@@ -670,12 +670,13 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     postTitlebar: (type, payload) => titlebarBridge?.post(type, payload),
     postEvent: (type, payload) => postBoth(type, payload),
     postTheme: (mode) => {
-      postBoth("theme", mode);
+      const resolved = mode === "light" ? "light" : "dark";
+      postBoth("theme", currentSurfaceToneFor(resolved));
       const skin = currentSkin();
       const visual = {
         id: skin,
         accent: currentAccent(),
-        surface: skinSurface(skin, mode === "light" ? "light" : "dark"),
+        surface: currentSurface(resolved),
       };
       postBoth("skin", visual);
       const probe = window as unknown as {

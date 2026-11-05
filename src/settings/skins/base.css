@@ -1670,11 +1670,11 @@ button.settings-toggle.on .settings-toggle-knob {
 
 .settings-theme-sample.light {
   color: #1b1d21;
-  background: #fbfbfd;
+  background: #f7f3e8;
 }
 
 .settings-theme-sample.system {
-  background: linear-gradient(135deg, #fbfbfd 0 49%, #1e1e20 51% 100%);
+  background: linear-gradient(135deg, #f7f3e8 0 49%, #1e1e20 51% 100%);
   color: transparent;
 }
 
@@ -2910,5 +2910,63 @@ html[data-skin="chromatic"] .settings-accent-option.active {
 
   .settings-accent-option {
     flex-basis: calc(50% - 3px);
+  }
+}
+/* Launcher-window surface controls (Appearance → Launcher window). */
+.settings-window-color {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-window-color-picker {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 9px 2px 2px;
+  border: var(--settings-line-width) solid var(--settings-line-strong);
+  border-radius: var(--settings-control-radius);
+  background: var(--settings-control);
+  cursor: pointer;
+}
+
+.settings-window-color-picker:hover,
+.settings-window-color-picker:focus-within {
+  border-color: var(--settings-structure);
+}
+
+.settings-window-color-picker input {
+  width: 38px;
+  height: 32px;
+  flex: 0 0 38px;
+  padding: 2px;
+  border: 1px solid var(--settings-line-strong);
+  border-radius: calc(var(--settings-control-radius) / 2);
+  background: var(--settings-panel);
+  cursor: pointer;
+}
+
+.settings-window-color-picker input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.settings-window-color-picker input::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--settings-control-radius) / 2);
+}
+
+.settings-window-color-picker code {
+  color: var(--settings-structure-text);
+  font: 600 10px/1.2 "Cascadia Mono", Consolas, monospace;
+  text-transform: lowercase;
+}
+
+@media (max-width: 759px) {
+  .settings-window-color {
+    justify-content: flex-start;
   }
 }

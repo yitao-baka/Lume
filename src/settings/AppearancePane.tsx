@@ -11,7 +11,8 @@ import {
   nativeAccent,
   normalizeAccent,
 } from "../skins/accent";
-import type { SkinId } from "../skins/registry";
+import { skinSurface, type SkinId } from "../skins/registry";
+import { WINDOW_OPACITY_MAX, WINDOW_OPACITY_MIN } from "../skins/runtime";
 import type { SettingsData } from "./types";
 import { SegmentedControl, SettingGroup, SettingRow } from "./controls";
 
@@ -86,6 +87,43 @@ function RadioCards(props: {
           </button>
         )}
       </For>
+    </div>
+  );
+}
+
+function WindowColorControl(props: {
+  value: string;
+  skin: SkinId;
+  onChange: (value: string) => void;
+}) {
+  const custom = () => normalizeAccent(props.value);
+  const shown = () => custom() || skinSurface(props.skin, themeMode());
+  return (
+    <div class="settings-window-color">
+      <label
+        class="settings-window-color-picker"
+        title={`${t("appearanceWindowColor")}: ${shown()}`}
+      >
+        <input
+          type="color"
+          value={shown()}
+          aria-label={t("appearanceWindowColor")}
+          onChange={(event) => {
+            const value = normalizeAccent(event.currentTarget.value);
+            if (value) props.onChange(value);
+          }}
+        />
+        <code>{shown()}</code>
+      </label>
+      <button
+        class="settings-chip"
+        classList={{ active: !custom() }}
+        type="button"
+        aria-pressed={!custom()}
+        onClick={() => props.onChange("")}
+      >
+        {t("appearanceWindowColorFollowSkin")}
+      </button>
     </div>
   );
 }
@@ -255,6 +293,11 @@ export default function AppearancePane(props: {
   children?: JSX.Element;
 }) {
   const a = () => props.settings.appearance;
+  const opacity = () =>
+    Math.min(
+      WINDOW_OPACITY_MAX,
+      Math.max(WINDOW_OPACITY_MIN, a().window_opacity ?? WINDOW_OPACITY_MAX),
+    );
   const skinOptions = () => [
     {
       value: "quiet",
@@ -352,7 +395,55 @@ export default function AppearancePane(props: {
         </SettingRow>
       </SettingGroup>
 
-      <SettingGroup title={t("groupAppearanceAccent")} number="01.4">
+      <SettingGroup title={t("groupAppearanceWindow")} number="01.4">
+        <SettingRow
+          id="appearance.window_color"
+          label={t("appearanceWindowColor")}
+          summary={t("appearanceWindowColorHint")}
+          details={[t("appearanceWindowColorDetail")]}
+        >
+          <WindowColorControl
+            value={a().window_color}
+            skin={a().skin}
+            onChange={(value) => props.onChange({ window_color: value })}
+          />
+        </SettingRow>
+        <SettingRow
+          id="appearance.window_opacity"
+          label={t("appearanceWindowOpacity")}
+          summary={t("appearanceWindowOpacityHint")}
+          details={[t("appearanceWindowOpacityDetail")]}
+        >
+          <div class="settings-slider">
+            <input
+              class="settings-slider-input"
+              type="range"
+              min={WINDOW_OPACITY_MIN}
+              max={WINDOW_OPACITY_MAX}
+              step={1}
+              value={opacity()}
+              aria-label={t("appearanceWindowOpacity")}
+              aria-valuetext={`${opacity()}%`}
+              style={{
+                "--fill": `${
+                  ((opacity() - WINDOW_OPACITY_MIN) /
+                    (WINDOW_OPACITY_MAX - WINDOW_OPACITY_MIN)) *
+                  100
+                }%`,
+              }}
+              onInput={(event) => {
+                const value = event.currentTarget.valueAsNumber;
+                if (Number.isFinite(value)) {
+                  props.onChange({ window_opacity: Math.round(value) });
+                }
+              }}
+            />
+            <span class="settings-slider-value">{opacity()}%</span>
+          </div>
+        </SettingRow>
+      </SettingGroup>
+
+      <SettingGroup title={t("groupAppearanceAccent")} number="01.5">
         <SettingRow
           id="appearance.accent"
           label={t("appearanceAccent")}

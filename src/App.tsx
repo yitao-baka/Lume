@@ -15,7 +15,12 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Dynamic } from "solid-js/web";
 import { resolveLocale, setLocale, t, type Messages } from "./i18n";
 import { applyColorMode, currentThemeMode, normalizePluginColorMode } from "./theme";
-import { applySkin, currentSkin } from "./skins/runtime";
+import {
+  applySkin,
+  applyWindowSurface,
+  currentSkin,
+  currentSurfaceToneFor,
+} from "./skins/runtime";
 import { applyAccent, currentAccent } from "./skins/accent";
 import { pluginColorMode, pluginColorPref } from "./plugins/themePrefs";
 import type { SettingsData } from "./settings/types";
@@ -142,6 +147,7 @@ function App() {
   setLocale(resolveLocale(_a?.language ?? "system"));
   applyColorMode(_a?.color_mode ?? "system");
   applySkin(_a?.skin);
+  applyWindowSurface(_a?.window_color, _a?.window_opacity);
   applyAccent(_a?.accent);
   // Per-plugin color-mode overrides (docs/ROADMAP_HISTORY.md #36) before any page renders —
   // the first push into a plugin page's iframe must already be its effective
@@ -536,9 +542,10 @@ const services: PluginServices = {
     },
     pluginColorState: (pluginId) => {
       const host = currentThemeMode();
+      const mode = pluginColorMode(pluginId, host) === "light" ? "light" : "dark";
       return {
         pref: pluginColorPref(pluginId),
-        mode: pluginColorMode(pluginId, host),
+        mode: currentSurfaceToneFor(mode),
         host,
         skin: currentSkin(),
         accent: currentAccent(),
@@ -857,6 +864,10 @@ const services: PluginServices = {
       setLocale(resolveLocale(s.appearance.language));
       applyColorMode(s.appearance.color_mode);
       applySkin(s.appearance.skin);
+      applyWindowSurface(
+        s.appearance.window_color,
+        s.appearance.window_opacity,
+      );
       applyAccent(s.appearance.accent);
       // Per-plugin color modes ride every settings refresh: the settings
       // window's 「恢复默认设置」, a hand-edited settings.toml and our own

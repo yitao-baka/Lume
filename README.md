@@ -45,7 +45,8 @@ The goal is:
 - Dual-window skin system — choose Quiet / Chromatic independently for the
   launcher and settings window, with a shared accent and color mode; the
   launcher skin covers navigation, clipboard, embedded plugin canvases and
-  detached plugin windows, while CSS, iframe, window background and DWM border
+  detached plugin windows; the launcher surface color and 70–100% whole-window
+  opacity are configurable, while CSS, iframe, window background and DWM border
   share one surface metadata source
 - Search-state recall — a search you didn't open is restored on the next
   summon; remember-last-page and remember-checks persist across shows

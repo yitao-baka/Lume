@@ -237,7 +237,7 @@ const rgb = (value) => {
 };
 const hex = (pixel) => "#" + pixel.slice(0, 3).map((value) => value.toString(16).padStart(2, "0")).join("");
 const SURFACES = {
-  quiet: { dark: "#1e1e20", light: "#fbfbfd" },
+  quiet: { dark: "#1e1e20", light: "#f7f3e8" },
   chromatic: { dark: "#1e1e20", light: "#f3efe6" },
 };
 
@@ -410,7 +410,7 @@ let area = await pagePoint(main);
 check("embedded plugin frame mounted", !!area, JSON.stringify(area));
 const presenterInjection = await main.evalJs(`document.querySelector(".plugin-frame")?.getAttribute("srcdoc") ?? ""`);
 check("embedded Presenter receives skin, surface and accent before page load",
-  presenterInjection.includes('--lume-page-bg:#fbfbfd') &&
+  presenterInjection.includes('--lume-page-bg:#f7f3e8') &&
     presenterInjection.includes('--lume-page-accent:#d96c95') &&
     presenterInjection.includes('dataset.lumeSkin="quiet"'),
   presenterInjection.slice(0, 240));

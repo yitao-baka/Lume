@@ -434,7 +434,6 @@
   "settingsGroupPersonal": "個人化",
   "settingsGroupEfficiency": "效率",
   "settingsGroupManage": "管理",
-  "settingsAppearancePageDesc": "選擇 Lume 的介面語言、明暗主題、應用程式面板與主題色。變更會即時預覽並自動儲存。",
   "settingsLauncherPageDesc": "控制呼出視窗的尺寸、位置、主畫面內容、搜尋框佔位符、網格外觀與工作階段記憶。",
   "settingsClipboardPageDesc": "管理剪貼簿歷史的擷取、顯示、貼上與預覽方式。",
   "settingsSearchPageDesc": "選擇應用程式與檔案搜尋涵蓋的目錄，並維護可重建的索引快取。",
@@ -603,5 +602,14 @@
   "clipDeleteFailed": "無法刪除該剪貼簿項目。",
   "clipRestoreFailed": "無法還原該剪貼簿項目。",
   "permPreview": "預覽",
-  "permPreviewDesc": "在衛星預覽視窗中顯示內容"
+  "permPreviewDesc": "在衛星預覽視窗中顯示內容",
+  "settingsAppearancePageDesc": "選擇 Lume 的介面語言、明暗主題、應用程式面板、主視窗顏色與不透明度以及主題色。變更會即時預覽並自動儲存。",
+  "appearanceWindowColorFollowSkin": "跟隨面板",
+  "appearanceWindowOpacity": "視窗不透明度",
+  "appearanceWindowColorDetail": "視窗顏色獨立於主題與面板；文字與強調色會依所選顏色的明暗自動調整對比度。此設定不影響設定視窗與分離外掛視窗。",
+  "appearanceWindowOpacityHint": "作用於整個啟動器，包括嵌入外掛頁面。",
+  "appearanceWindowColor": "視窗顏色",
+  "appearanceWindowOpacityDetail": "低於 100% 時會透出桌面；最低為 70% 以維持文字與控制項可用。設定視窗與分離外掛視窗維持各自的不透明度。",
+  "groupAppearanceWindow": "主視窗",
+  "appearanceWindowColorHint": "覆寫主視窗在淺色與深色下的表面顏色。"
 }

@@ -239,7 +239,9 @@ export class LumeSession {
     installProcessCleanup();
     const port = await freePort();
     const logPath = join(runDir, "lume.log");
+    const webviewDataDir = join(runDir, "webview2");
     mkdirSync(runDir, { recursive: true });
+    mkdirSync(webviewDataDir, { recursive: true });
     const logFd = openSync(logPath, "w");
     const browserArgs = [
       process.env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
@@ -250,6 +252,10 @@ export class LumeSession {
       env: {
         ...process.env,
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: browserArgs,
+        // A running installed Lume can already own the default WebView2 user
+        // data folder. A private profile keeps this process's browser (and the
+        // requested debugging port) isolated from the user's app.
+        WEBVIEW2_USER_DATA_FOLDER: webviewDataDir,
         LUME_INSTANCE_ID: instanceId,
       },
       stdio: ["ignore", logFd, logFd],

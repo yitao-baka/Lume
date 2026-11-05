@@ -104,7 +104,7 @@ function pngPixel(buf) {
   return [out[off], out[off + 1], out[off + 2], ch === 4 ? out[off + 3] : 255];
 }
 
-const SURFACE = { dark: [30, 30, 32], light: [251, 251, 253] };
+const SURFACE = { dark: [30, 30, 32], light: [247, 243, 232] };
 const near = (px, ref, tol = 6) => px.slice(0, 3).every((v, i) => Math.abs(v - ref[i]) <= tol);
 const hex = (px) => "#" + px.slice(0, 3).map((v) => v.toString(16).padStart(2, "0")).join("");
 
@@ -214,7 +214,7 @@ check("②d plugin has not pinned anything yet",
   !(await themeTap()).some((e) => e.source === "main" || e.source === "window"), JSON.stringify(await themeTap()));
 const skinTap = await m.evalJs(`((window).__presenterSkins ?? []).filter((e) => e.pageId === "hello-mode")`);
 check("②e embedded Presenter received the global skin visual event",
-  skinTap.some((e) => e.id === "quiet" && e.accent === "" && e.surface === "#fbfbfd"),
+  skinTap.some((e) => e.id === "quiet" && e.accent === "" && e.surface === "#f7f3e8"),
   JSON.stringify(skinTap));
 
 // ③ theme.set("dark") —— 页面画布转深，启动器不动
@@ -265,7 +265,7 @@ check("⑤e launcher pushed the plugin's effective mode across windows",
   pushed.includes("light") && !pushed.includes("dark"), JSON.stringify(pushed));
 const pushedVisual = await w.evalJs(`((window).__pluginStates ?? []).filter((s) => s.skin).map((s) => ({ skin: s.skin, accent: s.accent, surface: s.surface, theme: s.theme }))`);
 check("⑤f detached window received skin, accent, and surface with the theme",
-  pushedVisual.some((s) => s.skin === "quiet" && s.accent === "" && s.surface === "#fbfbfd" && s.theme === "light"),
+  pushedVisual.some((s) => s.skin === "quiet" && s.accent === "" && s.surface === "#f7f3e8" && s.theme === "light"),
   JSON.stringify(pushedVisual));
 await w.shot("plugin_theme_window.png");
 

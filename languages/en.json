@@ -434,7 +434,6 @@
   "settingsGroupPersonal": "Personalization",
   "settingsGroupEfficiency": "Efficiency",
   "settingsGroupManage": "Management",
-  "settingsAppearancePageDesc": "Choose Lume's interface language, theme, application skin and accent color. Changes preview instantly and save automatically.",
   "settingsLauncherPageDesc": "Control the launcher window, home content, search placeholders, grid appearance, and session behavior.",
   "settingsClipboardPageDesc": "Manage clipboard capture, display, paste, and preview behavior.",
   "settingsSearchPageDesc": "Choose the apps and files Lume indexes, and maintain the rebuildable cache.",
@@ -603,5 +602,14 @@
   "clipDeleteFailed": "Could not delete the clipboard entry.",
   "clipRestoreFailed": "Could not restore the clipboard entry.",
   "permPreview": "Preview",
-  "permPreviewDesc": "Show content in the satellite preview window"
+  "permPreviewDesc": "Show content in the satellite preview window",
+  "settingsAppearancePageDesc": "Choose Lume's interface language, theme, application skin, launcher color and opacity, and accent color. Changes preview instantly and save automatically.",
+  "appearanceWindowColorFollowSkin": "Follow skin",
+  "appearanceWindowOpacity": "Window opacity",
+  "appearanceWindowColorDetail": "The window color is independent of theme and skin. Text and accent contrast follow the chosen surface tone. It does not change the settings window or detached plugin windows.",
+  "appearanceWindowOpacityHint": "Applies to the whole launcher, including embedded plugin pages.",
+  "appearanceWindowColor": "Window color",
+  "appearanceWindowOpacityDetail": "Values below 100% reveal the desktop behind Lume. The minimum is 70% to keep text and controls usable; settings and detached plugin windows keep their own opacity.",
+  "groupAppearanceWindow": "Launcher window",
+  "appearanceWindowColorHint": "Overrides the launcher surface color in both light and dark modes."
 }

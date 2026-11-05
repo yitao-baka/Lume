@@ -53,8 +53,9 @@ UI suites, the curated legacy release group, and the embedded release build.
 The harness suites in `scripts/test-harness/suites/` exercise the real embedded
 debug executable through CDP. The runner stages a private executable,
 `languages/`, `res/`, and an empty data/settings/plugins directory under
-`test/verify/`. It assigns a free debugging port and a debug-only
-`LUME_INSTANCE_ID`, so tests do not stop or attach to the user's running Lume.
+`test/verify/`. It assigns a free debugging port, a private WebView2 user-data
+profile, and a debug-only `LUME_INSTANCE_ID`, so tests do not stop or attach to
+the user's running Lume or share its browser process.
 
 Each suite:
 
@@ -96,7 +97,7 @@ hotkey delivery, and native window interactions remain manual. Follow
 | Documentation only | `pnpm verify:docs` |
 | Shared frontend logic | `pnpm verify:fast`, then the impacted UI suites |
 | Launcher shell or keyboard routing | `pnpm verify:fast`, `pnpm verify:ui --suite smoke` |
-| Settings or skins | `pnpm verify:fast`, `pnpm verify:ui --suite settings`, then `pnpm verify:legacy --group settings-visual` when visual behavior changed |
+| Settings, launcher surface color/opacity or skins | `pnpm verify:fast`, `pnpm verify:ui --suite settings`, then `pnpm verify:legacy --group settings-visual` when visual behavior changed |
 | Clipboard model/store | `pnpm verify:fast`, `pnpm verify:ui --suite clipboard-ui` |
 | Plugin runtime, permissions, or page model | `pnpm verify:fast`, `pnpm verify:ui --suite plugin-runtime,preview`, then `pnpm verify:legacy --group plugin-boundary` when the boundary changed |
 | Elevation agent or automation settings | `pnpm verify:fast`, `pnpm verify:ui --suite agent`; registration and elevated injection stay manual |
@@ -112,7 +113,7 @@ Review the selected list instead of assuming every change needs every suite.
 | Suite | Contract |
 | --- | --- |
 | `smoke` | Launcher shell, direct Navigate input, mode bar, Tab mode switch, clipboard surface, hiding |
-| `settings` | Settings navigation, command search, index actions/opt-in, Navigate IME opt-in, clipboard pane, close path |
+| `settings` | Settings navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, close path |
 | `plugin-runtime` | API 2 keyword entry, Presenter readiness, strict CSP and sandbox |
 | `clipboard-ui` | History/empty surface, categories, row artwork, pause acknowledgement, clear confirmation |
 | `preview` | Core preview window, undeclared-plugin denial, declared-plugin reuse |

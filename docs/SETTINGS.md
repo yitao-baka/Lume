@@ -64,26 +64,30 @@ WebView2 窗口，无边框、自绘标题栏；双窗口皮肤与全局主题�
 |---|---|---|---|---|
 | `appearance.skin` | string | `quiet` / `chromatic` | `quiet` | 主窗口及启动器插件外壳 |
 | `appearance.settings_skin` | string | `quiet` / `chromatic` | `chromatic` | 设置窗口 |
+| `appearance.window_color` | string | `""` / `#rrggbb` | `""` | 主窗口表面色；空值跟随皮肤 |
+| `appearance.window_opacity` | number | `70`–`100` | `100` | 主窗口整体不透明度（%） |
 | `appearance.accent` | string | `""` / `#rrggbb` | `""` | 全应用强调态 |
 | `appearance.accent_custom` | string | `""` / `#rrggbb` | `""` | 取色器记忆值 |
 
 - 首帧由 `src/index.tsx` 在 `render()` 前读取 `__LUME_CONFIG__`：主窗应用
   `appearance.skin`，设置窗应用 `appearance.settings_skin`，然后应用共享明暗
-  模式与主题色；`src/pluginWindow.tsx` 跟随主窗皮肤并使用插件生效的明暗模式。
+  模式、主题色与主窗口表面设置；`src/pluginWindow.tsx` 跟随主窗皮肤并使用插件生效的明暗模式。
   缺少配置或未知皮肤回落 `quiet`，主题色缺失或非法时为空值。
-- `src/skins/runtime.ts` 是每个 webview 的 `data-skin` 与 `--surface` 唯一写入器；
-  `src/skins/accent.ts` 是 `data-accent`、`--ui-accent*` 与 `--ui-focus-ring`
-  的唯一写入器；`src/theme.ts` 继续独占 `data-theme` 与系统明暗监听。
+- `src/skins/runtime.ts` 是每个 webview 的 `data-skin`、`--surface`、主窗口
+  颜色/不透明度与表面明暗色调的唯一写入器；`src/skins/accent.ts` 是
+  `data-accent`、`--ui-accent*` 与 `--ui-focus-ring` 的唯一写入器；
+  `src/theme.ts` 继续独占 `data-theme` 与系统明暗监听。
 - `src/skins/skins.json` 是皮肤 id、四个 surface 与对比度锚点的共享来源。
   TypeScript 直接导入；Rust 以 `include_str!` 编译并用 `OnceLock` 解析。主窗
   CSS、iframe 画布、分离窗口背景和 DWM 边框均从该文件派生。
-- Rust 在读取、补丁合并、导入、恢复默认、恢复备份与整表保存后统一规范化皮肤和
-  主题色。主题色只接受三位或六位十六进制，输出小写 `#rrggbb`；其他值回落为空。
-- 空主题色移除覆盖属性和内联 token，完全使用皮肤原生强调色。非空主题色按当前
-  皮肤/mode 的最不利背景锚点修正对比度，派生 `--ui-accent`、
-  `--ui-accent-text`、`--ui-accent-border`、`--ui-accent-on` 与
-  `--ui-focus-ring`。设置窗只把该强调色用于交互选中态；启动器外层与设置窗的
-  canvas / rail / panel / control 表面都不参与混色。
+- Rust 在读取、补丁合并、导入、恢复默认、恢复备份与整表保存后统一规范化皮肤、
+  主窗口颜色、不透明度和主题色。颜色只接受三位或六位十六进制，输出小写
+  `#rrggbb`；其他值回落为空。不透明度限制在 `70..100`。
+- 空主窗口颜色使用皮肤表面色；非空颜色覆盖主窗口在浅色和深色下的表面，并按
+  其明暗色调切换可读的共享 token。空主题色使用皮肤原生强调色；存在主窗口颜色
+  覆盖时，默认强调色也按实际表面重算。非空主题色按当前皮肤/mode 的背景锚点
+  修正对比度，派生 `--ui-accent`、`--ui-accent-text`、`--ui-accent-border`、
+  `--ui-accent-on` 与 `--ui-focus-ring`。设置窗和分离插件窗口不跟随主窗口颜色。
 - 切换任一窗口皮肤或主题色先更新 DOM，再更新工作副本并走自动保存。保存失败时
   DOM、工作副本和控件一起回滚到最近确认值。设置窗皮肤切换只预览当前窗口，
   主窗皮肤切换只预览主窗口。
@@ -170,7 +174,7 @@ WebView2 窗口，无边框、自绘标题栏；双窗口皮肤与全局主题�
 
 ### 01 外观（`appearance`）
 
-页面说明：选择界面语言、明暗主题、主窗口与设置窗口皮肤以及主题色。
+页面说明：选择界面语言、明暗主题、主窗口与设置窗口皮肤、主窗口颜色与不透明度以及主题色。
 
 - **颜色模式** `appearance.color_mode`：跟随系统 / 月之暗面（深色）/ 日之耀面
   （浅色），使用三张主题预览卡。跟随系统响应 `prefers-color-scheme`。
@@ -181,6 +185,13 @@ WebView2 窗口，无边框、自绘标题栏；双窗口皮肤与全局主题�
   只在内部使用直角/近直角控件和更强结构线。
 - **设置窗口皮肤** `appearance.settings_skin`：Quiet / Chromatic。只改变当前
   设置窗口；切换时主窗口保持自己的皮肤。
+- **主窗口颜色** `appearance.window_color`：默认「跟随皮肤」，也可用原生取色器
+  指定 `#rrggbb`。自定义色同时覆盖浅色与深色的主窗口表面；文字、控件和主题色
+  按该颜色的明暗自动切换到匹配的调色板并重算对比度。设置窗口和分离插件窗口
+  不跟随该覆盖色。
+- **主窗口不透明度** `appearance.window_opacity`：滑杆范围 `70–100%`，作用于
+  整个主窗口（含嵌入插件页面），低于 `100%` 时透出桌面。主窗使用透明 WebView；
+  `100%` 时 DWM 边框条涂成有效表面色，低于 `100%` 时清除边框条。
 - **主题色** `appearance.accent`：默认 / 六个预设色 / 自定义。预设行只在首格
   区分设置窗皮肤：Quiet 首格是湖蓝，Chromatic 首格是浅粉 `#ac8e97`
   （Chromatic 深色默认色为湖蓝）。首格「默认」的色块固定显示当前设置窗皮肤、

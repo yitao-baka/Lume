@@ -78,8 +78,13 @@ impl Settings {
             .unwrap_or_default();
         self.appearance.skin = Some(launcher_skin.to_string());
         self.appearance.settings_skin = Some(settings_skin.to_string());
-        self.appearance.accent = Some(normalize_accent(&accent));
-        self.appearance.accent_custom = Some(normalize_accent(&accent_custom));
+        self.appearance.accent = Some(normalize_hex_color(&accent));
+        self.appearance.accent_custom = Some(normalize_hex_color(&accent_custom));
+        self.appearance.window_color = normalize_hex_color(&self.appearance.window_color);
+        self.appearance.window_opacity = self
+            .appearance
+            .window_opacity
+            .clamp(WINDOW_OPACITY_MIN, WINDOW_OPACITY_MAX);
         // Durable values are deliberately bounded before they reach any
         // geometry transaction. The live target is additionally clamped to
         // the current monitor's work area, so an import cannot create an
@@ -215,6 +220,14 @@ pub struct Appearance {
     /// Missing inherits `skin`, preserving the former app-wide skin setting.
     #[serde(default)]
     pub settings_skin: Option<String>,
+    /// Launcher-only surface override (`""` follows the active skin). Only a
+    /// normalized lowercase `#rrggbb` is persisted.
+    #[serde(default)]
+    pub window_color: String,
+    /// Launcher window opacity in percent. The lower bound keeps text and
+    /// controls usable over arbitrary wallpapers.
+    #[serde(default = "default_window_opacity")]
+    pub window_opacity: u8,
     /// Application-wide accent: empty follows the skin, otherwise a
     /// normalized lowercase `#rrggbb`.
     #[serde(default)]
@@ -368,6 +381,15 @@ fn default_settings_skin() -> String {
     "chromatic".into()
 }
 
+/// Launcher opacity bounds, mirrored by `WINDOW_OPACITY_MIN/MAX` in
+/// `src/skins/runtime.ts`.
+pub const WINDOW_OPACITY_MIN: u8 = 70;
+pub const WINDOW_OPACITY_MAX: u8 = 100;
+
+fn default_window_opacity() -> u8 {
+    WINDOW_OPACITY_MAX
+}
+
 /// Normalize the settings-window skin. Kept as a string (not a strict enum)
 /// so future skin names in external files degrade to the default instead of
 /// failing the whole settings document.
@@ -380,7 +402,7 @@ pub fn normalize_skin(value: &str) -> &'static str {
 
 /// Normalize the settings-window accent. Only literal 3- or 6-digit hex colors
 /// are accepted; everything else falls back to the empty "follow skin" value.
-fn normalize_accent(value: &str) -> String {
+fn normalize_hex_color(value: &str) -> String {
     let raw = value.trim();
     if raw.is_empty() {
         return String::new();
@@ -674,6 +696,8 @@ impl Default for Settings {
                 color_mode: "system".into(),
                 skin: Some(default_skin()),
                 settings_skin: Some(default_settings_skin()),
+                window_color: String::new(),
+                window_opacity: default_window_opacity(),
                 accent: Some(String::new()),
                 accent_custom: Some(String::new()),
                 legacy_settings_accent: None,
@@ -1498,11 +1522,11 @@ mod tests {
     /// from reviving legacy data.
     #[test]
     fn accent_defaults_migrates_and_round_trips() {
-        assert_eq!(normalize_accent(""), "");
-        assert_eq!(normalize_accent("   "), "");
-        assert_eq!(normalize_accent("#5cf"), "#55ccff");
-        assert_eq!(normalize_accent("AABBCC"), "#aabbcc");
-        assert_eq!(normalize_accent("#AbCdEf"), "#abcdef");
+        assert_eq!(normalize_hex_color(""), "");
+        assert_eq!(normalize_hex_color("   "), "");
+        assert_eq!(normalize_hex_color("#5cf"), "#55ccff");
+        assert_eq!(normalize_hex_color("AABBCC"), "#aabbcc");
+        assert_eq!(normalize_hex_color("#AbCdEf"), "#abcdef");
         for invalid in [
             "#abcd",
             "#aabbccdd",
@@ -1512,7 +1536,7 @@ mod tests {
             "#12345g",
             "url(https://example.com/x)",
         ] {
-            assert_eq!(normalize_accent(invalid), "", "{invalid}");
+            assert_eq!(normalize_hex_color(invalid), "", "{invalid}");
         }
 
         let base = temp_base("settings-accent");
@@ -1792,6 +1816,50 @@ mod tests {
     }
 
     #[test]
+    fn launcher_surface_defaults_normalize_and_round_trip() {
+        let base = temp_base("launcher-surface");
+        ensure_settings_files(&base).unwrap();
+
+        let defaults = read_settings(&base);
+        assert_eq!(defaults.appearance.window_color, "");
+        assert_eq!(defaults.appearance.window_opacity, WINDOW_OPACITY_MAX);
+        let factory = fs::read_to_string(default_path(&base)).unwrap();
+        assert!(factory.contains("window_color = \"\""));
+        assert!(factory.contains("window_opacity = 100"));
+
+        let normalized = merge_settings_patch(
+            &defaults,
+            serde_json::json!({
+                "appearance": {
+                    "window_color": "#F7F3E8",
+                    "window_opacity": 20
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(normalized.appearance.window_color, "#f7f3e8");
+        assert_eq!(normalized.appearance.window_opacity, WINDOW_OPACITY_MIN);
+        write_settings_light(&base, &normalized).unwrap();
+        let round_trip = read_settings(&base);
+        assert_eq!(round_trip.appearance.window_color, "#f7f3e8");
+        assert_eq!(round_trip.appearance.window_opacity, WINDOW_OPACITY_MIN);
+
+        let invalid = merge_settings_patch(
+            &round_trip,
+            serde_json::json!({
+                "appearance": {
+                    "window_color": "rgba(0, 0, 0, .5)",
+                    "window_opacity": 255
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(invalid.appearance.window_color, "");
+        assert_eq!(invalid.appearance.window_opacity, WINDOW_OPACITY_MAX);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
     fn first_run_creates_default_and_settings() {
         let base = temp_base("first-run");
         ensure_settings_files(&base).unwrap();
@@ -1803,6 +1871,8 @@ mod tests {
         assert_eq!(s.appearance.entry_size, 70);
         assert!(!s.appearance.round_app_icons, "圆形图标默认关");
         assert_eq!(s.appearance.window_height, 520);
+        assert_eq!(s.appearance.window_color, "");
+        assert_eq!(s.appearance.window_opacity, WINDOW_OPACITY_MAX);
         assert!(!s.appearance.mode_switch_icons_only, "图标开关默认关");
         assert!(!s.appearance.per_mode_query, "各模式独立搜索词默认关");
         assert_eq!(s.hotkeys.toggle, "Alt+Space");

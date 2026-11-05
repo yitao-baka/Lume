@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyColorMode } from "./theme";
 import App from "./App";
 import SettingsApp from "./settings/Settings";
-import { applySkin } from "./skins/runtime";
+import { applySkin, applyWindowSurface } from "./skins/runtime";
 import { applyAccent } from "./skins/accent";
 import "./skins/index.css";
 
@@ -16,6 +16,7 @@ try {
 } catch {
   // Outside Tauri (plain browser) — render the launcher.
 }
+document.documentElement.dataset.windowKind = isSettings ? "settings" : "launcher";
 if (isSettings) {
   document.body.classList.add("settings-window");
 }
@@ -31,6 +32,8 @@ const cfg = (window as any).__LUME_CONFIG__ as
         settings_skin?: string;
         color_mode?: string;
         accent?: string;
+        window_color?: string;
+        window_opacity?: number;
       };
     }
   | undefined;
@@ -42,6 +45,12 @@ applySkin(
     ? cfg?.appearance?.settings_skin ?? cfg?.appearance?.skin ?? "chromatic"
     : cfg?.appearance?.skin ?? cfg?.appearance?.settings_skin,
 );
+if (!isSettings) {
+  applyWindowSurface(
+    cfg?.appearance?.window_color,
+    cfg?.appearance?.window_opacity,
+  );
+}
 applyAccent(cfg?.appearance?.accent);
 
 render(

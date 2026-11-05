@@ -1,16 +1,18 @@
 //! Global accent runtime — normalizes the persisted color, derives the five
-//! semantic tiers against the active skin's contrast anchors, and owns every
-//! custom-accent root variable.
+//! semantic tiers against the active surface, and owns every custom-accent
+//! root variable.
 
-import { onThemeModeChange, themeMode } from "../theme";
+import { themeMode } from "../theme";
+import { contrastRatio, mixHex, normalizeHexColor, surfaceToneFor } from "./color";
 import {
   normalizeSkin,
   skinAccentAnchor,
   skinDefaultAccent,
+  skinSurface,
   type ResolvedColorMode,
   type SkinId,
 } from "./registry";
-import { currentSkin, onSkinChange } from "./runtime";
+import { currentSkin, currentSurface, onSurfaceChange } from "./runtime";
 
 export const ACCENT_PRESETS = [
   { value: "#5ac8fa", labelKey: "appearanceAccentPresetAqua" },
@@ -50,64 +52,8 @@ export function nativeAccent(skin: SkinId, mode: ResolvedColorMode = themeMode()
   return skinDefaultAccent(normalizeSkin(skin), mode);
 }
 
-function parseHex(value: string): [number, number, number] | null {
-  const match = /^#([0-9a-f]{6})$/i.exec(value.trim());
-  if (!match) return null;
-  const raw = match[1];
-  return [
-    Number.parseInt(raw.slice(0, 2), 16),
-    Number.parseInt(raw.slice(2, 4), 16),
-    Number.parseInt(raw.slice(4, 6), 16),
-  ];
-}
-
-function toHex(rgb: [number, number, number]): string {
-  return `#${rgb.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
-}
-
-/** Normalize an untrusted value to `""` or a lowercase `#rrggbb`. */
-export function normalizeAccent(value: unknown): string {
-  if (typeof value !== "string") return "";
-  let raw = value.trim();
-  if (!raw) return "";
-  if (raw.startsWith("#")) raw = raw.slice(1);
-  if (/^[0-9a-f]{3}$/i.test(raw)) {
-    raw = raw
-      .split("")
-      .map((character) => character + character)
-      .join("");
-  }
-  if (!/^[0-9a-f]{6}$/i.test(raw)) return "";
-  return `#${raw.toLowerCase()}`;
-}
-
-function luminance(hex: string): number {
-  const parsed = parseHex(hex);
-  if (!parsed) return 0;
-  const [red, green, blue] = parsed.map((channel) => {
-    const value = channel / 255;
-    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-}
-
-export function accentContrast(foreground: string, background: string): number {
-  const first = luminance(foreground);
-  const second = luminance(background);
-  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
-}
-
-function mix(color: string, target: string, percent: number): string {
-  const left = parseHex(color);
-  const right = parseHex(target);
-  if (!left || !right) return color;
-  const ratio = Math.min(100, Math.max(0, percent)) / 100;
-  return toHex(
-    left.map((channel, index) =>
-      Math.round(channel * (1 - ratio) + right[index] * ratio),
-    ) as [number, number, number],
-  );
-}
+export const normalizeAccent = normalizeHexColor;
+export const accentContrast = contrastRatio;
 
 function correctContrast(
   accent: string,
@@ -117,7 +63,7 @@ function correctContrast(
 ): string {
   if (accentContrast(accent, background) >= minimum) return accent;
   for (let percent = 1; percent <= 100; percent++) {
-    const candidate = mix(accent, target, percent);
+    const candidate = mixHex(accent, target, percent);
     if (accentContrast(candidate, background) >= minimum) return candidate;
   }
   return target;
@@ -129,16 +75,18 @@ function bestForeground(background: string): "#ffffff" | "#000000" {
     : "#000000";
 }
 
-/** Derive every accent tier for one skin / resolved mode combination. */
+/** Derive every accent tier for one skin / resolved mode combination. A
+ * custom launcher surface replaces the skin's worst-case contrast anchor. */
 export function deriveAccentTokens(
   accent: string,
   mode: ResolvedColorMode,
   skin: SkinId = currentSkin(),
+  background?: string,
 ): AccentTokens | null {
   const raw = normalizeAccent(accent);
   if (!raw) return null;
-  const anchor = skinAccentAnchor(skin, mode);
-  const target = mode === "light" ? "#000000" : "#ffffff";
+  const anchor = background ?? skinAccentAnchor(skin, mode);
+  const target = surfaceToneFor(anchor) === "light" ? "#000000" : "#ffffff";
   const safeAccent = correctContrast(raw, anchor, 3, target);
   return {
     raw,
@@ -152,7 +100,11 @@ export function deriveAccentTokens(
 
 function writeAccent(): void {
   const root = document.documentElement;
-  if (!activeAccent) {
+  const skin = currentSkin();
+  const mode = themeMode();
+  const surface = currentSurface(mode, skin);
+  const customSurface = normalizeHexColor(surface) !== skinSurface(skin, mode);
+  if (!activeAccent && !customSurface) {
     delete root.dataset.accent;
     for (const name of [
       "--ui-accent-raw",
@@ -166,9 +118,16 @@ function writeAccent(): void {
     }
     return;
   }
-  const tokens = deriveAccentTokens(activeAccent, themeMode());
+  const tokens = deriveAccentTokens(
+    activeAccent || nativeAccent(skin, mode),
+    mode,
+    skin,
+    customSurface ? surface : undefined,
+  );
   if (!tokens) return;
-  root.dataset.accent = "custom";
+  // `surface` marks auto-derived skin accents contrast-corrected for a custom
+  // surface; only an explicit accent uses the settings-window "custom" hooks.
+  root.dataset.accent = activeAccent ? "custom" : "surface";
   root.style.setProperty("--ui-accent-raw", tokens.raw);
   root.style.setProperty("--ui-accent", tokens.accent);
   root.style.setProperty("--ui-accent-text", tokens.text);
@@ -193,5 +152,4 @@ export function currentAccent(): string {
   return activeAccent;
 }
 
-onThemeModeChange(writeAccent);
-onSkinChange(writeAccent);
+onSurfaceChange(writeAccent);

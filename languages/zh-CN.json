@@ -434,7 +434,6 @@
   "settingsGroupPersonal": "个性化",
   "settingsGroupEfficiency": "效率",
   "settingsGroupManage": "管理",
-  "settingsAppearancePageDesc": "选择 Lume 的界面语言、明暗主题、应用皮肤与主题色。更改实时预览并自动保存。",
   "settingsLauncherPageDesc": "控制呼出窗口的尺寸、位置、主界面内容、搜索框占位符、网格外观与会话记忆。",
   "settingsClipboardPageDesc": "管理剪贴板历史的采集、显示、粘贴与预览方式。",
   "settingsSearchPageDesc": "选择应用与文件搜索覆盖的目录，并维护可重建的索引缓存。",
@@ -603,5 +602,14 @@
   "clipDeleteFailed": "无法删除该剪贴板条目。",
   "clipRestoreFailed": "无法恢复该剪贴板条目。",
   "permPreview": "预览",
-  "permPreviewDesc": "在卫星预览窗口中显示内容"
+  "permPreviewDesc": "在卫星预览窗口中显示内容",
+  "settingsAppearancePageDesc": "选择 Lume 的界面语言、明暗主题、应用皮肤、主窗口颜色与透明度以及主题色。更改实时预览并自动保存。",
+  "appearanceWindowColorFollowSkin": "跟随皮肤",
+  "appearanceWindowOpacity": "窗口不透明度",
+  "appearanceWindowColorDetail": "窗口颜色独立于主题和皮肤；文字与强调色会按所选颜色的明暗自动调整对比度。此设置不影响设置窗口和分离插件窗口。",
+  "appearanceWindowOpacityHint": "作用于整个启动器，包括嵌入插件页面。",
+  "appearanceWindowColor": "窗口颜色",
+  "appearanceWindowOpacityDetail": "低于 100% 时会透出桌面；最低为 70% 以保持文字和控件可用。设置窗口和分离插件窗口保持各自的不透明度。",
+  "groupAppearanceWindow": "主窗口",
+  "appearanceWindowColorHint": "覆盖主窗口在浅色和深色下的表面颜色。"
 }

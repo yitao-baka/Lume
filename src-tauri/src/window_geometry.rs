@@ -452,12 +452,6 @@ pub fn apply_launcher_geometry(
     })
 }
 
-/// Keep the native canvas on the same opaque surface as the launcher panel.
-/// This is the pre-paint/compositor fallback on a non-transparent window.
-pub fn set_panel_background(win: &WebviewWindow, skin: &str, color_mode: &str) {
-    let (r, g, b) = crate::window::panel_surface_rgb(win, skin, color_mode);
-    let _ = win.set_background_color(Some(tauri::window::Color(r, g, b, 255)));
-}
 
 #[cfg(test)]
 mod tests {

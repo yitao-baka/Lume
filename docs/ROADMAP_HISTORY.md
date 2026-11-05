@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#87 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#98 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -5917,3 +5917,45 @@ Presenter 名称，值没有持久化或下发路径。
   无 `compositionstart` 且无候选窗；同一设置在插件页和关闭后的导航页均恢复
   `Process`/`compositionstart` 与候选窗（**4/4**，产物
   `test/verify/2026-11-02T17-15-19-317Z/ime-feature-probe/`）。
+
+## 98. 主窗口米白表面、颜色与不透明度（2026-11-05）
+
+### 98.1 背景
+
+- 默认 Quiet 浅色表面为近白 `#fbfbfd`，与米白主面板的视觉方向不一致。
+- 主窗口表面此前完全由皮肤派生，不透明且没有用户覆盖入口；用户无法调整主窗
+  底色，也无法让启动器与桌面形成更轻的视觉关系。
+
+### 98.2 实现
+
+- `src/skins/skins.json` 的 Quiet 浅色表面改为 `#f7f3e8`，Rust 的兜底 RGB、
+  设置页浅色预览和皮肤单测同步更新。
+- `appearance` 新增：
+  - `window_color: "" | #rrggbb`，空值跟随皮肤，自定义值同时覆盖浅色与深色；
+  - `window_opacity: 70..100`，默认 `100`，作为整窗不透明度百分比。
+- 主窗使用 `transparent(true)` 创建，移除原生不透明 background color；`html` /
+  `body` 在启动器窗口保持透明，`#root` 绘制 `--surface` 并应用整窗 opacity。
+  设置窗口与分离插件窗口不调用主窗覆盖。
+- `window_color` 与 `window_opacity` 在 Rust 的所有读取、patch、导入、恢复和
+  保存边界统一规范化。设置页新增「主窗口」组、原生取色器、跟随皮肤按钮和
+  `70–100%` 滑杆；三语文案与设置搜索目录同步。
+- 自定义表面会写入 `data-surface-tone` 选择匹配的共享明暗 token；默认/自定义
+  强调色都按实际表面重算对比度。嵌入 Presenter 的默认画布通过
+  `currentSurface()` 跟随覆盖色，`theme` 事件与 `theme.get().mode` 同步实际表面色调。
+- DWM 边框在 `100%` 时使用有效表面色；低于 `100%` 时清除，避免无法带 alpha
+  的 DWM 颜色形成不透明描边。系统明暗切换和设置应用都会重新解析该状态。
+- UI harness 为每个套件创建私有 `WEBVIEW2_USER_DATA_FOLDER`。此前只隔离
+  `LUME_INSTANCE_ID` 与调试端口；已运行的安装版 Lume 可占用默认 WebView2
+  用户目录，使新进程复用没有调试端口的浏览器进程。
+
+### 98.3 验证
+
+- `pnpm verify:fast` PASS：docs 15 项、i18n **613 键 × 3 语言**、Page Runtime
+  18/18、clipboard model 16/16、clipboard store 8/8、skin **13/13**、前端生产
+  构建、Rust **288 passed / 9 ignored**。
+- `pnpm verify:ui --suite settings --no-build` PASS：**24/24**（10.3s，产物
+  `test/verify/2026-11-05T14-01-42-819Z/summary.json`）。新增断言覆盖主窗颜色/
+  不透明度控件存在、保存、主窗 CSS 变量应用与重置。
+- `pnpm verify:ui --suite plugin-runtime --no-build` PASS：**6/6**（3.5s，产物
+  `test/verify/2026-11-05T14-02-15-228Z/summary.json`）。
+- `git diff --check` PASS。

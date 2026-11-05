@@ -20,16 +20,20 @@ const check = (name, ok, extra = "") => {
 try {
   const registry = await server.ssrLoadModule("/src/skins/registry.ts");
   const accent = await server.ssrLoadModule("/src/skins/accent.ts");
+  const color = await server.ssrLoadModule("/src/skins/color.ts");
 
   check("registry exposes Quiet and Chromatic", JSON.stringify(registry.SKIN_IDS) === JSON.stringify(["quiet", "chromatic"]));
   check("unknown skins normalize to Quiet", registry.normalizeSkin("unknown") === "quiet");
-  check("Quiet surfaces match the shared metadata", registry.skinSurface("quiet", "dark") === "#1e1e20" && registry.skinSurface("quiet", "light") === "#fbfbfd");
+  check("Quiet surfaces match the shared metadata", registry.skinSurface("quiet", "dark") === "#1e1e20" && registry.skinSurface("quiet", "light") === "#f7f3e8");
   check("Chromatic surfaces match the shared metadata", registry.skinSurface("chromatic", "dark") === "#1e1e20" && registry.skinSurface("chromatic", "light") === "#f3efe6");
   check("clipboard row heights are skin-owned",
     registry.clipboardRowHeight("quiet", "clipboard-list") === 52 &&
     registry.clipboardRowHeight("quiet", "clipboard-compact") === 44 &&
     registry.clipboardRowHeight("chromatic", "clipboard-list") === 56 &&
     registry.clipboardRowHeight("chromatic", "clipboard-compact") === 48);
+  check("surface tone follows the chosen color",
+    color.surfaceToneFor("#f7f3e8") === "light" &&
+    color.surfaceToneFor("#1e1e20") === "dark");
   check("accent normalization accepts 3/6 digit hex only",
     accent.normalizeAccent("#5cf") === "#55ccff" &&
     accent.normalizeAccent("AABBCC") === "#aabbcc" &&
@@ -38,6 +42,12 @@ try {
     accent.nativeAccent("quiet", "dark") === "#5ac8fa" &&
     accent.nativeAccent("quiet", "light") === "#0969da" &&
     accent.nativeAccent("chromatic", "light") === "#64796d");
+
+  const customSurfaceTokens = accent.deriveAccentTokens("#5ac8fa", "dark", "quiet", "#f7f3e8");
+  check("custom surface drives accent contrast",
+    !!customSurfaceTokens &&
+    accent.accentContrast(customSurfaceTokens.text, "#f7f3e8") >= 4.5 &&
+    accent.accentContrast(customSurfaceTokens.focus, "#f7f3e8") >= 3);
 
   for (const skin of ["quiet", "chromatic"]) {
     for (const mode of ["dark", "light"]) {

@@ -57,7 +57,7 @@ import {
   type SectionId,
   type SettingDescriptor,
 } from "./catalog";
-import { applySkin } from "../skins/runtime";
+import { applySkin, WINDOW_OPACITY_MAX, WINDOW_OPACITY_MIN } from "../skins/runtime";
 import { applyAccent, normalizeAccent } from "../skins/accent";
 import type { PluginManifest } from "../plugins/types";
 import { settingsError } from "./errors";
@@ -79,6 +79,11 @@ type SaveState = "saved" | "saving" | "error";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function normalizeWindowOpacity(value: number): number {
+  if (!Number.isFinite(value)) return WINDOW_OPACITY_MAX;
+  return Math.min(WINDOW_OPACITY_MAX, Math.max(WINDOW_OPACITY_MIN, Math.round(value)));
 }
 
 /** The skin this settings webview renders. Older injected settings only carry
@@ -289,6 +294,12 @@ export default function Settings() {
         normalized.appearance.accent = normalizeAccent(
           normalized.appearance.accent,
         );
+        normalized.appearance.window_color = normalizeAccent(
+          normalized.appearance.window_color,
+        );
+        normalized.appearance.window_opacity = normalizeWindowOpacity(
+          normalized.appearance.window_opacity,
+        );
         normalized.appearance.accent_custom = normalizeAccent(
           normalized.appearance.accent_custom,
         );
@@ -418,6 +429,12 @@ export default function Settings() {
     const current = settings();
     if (!current) return;
     const normalized: Partial<SettingsData["appearance"]> = { ...patch };
+    if ("window_color" in normalized) {
+      normalized.window_color = normalizeAccent(normalized.window_color);
+    }
+    if ("window_opacity" in normalized) {
+      normalized.window_opacity = normalizeWindowOpacity(normalized.window_opacity ?? 100);
+    }
     if ("accent" in normalized) {
       normalized.accent = normalizeAccent(normalized.accent);
     }
@@ -643,6 +660,12 @@ export default function Settings() {
           const normalized = clone(loaded);
           normalized.appearance.accent = normalizeAccent(
             normalized.appearance.accent,
+          );
+          normalized.appearance.window_color = normalizeAccent(
+            normalized.appearance.window_color,
+          );
+          normalized.appearance.window_opacity = normalizeWindowOpacity(
+            normalized.appearance.window_opacity,
           );
           normalized.appearance.accent_custom = normalizeAccent(
             normalized.appearance.accent_custom,

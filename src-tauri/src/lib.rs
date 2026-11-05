@@ -195,7 +195,9 @@ pub fn run() {
             .resizable(false)
             .decorations(false)
             .shadow(true)
-            .background_color(tauri::window::Color(30, 30, 32, 255))
+            // CSS owns the surface so the configured opacity can reveal the
+            // desktop; keep the native window and WebView controller transparent.
+            .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
             .focused(false)
@@ -208,26 +210,13 @@ pub fn run() {
             // windows keep it disabled.
             .initialization_script(&init_script)
             .build()?;
-            // The launcher's DWM frame: paint the visible-frame border strip in
-            // the theme's panel color. `shadow(true)` + frameless otherwise
-            // leaves DWM's border area clear — and the webview cannot cover it
-            // (non-client), so it shows as a ring around the panel. Same opaque
-            // `--surface` as the panel → the strip disappears into it.
-            // Refreshed on every settings apply (颜色模式) in
-            // window::apply_settings; the shadow and the Win11 rounded corners
-            // stay.
+            // Keep the DWM strip in step with the launcher surface. At 100%
+            // opacity it is painted the surface color; below 100% it is
+            // cleared because DWM border colors cannot carry alpha. The
+            // shadow and Win11 rounded corners stay.
             if let Some(mw) = app.get_webview_window("main") {
                 webview_guard::install(&mw);
-                window::set_panel_frame_border(
-                    &mw,
-                    current.appearance.skin(),
-                    &current.appearance.color_mode,
-                );
-                window_geometry::set_panel_background(
-                    &mw,
-                    current.appearance.skin(),
-                    &current.appearance.color_mode,
-                );
+                window::apply_launcher_chrome(&mw, &current.appearance);
             }
 
             // Settings window (replaces tauri.conf.json windows[1]). Frameless
@@ -393,19 +382,12 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 win.on_window_event(move |event| {
                     if let WindowEvent::ThemeChanged(_) = event {
-                        let (skin, mode) = app_handle
+                        let current = app_handle
                             .try_state::<settings::SettingsState>()
-                            .map(|s| {
-                                let current = s.current();
-                                (
-                                    current.appearance.skin().to_string(),
-                                    current.appearance.color_mode.clone(),
-                                )
-                            })
-                            .unwrap_or_else(|| ("quiet".into(), "system".into()));
-                        window::set_panel_frame_border(&themed, &skin, &mode);
-                        window_geometry::set_panel_background(&themed, &skin, &mode);
-                        appicon::apply(&app_handle, &mode);
+                            .map(|s| s.current())
+                            .unwrap_or_default();
+                        window::apply_launcher_chrome(&themed, &current.appearance);
+                        appicon::apply(&app_handle, &current.appearance.color_mode);
                     }
                 });
             }

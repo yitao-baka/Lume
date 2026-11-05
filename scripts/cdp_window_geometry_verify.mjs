@@ -168,7 +168,7 @@ try {
   ], { encoding: "utf8", windowsHide: true }).trim();
   const rgb = pixel.split(",").map(Number);
   // The opaque surface must match one of the quiet skin values (dark
-  // #1e1e20 or light #fbfbfd); an arbitrary wallpaper is not constrained.
+  // #1e1e20 or light #f7f3e8); an arbitrary wallpaper is not constrained.
   const opaqueSurface = Math.abs(rgb[0] - rgb[1]) <= 6 &&
     Math.abs(rgb[1] - rgb[2]) <= 12 &&
     (rgb.every((v) => v <= 48) || rgb.every((v) => v >= 235));

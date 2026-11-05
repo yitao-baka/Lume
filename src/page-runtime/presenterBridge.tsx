@@ -4,9 +4,9 @@
 //! and the Rust manifest gate; there is still no raw Tauri command surface.
 
 import { currentThemeMode } from "../theme";
-import { currentSkin } from "../skins/runtime";
+import { currentSkin, currentSurface, currentSurfaceToneFor } from "../skins/runtime";
 import { currentAccent, normalizeAccent } from "../skins/accent";
-import { normalizeSkin, skinSurface } from "../skins/registry";
+import { normalizeSkin } from "../skins/registry";
 import { createIframeView } from "../plugins/iframeBridge";
 import type { PageModel, PagePreviewRequest, PresenterDescriptor } from "./contracts";
 import { normalizeLayoutReport, normalizeResizeRequest } from "./layout";
@@ -309,7 +309,7 @@ export function injectPresenterBridge(
   form: "launcher" | "window",
   titlebar = false,
   skin = currentSkin(),
-  surface = skinSurface(skin, currentThemeMode()),
+  surface = currentSurface(currentThemeMode()),
   accent = currentAccent()
 ): string {
   const injection =
@@ -441,8 +441,8 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
         : currentThemeMode();
       const skin = normalizeSkin(state?.skin ?? currentSkin());
       const accent = normalizeAccent(state?.accent ?? currentAccent());
-      postNow("theme", mode);
-      postNow("skin", { id: skin, accent, surface: skinSurface(skin, mode) });
+      postNow("theme", currentSurfaceToneFor(mode));
+      postNow("skin", { id: skin, accent, surface: currentSurface(mode) });
       const snapshot = opts.takeSnapshot?.();
       if (snapshot != null) postNow("restore", snapshot);
 
@@ -491,7 +491,7 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
       opts.form,
       opts.titlebar === true,
       skin,
-      skinSurface(skin, mode),
+      currentSurface(mode),
       accent,
     ),
   );

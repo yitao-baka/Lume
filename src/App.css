@@ -20,11 +20,13 @@ html {
 
   /* Solid default so bars render at the right size before JS applies settings. */
   --entry-size: 110px;
+  --main-window-opacity: 1;
 }
 
-/* The native window and WebView canvas are opaque. Paint the same --surface
-   at every root layer so a pre-paint/compositor frame can never expose the
-   desktop through a resize. DWM owns the rounded outer corners. */
+/* The launcher window is transparent at the native layer so a configured
+   window opacity can reveal the desktop. Paint the surface once behind the
+   whole launcher root; settings and plugin windows keep their opaque,
+   mode-specific root backgrounds. */
 html,
 body,
 #root {
@@ -34,24 +36,32 @@ body,
   overflow: hidden;
 }
 
-/* No gutter: the opaque panel must reach every client edge. The ~2px frame
-   strip outside the client area is painted the same color by the host
-   (window.rs `set_panel_frame_border`), so a transparent inset here would
-   open a ring around the launcher. */
+html[data-window-kind="launcher"],
+html[data-window-kind="launcher"] body {
+  background: transparent;
+}
+
+html[data-window-kind="launcher"] #root {
+  background: var(--surface);
+  opacity: var(--main-window-opacity, 1);
+}
+
+/* No gutter: the panel must reach every client edge. At 100% opacity the
+   ~2px DWM frame strip is painted the same color by the host
+   (`window::apply_launcher_chrome`); below 100% the strip is cleared because
+   DWM border colors cannot carry alpha. */
 #root {
   padding: 0;
 }
 
-/* The launcher panel: opaque `--surface`, edge to edge. One uniform color is
-   the contract — the same value paints DWM's visible-frame strip (window.rs
-   `set_panel_frame_border`) and is the default plugin-page canvas
-   (page-runtime `presenterBridge`), so search row / page / corners / frame strip
-   are one surface with no seam. Do NOT reintroduce: ① a border — the 1px
-   hairline read as a bright ring (its arc was the four-corner artifact);
-   ② `border-radius` — Win11 rounding is DWM's job; a CSS radius only exposes
-   the window backdrop in the crescent outside its arc; ③ a translucent fill
-   (Acrylic) — no tint the opaque frame strip can reproduce, so the ring comes
-   back and varies with the wallpaper. DWM draws the shadow and the rounding. */
+/* The launcher panel: `--surface`, edge to edge. One uniform color is the
+   contract — the same value paints the default plugin-page canvas
+   (page-runtime `presenterBridge`) and, at full opacity, the DWM frame strip.
+   Do NOT reintroduce a border or CSS radius: Win11 rounding is DWM's job, and
+   a CSS radius exposes the window backdrop in the crescent outside its arc.
+   A custom surface and whole-window opacity are user settings; the panel,
+   search row and page still form one continuous surface. DWM draws the
+   shadow and the rounding. */
 .launcher {
   display: flex;
   flex-direction: column;

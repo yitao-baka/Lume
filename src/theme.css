@@ -58,9 +58,10 @@
   --icon-filter: invert(1);
 }
 
-:root[data-theme="light"] {
+:root[data-theme="light"],
+:root[data-surface-tone="light"] {
   --bg: rgba(248, 249, 250, 0.92);
-  --surface: #fbfbfd;
+  --surface: #f7f3e8;
   --surface-raised: #ffffff;
   --text: #1f2328;
   --text-secondary: rgba(31, 35, 40, 0.72);
@@ -101,4 +102,47 @@
   --provider-tint: rgba(26, 127, 55, 0.09);
   /* #333 strokes already read as dark icons on the light theme. */
   --icon-filter: none;
+}
+/* A custom launcher surface can choose a dark tone while the user's color
+   mode is light. Keep every semantic token on the matching palette so text,
+   controls and status colors remain legible. */
+:root[data-theme="light"][data-surface-tone="dark"] {
+  --bg: rgba(30, 30, 32, 0.75);
+  --surface: #1e1e20;
+  --surface-raised: rgba(38, 38, 40, 0.97);
+  --text: #f2f2f2;
+  --text-secondary: rgba(242, 242, 242, 0.68);
+  --text-muted: rgba(242, 242, 242, 0.58);
+  --text-faint: rgba(242, 242, 242, 0.49);
+  --icon-muted: rgba(242, 242, 242, 0.58);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --hover: rgba(255, 255, 255, 0.08);
+  --selected: rgba(255, 255, 255, 0.14);
+  --ui-accent: #5ac8fa;
+  --ui-accent-text: #5ac8fa;
+  --ui-accent-border: rgba(90, 200, 250, 0.62);
+  --ui-accent-on: #06131a;
+  --ui-focus-ring: #5ac8fa;
+  --accent: var(--ui-accent);
+  --accent-text: var(--ui-accent-text);
+  --accent-tint: color-mix(in srgb, var(--ui-accent) 16%, transparent);
+  --accent-border: var(--ui-accent-border);
+  --accent-on: var(--ui-accent-on);
+  --focus-ring: var(--ui-focus-ring);
+  --danger-text: #ff7b72;
+  --danger-fill: #c7353c;
+  --danger-on: #ffffff;
+  --danger-tint: rgba(255, 123, 114, 0.12);
+  --danger-border: rgba(255, 123, 114, 0.45);
+  --warning-text: #ffb020;
+  --warning-tint: rgba(255, 176, 32, 0.12);
+  --warning-border: rgba(255, 176, 32, 0.45);
+  --success-text: #4cc38a;
+  --success-tint: rgba(76, 195, 138, 0.12);
+  --service-text: #b18cff;
+  --service-tint: rgba(177, 140, 255, 0.16);
+  --provider-text: #3fbf7f;
+  --provider-tint: rgba(63, 191, 127, 0.16);
+  --icon-filter: invert(1);
 }

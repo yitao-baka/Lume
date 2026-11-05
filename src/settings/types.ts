@@ -31,6 +31,12 @@ export interface SettingsData {
     skin: SkinId;
     /** `"quiet"` | `"chromatic"` — settings-window visual language. */
     settings_skin: SkinId;
+    /** Launcher-only surface override: empty follows the active skin,
+     * otherwise a lowercase #rrggbb. */
+    window_color: string;
+    /** Launcher window opacity in percent (70–100). The setting is applied to
+     * the whole window so embedded plugin pages fade with the shell. */
+    window_opacity: number;
     /** Application-wide accent: empty follows each window's skin, otherwise #rrggbb. */
     accent: string;
     /** The color the custom picker last stored — remembered independently of
@@ -188,6 +194,8 @@ export const DEFAULT_SETTINGS: SettingsData = {
     color_mode: "system",
     skin: "quiet",
     settings_skin: "chromatic",
+    window_color: "",
+    window_opacity: 100,
     accent: "",
     accent_custom: "",
     entry_size: 70,

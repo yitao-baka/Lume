@@ -73,7 +73,7 @@ medium integrity), `lume-svc.exe` (the SYSTEM file-index service) and
 ## Modules
 
 ### `window.rs`
-Owns the single frameless, opaque webview window (label `main`, see
+Owns the single frameless webview window (label `main`, see
 `tauri.conf.json`). A shown window is revealed only after the hidden renderer
 has reset the destination page and submitted its measured geometry; the
 hotkey then waits for that matching generation (bounded fallback) before
@@ -97,19 +97,18 @@ caller's `fs.read` declaration and adds exactly one canonical file selected by
 a plugin. The trusted main/preview renderer keeps its native `allow_asset_path`
 entry point for core previews.
 
-Window frame: the launcher panel is opaque (src/App.css `.launcher`, solid
-`--surface`) — the window has **no Acrylic backdrop** (deliberately removed;
-see docs/ROADMAP_HISTORY.md). DWM's visible frame border strip (the ~2px non-client ring
-around the client area) is **painted in that same panel color** —
-`set_panel_frame_border()` → `DWMWA_BORDER_COLOR` with the `--surface` value
-for the current skin + 颜色模式 (re-painted from `apply_settings` and on
-`WindowEvent::ThemeChanged` in system mode); left at the default or
-`DWMWA_COLOR_NONE` the strip shows the desktop through the transparent window
-as a light-gray ring. Panel, strip and the default plugin-page canvas then
-read as one uniform surface, corners included (Win11 rounding is DWM's).
-`clear_dwm_border()` (COLOR_NONE) is what the settings/preview/detached-plugin
-windows use. `DwmGetWindowAttribute(DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)`
-reports the strip; see docs/ROADMAP_HISTORY.md for the pixel measurements.
+Window frame: the main WebView is transparent and CSS paints its effective
+`--surface`; there is **no Acrylic backdrop or blur**. `appearance.window_color`
+can override the skin surface, and `appearance.window_opacity` applies one
+uniform opacity to the whole window (including embedded plugin pages). At
+`100%`, `window::apply_launcher_chrome()` paints DWM's visible frame border
+strip (`DWMWA_BORDER_COLOR`) in the same effective surface color; below `100%`
+the strip is cleared because DWM colors cannot carry alpha. The effective
+surface is repainted from `apply_settings` and on `WindowEvent::ThemeChanged`
+in system mode. `clear_dwm_border()` (COLOR_NONE) is also what the
+settings/preview/detached-plugin windows use. `DwmGetWindowAttribute(
+DWMWA_VISIBLE_FRAME_BORDER_THICKNESS)` reports the strip; see
+docs/ROADMAP_HISTORY.md for the pixel measurements.
 
 ### Satellite preview host
 
@@ -584,7 +583,7 @@ before adding a field:
 - **拼接几何 (the seam)**: the surface is one continuous panel — literally
   one color: the panel fill, the DWM frame strip and the default plugin-page
   canvas are all `--surface` (see Surface in docs/UI_GUIDELINES.md; do not
-  give `.launcher` a border, CSS radius or translucent fill). The search row
+  give `.launcher` a border or CSS radius; only the explicit whole-window opacity setting may make it translucent). The search row
   carries no bottom border and `.results` has no inset, so the page area
   starts exactly at the search row's bottom edge and runs to the panel edge
   on the left, right and bottom. Each page brings its own inner padding

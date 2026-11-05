@@ -34,6 +34,74 @@ export default {
       return buttons.length === 1 && buttons[0].classList.contains("settings-footer-action");
     })()`));
 
+    await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="appearance"]\').click()');
+    await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "appearance"', 5000);
+    const launcherSurfaceControls = await settingsContext.evaluate(`(() => {
+      const color = document.querySelector('[data-setting-id="appearance.window_color"] input[type="color"]');
+      const opacity = document.querySelector('[data-setting-id="appearance.window_opacity"] input[type="range"]');
+      return {
+        color: !!color,
+        opacity: !!opacity,
+        opacityMin: opacity?.min,
+        opacityMax: opacity?.max,
+        followSkin: !!document.querySelector('[data-setting-id="appearance.window_color"] .settings-chip'),
+      };
+    })()`);
+    t.check(
+      "launcher color and opacity controls are visible",
+      launcherSurfaceControls.color &&
+        launcherSurfaceControls.opacity &&
+        launcherSurfaceControls.opacityMin === "70" &&
+        launcherSurfaceControls.opacityMax === "100" &&
+        launcherSurfaceControls.followSkin,
+      launcherSurfaceControls,
+    );
+    await settingsContext.evaluate(`(() => {
+      const input = document.querySelector('[data-setting-id="appearance.window_color"] input[type="color"]');
+      input.value = "#dce6f2";
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    })()`);
+    const launcherColorSaved = await settingsContext.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("get_settings").then((s) => s.appearance.window_color === "#dce6f2")',
+      5000,
+    );
+    t.check("launcher color persists", launcherColorSaved);
+    await settingsContext.evaluate(`(() => {
+      const input = document.querySelector('[data-setting-id="appearance.window_opacity"] input[type="range"]');
+      input.value = "84";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`);
+    const launcherOpacitySaved = await settingsContext.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("get_settings").then((s) => s.appearance.window_opacity === 84)',
+      5000,
+    );
+    t.check("launcher opacity persists", launcherOpacitySaved);
+    const launcherSurfaceApplied = await t.waitFor(
+      'getComputedStyle(document.documentElement).getPropertyValue("--surface").trim() === "#dce6f2" && getComputedStyle(document.documentElement).getPropertyValue("--main-window-opacity").trim() === "0.84"',
+      5000,
+    );
+    t.check("launcher applies its custom surface and opacity", launcherSurfaceApplied);
+    await settingsContext.evaluate('document.querySelector(\'[data-setting-id="appearance.window_color"] .settings-chip\').click()');
+    await settingsContext.evaluate(`(() => {
+      const input = document.querySelector('[data-setting-id="appearance.window_opacity"] input[type="range"]');
+      input.value = "100";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    })()`);
+    const launcherSurfaceReset = await settingsContext.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("get_settings").then((s) => s.appearance.window_color === "" && s.appearance.window_opacity === 100)',
+      5000,
+    );
+    t.check("launcher surface controls reset to follow skin and full opacity", launcherSurfaceReset);
+
+    await settingsContext.evaluate(
+      'document.querySelector(\'[data-setting-id="appearance.window_color"]\')?.scrollIntoView({ block: "center" }); true',
+    );
+    await t.sleep(100);
+    await t.screenshot("settings-appearance-window", settings);
+
     await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="about"]\').click()');
     await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "about"', 5000);
     t.equal(

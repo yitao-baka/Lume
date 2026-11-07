@@ -35,6 +35,7 @@ import {
   type PluginColorSource,
 } from "./themePrefs";
 import { t } from "../i18n";
+import { diagnosticsEnabled, exposeDebugProbe, pushBoundedDiagnostic } from "../page-runtime/diagnostics";
 export {
   APPS_MODE,
   type LauncherPlugin,
@@ -52,30 +53,34 @@ const [manifests, setManifests] = createSignal<PluginManifest[]>([]);
  * resurrect a stale `enabled=false` view. */
 let refreshSeq = 0;
 const pageRuntimeModes = new Map<string, PageRuntimeMode>();
+const pageRuntimeModelSources = new Map<string, () => PageModel | undefined>();
+const earlyPageModels = new Map<string, PageModel>();
 
-export function rememberPageModel(id: string, model: PageModel): void {
-  latestPageModels.set(id, model);
+/** Register a zero-copy getter for a built-in Page Session's current model. */
+export function registerPageRuntimeModelSource(
+  id: string,
+  source: () => PageModel | undefined,
+): void {
+  pageRuntimeModelSources.set(id, source);
+  earlyPageModels.delete(id);
 }
-const latestPageModels = new Map<string, PageModel>();
 
-type PageRuntimeProbeWindow = Window & {
-  __pageRuntimeDispatch?: (id: string, intent: unknown) => Promise<unknown>;
-  __pageRuntimeSwitchPresenter?: (id: string, presenterId: string) => Promise<void>;
-  __pageRuntimeLatestModel?: (id: string) => PageModel | undefined;
-};
-if (typeof window !== "undefined") {
-  const probe = window as PageRuntimeProbeWindow;
-  probe.__pageRuntimeDispatch = (id, intent) => {
+if (typeof window !== "undefined" && diagnosticsEnabled()) {
+  exposeDebugProbe("__pageRuntimeDispatch", (id: string, intent: unknown) => {
     const runtime = pageRuntimeModes.get(id);
     if (!runtime) return Promise.reject(new Error("Page Runtime not loaded: " + id));
     return runtime.dispatch(intent as never);
-  };
-  probe.__pageRuntimeSwitchPresenter = (id, presenterId) => {
+  });
+  exposeDebugProbe("__pageRuntimeSwitchPresenter", (id: string, presenterId: string) => {
     const runtime = pageRuntimeModes.get(id);
     if (!runtime) return Promise.reject(new Error("Page Runtime not loaded: " + id));
     return runtime.switchPresenter(presenterId);
-  };
-  probe.__pageRuntimeLatestModel = (id) => latestPageModels.get(id);
+  });
+  exposeDebugProbe("__pageRuntimeLatestModel", (id: string) => {
+    const runtime = pageRuntimeModes.get(id);
+    if (runtime) return runtime.currentModel();
+    return pageRuntimeModelSources.get(id)?.() ?? earlyPageModels.get(id);
+  });
 }
 
 /** Register a plugin. Call once per plugin at composition time. */
@@ -198,6 +203,30 @@ const logicPending = new Map<number, PendingLogicCall>();
 let logicCallSeq = 0;
 /** 已向宿主发过 load 的插件（宿主 ready 时重发；unload 时移除）。 */
 const logicLoadedIds = new Set<string>();
+const logicLoadPromises = new Map<string, Promise<void>>();
+const logicActiveIds = new Set<string>();
+const logicLastUsed = new Map<string, number>();
+const debugTimings = (window as unknown as {
+  __LUME_DEBUG_TIMINGS__?: {
+    logicIdleUnloadMs?: number;
+    logicIdleSweepMs?: number;
+  };
+}).__LUME_DEBUG_TIMINGS__;
+const positiveTiming = (value: number | undefined, fallback: number) =>
+  Number.isFinite(value) && Number(value) > 0 ? Number(value) : fallback;
+/** A loaded iframe with no active page, detached window or pending call is
+ * unloaded after this idle period; the shared host then closes after its own
+ * shorter empty grace period. */
+const LOGIC_PLUGIN_IDLE_UNLOAD_MS = positiveTiming(
+  debugTimings?.logicIdleUnloadMs,
+  5 * 60_000,
+);
+const LOGIC_IDLE_SWEEP_INTERVAL_MS = positiveTiming(
+  debugTimings?.logicIdleSweepMs,
+  30_000,
+);
+let logicIdleSweepTimer: number | undefined;
+let logicHostClosingForIdle = false;
 /** Empty hosts stay warm briefly for reload/burst navigation, then are torn
  * down by Rust so their renderer and supervisor page stop costing memory. */
 const LOGIC_HOST_IDLE_CLOSE_MS = 30_000;
@@ -212,8 +241,14 @@ function scheduleLogicHostIdleClose(): void {
   cancelLogicHostIdleClose();
   logicHostCloseTimer = window.setTimeout(() => {
     logicHostCloseTimer = undefined;
-    if (logicLoadedIds.size > 0 || logicPending.size > 0) return;
-    void invoke("plugin_logic_host_close").catch(() => {});
+    if (logicLoadedIds.size > 0 || logicPending.size > 0) {
+      logicHostClosingForIdle = false;
+      return;
+    }
+    logicHostClosingForIdle = true;
+    void invoke("plugin_logic_host_close").catch(() => {
+      logicHostClosingForIdle = false;
+    });
   }, LOGIC_HOST_IDLE_CLOSE_MS);
 }
 
@@ -274,6 +309,115 @@ function waitForLogicReady(id: string, timeoutMs = 12_000): Promise<void> {
   });
 }
 
+function hasPendingLogicCall(id: string): boolean {
+  for (const pending of logicPending.values()) {
+    if (pending.id === id) return true;
+  }
+  return false;
+}
+
+function touchLogicUse(id: string): void {
+  if (!logicLoadedIds.has(id)) return;
+  logicLastUsed.set(id, Date.now());
+  scheduleLogicIdleSweep();
+}
+
+function scheduleLogicIdleSweep(): void {
+  if (logicIdleSweepTimer !== undefined || logicLoadedIds.size === 0) return;
+  logicIdleSweepTimer = window.setTimeout(() => {
+    logicIdleSweepTimer = undefined;
+    sweepIdlePluginLogic();
+  }, LOGIC_IDLE_SWEEP_INTERVAL_MS);
+}
+
+function sweepIdlePluginLogic(): void {
+  const now = Date.now();
+  for (const id of [...logicLoadedIds]) {
+    if (
+      logicActiveIds.has(id) ||
+      detachedIds.has(id) ||
+      hasPendingLogicCall(id)
+    ) {
+      continue;
+    }
+    const due = (logicLastUsed.get(id) ?? now) + LOGIC_PLUGIN_IDLE_UNLOAD_MS;
+    if (due <= now) {
+      void unloadPluginLogic(id, "idle");
+    }
+  }
+  scheduleLogicIdleSweep();
+}
+
+async function unloadPluginLogic(id: string, reason: string): Promise<boolean> {
+  if (
+    !logicLoadedIds.has(id) ||
+    logicActiveIds.has(id) ||
+    detachedIds.has(id) ||
+    hasPendingLogicCall(id)
+  ) {
+    return false;
+  }
+  logicLoadedIds.delete(id);
+  logicPendingReady.delete(id);
+  logicLoadPromises.delete(id);
+  logicHooks.delete(id);
+  logicLastUsed.delete(id);
+  clearThrottledCalls(id);
+  pageRuntimeModes.get(id)?.invalidateService();
+  await invoke("plugin_logic_push", { id, kind: "unload", payload: {} }).catch(() => {});
+  plog.debug(id, `logic iframe unloaded (${reason})`);
+  if (logicLoadedIds.size === 0) scheduleLogicHostIdleClose();
+  return true;
+}
+
+/** Called by a Page Service, detached window or other lifecycle owner. The
+ * active flag is reference-free because one plugin has at most one visible
+ * page owner in the launcher plus an optional detached window. */
+export function setPluginLogicActivity(id: string, active: boolean): void {
+  if (!isEnabled(id)) return;
+  if (active) {
+    logicActiveIds.add(id);
+    void ensureLogicLoaded(id).catch((err) => plog.debug(id, "logic activation deferred:", err));
+  } else {
+    logicActiveIds.delete(id);
+    touchLogicUse(id);
+  }
+}
+
+/** Lazily create/reuse this plugin's iframe and resolve only after the
+ * supervisor reports that its entry module and hooks are ready. */
+async function ensureLogicLoaded(id: string): Promise<void> {
+  const manifest = manifests().find((item) => item.id === id);
+  if (!isEnabled(id) || manifest?.apiError) {
+    throw new Error(`plugin "${id}" cannot load logic`);
+  }
+  if (logicOffline.has(id)) {
+    throw new Error(`plugin "${id}" is offline (circuit open — reload it to retry)`);
+  }
+  touchLogicUse(id);
+  if (logicLoadedIds.has(id) && !logicPendingReady.has(id)) return;
+  const pending = logicLoadPromises.get(id);
+  if (pending) return pending;
+
+  let attempt!: Promise<void>;
+  attempt = pushLogicLoad(id)
+    .then(() => waitForLogicReady(id))
+    .then(() => {
+      touchLogicUse(id);
+    })
+    .catch((error) => {
+      logicLoadedIds.delete(id);
+      logicPendingReady.delete(id);
+      logicLastUsed.delete(id);
+      throw error;
+    })
+    .finally(() => {
+      if (logicLoadPromises.get(id) === attempt) logicLoadPromises.delete(id);
+    });
+  logicLoadPromises.set(id, attempt);
+  return attempt;
+}
+
 function noteLogicFailure(id: string, why: string): void {
   if (logicOffline.has(id)) return;
   circuitLog.push({ id, why, at: Date.now() });
@@ -298,11 +442,11 @@ function resetCircuit(id: string): void {
 }
 
 // CDP verify tap（同 __logicEntries/__pluginStates 模式）
-(window as unknown as { __logicCircuit?: unknown }).__logicCircuit = {
+exposeDebugProbe("__logicCircuit", {
   failCounts: logicFailCounts,
   offline: logicOffline,
   log: circuitLog,
-};
+});
 
 /** 一次 hook 调用：跨窗口 RPC，8s 超时（与桥接 10s 语义对齐、略短）。 */
 function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000): Promise<unknown> {
@@ -322,6 +466,7 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
   if (logicPendingReady.has(id)) {
     return Promise.reject(new Error(`logic not loaded for "${id}"`));
   }
+  touchLogicUse(id);
   const callId = ++logicCallSeq;
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
@@ -356,20 +501,27 @@ function logicCall(id: string, name: string, args: unknown[], timeoutMs = 8000):
 /** 建窗（幂等）+ 发一次 load 指令。supervisor 未就绪时 load 会丢失——由
  * `plugin-logic-host-ready` 通告驱动重发兜底。熔断打开的插件不再重发
  * （#32.4：保持暂停直到重载/保存设置）。 */
-function pushLogicLoad(id: string): void {
+function pushLogicLoad(id: string): Promise<void> {
   const manifest = manifests().find((item) => item.id === id);
-  if (!isEnabled(id) || manifest?.apiError) return;
-  if (logicOffline.has(id)) return;
+  if (!isEnabled(id) || manifest?.apiError || logicOffline.has(id)) {
+    return Promise.resolve();
+  }
   cancelLogicHostIdleClose();
+  logicHostClosingForIdle = false;
   logicPendingReady.add(id); // 帧就绪信号（logic-loaded）到达前 hook 快速失败
   logicLoadedIds.add(id);
-  void invoke("plugin_logic_host_ensure")
+  touchLogicUse(id);
+  return invoke("plugin_logic_host_ensure")
     .then(() => invoke("plugin_logic_push", {
       id,
       kind: "load",
       payload: manifest ? { manifest } : {},
     }))
-    .catch((err) => plog.error(id, "logic load push failed:", err));
+    .then(() => undefined)
+    .catch((err) => {
+      plog.error(id, "logic load push failed:", err);
+      throw err;
+    });
 }
 
 /** Explicit recovery for a Page Service whose first logic-host load failed.
@@ -378,8 +530,10 @@ function pushLogicLoad(id: string): void {
 async function restartLogicService(id: string): Promise<void> {
   if (!isEnabled(id)) throw new Error(`plugin "${id}" is disabled`);
   resetCircuit(id);
+  logicLoadPromises.delete(id);
   logicPendingReady.add(id);
   logicLoadedIds.add(id);
+  logicLastUsed.set(id, Date.now());
   const manifest = manifests().find((item) => item.id === id);
   await invoke("plugin_logic_host_ensure");
   await invoke("plugin_logic_push", { id, kind: "unload", payload: {} });
@@ -418,7 +572,7 @@ export function throttledLogicCall(
   throttledCalls.set(key, slot);
   slot.timer = window.setTimeout(() => {
     throttledCalls.delete(key);
-    void logicCall(id, name, slot.args).catch(() => {});
+    void callLogicLazy(id, name, slot.args).catch(() => {});
   }, ms);
 }
 
@@ -470,7 +624,9 @@ function handleLogicAction(id: string, action: string, args: Record<string, unkn
       // 逻辑帧就绪：解除"未就绪"快速失败 + 补投 load 前积压的声明式设置
       // （applyPluginSettings 的首投可能早于逻辑就绪而落空）。
       {
+        if (!logicLoadedIds.has(id)) break;
         logicPendingReady.delete(id);
+        touchLogicUse(id);
         const hooks = Array.isArray(args.hooks)
           ? args.hooks.filter((hook): hook is string => typeof hook === "string")
           : [];
@@ -502,6 +658,10 @@ const pendingLogicSettings = new Map<string, Record<string, unknown>>();
 /** 宿主窗口崩溃恢复：整窗重建后重发全部 load；10s 内二次崩溃 → 停止。 */
 let logicHostCrashAt = 0;
 function onLogicHostCrashed(): void {
+  if (logicHostClosingForIdle || logicLoadedIds.size === 0) {
+    logicHostClosingForIdle = false;
+    return;
+  }
   const now = Date.now();
   plog.error(null, "logic host window destroyed — rebuilding");
   if (now - logicHostCrashAt < 10000) {
@@ -509,7 +669,8 @@ function onLogicHostCrashed(): void {
     return;
   }
   logicHostCrashAt = now;
-  for (const id of logicLoadedIds) pushLogicLoad(id);
+  logicLoadPromises.clear();
+  for (const id of logicLoadedIds) void pushLogicLoad(id).catch(() => {});
 }
 
 let logicRelayWired = false;
@@ -543,12 +704,18 @@ function initLogicRelay(): void {
   );
   void listen<{ id: string; model: PageModel }>("plugin-page-model", (e) => {
     const { id, model } = e.payload;
-    if (!isEnabled(id)) return;
+    if (!isEnabled(id) || !logicLoadedIds.has(id)) return;
     const runtime = pageRuntimeModes.get(id);
     try {
       validatePageModel(model);
-      latestPageModels.set(id, model);
-      runtime?.publishModel(model);
+      if (runtime) {
+        runtime.publishModel(model);
+        earlyPageModels.delete(id);
+      } else {
+        // The logic frame can publish before the main window finishes loading
+        // the runtime proxy. Keep exactly one early model, consumed below.
+        earlyPageModels.set(id, model);
+      }
       const modelData = model.data && typeof model.data === "object" ? model.data as Record<string, unknown> : {};
       pushDetachedRuntimeState(id, {
         model,
@@ -560,17 +727,17 @@ function initLogicRelay(): void {
     }
   });
   void listen<{ id: string; event: unknown }>("plugin-page-event", (e) => {
-    if (!isEnabled(e.payload.id)) return;
+    if (!isEnabled(e.payload.id) || !logicLoadedIds.has(e.payload.id)) return;
     pageRuntimeModes.get(e.payload.id)?.emitEvent(e.payload.event);
     pushDetachedRuntimeState(e.payload.id, { pageEvent: e.payload.event });
   });
   void listen<{ id: string; error: unknown }>("plugin-page-error", (e) => {
-    if (!isEnabled(e.payload.id)) return;
+    if (!isEnabled(e.payload.id) || !logicLoadedIds.has(e.payload.id)) return;
     pageRuntimeModes.get(e.payload.id)?.publishError(e.payload.error);
     pushDetachedRuntimeState(e.payload.id, { pageError: e.payload.error });
   });
   void listen<{ id: string }>("plugin-page-clear-error", (e) => {
-    if (!isEnabled(e.payload.id)) return;
+    if (!isEnabled(e.payload.id) || !logicLoadedIds.has(e.payload.id)) return;
     pageRuntimeModes.get(e.payload.id)?.clearError();
     pushDetachedRuntimeState(e.payload.id, { pageClearError: true });
   });
@@ -584,6 +751,7 @@ function initLogicRelay(): void {
       const { id, requestId, name, args } = e.payload;
       try {
         if (!isEnabled(id)) throw new Error("plugin is disabled: " + id);
+        if (!logicLoadedIds.has(id)) throw new Error("logic is not loaded: " + id);
         const runtime = pageRuntimeModes.get(id);
         if (!runtime) throw new Error("Page Runtime is not loaded: " + id);
         const result = await runtime.callRemote(name, args ?? {});
@@ -607,11 +775,15 @@ function initLogicRelay(): void {
   });
   void listen("plugin-logic-host-ready", () => {
     // supervisor 就绪（建窗竞态 / 崩溃恢复）→ 重发全部 load
-    for (const id of logicLoadedIds) pushLogicLoad(id);
+    for (const id of logicLoadedIds) void pushLogicLoad(id).catch(() => {});
   });
   void listen("plugin-logic-host-closed", () => onLogicHostCrashed());
 }
 initLogicRelay();
+
+function callLogicLazy(id: string, name: string, args: unknown[]): Promise<unknown> {
+  return ensureLogicLoaded(id).then(() => logicCall(id, name, args));
+}
 
 /** 代理逻辑对象：任意 hook 名都是跨窗口调用（帧内缺名时安全返回
  * undefined，调用点按可选项语义处理）。 */
@@ -619,7 +791,7 @@ function logicProxy(id: string): Record<string, unknown> {
   return new Proxy({} as Record<string, unknown>, {
     get: (_t, prop) => {
       if (typeof prop !== "string") return undefined;
-      return (...args: unknown[]) => logicCall(id, prop, args);
+      return (...args: unknown[]) => callLogicLazy(id, prop, args);
     },
   });
 }
@@ -706,6 +878,10 @@ function navBarsContribution(
   if (typeof logic.navBars !== "function") return undefined;
   return async () => {
     try {
+      // Startup bar discovery must not force every installed entry plugin to
+      // create a renderer. A plugin's bars appear after its own first use and
+      // the logic-loaded action refreshes the bar list.
+      if (!logicLoadedIds.has(pluginId) || logicPendingReady.has(pluginId)) return [];
       // The logic proxy always exposes functions, and the real hook may be
       // synchronous or asynchronous. Wait for the shared logic host first,
       // then await the RPC result before validating it: Promise.resolve()
@@ -746,7 +922,7 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   clearFeatureRegexCache(id);
   const runtime = pageRuntimeModes.get(id);
   pageRuntimeModes.delete(id);
-  latestPageModels.delete(id);
+  earlyPageModels.delete(id);
   await runtime?.dispose();
   registeredDiskIds.delete(id);
   loadedDiskIds.delete(id);
@@ -754,6 +930,9 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
     if (plugins[i].id === id) plugins.splice(i, 1);
   }
   logicLoadedIds.delete(id);
+  logicLoadPromises.delete(id);
+  logicActiveIds.delete(id);
+  logicLastUsed.delete(id);
   logicHooks.delete(id);
   clearThrottledCalls(id);
   resetCircuit(id); // 重载 = 重新开始：熔断状态不跨代（#32.4）
@@ -860,10 +1039,8 @@ export async function loadDiskPlugins(seq = refreshSeq) {
     try {
       if (m.kind === "provider" && m.entry) {
         // 逻辑在共享宿主窗口的沙箱 iframe 里 —— 这里只注册代理贡献。
-        // 帧内未实现/未就绪的 hook 安全返回 undefined（search → 空结果）。
-        // pushLogicLoad 先于任何 hook 拉取（navBarsContribution）：未就绪窗口
-        // 内的调用走 registry 的快速失败，而不是被宿主静默丢弃后拖满 8s。
-        pushLogicLoad(m.id);
+        // 第一次搜索/动作才创建逻辑 iframe；原生结果先发布，插件结果在
+        // 冷启动完成后增量合并。
         const proxy = logicProxy(m.id);
         const navBars = navBarsContribution(m.id, proxy, m.dir);
         definePlugin({
@@ -874,30 +1051,30 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           provider: {
             hasHook: (name: string) => logicHasHook(m.id, name),
             search: async (q) => {
-              const rows = await logicCall(m.id, "search", [q]).catch((err) => {
+              const rows = await callLogicLazy(m.id, "search", [q]).catch((err) => {
                 plog.error(m.id, "provider search failed:", err);
                 return undefined;
               });
               return normalizeProviderRows(m.id, rows, "search");
             },
             onEnter: (item: ProviderResult) =>
-              void logicCall(m.id, "onEnter", [item]).catch((err) =>
+              void callLogicLazy(m.id, "onEnter", [item]).catch((err) =>
                 plog.error(m.id, "provider onEnter failed:", err)
               ),
             onFeature: (info: FeatureEnterInfo) =>
-              void logicCall(m.id, "onFeature", [info]).catch((err) =>
+              void callLogicLazy(m.id, "onFeature", [info]).catch((err) =>
                 plog.error(m.id, "provider onFeature failed:", err)
               ),
             select: async (item: ProviderResult) => {
-              const rows = await logicCall(m.id, "select", [item]).catch(() => undefined);
+              const rows = await callLogicLazy(m.id, "select", [item]).catch(() => undefined);
               return normalizeProviderRows(m.id, rows, "search");
             },
             filter: async (item: ProviderResult, q: string) => {
-              const rows = await logicCall(m.id, "filter", [item, q]).catch(() => undefined);
+              const rows = await callLogicLazy(m.id, "filter", [item, q]).catch(() => undefined);
               return normalizeProviderRows(m.id, rows, "search");
             },
             onSettings: (values: Record<string, unknown>) =>
-              void logicCall(m.id, "onSettings", [values]).catch((err) =>
+              void callLogicLazy(m.id, "onSettings", [values]).catch((err) =>
                 plog.error(m.id, "provider onSettings failed:", err)
               ),
           },
@@ -908,15 +1085,16 @@ export async function loadDiskPlugins(seq = refreshSeq) {
         loadedAny = true;
         plog.info(m.id, `registered provider proxy (entry=${m.entry})`);
       } else if (m.kind === "mode" && m.pageRuntime) {
-        pushLogicLoad(m.id);
         const logic = logicProxy(m.id);
         const runtime = createPageRuntimeMode({
           manifest: m,
           services: services!,
           form: "launcher",
+          ensureService: () => ensureLogicLoaded(m.id),
           waitForService: () => waitForLogicReady(m.id),
           restartService: () => restartLogicService(m.id),
-          callService: (name, ...args) => logicCall(m.id, name, args),
+          onServiceActivity: (active) => setPluginLogicActivity(m.id, active),
+          callService: (name, ...args) => callLogicLazy(m.id, name, args),
           fetchPresenter: (presenter) => fetchDiskFile(pluginFilePath(m.dir, presenter.entry)),
           applyTheme: async (mode) => {
             if (!mode) throw new Error("theme mode is required");
@@ -924,7 +1102,6 @@ export async function loadDiskPlugins(seq = refreshSeq) {
             applyPluginColorMode(m.id, mode);
           },
           initialPresenterId: ((window as any).__LUME_CONFIG__?.pages?.presenters ?? {})[m.id],
-          onModel: (model) => rememberPageModel(m.id, model),
           onPresenterState: (state) => {
             pushDetachedRuntimeState(m.id, {
               presenter: state.presenterId,
@@ -952,8 +1129,11 @@ export async function loadDiskPlugins(seq = refreshSeq) {
           mode: runtime.instance,
           ...(navBars ? { navBars } : {}),
         });
-        const pendingModel = latestPageModels.get(m.id);
-        if (pendingModel) runtime.publishModel(pendingModel);
+        const pendingModel = earlyPageModels.get(m.id);
+        if (pendingModel) {
+          runtime.publishModel(pendingModel);
+          earlyPageModels.delete(m.id);
+        }
         registeredDiskIds.add(m.id);
         void applyPluginSettings(m.id);
         void applyPluginPresenterSettings(m.id);
@@ -967,7 +1147,6 @@ export async function loadDiskPlugins(seq = refreshSeq) {
         // host-side (provider trust model) and the built-in list component
         // renders its rows.
         // 逻辑在共享宿主的沙箱 iframe（list 模板消费的是代理 hook）。
-        pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const logic = logicProxy(m.id);
         const instance = createListTemplateMode(m, logic, services!);
         definePlugin({
@@ -995,18 +1174,24 @@ export async function loadDiskPlugins(seq = refreshSeq) {
             `${m.height != null ? `, height=${m.height}` : ""}${m.features?.length ? `, ${m.features.length} feature(s)` : ""})`
         );
       } else if (m.kind === "service" && m.entry) {
-        pushLogicLoad(m.id); // 先于 hook 拉取（同 provider 分支注释）
         const navBars = navBarsContribution(m.id, logicProxy(m.id), m.dir);
         definePlugin({
           id: m.id,
           icon: manifestIconSpec(m),
           lifecycle: {
-            onShow: () => void logicCall(m.id, "onShow", []).catch(() => {}),
-            onHide: () => void logicCall(m.id, "onHide", []).catch(() => {}),
+            onShow: () => {
+              setPluginLogicActivity(m.id, true);
+              void callLogicLazy(m.id, "onShow", []).catch(() => {});
+            },
+            onHide: () => {
+              void callLogicLazy(m.id, "onHide", [])
+                .catch(() => {})
+                .finally(() => setPluginLogicActivity(m.id, false));
+            },
             onQuery: (q) => throttledLogicCall(m.id, "onQuery", [q]),
-            onFeature: (info) => void logicCall(m.id, "onFeature", [info]).catch(() => {}),
+            onFeature: (info) => void callLogicLazy(m.id, "onFeature", [info]).catch(() => {}),
             onSubInput: (text) => throttledLogicCall(m.id, "onSubInput", [text]),
-            onSettings: (values) => void logicCall(m.id, "onSettings", [values]).catch(() => {}),
+            onSettings: (values) => void callLogicLazy(m.id, "onSettings", [values]).catch(() => {}),
           },
           features: m.features ?? [],
           dir: m.dir,
@@ -1074,10 +1259,9 @@ export async function applyPluginSettings(id: string): Promise<void> {
   }
   plog.debug(id, "settings →", values);
   pendingLogicSettings.set(id, values); // logic-loaded 时补投（首投可能早于逻辑就绪）
-  if (logicPendingReady.has(id)) {
-    // The entry proxy rejects every hook until the logic iframe reports
-    // `logic-loaded`. Logging that expected first-apply miss as an error made
-    // startup smoke tests flaky; the pending copy above is delivered on ready.
+  if (!logicLoadedIds.has(id) || logicPendingReady.has(id)) {
+    // Registration only installs proxies. The first real use loads the logic
+    // iframe; the pending copy above is delivered by `logic-loaded`.
     plog.debug(id, "settings deferred until logic is ready");
     return;
   }
@@ -1339,6 +1523,7 @@ export function isPluginDetached(id: string): boolean {
 export function setPluginDetached(id: string, detached: boolean): void {
   if (detached) detachedIds.add(id);
   else detachedIds.delete(id);
+  touchLogicUse(id);
 }
 
 /** Currently detached ids (consistency cleanup after settings changes). */
@@ -1425,12 +1610,17 @@ export function onPluginWindowClosed(
     plugins.find((x) => x.id === id)?.mode?.setQuery(payload.query);
   }
   // CDP verify tap（无快照的关闭也记录——query 清空语义同样需要可观测）
-  ((window as unknown as { __pwClosed?: unknown[] }).__pwClosed ??= []).push({
-    id,
-    hasSnapshot: stored > 0,
-    query: payload.query ?? null,
-    user: userInitiated,
-  });
+  pushBoundedDiagnostic(
+    "__pwClosed",
+    {
+      id,
+      hasSnapshot: stored > 0,
+      query: payload.query ?? null,
+      user: userInitiated,
+    },
+    80,
+    64 * 1024,
+  );
   return userInitiated ? id : null;
 }
 // ── Declarative entry rules (: `[[features]]` in the manifest) ──
@@ -1829,7 +2019,7 @@ export function modeById(id: ModeId): ModeInstance | undefined {
 
 
 // CDP probe for plugin registration and logic-readiness state.
-(window as unknown as { __pluginRegistryProbe?: unknown }).__pluginRegistryProbe = {
+exposeDebugProbe("__pluginRegistryProbe", {
   plugins: () => plugins.map((plugin) => ({
     id: plugin.id,
     provider: !!plugin.provider,
@@ -1848,6 +2038,6 @@ export function modeById(id: ModeId): ModeInstance | undefined {
     pending: [...logicPendingReady],
     hooks: Object.fromEntries([...logicHooks].map(([id, hooks]) => [id, [...hooks]])),
   }),
-};
+});
 
 export { isEnabled as pluginEnabled };

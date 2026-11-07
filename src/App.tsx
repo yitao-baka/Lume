@@ -62,15 +62,37 @@ import { createHostStack, dropSessionFrame, dropSessionFrames, putSessionFrame }
 import { createNavigatePlugin, NAVIGATE_MODE_ID } from "./plugins/navigate";
 import { createClipboardPlugin } from "./plugins/clipboard";
 import { createPreviewHost } from "./launcher/previewHost";
-import { rasterizePluginIcon } from "./plugins/windowIcon";
-import { installPageRuntimeProbes } from "./page-runtime/diagnostics";
+import { clearPluginWindowIconCache, rasterizePluginIcon } from "./plugins/windowIcon";
+import {
+  diagnosticsEnabled,
+  installPageRuntimeProbes,
+  pushBoundedDiagnostic,
+} from "./page-runtime/diagnostics";
 
 /** Coalesce keystroke-driven searches; query text still updates immediately. */
 const INPUT_SEARCH_DEBOUNCE_MS = 80;
+const DEBUG_TIMINGS = (window as unknown as {
+  __LUME_DEBUG_TIMINGS__?: {
+    hostInactiveReclaimMs?: number;
+    hostActiveReclaimMs?: number;
+  };
+}).__LUME_DEBUG_TIMINGS__;
+const positiveTiming = (value: number | undefined, fallback: number) =>
+  Number.isFinite(value) && Number(value) > 0 ? Number(value) : fallback;
 /** Inactive visited pages release their DOM/iframe after a bounded hidden
  * period. Session snapshots preserve restoration; `keep_session` and explicit
  * user overrides opt a page out. */
-const HOST_RECLAIM_AFTER_HIDDEN_MS = 5 * 60_000;
+const HOST_RECLAIM_AFTER_HIDDEN_MS = positiveTiming(
+  DEBUG_TIMINGS?.hostInactiveReclaimMs,
+  2 * 60_000,
+);
+/** The current non-home plugin page is snapshotted after this much hidden
+ * time, even though it remains selected for the next summon. */
+const ACTIVE_HOST_RECLAIM_AFTER_HIDDEN_MS = positiveTiming(
+  DEBUG_TIMINGS?.hostActiveReclaimMs,
+  15 * 60_000,
+);
+const HOST_MAX_LIVE = 4;
 
 function App() {
   installPageRuntimeProbes();
@@ -170,10 +192,12 @@ function App() {
   /** CDP tap (scripts/cdp_mode_query_verify.mjs) — query routing is otherwise
    * only observable through the final box text. */
   const queryRoute = (entry: Record<string, unknown>) => {
-    const w = window as unknown as { __queryRoute?: unknown[] };
-    const tap = (w.__queryRoute ??= []);
-    tap.push({ at: Date.now(), mode: mode(), ...entry });
-    tap.splice(0, Math.max(0, tap.length - 80));
+    pushBoundedDiagnostic(
+      "__queryRoute",
+      { at: Date.now(), mode: mode(), ...entry },
+      80,
+      64 * 1024,
+    );
   };
   const query = (): string => (perModeQuery() ? activeMode()?.query() ?? "" : sharedQuery());
   const setQuery = (q: string) => {
@@ -206,21 +230,32 @@ function App() {
       return !(modeById(id)?.home ?? false) &&
         !idleResetExempt(id, meta?.keepSession ?? false);
     },
-    maxLive: 8,
+    maxLive: HOST_MAX_LIVE,
   });
   const ensureHost = (id: ModeId) => hostStack.ensure(id);
 
   let hostReclaimTimer: number | undefined;
+  let activeHostReclaimTimer: number | undefined;
   function cancelInactiveHostReclaim() {
     if (hostReclaimTimer !== undefined) window.clearTimeout(hostReclaimTimer);
     hostReclaimTimer = undefined;
+    if (activeHostReclaimTimer !== undefined) window.clearTimeout(activeHostReclaimTimer);
+    activeHostReclaimTimer = undefined;
   }
   function scheduleInactiveHostReclaim() {
     cancelInactiveHostReclaim();
     hostReclaimTimer = window.setTimeout(() => {
       hostReclaimTimer = undefined;
+      // The launcher has been hidden long enough that re-fetching a handful
+      // of current icons on the next show is cheaper than retaining every
+      // path searched during the session.
+      icons.trim();
       void reclaimInactiveHosts();
     }, HOST_RECLAIM_AFTER_HIDDEN_MS);
+    activeHostReclaimTimer = window.setTimeout(() => {
+      activeHostReclaimTimer = undefined;
+      void reclaimActiveHostIfIdle();
+    }, ACTIVE_HOST_RECLAIM_AFTER_HIDDEN_MS);
   }
   /** Take a snapshot and unmount every inactive visited page that has not opted
    * into session retention. The active page stays warm so the next summon is
@@ -233,6 +268,15 @@ function App() {
       if (meta && idleResetExempt(id, meta.keepSession)) continue;
       await hostStack.evict(id);
     }
+  }
+  /** Deep-idle release for the selected page. The mode id stays selected; the
+   * show path remounts it from the snapshot before running its search. */
+  async function reclaimActiveHostIfIdle() {
+    const active = mode();
+    if (!active || modeById(active)?.home || isPluginDetached(active)) return;
+    const meta = modePlugins().find((item) => item.id === active);
+    if (meta && idleResetExempt(active, meta.keepSession)) return;
+    await hostStack.evict(active, { allowActive: true });
   }
 
   /** Retire hosts whose instance was replaced/removed (plugin reload or
@@ -372,10 +416,7 @@ function App() {
     entryOpened = false;
     persistLastPage();
     // CDP tap (scripts/cdp_idle_reset_verify.mjs): what the reset decided.
-    const w = window as unknown as { __idleReset?: unknown[] };
-    const tap = (w.__idleReset ??= []);
-    tap.push({ at: Date.now(), reset, kept });
-    tap.splice(0, Math.max(0, tap.length - 40));
+    pushBoundedDiagnostic("__idleReset", { at: Date.now(), reset, kept }, 40, 32 * 1024);
   }
 
   /** Hide-time bookkeeping — summon-scoped state only; pages keep everything.
@@ -394,19 +435,27 @@ function App() {
 
   /** Show-time restore (D1): a home-page entry clears the home query only;
    * plugin pages keep query + page state. Invalid active modes fall home. */
-  function beginSummon() {
+  async function beginSummon() {
     summonActive = true;
-    const reclaimDue =
-      lastHiddenAt > 0 && Date.now() - lastHiddenAt >= HOST_RECLAIM_AFTER_HIDDEN_MS;
+    const hiddenFor = lastHiddenAt > 0 ? Date.now() - lastHiddenAt : 0;
+    const reclaimDue = hiddenFor >= HOST_RECLAIM_AFTER_HIDDEN_MS;
+    const activeReclaimDue = hiddenFor >= ACTIVE_HOST_RECLAIM_AFTER_HIDDEN_MS;
     cancelInactiveHostReclaim();
+    // A hidden active-page snapshot may still be in flight. Showing the page
+    // invalidates that retirement before the fresh due-check below can run.
+    hostStack.cancelEviction(mode());
     if (idleResetDue()) {
       lastHiddenAt = 0;
       applyIdleReset();
     }
+    if (activeReclaimDue) await reclaimActiveHostIfIdle();
     if (!modeById(mode())) {
       ensureHost(NAVIGATE_MODE_ID);
       setMode(NAVIGATE_MODE_ID);
     }
+    // A deep-idle active host was unmounted above. Recreate it from its
+    // consumed session frame before the hidden-show geometry measurement.
+    ensureHost(mode());
     if (entryOpened && mode() === NAVIGATE_MODE_ID) {
       // D1 (#40): a home entry consumed the query — clear it. #48: in shared
       // mode this clears the one value every page adopts on activation.
@@ -520,12 +569,14 @@ function App() {
 
   // CDP probe for flows that need a deterministic query dispatch while the
   // native window is hidden or focus is owned by the automation harness.
-  (window as unknown as { __launcherTestQuery?: (q: string) => Promise<string> }).__launcherTestQuery =
-    async (q: string) => {
+  if (diagnosticsEnabled()) {
+    (window as unknown as { __launcherTestQuery?: (q: string) => Promise<string> }).__launcherTestQuery =
+      async (q: string) => {
       setQuery(q);
       await runSearch(q);
       return query();
     };
+  }
 
   /** Show a transient toast at the bottom of the launcher (auto-dismisses). */
   function showToast(text: string, opts?: { undo?: () => void; duration?: number }) {
@@ -660,8 +711,7 @@ const services: PluginServices = {
       void getCurrentWindow().startDragging();
     },
     setSubInput: (pluginId, opts) => {
-      const probe = window as unknown as { __subInputCalls?: unknown[] };
-      (probe.__subInputCalls ??= []).push({ pluginId, opts, activeMode: mode() });
+      pushBoundedDiagnostic("__subInputCalls", { pluginId, opts, activeMode: mode() }, 80, 32 * 1024);
       // — one owner at a time; `null` releases. Releasing is a no-op when
       // some other plugin holds the box (a plugin can never steal or drop
       // another's ownership by accident).
@@ -891,8 +941,10 @@ const services: PluginServices = {
 
   // CDP smoke tap: exercises the exact input pipeline even when the launcher
   // is hidden behind another Tauri window during a long verification run.
-  (window as unknown as { __lumeHandleInput?: (text: string) => Promise<void> }).__lumeHandleInput =
-    handleInput;
+  if (diagnosticsEnabled()) {
+    (window as unknown as { __lumeHandleInput?: (text: string) => Promise<void> }).__lumeHandleInput =
+      handleInput;
+  }
 
   /** Open the settings window (gear button). */
   async function openSettings() {
@@ -1037,6 +1089,7 @@ const services: PluginServices = {
       return;
     }
     setPluginDetached(m, true);
+    void modeById(m)?.onHide?.();
     hostStack.retire(m); // single authority: the window owns the page now
     if (mode() === m) setMode(NAVIGATE_MODE_ID); // launcher stays on a valid page
     services.resetAndHide();
@@ -1051,6 +1104,9 @@ const services: PluginServices = {
       return;
     }
     ensureHost(m); // keep-alive: mount lazily, then leave it mounted
+    // The outgoing page is no longer the launcher surface owner. Page Logic
+    // uses this transition to start its idle-unload clock.
+    void activeMode()?.onHide?.();
     setMode(m);
     // Mode activation is also the recovery trigger for a page whose first
     // service/Presenter boot failed while it was in the background.
@@ -1257,6 +1313,7 @@ const services: PluginServices = {
       query?: string | null;
       user?: boolean;
     }>("plugin-window-closed", (e) => {
+      clearPluginWindowIconCache();
       const resumed = onPluginWindowClosed(e.payload);
       if (resumed) void redockMode(resumed); // D2: user close re-docks
     });
@@ -1331,7 +1388,7 @@ const services: PluginServices = {
         const generation = event.payload.generation;
         try {
           for (const p of allPlugins()) p.lifecycle?.onShow?.();
-          beginSummon();
+          await beginSummon();
           sizer.invalidate();
           await runSearch(query());
           await activeMode()?.onShow?.();
@@ -1359,9 +1416,13 @@ const services: PluginServices = {
     // there would clear summon-scoped state mid-drag.
     const unlisten = await getCurrentWindow().listen("launcher-shown", () => {
       queueMicrotask(() => document.getElementById("search-input")?.focus());
-      (window as unknown as { __summonCompletedAt?: number }).__summonCompletedAt = Date.now();
+      if (diagnosticsEnabled()) {
+        (window as unknown as { __summonCompletedAt?: number }).__summonCompletedAt = Date.now();
+      }
     });
-    (window as unknown as { __summonListenerReadyAt?: number }).__summonListenerReadyAt = Date.now();
+    if (diagnosticsEnabled()) {
+      (window as unknown as { __summonListenerReadyAt?: number }).__summonListenerReadyAt = Date.now();
+    }
     await invoke("launcher_renderer_ready").catch(() => {});
     onCleanup(() => unlisten());
 

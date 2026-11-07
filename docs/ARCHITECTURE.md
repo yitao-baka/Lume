@@ -95,10 +95,15 @@ Native `Window::{show,hide}` only changes the top-level HWND. `window.rs` also
 sets `ICoreWebView2Controller::SetIsVisible` and the WebView2 memory target, so
 a hidden launcher reports `document.visibilityState === "hidden"` instead of
 continuing RAF/timer work. The same resource state applies to preview, settings,
-detached plugin windows and the hidden logic host. Settings are created on first
-open and destroyed after a long hidden idle; the preview window stays resident
-but starts on a same-origin, zero-script `blank.html` page until real content
-arrives.
+detached plugin windows and the hidden logic host. The launcher stays resident;
+settings, preview and the shared logic host are created on demand. A hidden
+settings webview is destroyed after five idle minutes, a hidden preview after
+ten, and idle per-plugin logic iframes after five minutes before the empty host
+closes. A newly created settings webview stays hidden until it has loaded the
+current settings, preloaded the plugin manifest list and completed the renderer
+generation handshake; all settings panes are already part of that entry. Its
+native builder background uses the active settings skin surface as a
+no-white-flash fallback.
 
 User-preview assets use a narrow capability boundary: the static asset scope
 covers only Lume's own trees, while `plugin_allow_asset_path` checks the
@@ -124,13 +129,13 @@ docs/ROADMAP_HISTORY.md for the pixel measurements.
 The satellite preview is a core capability rather than a plugin contribution.
 `src/launcher/previewHost.ts` owns the explicit show/close state, the 100 ms
 selection-follow debounce and the Esc-priority signal; the renderer lives in
-`src/preview.tsx`. `window.rs` creates the non-activating, always-on-top
-native window at startup with `focused(false)` and `focusable(false)` applied
-in the builder. Its initial document is the same-origin, zero-script
-`blank.html`; the preview runtime is navigated in only when content first
-appears. Rust waits for its explicit renderer-ready handshake before revealing
-the window. The window docks flush to the launcher's client edge and tears its
-page down to `about:blank` on close. Built-in pages call the host directly;
+`src/preview.tsx`. `window.rs` creates the non-activating, always-on-top native
+window only when content first appears, with `focused(false)` and
+`focusable(false)` applied in the builder. Rust stores the pending request and
+waits for the explicit renderer-ready handshake before revealing the window.
+The window docks flush to the launcher's client edge and tears its page down to
+`about:blank` on close; after ten hidden minutes the webview itself is destroyed
+and the next request recreates it. Built-in pages call the host directly;
 external plugins reach the same commands through `ctx.preview.show/close` (and
 Presenters through `lume.app.preview/closePreview`). Rust re-checks the
 caller's `preview` permission and accepts only renderable content kinds,
@@ -760,10 +765,12 @@ before adding a field:
     mode-switch/shared bindings while its dialog is open. The accelerator
     blocker allows the native Windows edit set (Ctrl+Backspace, Ctrl+Home/End,
     word navigation, …) inside text fields.
-- The settings window reuses the same build via the window label
-  (`src/settings/` — grouped navigation, shared semantic rows, command search,
-  autosave, and a Quiet / Chromatic skin independent from the launcher; see
-  `docs/SETTINGS.md`).
+- The settings window has its own `settings.html` / `src/settings-entry.tsx`
+  entry and keeps the launcher bundle out of the settings renderer. The nine
+  settings panes ship in the settings entry rather than cold-loading on first
+  click (`src/settings/` — grouped navigation, shared semantic rows, command
+  search, autosave, and a Quiet / Chromatic skin independent from the launcher;
+  see `docs/SETTINGS.md`).
   Its catalog indexes localized labels, summaries/details, keywords, current
   values, and live plugin manifest/setting metadata; result jumps focus the
   exact row. The confirm dialog owns a focus trap with inert background, all
@@ -828,7 +835,9 @@ before adding a field:
   container-wide focus ring; the selected row/tile border carries the
   page-level cue. Command-button clicks hand focus back to the search box;
   inputs and modal scopes keep their own focus.
-- **i18n**: all user-facing strings go through `t()` from `src/i18n.ts`
+- **i18n**: all user-facing strings go through `t()` from `src/i18n.ts`. English
+  is the compiled fallback; the current Chinese bundle is loaded on demand before
+  the first render rather than embedding all locale tables in every entry.
   (en / zh-CN / zh-TW), keyed off the system language. A numeric `count` also
   selects the `_one` / `_other` variant — English needs it ("1 item" /
   "2 items"), the Chinese bundles carry one form in both slots. Text Rust has to
@@ -841,16 +850,19 @@ before adding a field:
 
 ## State & lifecycle
 
-- The main and preview webviews start hidden with `focused(false)`; settings is
-  absent until its first open. Every show/hide pairs the native HWND transition
-  with WebView controller visibility and memory residency. The launcher is first
-  shown by the hotkey, focused explicitly on every show, and auto-hides on focus
-  loss (`lib.rs` window-event handler).
+- The main webview starts hidden with `focused(false)`; settings, preview and
+  the shared plugin-logic host are absent until first use. Every show/hide pairs
+  the native HWND transition with WebView controller visibility and memory
+  residency. The launcher is first shown by the hotkey, focused explicitly on
+  every show, and auto-hides on focus loss (`lib.rs` window-event handler).
 - Hidden launcher mode pages stop through the central `launcher-hidden` event.
-  Inactive visited hosts are snapshotted and unmounted after five hidden minutes;
-  the active page, the home page, detached windows, `keep_session` pages and
-  explicit user retention overrides stay warm. An empty plugin logic host closes
-  after a bounded idle period.
+  The evictable live-host budget is four. Inactive visited hosts are snapshotted and
+  unmounted after two hidden minutes; a selected non-home plugin page is also
+  cold-reclaimed after fifteen hidden minutes. Home, detached windows,
+  `keep_session` pages and explicit user retention overrides stay exempt. A
+  loaded plugin logic iframe with no active page, detached window or pending RPC
+  is unloaded after five idle minutes; the empty shared host then closes after
+  its short grace period.
 - 会话续存：隐藏 / 呼出 / 模式切换都不再清 query / results / mode，
   热键重呼出恢复上次页面与状态；只有「打开首页条目后的下次呼出」（首次打开条目后的下次呼出）
   与闲置重置清空查询并回导航页。搜索框默认是一份全局共享值（共享单值，

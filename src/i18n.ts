@@ -5,17 +5,17 @@
 //! locale is detected from the system language at startup; `setLocale`
 //! (used by the settings page) switches it at runtime.
 //!
-//! The JSON bundles are compiled in as the baseline. Any `languages/*.json`
-//! found next to the exe is merged in as a runtime override, so a portable
-//! install can tweak strings without a rebuild.
+//! English is compiled into the entry bundle as the fallback. The active
+//! Chinese bundle is loaded on demand before the first render, so a window
+//! never carries all three locale tables at once. Any `languages/*.json` found
+//! next to the exe is merged in as a runtime override, so a portable install
+//! can tweak strings without a rebuild.
 
 import { createSignal } from "solid-js";
 import i18n from "i18next";
 import { invoke } from "@tauri-apps/api/core";
 
 import en from "../languages/en.json";
-import zhCN from "../languages/zh-CN.json";
-import zhTW from "../languages/zh-TW.json";
 
 export type Locale = "en" | "zh-CN" | "zh-TW";
 
@@ -32,11 +32,9 @@ export function detectLocale(): Locale {
   return "en";
 }
 
-void i18n.init({
+const i18nReady = i18n.init({
   resources: {
     en: { translation: en },
-    "zh-CN": { translation: zhCN },
-    "zh-TW": { translation: zhTW },
   },
   lng: detectLocale(),
   fallbackLng: "en",
@@ -49,6 +47,36 @@ void i18n.init({
     escapeValue: false,
   },
 });
+
+const localeLoaders: Record<Exclude<Locale, "en">, () => Promise<{ default: object }>> = {
+  "zh-CN": () => import("../languages/zh-CN.json"),
+  "zh-TW": () => import("../languages/zh-TW.json"),
+};
+const localeLoads = new Map<Locale, Promise<void>>();
+
+/** Load one non-English bundle once and add it to i18next. */
+export function ensureLocale(locale: Locale): Promise<void> {
+  if (locale === "en") return Promise.resolve();
+  const loaded = localeLoads.get(locale);
+  if (loaded) return loaded;
+  const pending = localeLoaders[locale]()
+    .then((module) => {
+      i18n.addResourceBundle(locale, "translation", module.default, true, true);
+    })
+    .catch(() => {
+      // A missing optional bundle keeps the English fallback usable.
+      localeLoads.delete(locale);
+    });
+  localeLoads.set(locale, pending);
+  return pending;
+}
+
+/** Load and activate a locale before the first render. */
+export async function prepareLocale(locale: Locale): Promise<void> {
+  await i18nReady;
+  await ensureLocale(locale);
+  await i18n.changeLanguage(locale);
+}
 
 function syncDocumentLanguage(locale: string) {
   if (typeof document !== "undefined") {
@@ -76,7 +104,7 @@ export function getLocale(): Locale {
 /** Override the active locale (used by the settings page). */
 export function setLocale(locale: Locale) {
   syncDocumentLanguage(locale);
-  void i18n.changeLanguage(locale);
+  void i18nReady.then(() => ensureLocale(locale)).then(() => i18n.changeLanguage(locale));
 }
 
 /** Resolve a stored language value (`"system"` or a locale) to an active one. */
@@ -104,6 +132,7 @@ interface LanguageFile {
 /** Merge language files found next to the exe as runtime overrides. */
 export async function loadExternalLanguages() {
   try {
+    await i18nReady;
     const files = await invoke<LanguageFile[]>("load_language_files");
     for (const f of files) {
       try {

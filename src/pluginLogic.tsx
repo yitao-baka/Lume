@@ -28,6 +28,11 @@ import { normalizeSkin } from "./skins/registry";
 import { normalizeAccent } from "./skins/accent";
 import { pluginColorMode, pluginColorPref, seedPluginColorPrefs, setPluginColorPref } from "./plugins/themePrefs";
 import type { SettingsData } from "./settings/types";
+import {
+  diagnosticSummary,
+  diagnosticsEnabled,
+  exposeDebugProbe,
+} from "./page-runtime/diagnostics";
 
 /** This hidden window's copy of the launcher's color-mode setting + the
  * per-plugin preference mirror (same `__LUME_CONFIG__` snapshot every window
@@ -73,12 +78,13 @@ interface LogicEntry {
 
 const entries = new Map<string, LogicEntry>();
 let messageListenerCount = 0;
+const captureDiagnostics = diagnosticsEnabled();
 // CDP verify tap（同 __pluginStates/__pwClosed 模式）
-(window as unknown as { __logicEntries?: Map<string, LogicEntry> }).__logicEntries = entries;
-(window as unknown as { __logicListenerProbe?: unknown }).__logicListenerProbe = {
+exposeDebugProbe("__logicEntries", entries);
+exposeDebugProbe("__logicListenerProbe", {
   listenerCount: () => messageListenerCount,
   pendingCalls: () => [...entries.values()].reduce((sum, entry) => sum + entry.calls.size, 0),
-};
+});
 /** 最近 80 条帧 rpc 的结局摘要（#32 加固核验用；CDP 直读）。 */
 const rpcLog: {
   id: string;
@@ -87,9 +93,16 @@ const rpcLog: {
   error?: string;
   resultType: string;
 }[] = [];
-(window as unknown as { __rpcLog?: unknown }).__rpcLog = rpcLog;
-const hookLog: { id: string; name?: string; callId: number; ok: boolean; result?: unknown; error?: string }[] = [];
-(window as unknown as { __logicHookLog?: unknown }).__logicHookLog = hookLog;
+exposeDebugProbe("__rpcLog", rpcLog);
+const hookLog: {
+  id: string;
+  name?: string;
+  callId: number;
+  ok: boolean;
+  result: ReturnType<typeof diagnosticSummary>;
+  error?: string;
+}[] = [];
+exposeDebugProbe("__logicHookLog", hookLog);
 
 function postTo(entry: LogicEntry, msg: unknown) {
   entry.frame?.contentWindow?.postMessage(msg, "*");
@@ -280,8 +293,17 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
     if (call.kind === "load") {
       r.ok ? call.resolve?.(r.result) : call.reject?.(new Error(r.error ?? "logic load failed"));
     } else {
-      hookLog.push({ id, name: call.name, callId: r.callId, ok: r.ok, result: r.result, error: r.error });
-      if (hookLog.length > 80) hookLog.shift();
+      if (captureDiagnostics) {
+        hookLog.push({
+          id,
+          name: call.name,
+          callId: r.callId,
+          ok: r.ok,
+          result: diagnosticSummary(r.result),
+          error: r.error,
+        });
+        if (hookLog.length > 80) hookLog.shift();
+      }
       // hook 回执 → 经 Rust 令牌中继回 main（registry 按 callId 收口）
       void invoke("plugin_logic_result", {
         token: entry.token,
@@ -295,10 +317,13 @@ function onFrameMessage(id: string, entry: LogicEntry, e: MessageEvent) {
   }
   if (d.__lumeRpc) {
     const rpc = d.__lumeRpc as { id: number; method: string; args: Record<string, unknown> };
-    rpcLog.push({ id, method: rpc.method, ok: true, resultType: "(recv)" });
-    if (rpcLog.length > 80) rpcLog.shift();
+    if (captureDiagnostics) {
+      rpcLog.push({ id, method: rpc.method, ok: true, resultType: "(recv)" });
+      if (rpcLog.length > 80) rpcLog.shift();
+    }
     // CDP verify tap（同 __logicEntries 模式）：最近 80 条 rpc 的结果摘要。
     const rec = (ok: boolean, error?: string, result?: unknown) => {
+      if (!captureDiagnostics) return;
       rpcLog.push({
         id,
         method: rpc.method,

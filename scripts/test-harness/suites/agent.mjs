@@ -10,6 +10,10 @@ export default {
 
     await evaluate('document.querySelector(\'.settings-nav[data-section="automation"]\').click()');
     await settings.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "automation"', 5000);
+    await settings.waitFor(
+      '!document.querySelector(".settings-page-loading") && !!document.querySelector(\'[data-setting-id="automation.use_agent"]\')',
+      5000,
+    );
 
     const toggleState = (id) => evaluate(`(() => {
       const row = document.querySelector('[data-setting-id=${JSON.stringify(id)}]');
@@ -21,10 +25,16 @@ export default {
       };
     })()`);
 
-    const useAgent = await toggleState("automation.use_agent");
-    const resident = await toggleState("automation.agent_resident");
     const stored = await invoke("get_settings");
     const status = await invoke("agent_status");
+    if (status?.installed === true && stored?.automation?.use_agent === true) {
+      await settings.waitFor(
+        'document.querySelector(\'[data-setting-id="automation.use_agent"] .settings-toggle\')?.getAttribute("aria-checked") === "true"',
+        5000,
+      );
+    }
+    const useAgent = await toggleState("automation.use_agent");
+    const resident = await toggleState("automation.agent_resident");
     t.check("agent switches render in Automation", useAgent.found && resident.found, { useAgent, resident });
     t.check(
       "stored agent preference is on-demand and not resident",
@@ -52,6 +62,10 @@ export default {
 
     await evaluate('document.querySelector(\'.settings-nav[data-section="system"]\').click()');
     await settings.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "system"', 5000);
+    await settings.waitFor(
+      '!document.querySelector(".settings-page-loading") && !!document.querySelector(\'[data-setting-id="system.agent"]\')',
+      5000,
+    );
     const system = await evaluate(`(() => ({
       groups: [...document.querySelectorAll(".settings-grouptitle")].map((node) => node.textContent.trim()),
       tickets: [...document.querySelectorAll(".settings-status-ticket")].map((node) => ({

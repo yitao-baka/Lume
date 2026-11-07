@@ -11,7 +11,7 @@ import type { PageIntent, PageModel, PresenterDescriptor } from "../../page-runt
 import { pushDiagnostic } from "../../page-runtime/diagnostics";
 import type { AppEntry } from "../../launcher/types";
 import type { LauncherPlugin, ModeInstance, ModeKeyContext, PageRow, PluginServices } from "../types";
-import { navBarPlugins, rememberPageModel } from "../registry";
+import { navBarPlugins, registerPageRuntimeModelSource } from "../registry";
 import { createNavigatePageService } from "../../page-services/navigate/service";
 import { NavigateGridPresenter } from "../../presenters/navigate-grid/NavigateGridPresenter";
 import { NavigateListPresenter } from "../../presenters/navigate-list/NavigateListPresenter";
@@ -41,6 +41,7 @@ export function createNavigatePlugin(
   const [fullDriveSearch, setFullDriveSearch] = createSignal(cfg?.index?.full_drive_search ?? false);
   const [presenterId, setPresenterId] = createSignal(cfg?.pages?.presenters?.apps || "navigate-grid");
   const [model, setModel] = createSignal<PageModel>();
+  registerPageRuntimeModelSource(NAVIGATE_MODE_ID, model);
 
   const page = createNavigatePageService({
     services,
@@ -61,7 +62,7 @@ export function createNavigatePlugin(
     schema: NAVIGATE_SCHEMA,
     presenters: NAVIGATE_PRESENTERS,
     presenterId: presenterId(),
-    onModel: (next) => { setModel(next); rememberPageModel(NAVIGATE_MODE_ID, next); },
+    onModel: setModel,
   });
   void session.start(page.service);
   createEffect(() => {

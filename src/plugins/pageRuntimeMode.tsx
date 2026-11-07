@@ -2,7 +2,7 @@
 //! restricted Presenter bridge. The service is reached through the shared logic
 //! host; the Presenter never receives its token or sensitive capabilities.
 
-import { createSignal, onMount, Show, type Component } from "solid-js";
+import { createSignal, onCleanup, onMount, Show, type Component } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { Dynamic } from "solid-js/web";
 import type { PageIntent, PageModel, PageService, PresenterDescriptor } from "../page-runtime/contracts";
@@ -14,6 +14,7 @@ import { dropSessionFrames, takeSessionFrames } from "../launcher/session";
 import { normalizePluginColorMode } from "../theme";
 import { currentSkin, currentSurface, currentSurfaceToneFor } from "../skins/runtime";
 import { currentAccent } from "../skins/accent";
+import { pushBoundedDiagnostic } from "../page-runtime/diagnostics";
 
 import { t } from "../i18n";
 import { assertPermission } from "./permissions";
@@ -29,8 +30,10 @@ export interface PageRuntimeModeDeps {
   manifest: PluginManifest;
   services: PluginServices;
   form: "launcher" | "window";
+  ensureService?(): Promise<void>;
   waitForService(): Promise<void>;
   restartService?(): Promise<void>;
+  onServiceActivity?(active: boolean): void;
   callService(name: string, ...args: unknown[]): Promise<unknown>;
   fetchPresenter(presenter: PluginPresenter): Promise<string>;
   fetchTitlebar?(presenter: PluginPresenter): Promise<string>;
@@ -62,6 +65,7 @@ export interface PageRuntimeMode {
   postTheme(mode: string): void;
   switchPresenter(presenterId: string): Promise<void>;
   applyPresenterSettings(values: Record<string, Record<string, unknown>>): void;
+  invalidateService(): void;
   dispose(): Promise<void>;
 }
 
@@ -117,6 +121,8 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
   let lifecycleGeneration = 0;
   let presenterSettings: Record<string, Record<string, unknown>> = {};
   const htmlCache = new Map<string, string>();
+  let pageVisible = false;
+  let modelDirty = false;
 
   const remoteService: PageService = {
     async getModel() {
@@ -163,8 +169,15 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     onModel: (model) => {
       setSelected(selectedIndex(model));
       deps.onModel?.(model);
-      bridge?.postModel(model);
-      titlebarBridge?.postModel(model);
+      if (pageVisible) {
+        bridge?.postModel(model);
+        titlebarBridge?.postModel(model);
+        modelDirty = false;
+      } else {
+        // Hidden pages keep only the authoritative store copy. The current
+        // model is replayed once when the page becomes visible again.
+        modelDirty = true;
+      }
     },
   });
 
@@ -225,6 +238,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
         needsServiceRestart = false;
       }
       try {
+        await deps.ensureService?.();
         await deps.waitForService();
       } catch (error) {
         needsServiceRestart = Boolean(deps.restartService);
@@ -407,6 +421,11 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
 
   const View = () => {
     onMount(() => { void mount().catch(() => {}); });
+    onCleanup(() => {
+      // A cold host release drops the Presenter documents with the DOM. The
+      // next mount reloads only the Presenter it actually needs.
+      htmlCache.clear();
+    });
     return (
       <Show
         when={!failed()}
@@ -450,9 +469,10 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
     search: async (q) => {
       setQuery(q);
       pendingQuery = q;
-      if (!ready()) {
+      if (!serviceStarted) {
         if (failed()) retryIfDue();
-        else void mount().catch(() => {});
+        else if (!ready()) void mount().catch(() => {});
+        else void ensureStarted().catch(markMountFailed);
       }
       if (serviceStarted) {
         pendingQuery = null;
@@ -543,17 +563,30 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       }
     },
     onShow: async () => {
+      pageVisible = true;
+      deps.onServiceActivity?.(true);
       retryIfDue();
       pendingShow = true;
+      if (modelDirty) {
+        const current = session?.store.get();
+        if (current) postBoth("model", current);
+        modelDirty = false;
+      }
       postBoth("show");
       if (serviceStarted) {
         pendingShow = null;
         await session?.show();
-      } else if (startPromise) {
-        await startPromise;
+      } else {
+        try {
+          await ensureStarted();
+        } catch (error) {
+          markMountFailed(error);
+        }
       }
     },
     onHide: async () => {
+      pageVisible = false;
+      deps.onServiceActivity?.(false);
       pendingShow = false;
       postBoth("hide");
       if (serviceStarted) {
@@ -593,6 +626,8 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       if (serviceStarted) {
         pendingFilesDropped = null;
         void session?.filesDropped(paths).catch((err) => console.error("[page-runtime] onFilesDropped failed:", err));
+      } else {
+        void ensureStarted().catch((err) => console.error("[page-runtime] onFilesDropped start failed:", err));
       }
     },
     snapshot: () => bridge?.snapshot() ?? Promise.resolve(null),
@@ -682,12 +717,8 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
         surface: currentSurface(resolved),
       };
       postBoth("skin", visual);
-      const probe = window as unknown as {
-        __presenterThemes?: unknown[];
-        __presenterSkins?: unknown[];
-      };
-      (probe.__presenterThemes ??= []).push({ pageId: m.id, mode });
-      (probe.__presenterSkins ??= []).push({ pageId: m.id, ...visual });
+      pushBoundedDiagnostic("__presenterThemes", { pageId: m.id, mode }, 80, 64 * 1024);
+      pushBoundedDiagnostic("__presenterSkins", { pageId: m.id, ...visual }, 80, 64 * 1024);
     },
     switchPresenter: async (presenterId) => {
       if (!m.presenters.some((presenter) => presenter.id === presenterId)) {
@@ -708,15 +739,22 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       const presenterId = session?.snapshot().presenter.presenterId;
       const delivered = presenterId ? presenterSettings[presenterId] ?? {} : {};
       if (presenterId) postBoth("settings", delivered);
-      const probe = window as unknown as { __presenterSettings?: unknown[] };
-      (probe.__presenterSettings ??= []).push({
-        pageId: m.id,
-        presenterId,
-        values: delivered,
-        live: bridge?.live() ?? false,
-      });
+      pushBoundedDiagnostic(
+        "__presenterSettings",
+        { pageId: m.id, presenterId, values: delivered, live: bridge?.live() ?? false },
+        80,
+        128 * 1024,
+      );
+    },
+    invalidateService: () => {
+      serviceStarted = false;
+      startPromise = undefined;
+      needsServiceRestart = true;
+      modelDirty = true;
     },
     dispose: async () => {
+      pageVisible = false;
+      deps.onServiceActivity?.(false);
       lifecycleGeneration++;
       pendingQuery = null;
       pendingShow = null;
@@ -727,6 +765,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       pendingPresenterSettings = null;
       bridge = undefined;
       titlebarBridge = undefined;
+      htmlCache.clear();
       await session?.dispose();
     },
   };

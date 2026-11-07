@@ -5,6 +5,7 @@
 
 import { createSignal, onMount, onCleanup, type Component } from "solid-js";
 import { plog } from "./log";
+import { pushBoundedDiagnostic } from "../page-runtime/diagnostics";
 
 /** The sandbox attribute for plugin view iframes: scripts/forms/popups/modals
  * run, but the page gets an opaque origin — no access to the host document,
@@ -326,12 +327,10 @@ export function createIframeView(
           }
         }
         if (d.__lumeFrameState) {
-          // 帧内状态上报（桥的 reportState）：收口到本窗口的 __frameStates
-          // 环形缓冲。srcdoc 帧的 CDP context 在新 WebView2 里对宿主 target 不
-          // 可见，外部工具（probe）改从这读取；生产路径无人消费，成本 ~KB/s。
-          const states = ((window as unknown as { __frameStates?: unknown[] }).__frameStates ??= []);
-          states.push(d.__lumeFrameState);
-          if (states.length > 40) states.shift();
+          // 帧内状态上报（桥的 reportState）：调试构建收口到本窗口的有界
+          // ring。srcdoc 帧的 CDP context 对宿主 target 不可见，外部工具从
+          // 这里读取；正式构建完全不保留表单状态。
+          pushBoundedDiagnostic("__frameStates", d.__lumeFrameState, 40, 256 * 1024);
         }
         if (d.__lumeRpc) {
           const { id, method, args } = d.__lumeRpc;

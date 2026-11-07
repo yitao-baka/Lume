@@ -36,10 +36,11 @@ export default defineConfig(async () => ({
     rollupOptions: {
       input: {
         main: "index.html",
+        settings: "settings.html",
         blank: "blank.html",
         preview: "preview.html",
         plugin: "plugin.html",
-        // P6.5 逻辑宿主窗口 + 每插件逻辑帧（共享窗口内的沙箱 iframe 页）
+        // 逻辑宿主窗口 + 每插件逻辑帧（共享窗口内的沙箱 iframe 页）
         pluginLogic: "pluginLogic.html",
         pluginLogicFrame: "pluginLogicFrame.html",
       },

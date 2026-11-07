@@ -121,6 +121,7 @@ export async function runSuite(suite, {
   exe,
   keepRuntime = process.env.KEEP_TEST_RUN === "1",
   readyTimeoutMs,
+  extraEnv = suite.env ?? {},
 } = {}) {
   const resultDir = join(resultsRoot, runId, suite.id);
   mkdirSync(resultDir, { recursive: true });
@@ -143,6 +144,7 @@ export async function runSuite(suite, {
       runDir: resultDir,
       instanceId: `verify-${process.pid}-${suite.id}-${Date.now()}`,
       readyTimeoutMs,
+      extraEnv,
     });
     const main = await session.main();
     context = createTestContext({ suiteId: suite.id, resultDir, main, session });

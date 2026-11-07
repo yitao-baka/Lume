@@ -9,6 +9,7 @@ import { createNavigateStore, GRID_ZONE, type ContributedBar, type NavItem, type
 import { createNavigateSearch, type NavigateSearch } from "../../plugins/navigate/search";
 import { fitNavBarPageBudget } from "../../plugins/contributionBudget";
 import { plog } from "../../plugins/log";
+import { pushBoundedDiagnostic } from "../../page-runtime/diagnostics";
 
 export interface NavigatePageDeps {
   services: PluginServices;
@@ -126,8 +127,6 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
 
   let revision = 0;
   let barsRefreshSeq = 0;
-  const barsProbe: unknown[] = [];
-  (window as unknown as { __navBarsProbe?: unknown }).__navBarsProbe = barsProbe;
   const targets = new Map<string, NavigateTarget>();
 
   async function refreshBars(): Promise<void> {
@@ -152,8 +151,12 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
       );
     }
     const applied = seq === barsRefreshSeq;
-    barsProbe.push({ seq, ids: budgeted.value.map((bar) => bar.id), applied });
-    if (barsProbe.length > 40) barsProbe.shift();
+    pushBoundedDiagnostic(
+      "__navBarsProbe",
+      { seq, ids: budgeted.value.map((bar) => bar.id), applied },
+      40,
+      32 * 1024,
+    );
     if (applied) nav.setPluginBars(budgeted.value);
   }
 

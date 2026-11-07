@@ -9,6 +9,34 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Changed
+- **WebView2 常驻内存第二轮治理（2026-11-07）** — 预览 WebView 改为首次请求
+  才创建，关闭后先 `about:blank` 再于 10 分钟时销毁并可从新请求重建；设置窗
+  热页保留期由 15 分钟收紧到 5 分钟。插件注册只建立代理，provider 首次搜索、
+  Page Runtime 首次挂载或 service 首个生命周期事件才加载逻辑 iframe；无活动页
+  面、分离窗和挂起 RPC 的逻辑帧 5 分钟后卸载，空宿主继续 30 秒后关闭。页面
+  host 上限 8→4，隐藏 2 分钟回收非活动页，活动非 home 插件页隐藏 15 分钟后
+  也按会话帧冷回收；`keep_session`、用户覆盖、home 与分离窗继续豁免。Page
+  Model 改为 runtime/内置 signal 单副本加一次性 early model；会话帧增加 4 MiB
+  总预算与 10 分钟 TTL；Presenter 队列增加 128 条 / 512 KiB 上限并只在 ready
+  时重放权威状态；图标缓存增加 LRU 数量与字节上限。完整 CDP ring 只在 debug
+  构建开放且均有条数 / 字节上限，已加载页面不再接收隐藏期间的重复 Page Model。
+  设置窗改用独立 `settings.html` 入口并把九个 pane 留在设置 bundle 内，
+  i18n 只预载当前 locale + 英文 fallback。`TrySuspend`、renderer 合并且 site isolation 关闭仍
+  不在范围内。验证：`pnpm verify:docs` PASS（15 项）；`pnpm verify:fast` PASS
+  （TS、i18n 613 键 × 3、Page Runtime 18/18、clipboard model 16/16、clipboard
+  store 8/8、skin 13/13、前端生产构建、Rust **288 passed / 9 ignored**）；
+  `pnpm verify:ui:changed --no-build` PASS **100/100**（smoke 23、settings 29、
+  plugin-runtime 13、clipboard-ui 7、preview 18、agent 10，产物
+  `test/verify/2026-11-07T14-55-48-279Z/summary.json`）。独立 60 秒隐藏审计
+  PASS 3/3（产物 `test/verify/hidden-resource-2026-11-07T15-03-29-924Z`）：
+  `applyLatest` / `viewportSyncs` 增量均为 0，工作集约 **147 MiB**、私有内存约
+  **165 MiB**、**6** 个 WebView2 进程（browser 1 / renderer 1 / GPU 1 /
+  utility 2 / other 1），进程树 CPU 0.4375s/60s，主 renderer JS heap
+  约 3.45 MiB → 2.41 MiB。`cdp_plugin_lru_verify.mjs` PASS **23/23**，确认 4 页
+  上限、会话帧预算和冷恢复。方案归档见
+  [docs/History/WEBVIEW_MEMORY_OPTIMIZATION_PLAN.md](docs/History/WEBVIEW_MEMORY_OPTIMIZATION_PLAN.md)；
+  `pnpm run tauri build --no-bundle` release 构建通过。
+
 - **WebView2 隐藏资源生命周期（2026-11-07）** — 切断
   `applyLatest → measureViewport → scheduleResize` RAF 自反馈环，Navigate / Page
   Runtime 的测量回调改为单次幂等视口同步；统一原生 HWND 与 WebView2 controller
@@ -36,6 +64,33 @@ All notable changes to Lume are documented here. Format based on
   PASS（docs 15、i18n 605 键 × 3 语言、Page Runtime 18/18、clipboard model 16/16、
   clipboard store 8/8、skin 11/11、前端生产构建、Rust 287 passed / 9 ignored）。
 ### Fixed
+- **设置 pane 首次点击冷启动（2026-11-07）** — 设置页此前把九个 pane 都做成
+  动态 import，第一次进入 Search / About / Plugins 时才开始下载和执行对应
+  chunk；外层 shell 已经出现，但 pane 区域空白，插件页还要再等一次
+  `get_plugins`。现在九个 pane 重新编入独立 settings entry，设置窗口首次显示前
+  预热插件清单，并把同一份 manifest 数组作为 Plugins pane 首屏数据；其后台刷新
+  仅负责后续更新。回归断言要求 Search / About / Plugins 首次激活均在 1s 内出现
+  实际内容。验证：`pnpm verify:ui --suite settings` PASS（**32/32**，11.2s，
+  Search 119.2ms / About 24.1ms / Plugins 17.6ms，产物
+  `test/verify/2026-11-07T16-37-22-221Z/summary.json`）。
+- **设置窗首次打开白屏（2026-11-07）** — 首次创建设置 WebView 时，
+  `open_settings` 在 `settings.html`、首屏设置数据和插件清单尚未完成前就
+  显示了 HWND，透明/未绘制 surface 会短暂露出白色。现在设置页加载设置、解析
+  当前 pane、强制样式布局并完成后，才通过 generation-ready 握手下发显示；
+  WebView builder 同时使用当前设置皮肤的实体底色，作为握手期的原生兜底。
+  回归断言记录 `readyAt <= shownAt`、`readyState === "complete"`、无 loading
+  pane 且首屏内容非空。验证：`pnpm verify:ui --suite settings` PASS
+  （最终 **32/32**，11.2s，产物
+  `test/verify/2026-11-07T16-37-22-221Z/summary.json`；首开记录 ready
+  `1193.6ms`、show `1251.1ms`）；`pnpm verify:fast` PASS；
+  `pnpm run tauri build --no-bundle` release 构建通过。
+- **设置窗深色导航图标反相（2026-11-07）** — 设置页拆成独立
+  `settings.html` 入口后不再加载 `App.css`，而 `--icon-filter` 只定义于共享
+  `theme.css`，导致深色模式导航图标保留深色描边。设置样式入口现在显式导入
+  共享主题 token；回归断言同时检查 `data-theme="dark"`、
+  `--icon-filter: invert(1)` 和导航图标实际 computed filter。验证：
+  `pnpm verify:ui --suite settings` PASS（**30/30**，11.1s，产物
+  `test/verify/2026-11-07T15-36-08-288Z/summary.json`）。
 - **UI harness 的 WebView2 进程隔离（2026-11-05）** — 隔离运行器此前只分配
   `LUME_INSTANCE_ID`、动态 CDP 端口和独立数据目录；已运行的安装版 Lume 仍可
   占用默认 WebView2 用户目录，使测试进程复用没有调试端口的浏览器进程并导致
@@ -68,6 +123,10 @@ All notable changes to Lume are documented here. Format based on
   （436×617 canvas）和真实 XLSX（表格 + 单元格文本）均正常；重复图标请求由
   首轮约 19ms 降至 1.6–2ms。
 ### Added
+- **WebView2 常驻内存治理方案（2026-11-07）** — 新增 [docs/History/WEBVIEW_MEMORY_OPTIMIZATION_PLAN.md](docs/History/WEBVIEW_MEMORY_OPTIMIZATION_PLAN.md)，
+  统一预览/设置/插件 renderer 生命周期、Page Model 与会话帧预算、诊断探针、
+  前端缓存、bundle 拆分和分场景内存验收；`TrySuspend` 保持范围外。验证：
+  `pnpm verify:docs` PASS。
 - **主窗口米白表面、颜色与不透明度（2026-11-05）** — Quiet 浅色主窗表面改为
   米白 `#f7f3e8`。外观页新增「主窗口」组：`appearance.window_color` 可用原生
   取色器覆盖表面色，空值跟随皮肤；`appearance.window_opacity` 以 `70–100%`

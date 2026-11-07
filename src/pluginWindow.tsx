@@ -39,6 +39,7 @@ import { setPermissionSource } from "./plugins/permissions";
 import { fetchDiskFile, pluginFilePath } from "./plugins/disk";
 import { plog } from "./plugins/log";
 import { resolveLocale, setLocale, t } from "./i18n";
+import { exposeDebugProbe, pushBoundedDiagnostic } from "./page-runtime/diagnostics";
 import "./skins/index.css";
 import "./pluginWindow.css";
 
@@ -202,7 +203,9 @@ function App() {
       lastDragAt = now;
       // Debug tap for the CDP verify scripts (same pattern as __pluginStates).
       const w = window as unknown as { __dragStarts?: number };
-      w.__dragStarts = (w.__dragStarts ?? 0) + 1;
+      if ((window as unknown as { __LUME_DEBUG__?: boolean }).__LUME_DEBUG__ !== false) {
+        w.__dragStarts = (w.__dragStarts ?? 0) + 1;
+      }
       void getCurrentWindow().startDragging().catch((err) =>
         plog.error(id, "drag failed:", err)
       );
@@ -311,7 +314,7 @@ function App() {
       },
     });
     pageRuntime = runtime;
-    (window as unknown as { __detachedPageRuntime?: unknown }).__detachedPageRuntime = {
+    exposeDebugProbe("__detachedPageRuntime", {
       getModel: () => runtime.currentModel() ?? null,
       getState: () => runtime.currentPresenterState() ?? null,
       getPresenter: () => runtime.currentPresenterId() ?? null,
@@ -319,7 +322,7 @@ function App() {
       postTitlebar: (type: string, payload: unknown) => runtime.postTitlebar(type, payload),
       dispatch: (intent: unknown) => runtime.dispatch(intent as never),
       setQuery: (query: string) => runtime.instance.setQuery(query),
-    };
+    });
     setRuntimeView(() => runtime.instance.View);
     setRuntimeTitlebar(() => runtime.titlebarView);
   }
@@ -441,11 +444,16 @@ function App() {
       pageClearError?: boolean;
     }>("plugin-state", (e) => {
       const s = e.payload;
-      plog.debug(id, "plugin-state:", JSON.stringify(s).slice(0, 200));
+      plog.debug(id, "plugin-state:", {
+        keys: Object.keys(s),
+        presenter: s.presenter,
+        presenterStatus: s.presenterStatus,
+        hasModel: s.model != null,
+        hasSnapshot: s.snapshot != null,
+      });
       // Debug tap for the CDP verify scripts (same pattern as __plog): an
       // append-only history, since pushes interleave (shown vs enter).
-      const w = window as unknown as { __pluginStates?: unknown[] };
-      (w.__pluginStates ??= []).push(s);
+      pushBoundedDiagnostic("__pluginStates", s, 64, 512 * 1024);
       // Session snapshot frames are still separate from the Page Model: the
       // titlebar frame restores before host-driven events (its input mirrors
       // the query and must not write it back), while the main frame restores

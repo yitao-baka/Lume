@@ -6036,3 +6036,139 @@ Presenter 名称，值没有持久化或下发路径。
 - 全量六套件中的 agent 套件在本机因真实系统里已注册 agent 而按设计进入
   “installed” 分支，和其“未注册失败闭合”的隔离前提不符；本次改动相关的五个
   UI 套件全部通过。
+
+## 100. WebView2 常驻内存第二轮治理（2026-11-07）
+
+### 100.1 背景
+
+首轮生命周期修复消除了隐藏页面的几何反馈环，并让隐藏 controller 停止参与
+可见性生命周期；但预览仍在启动时常驻一个空白 renderer，设置热页保留 15 分钟，
+安装的 entry 插件会在注册时批量创建逻辑 iframe，页面 host 仍可同时保活 8 个，
+Page Model、会话帧、Presenter 事件和诊断探针也缺少统一的全局预算。方案与边界
+归档在 [History/WEBVIEW_MEMORY_OPTIMIZATION_PLAN.md](History/WEBVIEW_MEMORY_OPTIMIZATION_PLAN.md)。
+
+### 100.2 实现
+
+- 预览窗口不再在 setup 创建。`show_preview` 在首个有效请求时串行建窗；独立
+  activity epoch 失效旧的 idle-destroy timer，renderer ready 握手完成后才显示
+  HWND。关闭仍先导航 `about:blank`，隐藏 10 分钟后销毁，后续请求可从最新
+  `PreviewRequest` 重建。设置窗口沿用首开创建 / activity epoch，但热页保留期
+  收紧到 5 分钟。
+- 插件注册只创建代理，不再调用 `pushLogicLoad`。provider 首次搜索才加载自己的
+  逻辑 iframe，native 结果继续先行发布；Page Runtime 首次启动、list mode 首次
+  hook、service 首个生命周期事件同样按需加载。逻辑帧在无活动页面、分离窗口和
+  pending RPC 时闲置 5 分钟卸载；全部卸载后共享宿主继续 30 秒后关闭。unload
+  先撤令牌、拒绝 pending 调用并清理 throttle，再拆 iframe；迟到的 model/event
+  结果因 `logicLoadedIds` 已移除而丢弃。
+- Page host 上限从 8 降到 4；隐藏 2 分钟回收非活动 host，隐藏 15 分钟后允许
+  冷回收当前非 home 插件页。home、detached、`keep_session` 与用户覆盖保持
+  豁免。活动页 snapshot 在飞行期间若开始呼出，`cancelEviction` 用 token 中止
+  卸载，避免显示后仍被迟到快照拆掉；下次呼出先消费会话帧再挂载。
+- Page Model 不再为每个 runtime 永久保留第二份。磁盘 runtime 直接暴露
+  `currentModel()`，内置 Navigate/Clipboard 注册零拷贝 getter，只有 runtime
+  尚未注册时保留一条 early model。隐藏页面只更新 PageSession store，恢复可见
+  时再投递当前模型。
+- 会话帧增加 4 MiB 全局预算和 10 分钟 TTL，按最近使用时间淘汰；Presenter
+  未 ready 队列限制 128 条 / 512 KiB，`model/settings/theme/query/show` 等权威
+  状态不再重复入队，ready 时从 PageSession 重放最新值。
+- 所有长期 CDP ring 增加数量与估算字节上限。Rust init script 注入
+  `__LUME_DEBUG__`；release 不创建完整 `__pluginStates`、`__frameStates`、
+  hook result 或 Page Runtime probe。debug 构建保留测试所需探针，hook log 只
+  记录类型、字段数、序列化大小和截断摘要。
+- 启动器图标缓存改为 512 项 / 12 MiB LRU，隐藏 2 分钟后清空；分离插件任务栏
+  图标缓存改为 32 项 / 4 MiB，分离窗关闭即清。Presenter HTML cache 与 host
+  unmount 生命周期联动。
+- 新增独立 `settings.html` / `src/settings-entry.tsx`，设置窗不再静态加载
+  启动器 bundle；九个 pane 动态导入。i18n 只静态带入英文 fallback，当前中文
+  bundle 在首帧前按需加载。
+
+### 100.3 踩坑
+
+- 设置 pane 改为动态导入后，首次点击导航只更新 active section；测试和真实
+  UI 都要等 `.settings-page-loading` 消失或目标 row 出现，不能把 Suspense
+  的过渡帧当作空面板。
+- 活动页回收允许 `evict(active)`，因此必须额外处理“snapshot 未完成时用户又
+  呼出”的竞态；只判断 `mode() === id` 不足，必须有可取消的 eviction token。
+- 逻辑空闲判断不能用一个全局重置 timer：任一 provider 高频搜索都会不断推迟
+  其他 iframe 的回收。实现改为固定 1 秒测试 / 30 秒生产扫周期，再按每个插件
+  自己的 `logicLastUsed` 判断 5 分钟到期。
+- Page Runtime 被闲置逻辑卸载后，view host 可能仍保留；必须让 runtime
+  `invalidateService()`，下次显示时重新执行 service ready 握手，否则旧的
+  `serviceStarted` 会让页面继续调用已拆除的 iframe。
+- `__pluginStates` / `__frameStates` 的完整对象图只适合 debug harness。release
+  必须在 Rust 侧注入 false 标记并在前端最早处短路，不能只靠 tree-shaking：
+  `window` 属性写入本身无法被静态删除。
+- 事件队列只对未 ready 的 iframe 有意义。model/query/settings 等权威状态在
+  队列里再存一份既浪费又可能与最新 PageSession 不一致，ready 时统一重放
+  当前 session 才是单一权威。
+
+### 100.4 验证
+
+- `pnpm verify:docs` PASS（15 项）；`pnpm verify:fast` PASS：TypeScript、
+  i18n 613 键 × 3、Page Runtime 18/18、clipboard model 16/16、clipboard store
+  8/8、skin 13/13、前端生产构建、Rust **288 passed / 9 ignored**。
+- `pnpm verify:ui:changed --no-build` PASS **100/100**：smoke 23、settings 29、
+  plugin-runtime 13、clipboard-ui 7、preview 18、agent 10；产物
+  `test/verify/2026-11-07T14-55-48-279Z/summary.json`。新增断言覆盖预览/设置
+  idle destroy + rebuild、entry logic 冷启动、provider 首次搜索、隐藏 5 分钟
+  逻辑卸载、活动 host 冷回收、呼出重挂载和 pane 懒加载。
+- `cdp_plugin_lru_verify.mjs` PASS **23/23**，确认 4 页上限、一次溢出只淘汰
+  LRU 一页、view snapshot 可恢复、新 enter payload 优先，以及
+  `__sessionFrameStats` 字节不超过 4 MiB。
+- 独立 60 秒隐藏审计 PASS 3/3（63.7s，产物
+  `test/verify/hidden-resource-2026-11-07T15-03-29-924Z`）：无 preview /
+  settings renderer 预热，`applyLatest` / `viewportSyncs` 增量均为 0；进程树
+  CPU 0.4375s/60s，工作集约 **147 MiB**、私有内存约 **165 MiB**、**6** 个
+  WebView2 进程（browser 1 / renderer 1 / GPU 1 / utility 2 / other 1）；主
+  renderer JS heap 约 3.45 MiB → 2.41 MiB。该数据是隔离 debug 会话样本，不是
+  release 固定上限。`pnpm run tauri build --no-bundle` release 构建通过。
+
+## 101. 设置窗口首帧与 pane 冷启动（2026-11-07）
+
+### 101.1 背景
+
+设置窗首次打开时，原生 HWND 在 `settings.html`、首屏设置数据和 pane 内容完成前
+就显示，WebView 的未绘制区域会露出白色。后续用户实测又发现 Search / About
+首次进入时 pane 区域空白一段时间；Plugins 页虽然已有外壳，但插件卡片还要等待
+一次 pane 内的 `get_plugins`。这些现象都来自设置窗口创建时机和 pane 运行时加载
+策略，不是单个页面的数据查询慢。
+
+### 101.2 实现
+
+- 设置 WebView 增加 generation/activity 状态。新建时保持原生 HWND 和 controller
+  隐藏，`open_settings` 等待 renderer-ready 后才 show/focus；旧页面迟到的 ready
+  通过 generation 比较忽略。窗口 idle destroy 时清空 ready generation。
+- 设置页在 settings 数据与插件 manifest 都完成加载后，强制一次样式/布局并发送
+  `settings_renderer_ready`。最终静态 pane + manifest 预热版本的首次显示记录为
+  renderer ready 1193.6ms、native show 1251.1ms。
+- WebView builder 使用当前 settings skin 的实体 surface 作为 native background，
+  即使合成器在握手边缘产生一帧，也不会露出白底。
+- 取消九个 pane 的点击时动态 import，改回独立 settings entry 内的静态模块。
+  设置入口仍不加载 launcher bundle，i18n 仍只按需加载当前 locale；但首次点击
+  Search / About / Plugins 不再等待 chunk 下载。
+- 设置 shell 的 `get_plugins` 在显示前预热，结果作为 `initialPlugins` 传给
+  Plugins pane；pane 仍会在后台 refresh 以吸收后续插件安装/开关变化。
+
+### 101.3 踩坑
+
+- 只等设置 shell 的 `.settings-page-content` 不够：该节点在数据 fallback 和
+  Suspense fallback 时都存在。ready 必须等到真实设置和插件 manifest 已就绪。
+- `performance.now()` 的 ready 时间要在调用 `settings_renderer_ready` 前记录；
+  Rust 可能在 invoke 回执送达前就显示窗口，后记录会出现伪反序。
+- 动态 pane 拆分把一次下载成本从窗口打开转移到了首次点击，用户会看到“壳子已经
+  出现但内容迟迟不出现”。设置窗只有九个本地 pane，静态打包的确定性和交互收益
+  高于这一级别的拆分收益。
+- Plugins pane 自己再调用一次 `get_plugins` 会重复磁盘扫描，并让首屏卡片等待；
+  shell 预热的 manifest 数组必须直接作为首屏数据，后台 refresh 只做后续同步。
+
+### 101.4 验证
+
+- `pnpm verify:ui --suite settings` PASS **32/32**（11.2s，产物
+  `test/verify/2026-11-07T16-37-22-221Z/summary.json`）；首次开启记录
+  renderer ready 1193.6ms、native show 1251.1ms，`readyState=complete` 且无
+  loading pane；Search / About / Plugins 首次激活分别 **119.2ms / 24.1ms /
+  17.6ms**，均低于 1s 回归门限。
+- `pnpm verify:ui --suite agent --no-build` PASS **10/10**，确认 pane 静态化和
+  Plugins manifest 预热未影响后续设置页。
+- `pnpm verify:fast` PASS：docs、TypeScript、i18n、前端单测/生产构建及 Rust
+  **288 passed / 9 ignored**；`pnpm run tauri build --no-bundle` release 构建通过。

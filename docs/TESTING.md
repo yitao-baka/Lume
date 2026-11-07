@@ -113,13 +113,20 @@ Review the selected list instead of assuming every change needs every suite.
 | Suite | Contract |
 | --- | --- |
 | `smoke` | Launcher shell, hidden WebView visibility/quiet geometry, 20 hide/show cycles, direct Navigate input, mode bar, Tab mode switch, clipboard surface |
-| `settings` | Lazy first creation, navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, ten close/reopen cycles |
+| `settings` | Lazy first creation with renderer/plugin-manifest ready gate, warm Search/About/Plugins panes, idle destroy/rebuild, navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, ten close/reopen cycles |
 | `plugin-runtime` | API 2 keyword entry, Presenter readiness, strict CSP and sandbox |
 | `clipboard-ui` | History/empty surface, categories, row artwork, pause acknowledgement, clear confirmation |
-| `preview` | Zero-script startup page, core/PDF rendering, undeclared-plugin denial, declared-plugin reuse, ten close/reopen cycles |
+| `preview` | No renderer before first request, idle destroy/recreate, core/PDF rendering, undeclared-plugin denial, declared-plugin reuse, ten close/reopen cycles |
 | `agent` | Elevation-agent switches, fail-closed registration gate, UIPI explanation and status shape |
 
 List the current set with `pnpm verify:ui --list`.
+
+The `settings`, `preview` and `plugin-runtime` suites set debug-only timeout
+variables (`LUME_SETTINGS_IDLE_DESTROY_SECS`, `LUME_PREVIEW_IDLE_DESTROY_SECS`,
+`LUME_HOST_RECLAIM_SECS`, `LUME_ACTIVE_HOST_RECLAIM_SECS`,
+`LUME_LOGIC_IDLE_UNLOAD_SECS`, `LUME_LOGIC_IDLE_SWEEP_SECS`) to exercise the same
+idle-destroy and cold-reclaim paths without waiting production timeouts.
+Release builds ignore all of them.
 
 ## Legacy groups
 

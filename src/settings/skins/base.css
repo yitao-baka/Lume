@@ -1,6 +1,8 @@
 /* Shared settings shell and semantic components. Skin files supply only
    tokens and geometry; this file owns layout, focus and responsive behavior. */
 
+@import "../../theme.css";
+
 html[data-skin] body.settings-window {
   margin: 0;
   overflow: hidden;

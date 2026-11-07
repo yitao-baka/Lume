@@ -2,8 +2,15 @@ export default {
   id: "plugin-runtime",
   description: "API 2 plugin entry, Presenter readiness and opaque sandbox",
   tags: ["ui", "plugins"],
+  env: {
+    LUME_HOST_RECLAIM_SECS: "1",
+    LUME_ACTIVE_HOST_RECLAIM_SECS: "2",
+    LUME_LOGIC_IDLE_UNLOAD_SECS: "1",
+    LUME_LOGIC_IDLE_SWEEP_SECS: "1",
+  },
   fixtures: [
     { source: "examples/plugins/hello-mode", target: "plugins/hello-mode" },
+    { source: "examples/plugins/web-search", target: "plugins/web-search" },
   ],
   async run(t) {
     await t.ensureLauncherVisible();
@@ -12,6 +19,12 @@ export default {
       12000,
     );
     t.check("hello-mode is registered and enabled", registered);
+    const coldLogic = await t.evaluate('window.__pluginRegistryProbe?.logic().loaded ?? []');
+    t.check(
+      "entry logic stays cold until the plugin is first used",
+      !coldLogic.includes("hello-mode"),
+      coldLogic,
+    );
     await t.setQuery("hello");
 
     const rowReady = await t.waitFor(
@@ -19,6 +32,11 @@ export default {
       10000,
     );
     t.check("hello-mode appears as a searchable keyword row", rowReady);
+    const providerWarm = await t.waitFor(
+      'window.__pluginRegistryProbe?.logic().loaded.includes("web-search") === true',
+      12000,
+    );
+    t.check("provider first search lazily warms its own logic frame", providerWarm);
     await t.clickText("[data-target-id]", "Hello Mode");
 
     const presenterReady = await t.waitFor(
@@ -26,6 +44,32 @@ export default {
       12000,
     );
     t.check("plugin service and Presenter reach ready", presenterReady);
+    const warmLogic = await t.evaluate('window.__pluginRegistryProbe?.logic().loaded ?? []');
+    t.check("first page mount warms the plugin logic iframe", warmLogic.includes("hello-mode"), warmLogic);
+
+    await t.invoke("hide_launcher");
+    const logicUnloaded = await t.waitFor(
+      'window.__pluginRegistryProbe?.logic().loaded.length === 0',
+      12000,
+    );
+    t.check("hidden idle pages unload their logic iframes", logicUnloaded);
+    await t.sleep(2500);
+    const activeHostUnmounted = await t.waitFor(
+      '!document.querySelector(\'.mode-host[data-mode="hello-mode"]\')',
+      8000,
+    );
+    t.check("deep-idle active host is cold-reclaimed", activeHostUnmounted);
+    await t.ensureLauncherVisible();
+    const activeHostRestored = await t.waitFor(
+      '!!document.querySelector(\'.mode-host[data-mode="hello-mode"]\')',
+      12000,
+    );
+    t.check("summon restores the active page host from its session frame", activeHostRestored);
+    const logicReloaded = await t.waitFor(
+      'window.__pluginRegistryProbe?.logic().loaded.includes("hello-mode") === true',
+      12000,
+    );
+    t.check("summon lazily reloads the active page logic iframe", logicReloaded);
 
     const frame = await t.evaluate(`(() => {
       const frame = document.querySelector("iframe.presenter-frame");

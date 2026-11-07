@@ -212,7 +212,10 @@ pub async fn plugin_window_open(
     .background_color(tauri::window::Color(r, g, b, 255))
     .focused(false)
     .visible(false)
-    .initialization_script(format!("window.__LUME_CONFIG__ = {config_json};"));
+    .initialization_script(format!(
+        "window.__LUME_CONFIG__ = {config_json};{}",
+        crate::window::debug_flag_script()
+    ));
     builder = match remembered {
         Some(b) => builder.position(b.x, b.y),
         None => builder.center(),

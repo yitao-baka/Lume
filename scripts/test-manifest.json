@@ -18,7 +18,7 @@
     },
     "preview": {
       "module": "suites/preview.mjs",
-      "description": "Blank startup, core PDF/preview lifecycle and plugin permission gate"
+      "description": "Lazy preview creation, idle destroy/recreate, core PDF preview and plugin permission gate"
     },
     "agent": {
       "module": "suites/agent.mjs",
@@ -26,6 +26,10 @@
     }
   },
   "impact": [
+    {
+      "paths": ["src/index.tsx", "src/settings-entry.tsx", "src/windowBootstrap.ts", "settings.html", "vite.config.ts"],
+      "suites": ["smoke", "settings"]
+    },
     {
       "paths": ["scripts/test-harness/", "scripts/test-manifest.json", "scripts/verify.mjs"],
       "suites": ["smoke", "settings", "plugin-runtime", "clipboard-ui", "preview", "agent"]

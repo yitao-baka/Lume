@@ -18,6 +18,7 @@ import {
   type ColorMode,
   type PluginColorMode,
 } from "../theme";
+import { pushBoundedDiagnostic } from "../page-runtime/diagnostics";
 
 const prefs = new Map<string, PluginColorMode>();
 
@@ -33,9 +34,7 @@ export type PluginColorSource = "main" | "window" | "settings" | "launcher";
  * and the detached window's `data-theme` only shows the current value — so
  * probes read the intent *and* its source from here. */
 function tap(id: string, pref: PluginColorMode, source: PluginColorSource): void {
-  const w = window as unknown as { __pluginThemes?: unknown[] };
-  (w.__pluginThemes ??= []).push({ id, pref, source });
-  if (w.__pluginThemes.length > 60) (w.__pluginThemes ?? []).shift();
+  pushBoundedDiagnostic("__pluginThemes", { id, pref, source }, 60, 32 * 1024);
 }
 
 /** Seed/replace the mirror from a settings snapshot

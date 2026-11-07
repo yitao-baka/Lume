@@ -17,6 +17,9 @@ export default {
   id: "settings",
   description: "Lazy settings lifecycle, navigation, search surface and clipboard pane",
   tags: ["ui", "settings"],
+  // Keep the production five-minute warm window while exercising the same
+  // destroy/recreate path inside the isolated harness.
+  env: { LUME_SETTINGS_IDLE_DESTROY_SECS: "2" },
   async run(t) {
     const settingsPresentAtStartup = await t.main.evaluate(
       'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "settings" }).then(() => true).catch(() => false)',
@@ -28,6 +31,67 @@ export default {
       evaluate: (expression, options) => settings.evaluate(expression, options),
       waitFor: (expression, timeoutMs) => settings.waitFor(expression, timeoutMs),
     };
+
+    await settingsContext.waitFor('window.__settingsShownAt > 0', 5000);
+    const firstShow = await settingsContext.evaluate(`(() => ({
+      readyAt: window.__settingsReadyAt ?? 0,
+      shownAt: window.__settingsShownAt ?? 0,
+      readyState: document.readyState,
+      loadingPane: !!document.querySelector(".settings-page-loading"),
+      contentText: document.querySelector("#settings-page-content")?.textContent.trim().length ?? 0,
+    }))()`);
+    t.check(
+      "settings window is revealed only after its first pane is ready",
+      firstShow.readyAt > 0 &&
+        firstShow.shownAt >= firstShow.readyAt &&
+        firstShow.readyState === "complete" &&
+        !firstShow.loadingPane &&
+        firstShow.contentText > 0,
+      firstShow,
+    );
+
+    await settings.invoke("save_settings_patch", {
+      patch: { appearance: { color_mode: "dark" } },
+    });
+    await settingsContext.waitFor('document.documentElement.dataset.theme === "dark"', 5000);
+    const darkIconFilter = await settingsContext.evaluate(`(() => {
+      const icon = document.querySelector(".settings-nav-icon");
+      const root = document.documentElement;
+      return {
+        theme: root.dataset.theme,
+        token: getComputedStyle(root).getPropertyValue("--icon-filter").trim(),
+        filter: icon ? getComputedStyle(icon).filter : "",
+      };
+    })()`);
+    t.check(
+      "dark settings navigation icons invert their bundled dark artwork",
+      darkIconFilter.theme === "dark" &&
+        darkIconFilter.token === "invert(1)" &&
+        darkIconFilter.filter !== "none" &&
+        darkIconFilter.filter !== "",
+      darkIconFilter,
+    );
+
+    const measurePane = (section, selector) => settingsContext.evaluate(`(async () => {
+      const start = performance.now();
+      document.querySelector('.settings-nav[data-section="${section}"]')?.click();
+      while (!document.querySelector(${JSON.stringify(selector)})) {
+        await new Promise((resolve) => setTimeout(resolve, 4));
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return performance.now() - start;
+    })()`);
+    const paneLatency = {
+      search: await measurePane("search", '[data-setting-id="index.full_drive_group"]'),
+      about: await measurePane("about", '[data-setting-id="about.version"]'),
+      plugins: await measurePane("plugins", ".plg-card"),
+    };
+    t.check(
+      "Search, About and Plugins panes are warm on first activation",
+      Object.values(paneLatency).every((elapsed) => elapsed < 1000),
+      paneLatency,
+    );
+    await measurePane("appearance", '[data-setting-id="appearance.window_color"]');
 
     const sections = await settingsContext.evaluate(
       '[...document.querySelectorAll(".settings-nav")].map((item) => item.dataset.section)',
@@ -41,6 +105,7 @@ export default {
 
     await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="appearance"]\').click()');
     await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "appearance"', 5000);
+    await settingsContext.waitFor('!document.querySelector(".settings-page-loading")', 5000);
     const launcherSurfaceControls = await settingsContext.evaluate(`(() => {
       const color = document.querySelector('[data-setting-id="appearance.window_color"] input[type="color"]');
       const opacity = document.querySelector('[data-setting-id="appearance.window_opacity"] input[type="range"]');
@@ -109,6 +174,7 @@ export default {
 
     await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="about"]\').click()');
     await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "about"', 5000);
+    await settingsContext.waitFor('!document.querySelector(".settings-page-loading")', 5000);
     t.equal(
       "settings navigation reaches About",
       await settingsContext.evaluate('document.querySelector(".settings-nav.active")?.dataset.section'),
@@ -117,6 +183,11 @@ export default {
 
     await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="launcher"]\').click()');
     await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "launcher"', 5000);
+    await settingsContext.waitFor('!document.querySelector(".settings-page-loading")', 5000);
+    await settingsContext.waitFor(
+      '!!document.querySelector(\'[data-setting-id="appearance.disable_ime_on_navigate"]\')',
+      5000,
+    );
     const navigateIme = await settingsContext.evaluate(`(() => {
       const row = document.querySelector('[data-setting-id="appearance.disable_ime_on_navigate"]');
       const toggle = row?.querySelector('button[role="switch"]');
@@ -164,6 +235,7 @@ export default {
 
     await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="clipboard"]\').click()');
     await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "clipboard"', 5000);
+    await settingsContext.waitFor('!document.querySelector(".settings-page-loading")', 5000);
     const clipboardGroups = await settingsContext.evaluate(
       '[...document.querySelectorAll(".settings-grouptitle")].map((item) => item.textContent.trim())',
     );
@@ -172,6 +244,7 @@ export default {
 
     await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="search"]\').click()');
     await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "search"', 5000);
+    await settingsContext.waitFor('!document.querySelector(".settings-page-loading")', 5000);
     await settingsContext.waitFor(
       '!document.querySelector(\'[data-setting-id="index.full_drive_search"] button[role="switch"]\')?.disabled',
       5000,
@@ -321,5 +394,15 @@ export default {
       }
     }
     t.check("10 settings open/close cycles preserve the page and visibility", reopenCyclesOk);
+    await t.sleep(2500);
+    const destroyed = await t.evaluate(`window.__TAURI_INTERNALS__
+      .invoke("plugin:window|is_visible", { label: "settings" })
+      .then(() => false)
+      .catch(() => true)`);
+    t.check("idle settings webview is destroyed after its warm window", destroyed === true, destroyed);
+    const coldSettings = await t.openSettings();
+    const coldReopen = await coldSettings.evaluate('typeof window.__settingsWarmProbe');
+    t.equal("settings reopen after idle destroy rebuilds the page", coldReopen, "undefined");
+    await t.invoke("close_settings");
   },
 };

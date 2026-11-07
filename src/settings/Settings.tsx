@@ -183,6 +183,7 @@ export default function Settings() {
   const [settings, setSettings] = createSignal<SettingsData | null>(null);
   const [baseline, setBaseline] = createSignal<SettingsData | null>(null);
   const [plugins, setPlugins] = createSignal<PluginManifest[]>([]);
+  const [pluginsReady, setPluginsReady] = createSignal(false);
   const [pluginDeepQuery, setPluginDeepQuery] = createSignal("");
   const [loading, setLoading] = createSignal(true);
   const [loadError, setLoadError] = createSignal<string | null>(null);
@@ -281,6 +282,38 @@ export default function Settings() {
     );
   }
 
+  let rendererReadySent = false;
+  let rendererReadyTimer: number | undefined;
+  let shownListenerReady: Promise<void> | undefined;
+  async function signalInitialSettingsReady(): Promise<void> {
+    if (rendererReadySent || loading()) return;
+    if (!pluginsReady()) {
+      if (rendererReadyTimer !== undefined) return;
+      rendererReadyTimer = window.setTimeout(() => {
+        rendererReadyTimer = undefined;
+        void signalInitialSettingsReady();
+      }, 16);
+      return;
+    }
+    try {
+      // Force style/layout before releasing the hidden native window.
+      document.body.getBoundingClientRect();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      await shownListenerReady;
+      const epoch = Number(
+        (window as unknown as { __LUME_SETTINGS_EPOCH__?: number }).__LUME_SETTINGS_EPOCH__ ?? 0,
+      );
+      if ((window as unknown as { __LUME_DEBUG__?: boolean }).__LUME_DEBUG__ !== false) {
+        (window as unknown as { __settingsReadyAt?: number }).__settingsReadyAt = performance.now();
+      }
+      await invoke("settings_renderer_ready", { generation: epoch });
+      rendererReadySent = true;
+    } catch (error) {
+      console.error("[settings] renderer-ready handshake failed", error);
+      rendererReadyTimer = window.setTimeout(() => void signalInitialSettingsReady(), 250);
+    }
+  }
+
   function loadSettings(force = false) {
     if (!force && (saveState() === "saving" || saveTimer || saveState() === "error")) return;
     if (!force && activeTextEditor()) return;
@@ -322,7 +355,10 @@ export default function Settings() {
         if (sequence === loadSeq) setLoadError(settingsError(error, "settingsLoadFailed"));
       })
       .finally(() => {
-        if (sequence === loadSeq) setLoading(false);
+        if (sequence === loadSeq) {
+          setLoading(false);
+          void signalInitialSettingsReady();
+        }
       });
   }
 
@@ -691,7 +727,11 @@ export default function Settings() {
     loadSettings(true);
     void invoke<PluginManifest[]>("get_plugins")
       .then(setPlugins)
-      .catch((error) => console.error("[settings] plugin search index", error));
+      .catch((error) => console.error("[settings] plugin search index", error))
+      .finally(() => {
+        setPluginsReady(true);
+        void signalInitialSettingsReady();
+      });
 
     let disposed = false;
     let unlistenFocus: (() => void) | undefined;
@@ -716,6 +756,16 @@ export default function Settings() {
     }).then((unlisten) => {
       if (disposed) unlisten();
       else unlistenApplied = unlisten;
+    });
+
+    let unlistenShown: (() => void) | undefined;
+    shownListenerReady = listen("settings-shown", () => {
+      if ((window as unknown as { __LUME_DEBUG__?: boolean }).__LUME_DEBUG__ !== false) {
+        (window as unknown as { __settingsShownAt?: number }).__settingsShownAt = performance.now();
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenShown = unlisten;
     });
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -747,6 +797,7 @@ export default function Settings() {
       unlistenFocus?.();
       unlistenClose?.();
       unlistenApplied?.();
+      unlistenShown?.();
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown, true);
       bodyEl?.removeEventListener("scroll", scheduleBodyCue);
@@ -756,6 +807,7 @@ export default function Settings() {
       if (saveTimer) clearTimeout(saveTimer);
       if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
       if (undoTimer) clearTimeout(undoTimer);
+      if (rendererReadyTimer !== undefined) clearTimeout(rendererReadyTimer);
     });
   });
 
@@ -1035,6 +1087,7 @@ export default function Settings() {
                 <SectionBody
                   section={section()}
                   settings={settings()!}
+                  initialPlugins={plugins()}
                   onUpdateAppearance={commitAppearance}
                   onUpdatePages={commitPages}
                   onUpdateHotkeys={commitHotkeys}
@@ -1172,6 +1225,7 @@ function SectionBody(props: {
   onNavigate: (section: SectionId) => void;
   requestConfirm: (state: ConfirmState) => void;
   clipboardPluginEnabled: boolean;
+  initialPlugins: PluginManifest[];
 }) {
   return (
     <Switch>
@@ -1218,6 +1272,7 @@ function SectionBody(props: {
       <Match when={props.section === "plugins"}>
         <PluginsPane
           searchQuery={props.pluginSearchQuery}
+          initialPlugins={props.initialPlugins}
           requestConfirm={props.requestConfirm}
         />
       </Match>

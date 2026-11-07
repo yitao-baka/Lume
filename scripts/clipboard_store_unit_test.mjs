@@ -64,6 +64,8 @@ const check = (name, ok, extra = "") => {
 };
 
 try {
+  const i18n = await server.ssrLoadModule("/src/i18n.ts");
+  await i18n.prepareLocale("zh-CN");
   const { createClipboardStore } = await server.ssrLoadModule("/src/plugins/clipboard/store.ts");
   const searches = [];
   const services = {

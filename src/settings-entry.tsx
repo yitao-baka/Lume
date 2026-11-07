@@ -1,0 +1,11 @@
+/* @refresh reload */
+import { render } from "solid-js/web";
+import SettingsApp from "./settings/Settings";
+import { prepareWindow } from "./windowBootstrap";
+
+void prepareWindow("settings").then(() => {
+  render(
+    () => <SettingsApp />,
+    document.getElementById("root") as HTMLElement,
+  );
+});

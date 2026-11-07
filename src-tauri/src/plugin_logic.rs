@@ -56,7 +56,10 @@ pub async fn plugin_logic_host_ensure(
     .skip_taskbar(true)
     .focused(false)
     .visible(false)
-    .initialization_script(format!("window.__LUME_CONFIG__ = {config_json};"));
+    .initialization_script(format!(
+        "window.__LUME_CONFIG__ = {config_json};{}",
+        crate::window::debug_flag_script()
+    ));
     let win = builder.build().map_err(|e| e.to_string())?;
     crate::webview_guard::install(&win);
     // The hidden 1x1 host must be controller-invisible as well as HWND-hidden;

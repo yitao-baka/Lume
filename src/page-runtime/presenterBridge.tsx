@@ -11,6 +11,7 @@ import { createIframeView } from "../plugins/iframeBridge";
 import type { PageModel, PagePreviewRequest, PresenterDescriptor } from "./contracts";
 import { normalizeLayoutReport, normalizeResizeRequest } from "./layout";
 import type { PageSession } from "./session";
+import { diagnosticBytes } from "./diagnostics";
 
 const PRESENTER_BRIDGE_SCRIPT = `(function () {
   try { parent.postMessage({ __lumeFrameBoot: { frame: window.name } }, "*"); } catch (err) {}
@@ -365,8 +366,24 @@ export interface PresenterBridge {
   requestKey(key: Record<string, unknown>): Promise<boolean>;
 }
 
+const PRESENTER_QUEUE_MAX_ENTRIES = 128;
+const PRESENTER_QUEUE_MAX_BYTES = 512 * 1024;
+/** Authoritative state is replayed from the session when the frame becomes
+ * live, so queueing a second full model/settings copy is pure waste. */
+const PRESENTER_AUTHORITATIVE_EVENTS = new Set([
+  "model",
+  "settings",
+  "theme",
+  "skin",
+  "restore",
+  "query",
+  "show",
+  "hide",
+]);
+const PRESENTER_CRITICAL_EVENTS = new Set(["enter"]);
+
 export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBridge {
-  const queued: { type: string; payload?: unknown }[] = [];
+  const queued: { type: string; payload?: unknown; bytes: number }[] = [];
   const { View, post: postNow, live, snapshot, call } = createIframeView(
     async (method, args) => {
       switch (method) {
@@ -454,9 +471,6 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
       if (current.visible) postNow("show");
       const queuedEvents = queued.splice(0);
       for (const event of queuedEvents) {
-        if (["model", "settings", "theme", "skin", "restore", "query", "show", "hide"].includes(event.type)) {
-          continue;
-        }
         postNow(event.type, event.payload);
       }
     },
@@ -469,10 +483,24 @@ export function createPresenterBridge(opts: PresenterBridgeOptions): PresenterBr
   const post = (type: string, payload?: unknown): void => {
     if (!live()) {
       // Events are often produced while the iframe is still loading (first
-      // activation, slow service, replacement Presenter). Buffer them and
-      // replay after the authoritative model/query/show state.
-      if (queued.length >= 128) queued.shift();
-      queued.push({ type, payload });
+      // activation, slow service, replacement Presenter). Model/query/settings
+      // and the other authoritative state are reconstructed from the session
+      // on the ready callback, so only non-authoritative events need a queue.
+      if (PRESENTER_AUTHORITATIVE_EVENTS.has(type)) return;
+      const bytes = diagnosticBytes(payload);
+      if (bytes > PRESENTER_QUEUE_MAX_BYTES) {
+        console.warn(`[page-runtime] dropped oversized Presenter event: ${type} (${bytes} bytes)`);
+        return;
+      }
+      queued.push({ type, payload, bytes });
+      while (
+        queued.length > PRESENTER_QUEUE_MAX_ENTRIES ||
+        queued.reduce((sum, event) => sum + event.bytes, 0) > PRESENTER_QUEUE_MAX_BYTES
+      ) {
+        const drop = queued.findIndex((event) => !PRESENTER_CRITICAL_EVENTS.has(event.type));
+        if (drop < 0) break;
+        queued.splice(drop, 1);
+      }
       return;
     }
     try {

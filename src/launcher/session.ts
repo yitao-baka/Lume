@@ -18,26 +18,112 @@
 import { createSignal, type Accessor } from "solid-js";
 import type { ModeId, ModeInstance, SessionFrames } from "../plugins/types";
 import { capSnapshot } from "../plugins/iframeBridge";
+import {
+  diagnosticBytes,
+  exposeDebugProbe,
+  pushBoundedDiagnostic,
+} from "../page-runtime/diagnostics";
 
 export type SessionFrameName = "view" | "titlebar";
 
 /** Diagnostic tap (CDP probes): every frame store/take/evict lands here. */
 function tap(entry: unknown) {
-  const w = window as unknown as { __sessionFrames?: unknown[] };
-  (w.__sessionFrames ??= []).push(entry);
-  (w.__sessionFrames as unknown[]).splice(
-    0,
-    Math.max(0, (w.__sessionFrames as unknown[]).length - 80)
-  );
+  pushBoundedDiagnostic("__sessionFrames", entry, 80, 64 * 1024);
 }
 
 // ── Session frames ──────────────────────────────────────────────────────────
 
-const frames = new Map<string, SessionFrames>();
+const SESSION_FRAME_TOTAL_BYTES = 4 * 1024 * 1024;
+const SESSION_FRAME_TTL_MS = 10 * 60_000;
+
+interface StoredFrame {
+  value: unknown;
+  bytes: number;
+  touchedAt: number;
+}
+
+type StoredFrames = Partial<Record<SessionFrameName, StoredFrame>>;
+
+const frames = new Map<string, StoredFrames>();
+let frameExpiryTimer: number | undefined;
+
+function totalFrameBytes(): number {
+  let total = 0;
+  for (const entry of frames.values()) {
+    for (const frame of Object.values(entry)) total += frame?.bytes ?? 0;
+  }
+  return total;
+}
+
+function pruneExpiredFrames(now = Date.now()): boolean {
+  let changed = false;
+  for (const [id, entry] of frames) {
+    for (const name of ["view", "titlebar"] as const) {
+      const frame = entry[name];
+      if (!frame || now - frame.touchedAt < SESSION_FRAME_TTL_MS) continue;
+      delete entry[name];
+      changed = true;
+      tap({ op: "expire", id, frame: name });
+    }
+    if (Object.keys(entry).length === 0) frames.delete(id);
+  }
+  if (changed) scheduleFrameExpiry();
+  return changed;
+}
+
+function scheduleFrameExpiry(): void {
+  if (frameExpiryTimer !== undefined) window.clearTimeout(frameExpiryTimer);
+  frameExpiryTimer = undefined;
+  let earliest = Number.POSITIVE_INFINITY;
+  for (const entry of frames.values()) {
+    for (const frame of Object.values(entry)) {
+      if (frame) earliest = Math.min(earliest, frame.touchedAt + SESSION_FRAME_TTL_MS);
+    }
+  }
+  if (!Number.isFinite(earliest)) return;
+  frameExpiryTimer = window.setTimeout(() => {
+    frameExpiryTimer = undefined;
+    pruneExpiredFrames();
+    scheduleFrameExpiry();
+  }, Math.max(0, earliest - Date.now()));
+}
+
+function evictFramesToBudget(): void {
+  while (totalFrameBytes() > SESSION_FRAME_TOTAL_BYTES) {
+    let oldestId: string | undefined;
+    let oldestName: SessionFrameName | undefined;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    for (const [id, entry] of frames) {
+      for (const name of ["view", "titlebar"] as const) {
+        const frame = entry[name];
+        if (frame && frame.touchedAt < oldestAt) {
+          oldestAt = frame.touchedAt;
+          oldestId = id;
+          oldestName = name;
+        }
+      }
+    }
+    if (!oldestId || !oldestName) break;
+    const entry = frames.get(oldestId);
+    if (!entry) break;
+    delete entry[oldestName];
+    if (Object.keys(entry).length === 0) frames.delete(oldestId);
+    tap({ op: "budget-evict", id: oldestId, frame: oldestName });
+  }
+}
+
+exposeDebugProbe("__sessionFrameStats", () => ({
+  entries: [...frames.values()].reduce((sum, entry) => sum + Object.keys(entry).length, 0),
+  ids: [...frames.keys()],
+  bytes: totalFrameBytes(),
+  budget: SESSION_FRAME_TOTAL_BYTES,
+  ttlMs: SESSION_FRAME_TTL_MS,
+}));
 
 /** Store one frame's snapshot (capped; null/oversized values are dropped).
  * Returns whether a frame was actually stored. */
 export function putSessionFrame(id: string, frame: SessionFrameName, snap: unknown): boolean {
+  pruneExpiredFrames();
   const capped = capSnapshot(snap, id);
   tap({ op: "put", id, frame, ok: capped != null });
   // CDP tap (test/_snapshot_probe.mjs + scripts/cdp_plugin_state_verify.mjs):
@@ -46,17 +132,24 @@ export function putSessionFrame(id: string, frame: SessionFrameName, snap: unkno
   const digest = (auto?.fields ?? [])
     .slice(0, 12)
     .map((f) => `${f.k ?? "?"}=${f.c != null ? (f.c ? "[x]" : "[ ]") : f.v ?? ""}`);
-  const w = window as unknown as { __snapPending?: unknown[] };
-  (w.__snapPending ??= []).push({ id, frame, stored: capped != null, fields: digest });
+  pushBoundedDiagnostic(
+    "__snapPending",
+    { id, frame, stored: capped != null, fields: digest },
+    80,
+    64 * 1024,
+  );
   if (capped == null) return false;
   const cur = frames.get(id) ?? {};
-  cur[frame] = capped;
+  cur[frame] = { value: capped, bytes: diagnosticBytes(capped), touchedAt: Date.now() };
   frames.set(id, cur);
+  evictFramesToBudget();
+  scheduleFrameExpiry();
   return true;
 }
 
 /** Drop one stored frame (e.g. a detach that failed to open its window). */
 export function dropSessionFrame(id: string, frame: SessionFrameName): void {
+  pruneExpiredFrames();
   const cur = frames.get(id);
   if (!cur) return;
   delete cur[frame];
@@ -67,17 +160,19 @@ export function dropSessionFrame(id: string, frame: SessionFrameName): void {
 
 /** Drop every stored frame of one mode (disable / reload / code replaced). */
 export function dropSessionFrames(id: string): void {
+  pruneExpiredFrames();
   if (frames.delete(id)) tap({ op: "drop-all", id });
 }
 
 /** Consume-once: take the requested frames, leave the rest stored. */
 export function takeSessionFrames(id: string, which: SessionFrameName[]): SessionFrames | null {
+  pruneExpiredFrames();
   const cur = frames.get(id);
   if (!cur) return null;
   const out: SessionFrames = {};
   for (const f of which) {
     if (cur[f] !== undefined) {
-      out[f] = cur[f];
+      out[f] = cur[f]?.value;
       delete cur[f];
     }
   }
@@ -86,8 +181,8 @@ export function takeSessionFrames(id: string, which: SessionFrameName[]): Sessio
   const taken = Object.keys(out).length > 0;
   tap({ op: "take", id, frames: Object.keys(out) });
   // Legacy CDP tap (test/_snapshot_probe.mjs): consumed view frames.
-  const w = window as unknown as { __snapConsume?: unknown[] };
-  (w.__snapConsume ??= []).push({ id, hadView: out.view !== undefined });
+  pushBoundedDiagnostic("__snapConsume", { id, hadView: out.view !== undefined }, 80, 64 * 1024);
+  scheduleFrameExpiry();
   return taken ? out : null;
 }
 
@@ -98,6 +193,7 @@ interface HostEntry {
   inst: ModeInstance;
   lastUsed: number;
   evicting?: boolean;
+  evictToken?: number;
 }
 
 export interface HostStack {
@@ -108,7 +204,9 @@ export interface HostStack {
   /** Unmount without a snapshot (detach hand-off, disable, reload). */
   retire(id: ModeId): void;
   /** Unmount after capturing a `view` snapshot (LRU eviction). */
-  evict(id: ModeId): void;
+  evict(id: ModeId, opts?: { allowActive?: boolean }): Promise<void>;
+  /** Cancel an in-flight snapshot/unmount when the page is about to be shown. */
+  cancelEviction(id: ModeId): void;
   /** Retire entries whose instance is gone or replaced (plugin reload). */
   prune(alive: (id: ModeId, inst: ModeInstance) => boolean): void;
   /** Live ids (oldest first) — diagnostics. */
@@ -122,7 +220,7 @@ export function createHostStack(deps: {
   evictable?: (id: ModeId) => boolean;
   maxLive?: number;
 }): HostStack {
-  const maxLive = deps.maxLive ?? 8;
+  const maxLive = deps.maxLive ?? 4;
   const entries = new Map<ModeId, HostEntry>();
   const [hosts, setHosts] = createSignal<HostEntry[]>([], { equals: false });
 
@@ -137,9 +235,11 @@ export function createHostStack(deps: {
     if (e) retireEntry(e);
   }
 
-  async function evict(id: ModeId) {
+  async function evict(id: ModeId, opts?: { allowActive?: boolean }) {
     const e = entries.get(id);
     if (!e || e.evicting) return;
+    const token = (e.evictToken ?? 0) + 1;
+    e.evictToken = token;
     e.evicting = true;
     let snap: unknown = null;
     try {
@@ -147,10 +247,11 @@ export function createHostStack(deps: {
     } catch {
       // A dead page yields null — unmounting still frees the DOM.
     }
+    if (e.evictToken !== token) return;
     e.evicting = false;
     if (!entries.has(id)) return;
     // Became (or stayed) the active page while the snapshot was in flight.
-    if (deps.mode() === id) {
+    if (deps.mode() === id && !opts?.allowActive) {
       // The abort spent its slot without freeing anything — pass the budget
       // to the next LRU victim so the cap still converges.
       if (entries.size > maxLive) runEvictionPass();
@@ -200,7 +301,7 @@ export function createHostStack(deps: {
       return;
     }
     if (cur) retireEntry(cur); // replaced instance (reload) — mount the new one
-    const e: HostEntry = { id, inst, lastUsed: Date.now() };
+    const e: HostEntry = { id, inst, lastUsed: Date.now(), evictToken: 0 };
     entries.set(id, e);
     setHosts((prev) => [...prev, e]);
     runEvictionPass(id);
@@ -212,11 +313,19 @@ export function createHostStack(deps: {
     }
   }
 
+  function cancelEviction(id: ModeId) {
+    const entry = entries.get(id);
+    if (!entry?.evicting) return;
+    entry.evictToken = (entry.evictToken ?? 0) + 1;
+    entry.evicting = false;
+  }
+
   return {
     hosts,
     ensure,
     retire,
     evict,
+    cancelEviction,
     prune,
     ids: () => [...entries.values()].sort((a, b) => a.lastUsed - b.lastUsed).map((e) => e.id),
   };

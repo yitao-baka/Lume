@@ -234,9 +234,10 @@ function pluginSearchText(p: PluginManifest): string {
 
 export default function PluginsPane(props: {
   searchQuery?: string;
+  initialPlugins?: PluginManifest[];
   requestConfirm: (state: ConfirmState, trigger?: HTMLElement) => void;
 }) {
-  const [plugins, setPlugins] = createSignal<PluginManifest[]>([]);
+  const [plugins, setPlugins] = createSignal<PluginManifest[]>(props.initialPlugins ?? []);
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
   /** Global plugin developer mode (settings `plugins.dev_mode`). While off,
    * the developer options — 重载, the global 全部授权 switch, the 开发

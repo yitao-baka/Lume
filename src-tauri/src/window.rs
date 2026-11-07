@@ -25,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 const MAIN_WINDOW: &str = "main";
 /// Label of the settings window defined in `tauri.conf.json`.
 const SETTINGS_WINDOW: &str = "settings";
-/// Label of the satellite preview window (created in `lib.rs::setup`).
+/// Label of the satellite preview window (created on the first preview).
 const PREVIEW_WINDOW: &str = "preview";
 /// Fixed logical width of the satellite preview window (the old `PREVIEW_W`).
 const PREVIEW_W_LOGICAL: f64 = 320.0;
@@ -40,9 +40,32 @@ const MAIN_IDLE_TRIM_SECS: u64 = 10;
 /// A hidden settings page is retained briefly for instant reopen, then its
 /// renderer is destroyed. The next `open_settings` rebuilds it from current
 /// settings; the activity epoch cancels a stale timer after a reopen.
-const SETTINGS_IDLE_DESTROY_SECS: u64 = 15 * 60;
+const SETTINGS_IDLE_DESTROY_SECS: u64 = 5 * 60;
+/// A hidden preview keeps its page warm for selection bursts, then the whole
+/// webview is destroyed. The next request creates it again and restores the
+/// current `PreviewRequest` through the normal ready handshake.
+const PREVIEW_IDLE_DESTROY_SECS: u64 = 10 * 60;
 static SETTINGS_ACTIVITY: AtomicU64 = AtomicU64::new(0);
 static SETTINGS_CREATE_LOCK: Mutex<()> = Mutex::new(());
+static SETTINGS_RENDERER_EPOCH: AtomicU64 = AtomicU64::new(0);
+static SETTINGS_READY_EPOCH: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_ACTIVITY: AtomicU64 = AtomicU64::new(0);
+static PREVIEW_CREATE_LOCK: Mutex<()> = Mutex::new(());
+
+/// The harness can shorten a lifecycle timeout without changing the shipped
+/// default. Release builds ignore the variable entirely.
+fn debug_timeout_secs(name: &str, default: u64) -> u64 {
+    #[cfg(debug_assertions)]
+    if let Ok(value) = std::env::var(name) {
+        if let Ok(seconds) = value.parse::<u64>() {
+            if seconds > 0 {
+                return seconds;
+            }
+        }
+    }
+    let _ = name;
+    default
+}
 
 /// Last foreground window HWND captured before the launcher is shown — used by
 /// the clipboard auto-paste feature to send content back to the right window.
@@ -145,9 +168,9 @@ pub fn is_hide_suppressed(focus: &FocusState) -> bool {
 }
 
 // ── WebView2 visibility and idle memory ──────────────────────────────────────
-// The launcher and blank preview remain resident; settings and the plugin logic
-// host are created on demand. Hidden pages explicitly set the WebView2
-// controller invisible so browser timers/RAF see the correct page lifecycle.
+// The launcher remains resident; settings, preview and the plugin logic host
+// are created on demand. Hidden pages explicitly set the WebView2 controller
+// invisible so browser timers/RAF see the correct page lifecycle.
 // `MemoryUsageTargetLevel = Low` additionally swaps idle working sets out;
 // `Normal` is restored manually before activation. Tauri does not expose either
 // controller call on the builder, so this module reaches the same COM
@@ -186,6 +209,25 @@ pub fn set_webview_resource_state(app: &AppHandle, label: &str, visible: bool, l
         let _ = unsafe { controller.SetIsVisible(visible) };
         set_controller_memory_level(&pw, low);
     });
+}
+
+/// Initialization-script suffix shared by every webview. Production builds set
+/// the flag to false so large CDP rings and test-only globals stay disabled;
+/// debug builds keep the existing probe surface for the UI harness.
+pub fn debug_flag_script() -> String {
+    let debug = cfg!(debug_assertions);
+    if !debug {
+        return "window.__LUME_DEBUG__ = false;".into();
+    }
+    let timings = serde_json::json!({
+        "hostInactiveReclaimMs": debug_timeout_secs("LUME_HOST_RECLAIM_SECS", 120) * 1000,
+        "hostActiveReclaimMs": debug_timeout_secs("LUME_ACTIVE_HOST_RECLAIM_SECS", 15 * 60) * 1000,
+        "logicIdleUnloadMs": debug_timeout_secs("LUME_LOGIC_IDLE_UNLOAD_SECS", 5 * 60) * 1000,
+        "logicIdleSweepMs": debug_timeout_secs("LUME_LOGIC_IDLE_SWEEP_SECS", 30) * 1000,
+    });
+    format!(
+        "window.__LUME_DEBUG__ = true; window.__LUME_DEBUG_TIMINGS__ = {timings};"
+    )
 }
 
 /// Reveal a non-activating webview window. Controller visibility, Normal
@@ -465,13 +507,23 @@ fn ensure_settings_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     }
 
     let settings = crate::settings::snapshot(&app.state::<crate::settings::SettingsState>());
+    let generation = SETTINGS_RENDERER_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
+    SETTINGS_READY_EPOCH.store(0, Ordering::SeqCst);
     let config_json = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".into());
-    let init_script = format!("window.__LUME_CONFIG__ = {config_json};");
+    let init_script = format!(
+        "window.__LUME_SETTINGS_EPOCH__ = {generation};window.__LUME_CONFIG__ = {config_json};{}",
+        debug_flag_script()
+    );
     let lang = crate::i18n::UiLang::from_setting(&settings.appearance.language);
+    let background = panel_surface_rgb_for(
+        app,
+        settings.appearance.settings_skin(),
+        &settings.appearance.color_mode,
+    );
     let window = WebviewWindowBuilder::new(
         app,
         SETTINGS_WINDOW,
-        WebviewUrl::App("index.html".into()),
+        WebviewUrl::App("settings.html".into()),
     )
     .title(crate::texts::window_title_settings(lang))
     .inner_size(1040.0, 720.0)
@@ -482,6 +534,7 @@ fn ensure_settings_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     .shadow(true)
     .focused(false)
     .visible(false)
+    .background_color(tauri::window::Color(background.0, background.1, background.2, 255))
     .initialization_script(&init_script)
     .build()
     .map_err(|error| error.to_string())?;
@@ -521,16 +574,50 @@ fn ensure_settings_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     Ok(window)
 }
 
+/// Wait until the settings document has mounted its first usable page. The
+/// native HWND and controller stay hidden during this period, so lazy CSS /
+/// locale / pane imports cannot flash a white WebView background.
+async fn wait_for_settings_renderer(app: &AppHandle, generation: u64) -> Result<(), String> {
+    for _ in 0..400 {
+        if SETTINGS_READY_EPOCH.load(Ordering::SeqCst) == generation {
+            return Ok(());
+        }
+        if app.get_webview_window(SETTINGS_WINDOW).is_none() {
+            return Err("settings window closed before its renderer became ready".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    Err("settings renderer did not become ready".into())
+}
+
+/// The settings renderer calls this after the initial settings load and the
+/// current lazy pane have painted. A stale document generation is ignored.
+#[tauri::command]
+pub fn settings_renderer_ready(generation: u64, window: WebviewWindow) -> Result<(), String> {
+    if window.label() != SETTINGS_WINDOW {
+        return Err("settings_renderer_ready: settings window required".into());
+    }
+    if generation != SETTINGS_RENDERER_EPOCH.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    SETTINGS_READY_EPOCH.store(generation, Ordering::SeqCst);
+    Ok(())
+}
+
 /// Destroy a settings page that has stayed hidden for long enough. The activity
 /// epoch changes whenever the window is opened or closed again, so a stale
 /// timer can never destroy a freshly reopened instance.
 fn schedule_settings_destroy_if_idle(app: &AppHandle) {
     let epoch = SETTINGS_ACTIVITY.fetch_add(1, Ordering::SeqCst) + 1;
+    let timeout = debug_timeout_secs(
+        "LUME_SETTINGS_IDLE_DESTROY_SECS",
+        SETTINGS_IDLE_DESTROY_SECS,
+    );
     let app = app.clone();
     let _ = std::thread::Builder::new()
         .name("settings-idle-destroy".into())
         .spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(SETTINGS_IDLE_DESTROY_SECS));
+            std::thread::sleep(std::time::Duration::from_secs(timeout));
             // Serialize the final epoch check + destroy with first-open creation.
             // Either the timer destroys first and open rebuilds, or the open's
             // activity bump wins and the stale timer leaves the window alone.
@@ -547,6 +634,7 @@ fn schedule_settings_destroy_if_idle(app: &AppHandle) {
                 return;
             }
             let _ = window.destroy();
+            SETTINGS_READY_EPOCH.store(0, Ordering::SeqCst);
             drop(window);
             // Wait for the queued native destruction to be observable before an
             // opening caller can acquire the same creation lock.
@@ -566,9 +654,12 @@ pub async fn open_settings(app: AppHandle) -> Result<(), String> {
     // timer observes the new activity epoch and backs off.
     SETTINGS_ACTIVITY.fetch_add(1, Ordering::SeqCst);
     let window = ensure_settings_window(&app)?;
+    let generation = SETTINGS_RENDERER_EPOCH.load(Ordering::SeqCst);
+    wait_for_settings_renderer(&app, generation).await?;
     set_webview_resource_state(&app, SETTINGS_WINDOW, true, false);
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
+    let _ = window.emit("settings-shown", ());
     sync_aux_memory_targets(&app);
     Ok(())
 }
@@ -689,10 +780,9 @@ pub fn get_work_area(app: AppHandle) -> Result<f64, String> {
 // ── Satellite preview window (docs/ROADMAP_HISTORY.md #15) ───────────────────────────────────
 // All clipboard previews (text / text files / images / audio / video) render in
 // this separate, non-activating window docked flush to the main window's right
-// edge. It is created at startup (like the settings window) to avoid the
-// runtime-window-creation GPU-hang risk, and on close it navigates to
-// `about:blank` so the decoded bitmaps / media buffers leave the page while the
-// renderer process stays resident for reuse. See `docs/ROADMAP_HISTORY.md` #15.
+// edge. It is created on the first request, navigates to `about:blank` on close
+// so decoded resources leave the page, stays warm briefly for selection bursts,
+// then the webview itself is destroyed. See `docs/ROADMAP_HISTORY.md` #15.
 
 /// The frontend's last pushed preview request. The page reads it on mount
 /// (`get_preview_request`) — which also self-corrects a `preview-update` event
@@ -819,22 +909,43 @@ fn preview_follow_allowed(caller: Option<&str>, clipboard_setting: bool) -> bool
     caller.is_some() || clipboard_setting
 }
 
-fn find_preview_window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    app.get_webview_window(PREVIEW_WINDOW)
-        .ok_or_else(|| "preview window not found".to_string())
-}
-
-/// Wait briefly for startup window creation before failing. The hotkey and a
-/// plugin capability can race setup() on the first summon; a false "not found"
-/// makes a valid call indistinguishable from a denied one.
-async fn wait_for_preview_window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    for _ in 0..20 {
-        if let Some(window) = app.get_webview_window(PREVIEW_WINDOW) {
-            return Ok(window);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
+/// Create the satellite preview on first use. Creation is serialized separately
+/// from the idle-destroy activity epoch: concurrent `show_preview` calls share
+/// one webview, while an old destroy timer cannot remove a newer instance.
+fn ensure_preview_window(app: &AppHandle) -> Result<(WebviewWindow, bool), String> {
+    let _guard = PREVIEW_CREATE_LOCK
+        .lock()
+        .map_err(|_| "preview window creation lock poisoned".to_string())?;
+    if let Some(window) = app.get_webview_window(PREVIEW_WINDOW) {
+        return Ok((window, false));
     }
-    find_preview_window(app)
+
+    let settings = crate::settings::snapshot(&app.state::<crate::settings::SettingsState>());
+    let lang = crate::i18n::UiLang::from_setting(&settings.appearance.language);
+    let window = WebviewWindowBuilder::new(
+        app,
+        PREVIEW_WINDOW,
+        WebviewUrl::App("preview.html".into()),
+    )
+    .title(crate::texts::window_title_preview(lang))
+    .inner_size(PREVIEW_W_LOGICAL, 480.0) // real size set on every dock
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(false)
+    .focusable(false)
+    .visible(false)
+    .background_color(tauri::window::Color(30, 30, 32, 255))
+    .disable_drag_drop_handler()
+    .initialization_script(debug_flag_script())
+    .build()
+    .map_err(|error| error.to_string())?;
+
+    crate::webview_guard::install(&window);
+    clear_dwm_border(&window);
+    set_webview_resource_state(app, PREVIEW_WINDOW, false, true);
+    Ok((window, true))
 }
 
 /// Wait for preview.html to install its listener and read the pending request.
@@ -899,10 +1010,13 @@ pub async fn show_preview(
         teardown_preview(&app);
         return Ok(());
     }
-    let preview = wait_for_preview_window(&app).await?;
+    // A live request invalidates every pending idle-destroy timer before the
+    // window is created or reused.
+    PREVIEW_ACTIVITY.fetch_add(1, Ordering::SeqCst);
     if let Some(state) = app.try_state::<PreviewState>() {
         *state.request.lock().unwrap() = Some(req.clone());
     }
+    let (preview, created) = ensure_preview_window(&app)?;
     // Track page readiness explicitly. `navigate(about:blank)` is asynchronous,
     // so `window.url()` can still report preview.html while the teardown is in
     // flight; trusting it leaves the next preview on a blank page.
@@ -916,12 +1030,18 @@ pub async fn show_preview(
         if let Some(state) = app.try_state::<PreviewState>() {
             state.page_ready.store(false, Ordering::SeqCst);
         }
-        preview.navigate(preview_page_url(&app)).map_err(|e| e.to_string())?;
+        if !created {
+            preview
+                .navigate(preview_page_url(&app))
+                .map_err(|e| e.to_string())?;
+        }
         wait_for_preview_ready(&app).await?;
     }
     // Dock + size before reveal; works while hidden too.
     if !redock(&app).map_err(|e| e.to_string())? {
-        // No room on either side — the window stays hidden (see `dock_position`).
+        // No room on either side. Tear the hidden page down and start its idle
+        // lifetime instead of leaving a detached renderer resident forever.
+        teardown_preview(&app);
         return Ok(());
     }
     if !preview.is_visible().map_err(|e| e.to_string())? {
@@ -986,6 +1106,11 @@ pub fn preview_renderer_ready(
     if window.label() != PREVIEW_WINDOW {
         return Err("preview_renderer_ready: preview window required".into());
     }
+    // A teardown can navigate to `about:blank` while preview.html is still
+    // starting. A late ready call must not mark that blank document resident.
+    if state.request.lock().unwrap().is_none() {
+        return Ok(());
+    }
     state.page_ready.store(true, Ordering::SeqCst);
     Ok(())
 }
@@ -1044,11 +1169,46 @@ pub async fn plugin_allow_asset_path(
     grant_asset_file(path, app).await
 }
 
-/// Hide the preview and navigate it to `about:blank`. Used by `close_preview`
-/// AND by every launcher-hide path (blur-to-hide, hotkey toggle, Esc) — a
-/// merely hidden window could keep playing media and would never reclaim
-/// memory. Idempotent.
+/// Destroy a hidden preview after its idle window. The activity epoch changes
+/// on every show and teardown, so a stale timer cannot remove a page that has
+/// become active again.
+fn schedule_preview_destroy_if_idle(app: &AppHandle) {
+    let epoch = PREVIEW_ACTIVITY.fetch_add(1, Ordering::SeqCst) + 1;
+    let timeout =
+        debug_timeout_secs("LUME_PREVIEW_IDLE_DESTROY_SECS", PREVIEW_IDLE_DESTROY_SECS);
+    let app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("preview-idle-destroy".into())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(timeout));
+            let Ok(_guard) = PREVIEW_CREATE_LOCK.lock() else {
+                return;
+            };
+            if PREVIEW_ACTIVITY.load(Ordering::SeqCst) != epoch {
+                return;
+            }
+            let Some(window) = app.get_webview_window(PREVIEW_WINDOW) else {
+                return;
+            };
+            if window.is_visible().unwrap_or(true) {
+                return;
+            }
+            let _ = window.destroy();
+            drop(window);
+            for _ in 0..50 {
+                if app.get_webview_window(PREVIEW_WINDOW).is_none() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        });
+}
+
+/// Hide the preview, release its current media/page resources, and arm the
+/// bounded idle destroy. Used by `close_preview` and every launcher-hide path
+/// (blur-to-hide, hotkey toggle, Esc). Idempotent.
 pub fn teardown_preview(app: &AppHandle) {
+    PREVIEW_ACTIVITY.fetch_add(1, Ordering::SeqCst);
     // Invalidate the readiness handshake before the asynchronous navigation so
     // a concurrent show cannot reuse a page that is already leaving.
     if let Some(state) = app.try_state::<PreviewState>() {
@@ -1077,6 +1237,7 @@ pub fn teardown_preview(app: &AppHandle) {
     if had_window {
         // Every teardown path clears the launcher's Esc-priority mirror.
         let _ = app.emit_to(MAIN_WINDOW, "preview-closed", ());
+        schedule_preview_destroy_if_idle(app);
     }
 }
 

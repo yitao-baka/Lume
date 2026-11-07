@@ -9,20 +9,53 @@
 
 /** Render size — matches appicon's `ICON_PX`. */
 const ICON_PX = 256;
+const WINDOW_ICON_CACHE_MAX_ENTRIES = 32;
+const WINDOW_ICON_CACHE_MAX_BYTES = 4 * 1024 * 1024;
 
 /** Per-URL cache: the raise path calls this on every activation of a
  * detached mode, and the pixels only change when the plugin is reloaded. */
-const cache = new Map<string, string | undefined>();
+const cache = new Map<string, { value: string | undefined; bytes: number; lastUsed: number }>();
+let cacheBytes = 0;
+let accessSeq = 0;
+
+function evictToBudget(): void {
+  while (cache.size > WINDOW_ICON_CACHE_MAX_ENTRIES || cacheBytes > WINDOW_ICON_CACHE_MAX_BYTES) {
+    let oldestUrl: string | undefined;
+    let oldest = Number.POSITIVE_INFINITY;
+    for (const [url, entry] of cache) {
+      if (entry.lastUsed < oldest) {
+        oldest = entry.lastUsed;
+        oldestUrl = url;
+      }
+    }
+    if (!oldestUrl) break;
+    cacheBytes -= cache.get(oldestUrl)?.bytes ?? 0;
+    cache.delete(oldestUrl);
+  }
+}
 
 /** Rasterize one plugin icon (an asset URL from `resolvePluginIcon`) into a
  * base64 PNG. `undefined` when it cannot be rasterized (no icon, missing or
  * broken file) — the detached window then keeps the Lume theme icon. */
 export function rasterizePluginIcon(url: string): Promise<string | undefined> {
-  if (cache.has(url)) return Promise.resolve(cache.get(url));
+  const cached = cache.get(url);
+  if (cached) {
+    cached.lastUsed = ++accessSeq;
+    return Promise.resolve(cached.value);
+  }
   return rasterize(url).then((png) => {
-    cache.set(url, png);
+    const bytes = png?.length ?? 0;
+    cache.set(url, { value: png, bytes, lastUsed: ++accessSeq });
+    cacheBytes += bytes;
+    evictToBudget();
     return png;
   });
+}
+
+/** A detached window closed: release its rasterized taskbar icons. */
+export function clearPluginWindowIconCache(): void {
+  cache.clear();
+  cacheBytes = 0;
 }
 
 async function rasterize(url: string): Promise<string | undefined> {

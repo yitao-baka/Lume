@@ -163,10 +163,10 @@ pub fn run() {
             // from createSignal defaults — no async IPC race on first paint.
             let current = app.state::<settings::SettingsState>().current();
             let config_json = serde_json::to_string(&current).unwrap_or_else(|_| "{}".into());
-            // Rust-rendered shell text (window titles, tray, notifications)
-            // follows the configured language, else the system UI language.
-            let ui_lang = i18n::UiLang::from_setting(&current.appearance.language);
-            let init_script = format!("window.__LUME_CONFIG__ = {config_json};");
+            let init_script = format!(
+                "window.__LUME_CONFIG__ = {config_json};{}",
+                window::debug_flag_script()
+            );
 
             // Clipboard, pins and recent must be managed before the first
             // webview exists: the hidden launcher can invoke these commands as
@@ -217,37 +217,6 @@ pub fn run() {
             if let Some(mw) = app.get_webview_window("main") {
                 webview_guard::install(&mw);
                 window::apply_launcher_chrome(&mw, &current.appearance);
-            }
-
-            // Satellite preview window (docs/ROADMAP_HISTORY.md #15): all clipboard previews
-            // (text / text files / images / audio / video) render here, docked
-            // flush to the launcher's right edge. The native window is retained
-            // to avoid runtime creation, but its page starts on a same-origin
-            // zero-script blank page; `show_preview` navigates to preview.html
-            // only when content exists.
-            // It is non-activating from creation (`focused(false)` plus
-            // `focusable(false)` → WS_EX_NOACTIVATE), so it neither steals
-            // startup focus nor takes focus when clicked later.
-            tauri::WebviewWindowBuilder::new(
-                app,
-                "preview",
-                tauri::WebviewUrl::App("blank.html".into()),
-            )
-            .title(texts::window_title_preview(ui_lang))
-            .inner_size(320.0, 480.0) // real size set on every dock
-            .resizable(false)
-            .decorations(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .focused(false)
-            .focusable(false)
-            .visible(false)
-            .background_color(tauri::window::Color(30, 30, 32, 255))
-            .disable_drag_drop_handler()
-            .build()?;
-            if let Some(pv) = app.get_webview_window("preview") {
-                // suppress the documented 1px DWM white border.
-                window::clear_dwm_border(&pv);
             }
 
             // Build the System32 preset DB once (background), then refresh the
@@ -384,6 +353,7 @@ pub fn run() {
             window::hide_launcher,
             window::open_settings,
             window::close_settings,
+            window::settings_renderer_ready,
             window::window_minimize,
             window::window_toggle_maximize,
             window::window_toggle_pin,

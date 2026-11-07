@@ -235,6 +235,7 @@ export class LumeSession {
     runDir,
     instanceId,
     readyTimeoutMs = 20000,
+    extraEnv = {},
   }) {
     installProcessCleanup();
     const port = await freePort();
@@ -251,6 +252,7 @@ export class LumeSession {
       cwd: runtimeDir,
       env: {
         ...process.env,
+        ...extraEnv,
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: browserArgs,
         // A running installed Lume can already own the default WebView2 user
         // data folder. A private profile keeps this process's browser (and the

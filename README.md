@@ -32,8 +32,10 @@ The goal is:
 - Satellite preview — text / text-file / image / audio / video / PDF previews
   render in a separate non-activating window docked to the launcher's right
   edge, so the main renderer never holds decoded bitmaps / media buffers
-- WebView2 idle-memory trimming — hidden windows' renderers swap their memory
-  out (`SetMemoryUsageTargetLevel(Low)`), cutting the idle baseline ~26%
+- WebView2 memory lifecycle — hidden targets use
+  `SetMemoryUsageTargetLevel(Low)`; settings, preview and plugin logic hosts are
+  created on demand, idle targets are destroyed, the live page budget is four,
+  and model / session-frame / diagnostic / icon caches are bounded
 - Auto-hide on focus loss
 - i18n — Simplified Chinese / Traditional Chinese / English
 - Pinyin search for Chinese app names
@@ -153,8 +155,9 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
 - Auto-sizing window — height fits the results, anchored to the preset until
   the user drags the window (fixed height in clipboard mode); 展开 fills the
   monitor work area
-- WebView2 idle-memory trimming — hidden windows' renderers swap their memory
-  out (`SetMemoryUsageTargetLevel(Low)`), then restore before showing
+- WebView2 memory lifecycle — hidden targets trim and restore through
+  `SetMemoryUsageTargetLevel`, while auxiliary windows and plugin logic start
+  on demand and expire after bounded idle periods
 - i18n — Simplified Chinese / Traditional Chinese / English
 - Real app icons — `IShellItemImageFactory`, in-memory cached, not in SQL
 - Pinyin search — Chinese app names match by pinyin (`kuake`/`kk` → 夸克)

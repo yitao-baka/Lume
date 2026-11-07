@@ -168,6 +168,9 @@ const expectField = async (id, want, tries = 20) => {
 const sessionTap = () => m.evalJs(`JSON.stringify(window.__sessionFrames ?? [])`);
 
 await invoke("set_plugin_enabled", { id: "state-probe", enabled: true });
+// The fixture declares keep_session=true for idle-reset coverage. This test is
+// specifically about the evictable LRU path, so pin the user override to false.
+await invoke("set_plugin_keep_session", { id: "state-probe", keep: false });
 await sleep(1200);
 await invoke("toggle_launcher");
 await sleep(1500);
@@ -188,7 +191,7 @@ check("A: seeded js counter = 7", await expectField("jsn", "7", 8), String(await
 await type("src:pre-lru");
 check("A: seeded #src = pre-lru", await expectField("src", "pre-lru", 8), String(await readField("src")));
 
-// ═══ B. overflow the 8-page cap exactly once ═══
+// ═══ B. overflow the 4-page cap as newer pages arrive ═══
 for (const f of FILLERS) {
   const ok = await clickPill(`LRU Fill ${FILLERS.indexOf(f) + 1}`);
   check(`B: visit ${f}`, ok);
@@ -197,13 +200,19 @@ for (const f of FILLERS) {
 await sleep(2500);
 const hosts = await m.evalJs(`JSON.stringify([...document.querySelectorAll(".mode-host")].map((h) => h.dataset.mode))`);
 const hostList = JSON.parse(hosts);
-check("B: cap holds (8 live hosts)", hostList.length === 8, hosts);
+check("B: cap holds (4 live hosts)", hostList.length === 4, hosts);
 check("B: LRU victim state-probe unmounted", !hostList.includes("state-probe"), hosts);
-check("B: every newer page survives", FILLERS.every((f) => hostList.includes(f)), hosts);
+check("B: newest fillers survive", FILLERS.slice(-3).every((f) => hostList.includes(f)), hosts);
 let tap = JSON.parse(await sessionTap());
 const evicts = tap.filter((e) => e.op === "evict");
-check("B: exactly one eviction for one overflow", evicts.length === 1, JSON.stringify(evicts));
+check("B: each overflow evicts one page", evicts.length === 5, JSON.stringify(evicts));
 check("B: victim evicted with a view snapshot", evicts[0]?.id === "state-probe" && tap.some((e) => e.op === "put" && e.id === "state-probe" && e.frame === "view" && e.ok), JSON.stringify(tap));
+const frameStats = await m.evalJs(`window.__sessionFrameStats?.() ?? null`);
+check(
+  "B: session frames stay under the global byte budget",
+  frameStats?.budget === 4 * 1024 * 1024 && frameStats?.bytes <= frameStats?.budget,
+  JSON.stringify(frameStats),
+);
 
 // ═══ C. re-enter with a NEW payload — it must beat the stale frame ═══
 check("C: back to home", await clickPill("导航"));

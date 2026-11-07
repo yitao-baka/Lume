@@ -14,8 +14,11 @@ let externalPdfPath = "";
 
 export default {
   id: "preview",
-  description: "Blank startup, core PDF/preview lifecycle and plugin permission gate",
+  description: "Lazy preview creation, idle destroy/recreate, core PDF preview and plugin permission gate",
   tags: ["ui", "plugins", "preview"],
+  // The production default is ten minutes; the isolated harness verifies the
+  // same destroy/recreate path with a short debug-only timeout.
+  env: { LUME_PREVIEW_IDLE_DESTROY_SECS: "2" },
   fixtures: [
     { source: "examples/plugins/host-tools", target: "plugins/host-tools" },
   ],
@@ -46,13 +49,12 @@ export default {
   async run(t) {
     const startupPages = await t.session.targets();
     t.check(
-      "preview renderer starts on the zero-script blank page without loading preview.html",
-      startupPages.some(
-        (target) => target.type === "page" && target.url.includes("/blank.html"),
-      ) &&
-        !startupPages.some(
-          (target) => target.type === "page" && target.url.includes("/preview.html"),
-        ),
+      "preview webview is not created before the first preview request",
+      !startupPages.some(
+        (target) =>
+          target.type === "page" &&
+          (target.url.includes("/preview.html") || target.url.includes("/blank.html")),
+      ),
       startupPages.map((target) => ({ type: target.type, url: target.url })),
     );
     await t.ensureLauncherVisible();
@@ -74,6 +76,16 @@ export default {
       "core preview closes cleanly",
       (await t.invoke("plugin:window|is_visible", { label: "preview" })) === false,
     );
+    await t.sleep(2500);
+    const destroyed = await t.evaluate(`window.__TAURI_INTERNALS__
+      .invoke("plugin:window|is_visible", { label: "preview" })
+      .then(() => false)
+      .catch(() => true)`);
+    t.check("idle preview webview is destroyed after its warm window", destroyed === true, destroyed);
+
+    const recreatedVisible = await showPreview({ req: { kind: "text", content: "preview recreate probe" } });
+    t.check("a later request recreates the preview webview", recreatedVisible === true, recreatedVisible);
+    await t.invoke("close_preview");
 
     const denied = await t.evaluate(`window.__TAURI_INTERNALS__.invoke("show_preview", {
       pluginId: "preview-denied",

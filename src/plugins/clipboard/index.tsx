@@ -12,7 +12,7 @@ import type { AppEntry, PreviewReq } from "../../launcher/types";
 import { clipboardIconSource } from "../../launcher/clipData";
 import type { LauncherPlugin, ModeInstance, ModeKeyContext, PageRow, PluginServices } from "../types";
 import { createClipboardPageService } from "../../page-services/clipboard/service";
-import { rememberPageModel } from "../registry";
+import { registerPageRuntimeModelSource } from "../registry";
 import { ClipboardListPresenter } from "../../presenters/clipboard-list/ClipboardListPresenter";
 import { ClipboardCompactPresenter } from "../../presenters/clipboard-compact/ClipboardCompactPresenter";
 
@@ -32,13 +32,14 @@ export function createClipboardPlugin(services: PluginServices, host: ClipboardH
   const cfg = (window as any).__LUME_CONFIG__ as SettingsData | undefined;
   const [presenterId, setPresenterId] = createSignal(cfg?.pages?.presenters?.clipboard || "clipboard-list");
   const [model, setModel] = createSignal<PageModel>();
+  registerPageRuntimeModelSource("clipboard", model);
   const page = createClipboardPageService({ services, icons: host.icons });
   const session = new PageSession({
     pageId: "clipboard",
     schema: CLIPBOARD_SCHEMA,
     presenters: CLIPBOARD_PRESENTERS,
     presenterId: presenterId(),
-    onModel: (next) => { setModel(next); rememberPageModel("clipboard", next); },
+    onModel: setModel,
   });
   void session.start(page.service);
   createEffect(() => session.publish(page.snapshot()));

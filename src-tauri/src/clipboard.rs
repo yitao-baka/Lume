@@ -1,14 +1,14 @@
 //! Clipboard history: capture, persist, search.
 //!
-//! A background thread polls the Windows clipboard sequence number
-//! (`GetClipboardSequenceNumber`) and, on change, captures text, file lists
-//! or images and records them in a SQLite database. The launcher's clipboard
-//! mode searches that history; `copy_clipboard` writes a selection back to
-//! the system clipboard.
+//! A message-only window listens for `WM_CLIPBOARDUPDATE`, then reads the
+//! Windows clipboard sequence number and captures text, file lists or images
+//! into SQLite. The launcher's clipboard mode searches that history;
+//! `copy_clipboard` writes a selection back to the system clipboard.
 //!
-//! The listener is a 250 ms sequence-number poll rather than a
-//! clipboard-format-listener window: it needs no hidden HWND/WndProc and its
-//! idle cost is negligible (one system call every quarter second).
+//! The normal path is event-driven and consumes no CPU while idle. If the
+//! clipboard-format listener cannot be registered, the same sequence check
+//! falls back to a bounded low-frequency poll so history is never silently
+//! lost.
 //!
 //! Storage (docs/ROADMAP_HISTORY.md #12): the DB stores only *references*, never the copied
 //! data's original form. Text rows keep the text inline; image rows keep a
@@ -20,6 +20,7 @@
 //! sort to the top and are exempt from pruning.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Cursor;
@@ -32,15 +33,24 @@ use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
-use windows::core::BOOL;
-use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND, POINT};
-use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData,
-    GetClipboardFormatNameW, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
+use windows::core::{BOOL, PCWSTR};
+use windows::Win32::Foundation::{
+    GlobalFree, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM,
 };
+use windows::Win32::Graphics::Gdi::HBRUSH;
+use windows::Win32::System::DataExchange::{
+    AddClipboardFormatListener, CloseClipboard, EmptyClipboard, EnumClipboardFormats,
+    GetClipboardData, GetClipboardFormatNameW, IsClipboardFormatAvailable, OpenClipboard,
+    RemoveClipboardFormatListener, SetClipboardData,
+};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::Shell::{DragQueryFileW, DROPFILES, HDROP};
-use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, IsWindow,
+    RegisterClassExW, TranslateMessage, HCURSOR, HICON, HWND_MESSAGE, MSG, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WNDCLASSEXW, WNDCLASS_STYLES, WM_CLIPBOARDUPDATE,
+};
 
 /// Clipboard drop format (files/folders copied from Explorer).
 const CF_HDROP: u32 = 15;
@@ -59,8 +69,10 @@ impl Drop for OpenClipboardGuard {
     }
 }
 
-/// How often the listener checks the clipboard sequence number.
-const POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// Fallback interval when `AddClipboardFormatListener` is unavailable. This is
+/// deliberately much slower than the old 250 ms poll and only runs after the
+/// event-driven path failed to register.
+const FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Display label stored for image rows.
 const IMAGE_LABEL: &str = "Image";
 /// Subfolder under the data dir holding image PNGs.
@@ -1480,31 +1492,144 @@ unsafe fn read_hdrop() -> Option<Vec<String>> {
     (!paths.is_empty()).then_some(paths)
 }
 
-/// Poll the clipboard sequence number and store new content on change. Reads
-/// the live clipboard settings on each change so toggles take effect without
+thread_local! {
+    /// The message-only window and its WndProc live on one dedicated thread;
+    /// keeping the AppHandle here avoids a process-global raw pointer.
+    static CLIPBOARD_NOTIFY_APP: RefCell<Option<AppHandle>> = const { RefCell::new(None) };
+}
+
+/// Read and store the current clipboard content when its sequence changed.
+/// Reads the live settings on each notification so toggles take effect without
 /// a restart.
-fn spawn_listener(app: AppHandle) {
-    std::thread::spawn(move || loop {
-        let seq =
-            unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() };
-        let state = app.state::<ClipboardState>();
-        let last = state.last_seq.load(Ordering::Relaxed);
-        if seq != last {
-            state.last_seq.store(seq, Ordering::Relaxed);
-            if !should_skip_sequence(
-                seq,
-                state.self_write_seq.load(Ordering::SeqCst),
-                state.self_write_pending.load(Ordering::SeqCst),
-            ) {
-                let clip = app
-                    .state::<crate::settings::SettingsState>()
-                    .current()
-                    .clipboard;
-                capture(&state, &clip);
+fn check_clipboard(app: &AppHandle) {
+    let seq = unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() };
+    let state = app.state::<ClipboardState>();
+    let last = state.last_seq.load(Ordering::Relaxed);
+    if seq == last {
+        return;
+    }
+    state.last_seq.store(seq, Ordering::Relaxed);
+    if should_skip_sequence(
+        seq,
+        state.self_write_seq.load(Ordering::SeqCst),
+        state.self_write_pending.load(Ordering::SeqCst),
+    ) {
+        return;
+    }
+    let clip = app
+        .state::<crate::settings::SettingsState>()
+        .current()
+        .clipboard;
+    capture(&state, &clip);
+}
+
+fn run_fallback_listener(app: &AppHandle) -> ! {
+    loop {
+        std::thread::sleep(FALLBACK_POLL_INTERVAL);
+        check_clipboard(app);
+    }
+}
+
+unsafe extern "system" fn clipboard_wnd_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == WM_CLIPBOARDUPDATE {
+        CLIPBOARD_NOTIFY_APP.with(|slot| {
+            if let Some(app) = slot.borrow().as_ref() {
+                check_clipboard(app);
             }
+        });
+        return LRESULT(0);
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+/// Dedicated thread: a message-only HWND receives `WM_CLIPBOARDUPDATE` and the
+/// thread parks in `GetMessageW` while idle. A failed window/listener setup
+/// degrades to the bounded fallback poll rather than losing history.
+fn listen_for_clipboard(app: AppHandle) {
+    CLIPBOARD_NOTIFY_APP.with(|slot| *slot.borrow_mut() = Some(app.clone()));
+    check_clipboard(&app);
+
+    unsafe {
+        let class_name = windows::core::w!("LumeClipboardListener");
+        let hinst = match GetModuleHandleW(None) {
+            Ok(module) => HINSTANCE(module.0),
+            Err(error) => {
+                eprintln!("[clipboard] GetModuleHandleW failed: {error}; using fallback poll");
+                run_fallback_listener(&app);
+            }
+        };
+        let class = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            style: WNDCLASS_STYLES(0),
+            lpfnWndProc: Some(clipboard_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinst,
+            hIcon: HICON::default(),
+            hCursor: HCURSOR::default(),
+            hbrBackground: HBRUSH::default(),
+            lpszMenuName: PCWSTR::null(),
+            lpszClassName: class_name,
+            hIconSm: HICON::default(),
+        };
+        if RegisterClassExW(&class) == 0 {
+            eprintln!("[clipboard] RegisterClassExW failed; using fallback poll");
+            run_fallback_listener(&app);
         }
-        std::thread::sleep(POLL_INTERVAL);
-    });
+        let hwnd = match CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            class_name,
+            PCWSTR::null(),
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            Some(hinst),
+            None,
+        ) {
+            Ok(hwnd) if !hwnd.0.is_null() => hwnd,
+            Ok(_) => {
+                eprintln!("[clipboard] message-only window was null; using fallback poll");
+                run_fallback_listener(&app);
+            }
+            Err(error) => {
+                eprintln!("[clipboard] CreateWindowExW failed: {error}; using fallback poll");
+                run_fallback_listener(&app);
+            }
+        };
+        if let Err(error) = AddClipboardFormatListener(hwnd) {
+            eprintln!("[clipboard] AddClipboardFormatListener failed: {error}; using fallback poll");
+            run_fallback_listener(&app);
+        }
+
+        eprintln!("[clipboard] listening for WM_CLIPBOARDUPDATE");
+        let mut msg = std::mem::zeroed::<MSG>();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        let _ = RemoveClipboardFormatListener(hwnd);
+    }
+
+    CLIPBOARD_NOTIFY_APP.with(|slot| *slot.borrow_mut() = None);
+}
+
+/// Start the event-driven clipboard listener.
+fn spawn_listener(app: AppHandle) {
+    if let Err(error) = std::thread::Builder::new()
+        .name("clipboard-listener".into())
+        .spawn(move || listen_for_clipboard(app))
+    {
+        eprintln!("[clipboard] failed to start listener thread: {error}");
+    }
 }
 
 // ---------------------------------------------------------------------------

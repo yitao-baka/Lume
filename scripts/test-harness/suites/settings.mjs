@@ -15,9 +15,14 @@ const EXPECTED_SECTIONS = [
 
 export default {
   id: "settings",
-  description: "Settings window navigation, search surface and clipboard pane",
+  description: "Lazy settings lifecycle, navigation, search surface and clipboard pane",
   tags: ["ui", "settings"],
   async run(t) {
+    const settingsPresentAtStartup = await t.main.evaluate(
+      'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "settings" }).then(() => true).catch(() => false)',
+    );
+    t.equal("settings webview is absent until first open", settingsPresentAtStartup, false);
+
     const settings = await t.openSettings();
     const settingsContext = {
       evaluate: (expression, options) => settings.evaluate(expression, options),
@@ -281,11 +286,40 @@ export default {
     await t.sleep(100);
     await t.screenshot("settings-search-index", settings);
 
+    await settingsContext.evaluate('window.__settingsWarmProbe = "first"; true');
     await t.invoke("close_settings");
     await t.waitFor(
       'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "settings" }).then((visible) => !visible)',
       5000,
     );
     t.check("close_settings hides the settings window", true);
+
+    const reopenedSettings = await t.openSettings();
+    const warmReopen = await reopenedSettings.evaluate('window.__settingsWarmProbe');
+    t.equal("recent settings reopen reuses the warm page", warmReopen, "first");
+    await t.invoke("close_settings");
+
+    let reopenCyclesOk = true;
+    for (let cycle = 0; cycle < 10; cycle++) {
+      await t.invoke("open_settings");
+      await t.waitFor(
+        'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "settings" })',
+        5000,
+      );
+      const visible = await reopenedSettings.waitFor(
+        'document.visibilityState === "visible" && !!document.querySelector(".settings-page-content")',
+        5000,
+      );
+      await t.invoke("close_settings");
+      await t.waitFor(
+        'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "settings" }).then((value) => !value)',
+        5000,
+      );
+      if (!visible) {
+        reopenCyclesOk = false;
+        break;
+      }
+    }
+    t.check("10 settings open/close cycles preserve the page and visibility", reopenCyclesOk);
   },
 };

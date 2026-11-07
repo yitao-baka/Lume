@@ -14,7 +14,7 @@ let externalPdfPath = "";
 
 export default {
   id: "preview",
-  description: "Core preview window, permission gate and plugin preview path",
+  description: "Blank startup, core PDF/preview lifecycle and plugin permission gate",
   tags: ["ui", "plugins", "preview"],
   fixtures: [
     { source: "examples/plugins/host-tools", target: "plugins/host-tools" },
@@ -44,6 +44,17 @@ export default {
     writeFileSync(externalPdfPath, PDF_PROBE);
   },
   async run(t) {
+    const startupPages = await t.session.targets();
+    t.check(
+      "preview renderer starts on the zero-script blank page without loading preview.html",
+      startupPages.some(
+        (target) => target.type === "page" && target.url.includes("/blank.html"),
+      ) &&
+        !startupPages.some(
+          (target) => target.type === "page" && target.url.includes("/preview.html"),
+        ),
+      startupPages.map((target) => ({ type: target.type, url: target.url })),
+    );
     await t.ensureLauncherVisible();
 
     const showPreview = async (args) => t.evaluate(`window.__TAURI_INTERNALS__.invoke("hide_launcher")
@@ -157,12 +168,48 @@ export default {
     });
     t.check("core PDF preview accepts a granted external file", pdfVisible === true, pdfVisible);
     const pdfPreview = await t.session.preview();
-    const pdfCanvas = await pdfPreview.connection.waitFor(
-      `(() => { const c = document.querySelector(".preview-pdf-canvas"); return c && c.width > 0 && c.height > 0 ? { width: c.width, height: c.height } : null; })()`,
-      12000,
-    );
+    let pdfCanvas;
+    try {
+      pdfCanvas = await pdfPreview.connection.waitFor(
+        `(() => { const c = document.querySelector(".preview-pdf-canvas"); return c && c.width > 0 && c.height > 0 ? { width: c.width, height: c.height } : null; })()`,
+        12000,
+      );
+    } catch (error) {
+      const diagnostic = await pdfPreview.connection.evaluate(`(() => ({
+        url: location.href,
+        visibility: document.visibilityState,
+        canvas: (() => { const c = document.querySelector(".preview-pdf-canvas"); return c ? { width: c.width, height: c.height } : null; })(),
+        error: document.querySelector(".preview-error")?.textContent ?? "",
+        lastError: window.__pdfLastError ?? "",
+        placeholder: document.querySelector(".preview-placeholder")?.textContent ?? "",
+        text: document.body.innerText.slice(0, 500),
+      }))()`);
+      t.log("PDF diagnostic", JSON.stringify(diagnostic));
+      throw error;
+    }
     t.check("core PDF preview renders the first page", pdfCanvas.width > 0 && pdfCanvas.height > 0, pdfCanvas);
     await t.screenshot("preview-pdf", pdfPreview.connection);
     await t.invoke("close_preview");
+
+    let previewCyclesOk = true;
+    for (let cycle = 0; cycle < 10; cycle++) {
+      await t.invoke("show_preview", {
+        req: { kind: "text", content: `preview cycle ${cycle}` },
+      });
+      const shown = await t.waitFor(
+        'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "preview" })',
+        5000,
+      );
+      await t.invoke("close_preview");
+      const hidden = await t.waitFor(
+        'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "preview" }).then((value) => !value)',
+        5000,
+      );
+      if (!shown || !hidden) {
+        previewCyclesOk = false;
+        break;
+      }
+    }
+    t.check("10 preview open/close cycles preserve native visibility", previewCyclesOk);
   },
 };

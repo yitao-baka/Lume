@@ -198,6 +198,24 @@ const logicPending = new Map<number, PendingLogicCall>();
 let logicCallSeq = 0;
 /** 已向宿主发过 load 的插件（宿主 ready 时重发；unload 时移除）。 */
 const logicLoadedIds = new Set<string>();
+/** Empty hosts stay warm briefly for reload/burst navigation, then are torn
+ * down by Rust so their renderer and supervisor page stop costing memory. */
+const LOGIC_HOST_IDLE_CLOSE_MS = 30_000;
+let logicHostCloseTimer: number | undefined;
+
+function cancelLogicHostIdleClose(): void {
+  if (logicHostCloseTimer !== undefined) window.clearTimeout(logicHostCloseTimer);
+  logicHostCloseTimer = undefined;
+}
+
+function scheduleLogicHostIdleClose(): void {
+  cancelLogicHostIdleClose();
+  logicHostCloseTimer = window.setTimeout(() => {
+    logicHostCloseTimer = undefined;
+    if (logicLoadedIds.size > 0 || logicPending.size > 0) return;
+    void invoke("plugin_logic_host_close").catch(() => {});
+  }, LOGIC_HOST_IDLE_CLOSE_MS);
+}
 
 // ── 插件熔断（#32.4）──
 //
@@ -342,6 +360,7 @@ function pushLogicLoad(id: string): void {
   const manifest = manifests().find((item) => item.id === id);
   if (!isEnabled(id) || manifest?.apiError) return;
   if (logicOffline.has(id)) return;
+  cancelLogicHostIdleClose();
   logicPendingReady.add(id); // 帧就绪信号（logic-loaded）到达前 hook 快速失败
   logicLoadedIds.add(id);
   void invoke("plugin_logic_host_ensure")
@@ -755,6 +774,7 @@ export async function unloadDiskPlugin(id: string): Promise<boolean> {
   // 否则紧随其后的 navBars/onSettings 拉取可能被 post 到正在销毁的旧帧
   // （无回执 → 8s 超时 → 重载把插件误判进熔断）。
   await invoke("plugin_logic_push", { id, kind: "unload", payload: {} }).catch(() => {});
+  scheduleLogicHostIdleClose();
   pendingLogicSettings.delete(id);
   detachedSuppliers.delete(id);
   themePosters.delete(id);

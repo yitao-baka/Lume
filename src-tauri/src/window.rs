@@ -8,15 +8,16 @@
 //! Global hotkey module (v0.1) and the frontend Esc key both call them.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::Deserialize;
 
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, State,
-    WebviewWindow,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
-use windows::Win32::Foundation::COLORREF;
+use windows::Win32::Foundation::{COLORREF, HWND};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
 use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -36,6 +37,12 @@ const PREVIEW_GAP_LOGICAL: f64 = 8.0;
 /// never cross this threshold, so the hotkey show path stays instant; a
 /// long-hidden launcher releases its memory for reuse elsewhere.
 const MAIN_IDLE_TRIM_SECS: u64 = 10;
+/// A hidden settings page is retained briefly for instant reopen, then its
+/// renderer is destroyed. The next `open_settings` rebuilds it from current
+/// settings; the activity epoch cancels a stale timer after a reopen.
+const SETTINGS_IDLE_DESTROY_SECS: u64 = 15 * 60;
+static SETTINGS_ACTIVITY: AtomicU64 = AtomicU64::new(0);
+static SETTINGS_CREATE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Last foreground window HWND captured before the launcher is shown — used by
 /// the clipboard auto-paste feature to send content back to the right window.
@@ -137,14 +144,14 @@ pub fn is_hide_suppressed(focus: &FocusState) -> bool {
     }
 }
 
-// ── WebView2 idle memory trimming ─────────────────────────────────────────────
-// Lume keeps three webviews resident (main / settings / preview) even when
-// hidden, so each owns a renderer process that never frees its working set.
-// WebView2's official `MemoryUsageTargetLevel = Low` swaps a webview's idle
-// memory out to the paging file; `Normal` must be set again manually before the
-// window becomes active (no automatic restore). tauri doesn't expose the API on
-// the builder, but `Webview::controller()` yields the COM controller — same
-// call wry makes internally (wry-0.55.1 src/webview2/mod.rs `set_memory_usage_level`).
+// ── WebView2 visibility and idle memory ──────────────────────────────────────
+// The launcher and blank preview remain resident; settings and the plugin logic
+// host are created on demand. Hidden pages explicitly set the WebView2
+// controller invisible so browser timers/RAF see the correct page lifecycle.
+// `MemoryUsageTargetLevel = Low` additionally swaps idle working sets out;
+// `Normal` is restored manually before activation. Tauri does not expose either
+// controller call on the builder, so this module reaches the same COM
+// controller Wry owns.
 
 /// Set one webview's memory usage target level. Any failure (missing webview,
 /// too-old runtime for `ICoreWebView2_19`) degrades silently to "no trimming".
@@ -153,58 +160,103 @@ pub fn is_hide_suppressed(focus: &FocusState) -> bool {
 /// (background trim threads included). The callback is queued, not synchronous;
 /// fine for memory trimming, which is never latency-critical.
 pub fn set_memory_target(app: &AppHandle, label: &str, low: bool) {
+    let Some(window) = app.get_webview_window(label) else {
+        return;
+    };
+    let _ = window.as_ref().with_webview(move |pw| {
+        set_controller_memory_level(&pw, low);
+    });
+}
+
+/// Set both halves of the resource state that a top-level HWND hide/show does
+/// not cover: `ICoreWebView2Controller::SetIsVisible` (page visibility, timer /
+/// RAF behavior) and `MemoryUsageTargetLevel` (working-set residency).
+///
+/// Wry sets the controller visibility only when the webview is first created;
+/// Tauri's later `Window::show()/hide()` operates on the parent HWND alone.
+/// Without this bridge `document.visibilityState` stays `visible` while the
+/// launcher is hidden. Calls are dispatched to the main thread and are safe
+/// from async command/background paths.
+pub fn set_webview_resource_state(app: &AppHandle, label: &str, visible: bool, low: bool) {
+    let Some(window) = app.get_webview_window(label) else {
+        return;
+    };
+    let _ = window.as_ref().with_webview(move |pw| {
+        let controller = pw.controller();
+        let _ = unsafe { controller.SetIsVisible(visible) };
+        set_controller_memory_level(&pw, low);
+    });
+}
+
+/// Reveal a non-activating webview window. Controller visibility, Normal
+/// residency and `SW_SHOWNOACTIVATE` happen in one main-thread callback, so the
+/// native window can never become visible with its WebView still hidden.
+pub fn show_webview_no_activate(app: &AppHandle, label: &str) -> Result<(), String> {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| format!("{label} window not found"))?;
+    let raw_hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as isize;
+    window
+        .as_ref()
+        .with_webview(move |pw| {
+            let controller = pw.controller();
+            let _ = unsafe { controller.SetIsVisible(true) };
+            set_controller_memory_level(&pw, false);
+            let _ = unsafe { ShowWindow(HWND(raw_hwnd as _), SW_SHOWNOACTIVATE) };
+        })
+        .map_err(|error| error.to_string())
+}
+
+fn set_controller_memory_level(pw: &tauri::webview::PlatformWebview, low: bool) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
         COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL, ICoreWebView2_19,
     };
     use windows::core::Interface;
-    let Some(window) = app.get_webview_window(label) else {
+    let Ok(core) = (unsafe { pw.controller().CoreWebView2() }) else {
         return;
     };
-    let _ = window.as_ref().with_webview(move |pw| {
-        let Ok(core) = (unsafe { pw.controller().CoreWebView2() }) else {
-            return;
-        };
-        let Ok(core19) = core.cast::<ICoreWebView2_19>() else {
-            return;
-        };
-        let level = if low {
-            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
-        } else {
-            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
-        };
-        let _ = unsafe { core19.SetMemoryUsageTargetLevel(level) };
-    });
+    let Ok(core19) = core.cast::<ICoreWebView2_19>() else {
+        return;
+    };
+    let level = if low {
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+    } else {
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+    };
+    let _ = unsafe { core19.SetMemoryUsageTargetLevel(level) };
 }
 
-/// Trim the two auxiliary windows (settings / preview) by their current
-/// visibility: hidden → `Low`, visible → `Normal`. Called after every show/hide
-/// transition; the always-hidden renderers release their idle memory. The main
-/// launcher is handled separately (`restore_main` / `trim_main_when_idle`) so
-/// the hotkey show path never pays a swap-back.
+/// Synchronize auxiliary controller visibility/residency with the native HWND:
+/// hidden → invisible + `Low`, visible → visible + `Normal`. Missing settings
+/// windows are skipped (they are created lazily). The main launcher is handled
+/// separately (`restore_main` / `trim_main_when_idle`) so its hotkey path never
+/// pays a swap-back.
 pub fn sync_aux_memory_targets(app: &AppHandle) {
-    // plugin-logic-host永远隐藏 —— 恒定低水位。
-    set_memory_target(app, "plugin-logic-host", true);
+    // plugin-logic-host never shows: controller-invisible and low from creation.
+    set_webview_resource_state(app, "plugin-logic-host", false, true);
     for label in [SETTINGS_WINDOW, PREVIEW_WINDOW] {
         let visible = app
             .get_webview_window(label)
             .and_then(|w| w.is_visible().ok())
             .unwrap_or(false);
-        set_memory_target(app, label, !visible);
+        set_webview_resource_state(app, label, visible, !visible);
     }
 }
 
 /// Set the main launcher to `Low` immediately. Used at startup — the launcher
 /// starts hidden and stays so until the first hotkey, which restores `Normal`.
 pub fn trim_main_now(app: &AppHandle) {
-    set_memory_target(app, MAIN_WINDOW, true);
+    set_webview_resource_state(app, MAIN_WINDOW, false, true);
 }
 
 /// Restore the main launcher to `Normal` **before** showing it, so the
 /// browser can swap the page's memory back while the window is still hidden —
 /// the hotkey show doesn't stall on the first frame.
 pub fn restore_main(app: &AppHandle) {
-    set_memory_target(app, MAIN_WINDOW, false);
+    set_webview_resource_state(app, MAIN_WINDOW, true, false);
 }
 
 /// Swap the main launcher's idle memory out only once it has stayed hidden for
@@ -385,6 +437,9 @@ pub fn hide_main(app: &AppHandle) -> Result<(), String> {
         .get_webview_window(MAIN_WINDOW)
         .ok_or_else(|| "main window not found".to_string())?;
     window.hide().map_err(|e| e.to_string())?;
+    // Tauri hides only the parent HWND. Tell WebView2 too, otherwise page
+    // timers/RAF continue under `document.visibilityState === "visible"`.
+    set_webview_resource_state(app, MAIN_WINDOW, false, false);
     let _ = window.emit("launcher-hidden", ());
     // The satellite preview lives and dies with the launcher.
     teardown_preview(app);
@@ -399,28 +454,136 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
     hide_main(&app)
 }
 
-/// Open (show + focus) the settings window.
+/// Create the settings webview on first use. The page is deliberately absent
+/// from startup so an unused settings surface costs no renderer/DOM/JS memory.
+fn ensure_settings_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    let _guard = SETTINGS_CREATE_LOCK
+        .lock()
+        .map_err(|_| "settings window creation lock poisoned".to_string())?;
+    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW) {
+        return Ok(window);
+    }
+
+    let settings = crate::settings::snapshot(&app.state::<crate::settings::SettingsState>());
+    let config_json = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".into());
+    let init_script = format!("window.__LUME_CONFIG__ = {config_json};");
+    let lang = crate::i18n::UiLang::from_setting(&settings.appearance.language);
+    let window = WebviewWindowBuilder::new(
+        app,
+        SETTINGS_WINDOW,
+        WebviewUrl::App("index.html".into()),
+    )
+    .title(crate::texts::window_title_settings(lang))
+    .inner_size(1040.0, 720.0)
+    .min_inner_size(560.0, 420.0)
+    .center()
+    .resizable(true)
+    .decorations(false)
+    .shadow(true)
+    .focused(false)
+    .visible(false)
+    .initialization_script(&init_script)
+    .build()
+    .map_err(|error| error.to_string())?;
+
+    crate::webview_guard::install(&window);
+    clear_dwm_border(&window);
+    // Keep the settings dialog on small work areas while the normal 1040x720
+    // canvas stays unchanged.
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+    if let Some(monitor) = monitor {
+        let scale = monitor.scale_factor();
+        let area = monitor.work_area();
+        let width = (area.size.width as f64 / scale - 64.0).clamp(560.0, 1040.0);
+        let height = (area.size.height as f64 / scale - 64.0).clamp(420.0, 720.0);
+        let _ = window.set_size(LogicalSize::new(width, height));
+        let _ = window.center();
+    }
+
+    // The title-bar close path asks the frontend first. Unsaved/save-error
+    // drafts remain in the live window; `close_settings` is only called after
+    // the page confirms there is nothing left to lose.
+    let handler = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = handler.emit("settings-close-requested", ());
+        }
+    });
+
+    // The builder hides only the native HWND; keep the controller hidden and the
+    // new renderer at Low until `open_settings` prepares it for display.
+    set_webview_resource_state(app, SETTINGS_WINDOW, false, true);
+    Ok(window)
+}
+
+/// Destroy a settings page that has stayed hidden for long enough. The activity
+/// epoch changes whenever the window is opened or closed again, so a stale
+/// timer can never destroy a freshly reopened instance.
+fn schedule_settings_destroy_if_idle(app: &AppHandle) {
+    let epoch = SETTINGS_ACTIVITY.fetch_add(1, Ordering::SeqCst) + 1;
+    let app = app.clone();
+    let _ = std::thread::Builder::new()
+        .name("settings-idle-destroy".into())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(SETTINGS_IDLE_DESTROY_SECS));
+            // Serialize the final epoch check + destroy with first-open creation.
+            // Either the timer destroys first and open rebuilds, or the open's
+            // activity bump wins and the stale timer leaves the window alone.
+            let Ok(_guard) = SETTINGS_CREATE_LOCK.lock() else {
+                return;
+            };
+            if SETTINGS_ACTIVITY.load(Ordering::SeqCst) != epoch {
+                return;
+            }
+            let Some(window) = app.get_webview_window(SETTINGS_WINDOW) else {
+                return;
+            };
+            if window.is_visible().unwrap_or(true) {
+                return;
+            }
+            let _ = window.destroy();
+            drop(window);
+            // Wait for the queued native destruction to be observable before an
+            // opening caller can acquire the same creation lock.
+            for _ in 0..50 {
+                if app.get_webview_window(SETTINGS_WINDOW).is_none() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        });
+}
+
+/// Open (show + focus) the settings window, creating its webview on first use.
 #[tauri::command]
-pub fn open_settings(app: AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window(SETTINGS_WINDOW)
-        .ok_or_else(|| "settings window not found".to_string())?;
+pub async fn open_settings(app: AppHandle) -> Result<(), String> {
+    // Bump before touching the window so a concurrently waking idle-destroy
+    // timer observes the new activity epoch and backs off.
+    SETTINGS_ACTIVITY.fetch_add(1, Ordering::SeqCst);
+    let window = ensure_settings_window(&app)?;
+    set_webview_resource_state(&app, SETTINGS_WINDOW, true, false);
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
-    // Settings is visible → Normal; the hidden preview stays Low.
     sync_aux_memory_targets(&app);
     Ok(())
 }
 
-/// Hide the settings window (keeps its state so re-opening is instant).
+/// Hide the settings window. Its page stays warm for a short, bounded idle
+/// window (preserving navigation state), then the webview is destroyed and the
+/// next open rebuilds it from current settings.
 #[tauri::command]
 pub fn close_settings(app: AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window(SETTINGS_WINDOW)
-        .ok_or_else(|| "settings window not found".to_string())?;
+    let Some(window) = app.get_webview_window(SETTINGS_WINDOW) else {
+        return Ok(());
+    };
     window.hide().map_err(|e| e.to_string())?;
-    // Settings now hidden → Low; the preview stays as it was.
-    sync_aux_memory_targets(&app);
+    set_webview_resource_state(&app, SETTINGS_WINDOW, false, true);
+    schedule_settings_destroy_if_idle(&app);
     Ok(())
 }
 
@@ -535,7 +698,13 @@ pub fn get_work_area(app: AppHandle) -> Result<f64, String> {
 /// (`get_preview_request`) — which also self-corrects a `preview-update` event
 /// that raced a page load — and it is cleared on close.
 #[derive(Default)]
-pub struct PreviewState(pub Mutex<Option<PreviewRequest>>);
+pub struct PreviewState {
+    request: Mutex<Option<PreviewRequest>>,
+    /// Set by `preview_renderer_ready` after preview.html mounts. Cleared
+    /// before every teardown/navigation so URL races cannot masquerade as a
+    /// resident page.
+    page_ready: AtomicBool,
+}
 
 /// What the satellite preview window renders.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -668,6 +837,23 @@ async fn wait_for_preview_window(app: &AppHandle) -> Result<WebviewWindow, Strin
     find_preview_window(app)
 }
 
+/// Wait for preview.html to install its listener and read the pending request.
+/// The navigation itself is asynchronous; revealing before this handshake can
+/// show the blank bootstrap document.
+async fn wait_for_preview_ready(app: &AppHandle) -> Result<(), String> {
+    for _ in 0..240 {
+        let ready = app
+            .try_state::<PreviewState>()
+            .map(|state| state.page_ready.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        if ready {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    Err("preview renderer did not become ready".into())
+}
+
 #[tauri::command]
 pub async fn show_preview(
     app: AppHandle,
@@ -715,19 +901,23 @@ pub async fn show_preview(
     }
     let preview = wait_for_preview_window(&app).await?;
     if let Some(state) = app.try_state::<PreviewState>() {
-        *state.0.lock().unwrap() = Some(req.clone());
+        *state.request.lock().unwrap() = Some(req.clone());
     }
-    // Resident check is by URL, not visibility: the very first show may find
-    // the window already loaded-hidden at startup, so we can skip a redundant
-    // reload. A page torn down to `about:blank` needs re-navigating.
-    let at_preview = preview
-        .url()
-        .map(|u| u.scheme() != "about")
+    // Track page readiness explicitly. `navigate(about:blank)` is asynchronous,
+    // so `window.url()` can still report preview.html while the teardown is in
+    // flight; trusting it leaves the next preview on a blank page.
+    let page_ready = app
+        .try_state::<PreviewState>()
+        .map(|state| state.page_ready.load(Ordering::SeqCst))
         .unwrap_or(false);
-    if at_preview {
+    if page_ready {
         let _ = preview.emit("preview-update", &req);
     } else {
+        if let Some(state) = app.try_state::<PreviewState>() {
+            state.page_ready.store(false, Ordering::SeqCst);
+        }
         preview.navigate(preview_page_url(&app)).map_err(|e| e.to_string())?;
+        wait_for_preview_ready(&app).await?;
     }
     // Dock + size before reveal; works while hidden too.
     if !redock(&app).map_err(|e| e.to_string())? {
@@ -735,13 +925,10 @@ pub async fn show_preview(
         return Ok(());
     }
     if !preview.is_visible().map_err(|e| e.to_string())? {
-        // Show WITHOUT activating — `preview.show()` (SW_SHOW) can still make
-        // the launcher lose focus and trigger its blur-to-hide, even though the
-        // window carries WS_EX_NOACTIVATE. SW_SHOWNOACTIVATE never touches the
-        // foreground window.
-        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
-        let hwnd = preview.hwnd().map_err(|e| e.to_string())?;
-        let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+        // Restore controller visibility/normal residency and reveal the parent
+        // in one main-thread callback. A direct `ShowWindow` here used to race
+        // the queued controller update, briefly showing a controller-hidden page.
+        show_webview_no_activate(&app, PREVIEW_WINDOW)?;
     }
     // Arm the launcher's Esc-priority state for every preview caller.
     // The preview renderer reads the full request from its own window.
@@ -785,7 +972,22 @@ pub fn get_preview_request(
     if label != MAIN_WINDOW && label != PREVIEW_WINDOW {
         return Err("get_preview_request: trusted launcher window required".into());
     }
-    Ok(state.0.lock().unwrap().clone())
+    Ok(state.request.lock().unwrap().clone())
+}
+
+/// The preview renderer has installed its live-update listener and consumed
+/// the pending request. `show_preview` waits for this before revealing the
+/// native HWND, preventing a blank controller/page from flashing.
+#[tauri::command]
+pub fn preview_renderer_ready(
+    state: State<'_, PreviewState>,
+    window: WebviewWindow,
+) -> Result<(), String> {
+    if window.label() != PREVIEW_WINDOW {
+        return Err("preview_renderer_ready: preview window required".into());
+    }
+    state.page_ready.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 async fn grant_asset_file(path: String, app: AppHandle) -> Result<(), String> {
@@ -847,6 +1049,12 @@ pub async fn plugin_allow_asset_path(
 /// merely hidden window could keep playing media and would never reclaim
 /// memory. Idempotent.
 pub fn teardown_preview(app: &AppHandle) {
+    // Invalidate the readiness handshake before the asynchronous navigation so
+    // a concurrent show cannot reuse a page that is already leaving.
+    if let Some(state) = app.try_state::<PreviewState>() {
+        *state.request.lock().unwrap() = None;
+        state.page_ready.store(false, Ordering::SeqCst);
+    }
     let had_window = if let Some(preview) = app.get_webview_window(PREVIEW_WINDOW) {
         // Tear the page down first, then hide synchronously via Win32. Tauri's
         // `hide()` is queued on the thread executor and can race navigation —
@@ -859,13 +1067,11 @@ pub fn teardown_preview(app: &AppHandle) {
                 let _ = ShowWindow(hwnd, SW_HIDE);
             }
         }
+        set_webview_resource_state(app, PREVIEW_WINDOW, false, true);
         true
     } else {
         false
     };
-    if let Some(state) = app.try_state::<PreviewState>() {
-        *state.0.lock().unwrap() = None;
-    }
     // Preview hidden → Low (settings too, per its own visibility).
     sync_aux_memory_targets(app);
     if had_window {

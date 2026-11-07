@@ -44,7 +44,7 @@ mod window_geometry;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Manager, WindowEvent};
 
 /// The held single-instance mutex handle. Keeping the handle here rather than in
 /// a stack local lets the tray restart path release it before Tauri spawns the
@@ -219,61 +219,19 @@ pub fn run() {
                 window::apply_launcher_chrome(&mw, &current.appearance);
             }
 
-            // Settings window (replaces tauri.conf.json windows[1]). Frameless
-            // like the launcher — the page draws its own titlebar
-            // (src/settings/Settings.tsx .settings-topbar +
-            // src/components/TitleBar.tsx). Opaque (no transparent): Win11
-            // rounds the corners via DWM and tao keeps its native invisible
-            // resize borders, which a transparent resizable window would turn
-            // into a visible dead zone (see window.rs redock notes).
-            tauri::WebviewWindowBuilder::new(
-                app,
-                "settings",
-                tauri::WebviewUrl::App("index.html".into()),
-            )
-            .title(texts::window_title_settings(ui_lang))
-            .inner_size(1040.0, 720.0)
-            .min_inner_size(560.0, 420.0)
-            .center()
-            .resizable(true)
-            .decorations(false)
-            .shadow(true)
-            .focused(false)
-            .visible(false)
-            .initialization_script(&init_script)
-            .build()?;
-            // suppress the documented 1px DWM white border on shadowed
-            // frameless windows (same as the detached plugin window).
-            if let Some(sw) = app.get_webview_window("settings") {
-                window::clear_dwm_border(&sw);
-                // The redesign opens at 1040x720, but small work areas keep a
-                // 64px margin before falling back to the 560x420 minimum.
-                let monitor = sw
-                    .current_monitor()
-                    .ok()
-                    .flatten()
-                    .or_else(|| sw.primary_monitor().ok().flatten());
-                if let Some(monitor) = monitor {
-                    let scale = monitor.scale_factor();
-                    let area = monitor.work_area();
-                    let width = (area.size.width as f64 / scale - 64.0).clamp(560.0, 1040.0);
-                    let height = (area.size.height as f64 / scale - 64.0).clamp(420.0, 720.0);
-                    let _ = sw.set_size(tauri::LogicalSize::new(width, height));
-                    let _ = sw.center();
-                }
-            }
-
             // Satellite preview window (docs/ROADMAP_HISTORY.md #15): all clipboard previews
             // (text / text files / images / audio / video) render here, docked
-            // flush to the launcher's right edge. Created at startup (hidden)
-            // like the settings window to avoid runtime window creation;
-            // non-activating from creation (`focused(false)` plus
+            // flush to the launcher's right edge. The native window is retained
+            // to avoid runtime creation, but its page starts on a same-origin
+            // zero-script blank page; `show_preview` navigates to preview.html
+            // only when content exists.
+            // It is non-activating from creation (`focused(false)` plus
             // `focusable(false)` → WS_EX_NOACTIVATE), so it neither steals
             // startup focus nor takes focus when clicked later.
             tauri::WebviewWindowBuilder::new(
                 app,
                 "preview",
-                tauri::WebviewUrl::App("preview.html".into()),
+                tauri::WebviewUrl::App("blank.html".into()),
             )
             .title(texts::window_title_preview(ui_lang))
             .inner_size(320.0, 480.0) // real size set on every dock
@@ -391,20 +349,6 @@ pub fn run() {
                     }
                 });
             }
-            // Settings window: the title-bar X hides instead of destroying the
-            // window, so `open_settings` can re-show the same instance.
-            if let Some(win) = app.get_webview_window("settings") {
-                let keep = win.clone();
-                win.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        // Ask the frontend first: an unsaved draft gets a
-                        // Save / Discard / Continue prompt instead of being
-                        // silently kept and later overwriting newer writes.
-                        let _ = keep.emit("settings-close-requested", ());
-                    }
-                });
-            }
             // Register the configured toggle hotkey (设置 → 快捷键) — a
             // single attempt with no silent fallback: a combo another app
             // already owns stays a settings problem resolved there
@@ -427,9 +371,10 @@ pub fn run() {
             // Theme-matched app icon (dark/light artwork pair) on the windows'
             // taskbar icons and the tray (docs/ROADMAP_HISTORY.md #31).
             appicon::apply(app.handle(), &current.appearance.color_mode);
-            // All three webviews start hidden — swap their idle memory out now so
-            // the launch baseline is minimal. The first hotkey restores Normal
-            // in `window::show` (before the window is painted).
+            // Main and preview start hidden; settings has no page until first
+            // use. Sync the controller visibility and idle memory of the pages
+            // that do exist so the launch baseline is minimal. The first hotkey
+            // restores Normal in `window::show` before the window is painted.
             window::trim_main_now(app.handle());
             window::sync_aux_memory_targets(app.handle());
             Ok(())
@@ -450,6 +395,7 @@ pub fn run() {
             window::show_preview,
             window::close_preview,
             window::get_preview_request,
+            window::preview_renderer_ready,
             window::allow_asset_path,
             window::plugin_allow_asset_path,
             explorer::get_foreground_context,

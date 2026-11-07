@@ -5959,3 +5959,80 @@ Presenter 名称，值没有持久化或下发路径。
 - `pnpm verify:ui --suite plugin-runtime --no-build` PASS：**6/6**（3.5s，产物
   `test/verify/2026-11-05T14-02-15-228Z/summary.json`）。
 - `git diff --check` PASS。
+
+## 99. WebView2 隐藏资源生命周期（2026-11-07）
+
+### 99.1 背景
+
+诊断证据与原始优化顺序归档在
+[History/WEBVIEW_RESOURCE_OPTIMIZATION.md](History/WEBVIEW_RESOURCE_OPTIMIZATION.md)。
+首要问题是 `sizing.applyLatest()` 在尺寸未变和提交成功后都重新排入
+`measureModeViewport`，而 Navigate / Page Runtime 又把它实现成
+`scheduleResize()`，形成隐藏后仍持续执行的 RAF 自反馈环。与此同时，Tauri 的
+顶层窗口 `hide()` 不会调用 `ICoreWebView2Controller::SetIsVisible(false)`，页面
+仍认为自己可见；设置页、预览页、保活页面与逻辑宿主也各自保留不必要的常驻成本。
+
+### 99.2 实现
+
+- `src/launcher/sizing.ts` 把几何路径改为单向：尺寸未变只返回；成功提交后只做
+  一次幂等内部视口同步。Navigate 与 Page Runtime 的 `measureViewport` 不再
+  请求 resize，剪贴板仍可重读虚拟列表高度。`window.__sizerStats` 保留
+  `applyLatest` / `viewportSyncs` 计数供 CDP 回归。
+- `window.rs` 统一设置 WebView2 controller 可见性与
+  `MemoryUsageTargetLevel`。主窗、预览、设置、分离插件窗和隐藏逻辑宿主都走同一
+  状态入口；非激活预览把 controller 恢复、Normal 内存水位和
+  `SW_SHOWNOACTIVATE` 放在同一个主线程回调里。
+- 设置页不在 setup 创建。`open_settings` 首次按需构建完整页面，关闭后先保留
+  热页；15 分钟隐藏期结束且 activity epoch 未变化时销毁 WebView，下次打开从
+  当前设置重建。窗口标题、草稿关闭确认与首批设置注入沿用原契约。
+- 预览窗保留原生 HWND，但启动只加载同源、零脚本的 `blank.html`；首次内容预览
+  才导航到 `preview.html`，关闭仍拆回 `about:blank`。`PreviewState.page_ready`
+  由 renderer 就绪命令置位，`show_preview` 等到握手完成才显示 HWND。PDF.js
+  继续动态加载，不启动预览运行时。
+- 启动与呼出不再对所有 mode 调 `onShow`。`launcher-hidden` 成为统一 end-summon
+  路径；非活动宿主在隐藏五分钟后先抓会话快照再卸载，active/home、分离窗口、
+  `keep_session` 和用户保留覆盖不回收。空逻辑宿主在无 load、无挂起 RPC 时闲置
+  30 秒后销毁，下次由 `plugin_logic_host_ensure` 重建。
+- 剪贴板监听改为 message-only HWND + `AddClipboardFormatListener` +
+  `WM_CLIPBOARDUPDATE`。通知处理仍先比较序列号，保留 self-write 抑制、暂停、
+  文本/HTML/图片/文件采集与 SQLite 顺序；消息窗口或注册失败时记录错误并降级为
+  每 2 秒一次的序号兜底。
+
+### 99.3 踩坑
+
+- 预览 WebView 若以外部 `about:blank` 创建，之后导航到内置 `preview.html` 时，
+  图像接口仍可用但 PDF.js 的 asset-protocol `fetch` 会报 `Failed to fetch`。
+  初始空白页必须是同源零脚本 app 页面（`blank.html`），不能只按“看起来空白”选用
+  外部 URL。
+- `with_webview` 的 controller 回调是主线程排队执行。非激活预览若紧接着直接
+  `ShowWindow`，会与 controller 可见性更新竞争；两者必须在同一个回调中完成。
+- `navigate(about:blank)` 是异步的，`window.url()` 在关闭后的短窗口内仍可能报告
+  `preview.html`。用 URL 猜页面驻留会让下一次 show 只发 update 而停在空白页；
+  必须用显式 renderer ready 握手，并在 teardown 开始时先失效该状态。
+- 隐藏前的 `onHide` 不能只挂在 `resetAndHide`。失焦、热键和 Esc 都直接进入 Rust
+  的中央隐藏函数，因此前端要监听 `launcher-hidden`，并让 end-summon 幂等。
+- 隐藏页 timer 会被浏览器节流，不能把闲置回收只交给后台 timer。呼出时还要比较
+  `lastHiddenAt` 的墙钟差，补偿休眠/节流后再回收非活动宿主。
+
+### 99.4 验证
+
+- `pnpm verify:fast` PASS：docs、TypeScript、i18n 613 键 × 3 语言、Page Runtime
+  18/18、clipboard model 16/16、clipboard store 8/8、skin 13/13、前端生产构建、
+  Rust **288 passed / 9 ignored**。
+- `pnpm verify:ui --suite=smoke,settings,preview,plugin-runtime,clipboard-ui`
+  PASS：**79/79**，产物
+  `test/verify/2026-11-07T08-56-41-256Z/summary.json`。其中 smoke 23/23（7.5s）
+  覆盖隐藏文档可见性、静默几何计数与 20 次呼出/隐藏；settings 27/27（7.5s）
+  覆盖首次懒创建、热页复用和 10 次开关；preview 16/16（3.6s）覆盖零脚本启动、
+  PDF 首屏、ready 握手和 10 次开关；plugin-runtime 6/6、clipboard-ui 7/7。
+  预览套件在最终构建上连续运行三次均 16/16，确认 teardown/navigation 竞态不再
+  偶发。
+- 独立 60 秒隐藏审计 PASS（2/2，63.6s，产物
+  `test/verify/hidden-resource-2026-11-07T09-08-44-468Z/hidden-resource-audit/result.json`）：
+  `applyLatest` 保持 2，`viewportSyncs` 保持 1，`document.visibilityState` 为
+  `hidden`；该实例进程树 CPU 增量 **0.671875s/60s**（单核 1.12%，按 32 个逻辑
+  处理器折合整机 0.035%），工作集约 **162 MiB**、私有内存约 **199 MiB**，
+  7 个 WebView2 进程。该数值是隔离 debug 会话的分项基线，不作为固定内存上限。
+- 全量六套件中的 agent 套件在本机因真实系统里已注册 agent 而按设计进入
+  “installed” 分支，和其“未注册失败闭合”的隔离前提不符；本次改动相关的五个
+  UI 套件全部通过。

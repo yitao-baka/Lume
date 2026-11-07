@@ -1,6 +1,6 @@
 export default {
   id: "smoke",
-  description: "Launcher shell, mode switching and basic clipboard surface",
+  description: "Launcher shell, hidden resource lifecycle, mode switching and clipboard surface",
   tags: ["ui", "smoke"],
   async run(t) {
     const hiddenFocus = await t.evaluate('document.activeElement?.id ?? ""');
@@ -9,9 +9,55 @@ export default {
       hiddenFocus !== "search-input",
       hiddenFocus,
     );
+    const hiddenVisibility = await t.waitFor(
+      'document.visibilityState === "hidden" && document.hidden === true',
+      5000,
+    );
+    t.check("native hide also hides the WebView document", hiddenVisibility);
+
+    // Let startup measurements settle, then prove the hidden page is quiet.
+    // The old applyLatest -> measureViewport -> scheduleResize loop kept
+    // incrementing this counter several times per second while hidden.
+    await t.sleep(1200);
+    const sizingBefore = await t.evaluate('window.__sizerStats?.applyLatest ?? -1');
+    await t.sleep(2600);
+    const sizingAfter = await t.evaluate('window.__sizerStats?.applyLatest ?? -1');
+    t.equal("hidden launcher has no geometry feedback loop", sizingAfter, sizingBefore, {
+      before: sizingBefore,
+      after: sizingAfter,
+    });
+
     await t.ensureLauncherVisible();
+    const shownVisibility = await t.waitFor(
+      'document.visibilityState === "visible" && document.hidden === false',
+      5000,
+    );
+    t.check("show restores WebView document visibility", shownVisibility);
     const summonFocus = await t.waitFor('document.activeElement?.id === "search-input"', 2000);
     t.check("summon returns focus to the search input", summonFocus);
+
+    let toggleCyclesOk = true;
+    for (let cycle = 0; cycle < 20; cycle++) {
+      await t.invoke("hide_launcher");
+      await t.waitFor(
+        'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" }).then((visible) => !visible)',
+        5000,
+      );
+      await t.invoke("toggle_launcher");
+      await t.waitFor(
+        'document.visibilityState === "visible" && window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" })',
+        5000,
+      );
+      const focused = await t.waitFor(
+        'document.activeElement?.id === "search-input"',
+        3000,
+      );
+      if (!focused) {
+        toggleCyclesOk = false;
+        break;
+      }
+    }
+    t.check("20 hide/show cycles preserve visibility and search focus", toggleCyclesOk);
 
     t.check("launcher exposes the search input", await t.evaluate('!!document.getElementById("search-input")'));
     const modes = await t.evaluate(
@@ -162,6 +208,10 @@ export default {
       'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" }).then((visible) => !visible)',
       5000,
     );
-    t.check("hide_launcher hides the main window", true);
+    const finalVisibility = await t.waitFor(
+      'document.visibilityState === "hidden" && document.hidden === true',
+      5000,
+    );
+    t.check("hide_launcher hides both the window and its WebView document", finalVisibility);
   },
 };

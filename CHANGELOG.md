@@ -9,6 +9,27 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Changed
+- **WebView2 隐藏资源生命周期（2026-11-07）** — 切断
+  `applyLatest → measureViewport → scheduleResize` RAF 自反馈环，Navigate / Page
+  Runtime 的测量回调改为单次幂等视口同步；统一原生 HWND 与 WebView2 controller
+  可见性、Normal/Low 内存水位。设置页改为首次打开创建、隐藏 15 分钟后销毁，
+  预览启动停在同源零脚本 `blank.html`，首次内容才加载 `preview.html` 并等待
+  `preview_renderer_ready` 握手。启动不再预热全部 mode，`launcher-hidden`
+  统一触发 onHide，非活动宿主隐藏五分钟后按
+  会话快照回收（保留 `keep_session`/用户覆盖），空逻辑宿主闲置 30 秒关闭。
+  剪贴板监听改为 `WM_CLIPBOARDUPDATE`，注册失败时每 2 秒序号兜底。诊断与原始
+  证据归档在 `docs/History/WEBVIEW_RESOURCE_OPTIMIZATION.md`。验证：
+  `pnpm verify:fast` PASS（docs、TS、i18n 613 键 × 3、Page Runtime 18/18、
+  clipboard model 16/16、clipboard store 8/8、skin 13/13、前端构建、Rust
+  **288 passed / 9 ignored**）；五个受影响 UI 套件 PASS **79/79**（smoke 23/23、
+  settings 27/27、preview 16/16、plugin-runtime 6/6、clipboard-ui 7/7，产物
+  `test/verify/2026-11-07T08-56-41-256Z/summary.json`）。独立 60 秒隐藏审计
+  PASS（2/2，产物 `test/verify/hidden-resource-2026-11-07T09-08-44-468Z/hidden-resource-audit/result.json`）：
+  `applyLatest` / `viewportSyncs` 增量均为 0，进程树 CPU `0.671875s/60s`、
+  工作集约 162 MiB、私有内存约 199 MiB、7 个 WebView2 进程。全量六套件中的
+  agent 用例受本机真实已注册 agent 影响落入 installed 分支，属于既有全局状态
+  前提，不计入本次五个受影响套件的失败。
+
 - **版本号切换（2026-11-03）** — 内部 semver `3.2.0` → `3.5.0`（`package.json` /
   `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`，并同步 `Cargo.lock`）；About 外部
   标签 `Pre-26.10.1` → `26.11`，`AGENTS.md` 的双版本说明同步更新。验证：`pnpm verify:fast`

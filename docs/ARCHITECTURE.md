@@ -37,8 +37,8 @@ Rust Core (src-tauri/src/)
   ├─ apps.rs     — file search from the index caches, fuzzy + pinyin scoring,
   │                ShellExecuteW launch (+ records recent-opens)
   ├─ cache.rs    — System32 / user / icons SQLite index caches
-  ├─ clipboard.rs— clipboard capture → SQLite, search, copy back, pin/delete,
-  │                ignored-app name + icon resolution
+  ├─ clipboard.rs— WM_CLIPBOARDUPDATE capture → SQLite, search, copy back,
+  │                pin/delete, ignored-app name + icon resolution
   ├─ icons.rs    — IShellItemImageFactory icon extraction + in-memory cache
   ├─ pins.rs     — 已固定 bar (SQLite `pinned_apps`, WAL connection)
   ├─ recent.rs   — 最近使用 bar (SQLite `recent_apps`, WAL connection)
@@ -91,6 +91,15 @@ that hides the window, so clicking elsewhere dismisses it. Elevated launches
 blur-hide suppression while the UAC prompt owns the foreground, so cancelling
 UAC leaves the launcher visible with its error toast.
 
+Native `Window::{show,hide}` only changes the top-level HWND. `window.rs` also
+sets `ICoreWebView2Controller::SetIsVisible` and the WebView2 memory target, so
+a hidden launcher reports `document.visibilityState === "hidden"` instead of
+continuing RAF/timer work. The same resource state applies to preview, settings,
+detached plugin windows and the hidden logic host. Settings are created on first
+open and destroyed after a long hidden idle; the preview window stays resident
+but starts on a same-origin, zero-script `blank.html` page until real content
+arrives.
+
 User-preview assets use a narrow capability boundary: the static asset scope
 covers only Lume's own trees, while `plugin_allow_asset_path` checks the
 caller's `fs.read` declaration and adds exactly one canonical file selected by
@@ -116,9 +125,12 @@ The satellite preview is a core capability rather than a plugin contribution.
 `src/launcher/previewHost.ts` owns the explicit show/close state, the 100 ms
 selection-follow debounce and the Esc-priority signal; the renderer lives in
 `src/preview.tsx`. `window.rs` creates the non-activating, always-on-top
-window at startup with `focused(false)` and `focusable(false)` applied in the
-builder, docks it flush to the launcher's client edge and tears it down to
-`about:blank` on close. Built-in pages call the host directly;
+native window at startup with `focused(false)` and `focusable(false)` applied
+in the builder. Its initial document is the same-origin, zero-script
+`blank.html`; the preview runtime is navigated in only when content first
+appears. Rust waits for its explicit renderer-ready handshake before revealing
+the window. The window docks flush to the launcher's client edge and tears its
+page down to `about:blank` on close. Built-in pages call the host directly;
 external plugins reach the same commands through `ctx.preview.show/close` (and
 Presenters through `lume.app.preview/closePreview`). Rust re-checks the
 caller's `preview` permission and accepts only renderable content kinds,
@@ -330,9 +342,11 @@ started** processes are affected; already-running ones keep their original
 environment.
 
 ### `clipboard.rs`
-- **Capture**: `spawn_listener` polls `GetClipboardSequenceNumber` every
-  250 ms on a background thread. On change it prefers text via `arboard`, then
-  file lists, then images (RGBA → PNG blob). Lume's own history-copy/paste
+- **Capture**: a message-only HWND listens for `WM_CLIPBOARDUPDATE` and then
+  reads `GetClipboardSequenceNumber` for dedupe. If registration fails, a
+  two-second sequence check is the bounded fallback. On change it prefers text
+  via `arboard`, then file lists, then images (RGBA → PNG blob). Lume's own
+  history-copy/paste
   writes are skipped by exact clipboard sequence number, never by content, so
   two external copies of identical content still create two events (or bump a
   deduped row). Captured text keeps leading/trailing whitespace; rich HTML is
@@ -425,7 +439,7 @@ sharing the file safely):
 
 | table | module | writes |
 |---|---|---|
-| `clipboard` | `clipboard.rs` | background 250 ms sequence poll; pruned to newest 300 |
+| `clipboard` | `clipboard.rs` | `WM_CLIPBOARDUPDATE` listener (sequence dedupe); pruned to newest 300 |
 | `pinned_apps` | `pins.rs` | pin/unpin commands (path unique) |
 | `recent_apps` | `recent.rs` | recorded at the `launch_app` chokepoint (path unique, pruned to `recent_count`) |
 
@@ -827,11 +841,16 @@ before adding a field:
 
 ## State & lifecycle
 
-- Every startup-created webview pairs `visible(false)` with `focused(false)`;
-  Tauri otherwise focuses the native window and WebView2 during construction
-  even though the HWND is hidden. The launcher is first shown by the hotkey,
-  focused explicitly on every show, and auto-hides on focus loss (`lib.rs`
-  window-event handler).
+- The main and preview webviews start hidden with `focused(false)`; settings is
+  absent until its first open. Every show/hide pairs the native HWND transition
+  with WebView controller visibility and memory residency. The launcher is first
+  shown by the hotkey, focused explicitly on every show, and auto-hides on focus
+  loss (`lib.rs` window-event handler).
+- Hidden launcher mode pages stop through the central `launcher-hidden` event.
+  Inactive visited hosts are snapshotted and unmounted after five hidden minutes;
+  the active page, the home page, detached windows, `keep_session` pages and
+  explicit user retention overrides stay warm. An empty plugin logic host closes
+  after a bounded idle period.
 - 会话续存：隐藏 / 呼出 / 模式切换都不再清 query / results / mode，
   热键重呼出恢复上次页面与状态；只有「打开首页条目后的下次呼出」（首次打开条目后的下次呼出）
   与闲置重置清空查询并回导航页。搜索框默认是一份全局共享值（共享单值，
@@ -842,7 +861,9 @@ before adding a field:
   combo (empty when another app owns it) and read by the frontend on mount.
 - `ClipboardState` (SQLite connection + sequence tracking) is initialized
   before any webview is created; recent/pins state follows the same startup
-  order. The listener thread shares the clipboard state through `AppHandle`.
+  order. Its message-only clipboard listener shares the state through
+  `AppHandle`; registration failure falls back to a bounded low-frequency
+  sequence check.
 
 ## Tests
 

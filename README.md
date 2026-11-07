@@ -125,7 +125,7 @@ Business logic belongs to Rust; the webview only renders and invokes commands.
 - Explorer-folder context bar — summoned while an Explorer window is focused,
   Lume resolves the folder it shows and adds 「CMD 中打开」/「PowerShell 中打开」/
   「复制路径」 (gated by the 显示资源管理器栏 setting)
-- Clipboard capture — background 250 ms sequence poll → SQLite history of text,
+- Clipboard capture — `WM_CLIPBOARDUPDATE` event listener → SQLite history of text,
   images and file/folder copies (stores references only; images write a PNG
   into `data/PictureCache/<id>.png`); ignored-apps list, pause-recording
   toggle, auto-merge (合并复制), source-app tracking

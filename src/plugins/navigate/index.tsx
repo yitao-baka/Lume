@@ -112,7 +112,10 @@ export function createNavigatePlugin(
       page.onKey(event, ctx, presenterId() === "navigate-list" ? "list" : "grid"),
     openContextMenu: page.openContextMenu,
     onEscape: () => page.search.popDrill(),
-    measureViewport: () => services.scheduleResize(),
+    // Navigate's fit height is data-driven (`page.store` / `search` schedule a
+    // resize when rows change). Geometry commits must not schedule another
+    // resize from here or the two paths form a hidden RAF feedback loop.
+    measureViewport: () => {},
     heightPolicy: () => "fit",
     anyExpanded: page.store.anyExpanded,
     home: true,

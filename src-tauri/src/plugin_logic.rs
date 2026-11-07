@@ -59,8 +59,9 @@ pub async fn plugin_logic_host_ensure(
     .initialization_script(format!("window.__LUME_CONFIG__ = {config_json};"));
     let win = builder.build().map_err(|e| e.to_string())?;
     crate::webview_guard::install(&win);
-    // 隐藏窗口常年空闲 —— 与 settings/preview 同等的低水位内存修剪。
-    crate::window::set_memory_target(&app, LOGIC_HOST_LABEL, true);
+    // The hidden 1x1 host must be controller-invisible as well as HWND-hidden;
+    // otherwise its supervisor page keeps the browser treating it as visible.
+    crate::window::set_webview_resource_state(&app, LOGIC_HOST_LABEL, false, true);
     let app2 = app.clone();
     win.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {

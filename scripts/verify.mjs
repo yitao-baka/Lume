@@ -29,6 +29,7 @@ const BUILD_INPUTS = [
   "plugin.html",
   "pluginLogic.html",
   "pluginLogicFrame.html",
+  "blank.html",
   "preview.html",
   "src-tauri/Cargo.toml",
   "src-tauri/Cargo.lock",

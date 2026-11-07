@@ -67,6 +67,10 @@ import { installPageRuntimeProbes } from "./page-runtime/diagnostics";
 
 /** Coalesce keystroke-driven searches; query text still updates immediately. */
 const INPUT_SEARCH_DEBOUNCE_MS = 80;
+/** Inactive visited pages release their DOM/iframe after a bounded hidden
+ * period. Session snapshots preserve restoration; `keep_session` and explicit
+ * user overrides opt a page out. */
+const HOST_RECLAIM_AFTER_HIDDEN_MS = 5 * 60_000;
 
 function App() {
   installPageRuntimeProbes();
@@ -197,10 +201,39 @@ function App() {
   const hostStack = createHostStack({
     mode,
     instance: (id) => modeById(id),
-    evictable: (id) => !(modeById(id)?.home ?? false),
+    evictable: (id) => {
+      const meta = modePlugins().find((item) => item.id === id);
+      return !(modeById(id)?.home ?? false) &&
+        !idleResetExempt(id, meta?.keepSession ?? false);
+    },
     maxLive: 8,
   });
   const ensureHost = (id: ModeId) => hostStack.ensure(id);
+
+  let hostReclaimTimer: number | undefined;
+  function cancelInactiveHostReclaim() {
+    if (hostReclaimTimer !== undefined) window.clearTimeout(hostReclaimTimer);
+    hostReclaimTimer = undefined;
+  }
+  function scheduleInactiveHostReclaim() {
+    cancelInactiveHostReclaim();
+    hostReclaimTimer = window.setTimeout(() => {
+      hostReclaimTimer = undefined;
+      void reclaimInactiveHosts();
+    }, HOST_RECLAIM_AFTER_HIDDEN_MS);
+  }
+  /** Take a snapshot and unmount every inactive visited page that has not opted
+   * into session retention. The active page stays warm so the next summon is
+   * still one frame away. */
+  async function reclaimInactiveHosts() {
+    const active = mode();
+    for (const id of hostStack.ids()) {
+      if (id === active || modeById(id)?.home || isPluginDetached(id)) continue;
+      const meta = modePlugins().find((item) => item.id === id);
+      if (meta && idleResetExempt(id, meta.keepSession)) continue;
+      await hostStack.evict(id);
+    }
+  }
 
   /** Retire hosts whose instance was replaced/removed (plugin reload or
    * disable), then make sure the active page still has a live host. */
@@ -345,8 +378,14 @@ function App() {
     tap.splice(0, Math.max(0, tap.length - 40));
   }
 
-  /** Hide-time bookkeeping — summon-scoped state only; pages keep everything. */
+  /** Hide-time bookkeeping — summon-scoped state only; pages keep everything.
+   * Idempotent because `resetAndHide` calls it before Rust emits the central
+   * `launcher-hidden` event (and blur/hotkey hides only emit the event). */
+  let summonActive = false;
   function endSummon() {
+    if (!summonActive) return;
+    summonActive = false;
+    cancelInactiveHostReclaim();
     activeMode()?.onHide?.();
     for (const p of allPlugins()) p.lifecycle?.onHide?.();
     setMenu(null);
@@ -356,6 +395,10 @@ function App() {
   /** Show-time restore (D1): a home-page entry clears the home query only;
    * plugin pages keep query + page state. Invalid active modes fall home. */
   function beginSummon() {
+    summonActive = true;
+    const reclaimDue =
+      lastHiddenAt > 0 && Date.now() - lastHiddenAt >= HOST_RECLAIM_AFTER_HIDDEN_MS;
+    cancelInactiveHostReclaim();
     if (idleResetDue()) {
       lastHiddenAt = 0;
       applyIdleReset();
@@ -378,6 +421,11 @@ function App() {
     activeMode()?.setSelected(0);
     activeMode()?.reset?.(); // page-level show (posts `show`; clears enter payload)
     sizer.invalidate();
+    // Hidden-page timers can be throttled. Re-check the elapsed wall clock when
+    // summoning and reclaim inactive pages after the reveal path is unblocked.
+    if (reclaimDue) {
+      window.setTimeout(() => void reclaimInactiveHosts(), 0);
+    }
   }
   /** 记住上次所在页面: debounce-persist the current page (page id + kind)
    * for the NEXT BOOT (in-session continuation is always on, #40). Only
@@ -1155,9 +1203,8 @@ const services: PluginServices = {
     ensureHost(mode());
     activeMode()?.reset?.();
     void runSearch(query());
-    // Warm summon-scoped data at mount too (the window starts hidden and the
-    // first show may restore a remembered page).
-    for (const p of modePlugins()) void p.instance.onShow?.();
+    // Only the destination page is prepared while hidden. Eagerly calling
+    // every mode's onShow built DOM/models for pages the user had not opened.
     sizer.scheduleResize();
 
     const unlistenSettings = await listen("settings-applied", () => {
@@ -1287,7 +1334,7 @@ const services: PluginServices = {
           beginSummon();
           sizer.invalidate();
           await runSearch(query());
-          for (const p of modePlugins()) await p.instance.onShow?.();
+          await activeMode()?.onShow?.();
         } finally {
           // Only the final measurement acknowledges the show generation.
           // Incidental effects during page reset must not release the reveal
@@ -1325,8 +1372,13 @@ const services: PluginServices = {
     // timers never matter.
     const unlistenHidden = await getCurrentWindow().listen("launcher-hidden", () => {
       lastHiddenAt = Date.now();
+      // Blur/hotkey/Esc hides enter Rust directly, so this event is the single
+      // hide-time lifecycle path for the active page and service plugins.
+      endSummon();
+      scheduleInactiveHostReclaim();
     });
     onCleanup(() => unlistenHidden());
+    onCleanup(cancelInactiveHostReclaim);
 
     // The satellite preview's × button (or any Rust-side teardown) clears our
     // Esc-priority state — without this, Esc would think the preview is still

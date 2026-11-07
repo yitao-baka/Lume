@@ -112,11 +112,11 @@ Review the selected list instead of assuming every change needs every suite.
 
 | Suite | Contract |
 | --- | --- |
-| `smoke` | Launcher shell, direct Navigate input, mode bar, Tab mode switch, clipboard surface, hiding |
-| `settings` | Settings navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, close path |
+| `smoke` | Launcher shell, hidden WebView visibility/quiet geometry, 20 hide/show cycles, direct Navigate input, mode bar, Tab mode switch, clipboard surface |
+| `settings` | Lazy first creation, navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, ten close/reopen cycles |
 | `plugin-runtime` | API 2 keyword entry, Presenter readiness, strict CSP and sandbox |
 | `clipboard-ui` | History/empty surface, categories, row artwork, pause acknowledgement, clear confirmation |
-| `preview` | Core preview window, undeclared-plugin denial, declared-plugin reuse |
+| `preview` | Zero-script startup page, core/PDF rendering, undeclared-plugin denial, declared-plugin reuse, ten close/reopen cycles |
 | `agent` | Elevation-agent switches, fail-closed registration gate, UIPI explanation and status shape |
 
 List the current set with `pnpm verify:ui --list`.

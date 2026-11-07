@@ -153,6 +153,7 @@ pub async fn plugin_window_open(
         // 重新聚焦取消一次在途的关闭簿记（防御：closing 已置位但窗口仍在的
         // 窗口期内用户再次打开 —— 此时destroy尚未完成，重开视为取消）。
         closing.0.lock().unwrap().remove(&id);
+        crate::window::set_webview_resource_state(&app, &label, true, false);
         let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
@@ -217,6 +218,9 @@ pub async fn plugin_window_open(
         None => builder.center(),
     };
     let win = builder.build().map_err(|e| e.to_string())?;
+    // The builder's `visible(false)` hides only the parent HWND. Keep the
+    // detached page controller hidden/low until `show()` restores both.
+    crate::window::set_webview_resource_state(&app, &label, false, true);
     crate::webview_guard::install(&win);
     // shadow(true) windows draw DWM's documented 1px white border — suppress
     // it (shadow + Win11 rounded corners stay).
@@ -291,6 +295,7 @@ pub async fn plugin_window_open(
             }
         }
     });
+    crate::window::set_webview_resource_state(&app, &label, true, false);
     let _ = win.show();
     let _ = win.set_focus();
     let _ = win.emit("plugin-window-shown", id.clone());

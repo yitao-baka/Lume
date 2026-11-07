@@ -2,11 +2,11 @@
   "suites": {
     "smoke": {
       "module": "suites/smoke.mjs",
-      "description": "Launcher shell, direct Navigate input, mode switching and basic clipboard surface"
+      "description": "Launcher shell, hidden resource lifecycle, mode switching and clipboard surface"
     },
     "settings": {
       "module": "suites/settings.mjs",
-      "description": "Settings navigation, search surface and clipboard pane"
+      "description": "Lazy settings lifecycle, navigation, search surface and clipboard pane"
     },
     "plugin-runtime": {
       "module": "suites/plugin-runtime.mjs",
@@ -18,7 +18,7 @@
     },
     "preview": {
       "module": "suites/preview.mjs",
-      "description": "Core preview window and plugin permission gate"
+      "description": "Blank startup, core PDF/preview lifecycle and plugin permission gate"
     },
     "agent": {
       "module": "suites/agent.mjs",

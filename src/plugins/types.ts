@@ -774,7 +774,8 @@ export interface ModeInstance {
    * the root suppresses mode-switch/shared bindings and delegates every key to
    * `onKey`, so background rows can never be activated. */
   modal?(): boolean;
-  /** Re-measure this mode's internal viewport (window sizer hook). */
+  /** One-shot internal viewport sync after the host committed a geometry
+   * change. This must be idempotent and must not request another resize. */
   measureViewport(): void;
   /** Loading gate (reactive): whether this page has content to show *now*.
    * While it reports false the shell hides `.results` and the sizer collapses

@@ -115,8 +115,9 @@ dev URL instead.
 
 ### Clipboard mode
 
-1. **Capture** — copy a few pieces of text (e.g. a URL, a code snippet). Wait
-   ~1s; the listener polls the clipboard every 250 ms.
+1. **Capture** — copy a few pieces of text (e.g. a URL, a code snippet). The
+   `WM_CLIPBOARDUPDATE` listener records each change without a background polling
+   cadence; copy several values quickly and confirm all are preserved in order.
 2. **Browse** — show the launcher, press `Tab` (or click the Clipboard pill):
    the recent history appears even with an empty query, newest first.
 3. **Search** — type a fragment; matching history entries are filtered
@@ -168,8 +169,15 @@ dev URL instead.
 2. **Close** — click the header ×: the satellite disappears immediately, the
    launcher stays visible, and the next selection can open a preview again.
    The click must not activate the satellite or steal focus from the launcher.
+   Repeat open/close ten times and verify the renderer is still visible after
+   each reopen.
 3. **No close button without content** — the window is hidden, never a bare
-   header floating beside the launcher.
+   header floating beside the launcher. At startup its page is the zero-script
+   blank document; `preview.html` loads only when the first content preview
+   appears.
+4. **PDF** — open a PDF preview, page through it and close. Reopen another
+   preview immediately; the blank-page teardown must not leave a hidden WebView
+   or break the asset-protocol read path.
 
 ### Settings window
 
@@ -196,7 +204,9 @@ dev URL instead.
    setting, then close: the window stays open, the control rolls back, and the
    footer offers retry. Import, backup restore, default restore, service
    uninstall, agent unregister, plugin uninstall, and trust-all enable use the
-   in-window confirmation dialog rather than “click twice”.
+   in-window confirmation dialog rather than “click twice”. Open and close the
+   window ten times: the first open creates the WebView, recent reopens retain
+   the current page while warm, and each reopen restores focus and visibility.
 7. **Idle reset ()** — 设置 → 启动器：「闲置重置」默认开、阈值
    30 分钟。把启动器呼出再隐藏，超过阈值后下次呼出应回导航页、搜索框为空，
    未豁免插件页冷启动；清单 `keep_session = true` 或 设置 → 插件 打开豁免的

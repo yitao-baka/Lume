@@ -3,10 +3,11 @@
  *
  * All clipboard previews render here instead of the launcher renderer, so a
  * decoded 4K bitmap or buffered video never lingers in the main window. The
- * window is created once at startup (hidden), docked flush to the launcher's
- * right edge, and non-activating (`WS_EX_NOACTIVATE` — clicking it never
- * steals focus from the launcher). Closing tears the page down to `about:blank`
- * (frees the decoded resources; the renderer process stays for reuse).
+ * native window is created once at startup (hidden) on a zero-script blank
+ * page, docked flush to the launcher's right edge, and non-activating
+ * (`WS_EX_NOACTIVATE` — clicking it never steals focus from the launcher).
+ * This app page loads only on the first content preview. Closing tears it down
+ * to `about:blank` (frees decoded resources; the renderer stays for reuse).
  *
  * The payload (`PreviewReq`) is read once on mount via `get_preview_request`,
  * then live-updated via the `preview-update` event (selection changes don't
@@ -188,6 +189,7 @@ function PreviewApp() {
       if (doc) await doc.loadingTask.destroy().catch(() => {});
       if (!isCurrentRequest(generation)) return;
       console.error("[preview] pdf load failed", e);
+      (window as unknown as { __pdfLastError?: string }).__pdfLastError = String(e);
       setPdfError(true);
     }
   }
@@ -296,7 +298,10 @@ function PreviewApp() {
     // Initial payload — also self-corrects a preview-update that raced the page
     // load (the stored request is read after the fact).
     const initial = await invoke<PreviewRequest | null>("get_preview_request");
-    if (initial) void load(initial);
+    if (initial) await load(initial);
+    // Rust reveals the native window only after this page has installed its
+    // listener and consumed the pending request.
+    await invoke("preview_renderer_ready").catch(() => {});
   });
 
   // Re-render the PDF page whenever the doc / page / zoom changes.

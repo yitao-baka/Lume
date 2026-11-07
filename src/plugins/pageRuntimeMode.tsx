@@ -510,7 +510,10 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
       });
     },
     modal,
-    measureViewport: () => deps.services.scheduleResize(),
+    // The Presenter reports fit/fixed layout through its bridge and the sizer's
+    // committed geometry already updates the iframe. Re-entering `scheduleResize`
+    // here would make the geometry commit feed itself forever.
+    measureViewport: () => {},
     ready,
     failed,
     heightPolicy: () => layout().sizing,

@@ -8,6 +8,13 @@ import { MIN_WINDOW_H, SCREEN_MARGIN, WINDOW_PAD } from "./types";
 
 const ERROR_PAGE_MIN_CONTENT_H = 220;
 
+/** CDP-visible counters for the hidden-resource regression: a quiet page must
+ * not keep re-entering `applyLatest` after its initial geometry settles. */
+interface SizerStats {
+  applyLatest: number;
+  viewportSyncs: number;
+}
+
 /** A terminal page error must not reuse the loading gate's search-row-only
  * height. Preserve the current page size when possible; if the preceding fit
  * page was shorter, leave enough room for the title, hint, detail and action. */
@@ -55,7 +62,9 @@ export interface SizerDeps {
   setWorkAreaH: (v: number | null) => void;
   barCols: () => number;
   setBarCols: (v: number) => void;
-  /** Plugin modes measure their own viewport (the sizer only triggers it). */
+  /** One-shot internal viewport sync after a committed geometry change. This
+   * must be idempotent and MUST NOT request another content resize: geometry
+   * measurement is a one-way path from page/data changes to the window. */
   measureModeViewport: () => void;
   /** The show handshake generation, when the caller is preparing a hidden show. */
   prepareGeneration: () => number | null;
@@ -66,6 +75,11 @@ export interface SizerDeps {
 }
 
 export function createWindowSizer(deps: SizerDeps) {
+  const stats = ((window as unknown as { __sizerStats?: SizerStats }).__sizerStats ??= {
+    applyLatest: 0,
+    viewportSyncs: 0,
+  });
+
   /** Query page content inside the ACTIVE host (fallback: document, for the
    * first frames before the host mounts). The search row stays global. */
   const pageQuery = <T extends Element>(sel: string): T | null =>
@@ -178,6 +192,7 @@ export function createWindowSizer(deps: SizerDeps) {
   /** One actual request. It reads the latest deps in one turn after the queue
    * drains, so a burst of triggers collapses to the last page state. */
   async function applyLatest(): Promise<void> {
+    stats.applyLatest++;
     const requestGeneration = generation;
     const h = targetFromDeps();
     let cap = deps.windowHeight();
@@ -202,7 +217,6 @@ export function createWindowSizer(deps: SizerDeps) {
     // current size: the command is also the generation acknowledgement that
     // releases the reveal. Only ordinary visible measurements may dedupe.
     if (prepareGeneration == null && committed?.w === width && committed.h === targetH) {
-      requestAnimationFrame(deps.measureModeViewport);
       return;
     }
     try {
@@ -220,7 +234,11 @@ export function createWindowSizer(deps: SizerDeps) {
       if (requestGeneration !== generation) return;
       committed = { w: Math.round(result.width), h: Math.round(result.height) };
       deps.setRuntimeSize(committed.w, committed.h);
-      requestAnimationFrame(deps.measureModeViewport);
+      // The WebView may now have a new client height. Let a virtualized page
+      // refresh its internal viewport once, but never feed that sync back into
+      // `scheduleResize()` — that was the hidden RAF self-feedback loop.
+      stats.viewportSyncs++;
+      deps.measureModeViewport();
     } catch (error) {
       // A stale generation is expected during rapid page/monitor changes. A
       // real failure leaves `committed` untouched so retrying is possible.

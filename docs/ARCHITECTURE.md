@@ -5,7 +5,7 @@ SolidJS UI (src/App.tsx, src/i18n.ts)
   ├─ src/skins/ — shared skin metadata + data-skin / --surface / accent runtime
         │  invoke("search_apps" | "search_clipboard" | "get_clipboard_thumbnails"
         │        | "get_app_icons"
-        │        | "launch_app" | "copy_clipboard" | "delete_clipboard"
+        │        | "launch_app" | "open_path" | "copy_clipboard" | "delete_clipboard"
         │        | "pin_clipboard" | "hide_launcher" | "get_hotkey")
         ▼
 Tauri IPC
@@ -35,7 +35,7 @@ Rust Core (src-tauri/src/)
   ├─ plugin_page.rs — service-role Page Model/event channel (role token + 1 MiB gate)
   ├─ plugin_secret.rs — service-only Windows Credential Manager secret slots
   ├─ apps.rs     — file search from the index caches, fuzzy + pinyin scoring,
-  │                ShellExecuteW launch (+ records recent-opens)
+  │                ShellExecuteW opens (Navigate launches record recent-opens)
   ├─ cache.rs    — System32 / user / icons SQLite index caches
   ├─ clipboard.rs— WM_CLIPBOARDUPDATE capture → SQLite, search, copy back,
   │                pin/delete, ignored-app name + icon resolution
@@ -179,8 +179,10 @@ browser arguments.
 - **Launch**: `launch_app(path, elevated, name)` calls
   `ShellExecuteW(…, "open"/"runas", …)`. `std::process::Command` would use
   `CreateProcess`, which cannot resolve `.lnk` targets, so the shell is
-  required. A successful launch is recorded into `recent_apps` (the single
-  chokepoint for the 最近使用 bar).
+  required. A successful Navigate launch is recorded into `recent_apps` (the
+  single chokepoint for the 最近使用 bar). `open_path(path)` shares the shell
+  path for plugin `app.openPath`, clipboard links and the About homepage, and
+  deliberately never writes `recent_apps`.
 
 ### `filesearch.rs` / `everything.rs` / `usnidx.rs`
 The whole-drive file-search stack (docs/ROADMAP_HISTORY.md), surfaced as one command —
@@ -407,8 +409,10 @@ environment.
 ### `recent.rs`
 Persists the Navigate **最近使用 bar** in a `recent_apps` table (`path` unique,
 `opened_at` recency) inside `lume.db`, on its own WAL connection. Opens are
-recorded at the single `launch_app` chokepoint (`apps.rs`), deduped by path
-(re-opening bumps the timestamp) and pruned to `appearance.recent_count`.
+recorded at the single `launch_app` chokepoint used by Navigate (`apps.rs`),
+deduped by path (re-opening bumps the timestamp) and pruned to
+`appearance.recent_count`. Non-Navigate opens use `open_path` and never enter
+this table.
 `delete_recent` soft-deletes a record (the file/app is untouched). The bar shows
 only on the empty-query main menu, above the 已固定 bar.
 
@@ -446,7 +450,7 @@ sharing the file safely):
 |---|---|---|
 | `clipboard` | `clipboard.rs` | `WM_CLIPBOARDUPDATE` listener (sequence dedupe); pruned to newest 300 |
 | `pinned_apps` | `pins.rs` | pin/unpin commands (path unique) |
-| `recent_apps` | `recent.rs` | recorded at the `launch_app` chokepoint (path unique, pruned to `recent_count`) |
+| `recent_apps` | `recent.rs` | recorded only by Navigate's `launch_app` chokepoint (path unique, pruned to `recent_count`) |
 
 Three rebuildable **index caches** (not user data — dropped and rebuilt freely):
 

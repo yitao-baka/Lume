@@ -377,6 +377,7 @@ pub fn run() {
             apps::search_apps,
             apps::refresh_index,
             apps::rebuild_index,
+            apps::open_path,
             apps::launch_app,
             apps::reveal_in_folder,
             filesearch::file_search,

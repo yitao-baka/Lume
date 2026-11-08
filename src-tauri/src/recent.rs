@@ -1,10 +1,11 @@
 //! Recent-opens for the Navigate main-menu bar.
 //!
-//! A distinct strip of recently-launched apps/files above the pinned bar. Opens
-//! are recorded at the single chokepoint `apps::launch_app`; each record is
-//! deduped by path (re-opening bumps the timestamp) and the list is pruned to
-//! the configured `appearance.recent_count`. Persisted to the same SQLite
-//! database (`lume.db`) in a separate WAL-mode connection, like `pins.rs`.
+//! A distinct strip of apps/files launched from Navigate, above the pinned bar.
+//! Opens are recorded only at the `apps::launch_app` chokepoint; plugin
+//! `app.openPath` and other non-Navigate surfaces use `apps::open_path` instead.
+//! Each record is deduped by path (re-opening bumps the timestamp) and the list
+//! is pruned to the configured `appearance.recent_count`. Persisted to the same
+//! SQLite database (`lume.db`) in a separate WAL-mode connection, like `pins.rs`.
 
 use std::sync::Mutex;
 

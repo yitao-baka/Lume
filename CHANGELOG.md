@@ -64,6 +64,19 @@ All notable changes to Lume are documented here. Format based on
   PASS（docs 15、i18n 605 键 × 3 语言、Page Runtime 18/18、clipboard model 16/16、
   clipboard store 8/8、skin 11/11、前端生产构建、Rust 287 passed / 9 ignored）。
 ### Fixed
+- **插件打开内容污染导航页最近使用（2026-11-08）** — `launch_app` 同时承担
+  “打开”和“写最近使用”，插件的 `app.openPath`、剪贴板链接与 About 主页也走同一
+  命令，导致文件秒搜等非导航入口污染导航页。现在拆为导航专用 `launch_app` 与
+  通用 `open_path`：前者保留最近使用记录，后者只执行 ShellExecuteW；插件 RPC、
+  剪贴板链接和 About 链接全部切到 `open_path`。插件契约新增 recent-open ownership
+  检查，防止 `app.openPath` 再回接 `launch_app`。现有历史记录没有来源字段，因此
+  不自动删除，继续由条目菜单手动移除。验证：`pnpm verify:fast` PASS（docs 15、
+  TypeScript、i18n 613×3、Page Runtime 18/18、clipboard model 16/16、clipboard
+  store 8/8、skin 17/17、前端生产构建、Rust **288 passed / 9 ignored**）；
+  `pnpm verify:ui:changed` PASS **76/76**（smoke 23、plugin-runtime 13、
+  clipboard-ui 7、settings 33，产物
+  `test/verify/2026-11-08T11-48-55-519Z/summary.json`）。
+
 - **设置窗拆分残留清理（2026-11-08）** — 独立 `settings.html` 落地后，
   `src/App.css` 仍保留约 1500 行旧设置窗、插件管理器和 ProgramPicker 规则；
   共享 `skins/index.css` 也把 `--settings-*` token 与启动器/插件窗一起打包。

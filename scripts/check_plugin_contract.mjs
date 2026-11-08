@@ -26,6 +26,7 @@ const iconSpec = read("src/launcher/iconSpec.ts");
 const presenterHost = read("src/page-runtime/presenterHost.ts");
 const clipboardService = read("src/page-services/clipboard/service.ts");
 const navigateSearch = read("src/plugins/navigate/search.ts");
+const navigateStore = read("src/plugins/navigate/store.ts");
 const pageRuntime = read("src/plugins/pageRuntimeMode.tsx");
 const presenterBridge = read("src/page-runtime/presenterBridge.tsx");
 const hostApi = read("src/plugins/hostApi.ts");
@@ -35,6 +36,7 @@ const listTemplate = read("src/plugins/listTemplate.tsx");
 const pluginFs = read("src-tauri/src/plugin_fs.rs");
 const clipboard = read("src-tauri/src/clipboard.rs");
 const pluginGate = read("src-tauri/src/plugins.rs");
+const rustApps = read("src-tauri/src/apps.rs");
 
 check((appShell.match(/definePlugin\(/g) ?? []).length >= 2, "navigate/clipboard built-in registrations disappeared");
 check(registry.includes("logicLoadedIds.delete(id)"), "registry does not show the disable/unload boundary");
@@ -59,6 +61,24 @@ check(contract.privateFiles?.canonicalPluginDirectory === true, "Private-file di
 check(pluginFs.includes("plugin_dir_for_id"), "Private files do not use the canonical plugin directory");
 check(pluginGate.includes("MAX_FEATURES") && pluginGate.includes("MAX_REGEX_CHARS"), "Manifest fan-out/regex limits are missing");
 check(contract.clipboard?.ownWriteGuard === "clipboard-sequence", "Clipboard own-write contract drifted");
+check(contract.recentOpens?.recordsNavigateLaunchesOnly === true, "Recent-open ownership contract drifted");
+check(contract.recentOpens?.pluginOpenCommand === "open_path", "Plugin open command contract drifted");
+check(
+  hostApi.includes('inv("open_path", { path })') && !hostApi.includes('inv("launch_app"'),
+  "plugin app.openPath must not call the Navigate recent-open chokepoint",
+);
+check(
+  navigateSearch.includes('invoke("launch_app"') && navigateStore.includes('invoke("launch_app"'),
+  "Navigate launches must keep recording through launch_app",
+);
+const openPathStart = rustApps.indexOf("pub fn open_path(");
+const launchAppStart = rustApps.indexOf("pub fn launch_app(");
+check(
+  openPathStart >= 0 &&
+    launchAppStart > openPathStart &&
+    !rustApps.slice(openPathStart, launchAppStart).includes("record_recent"),
+  "Rust open_path must stay separate from recent-open recording",
+);
 check(!registry.includes("previewPlugins("), "preview must not be a plugin contribution");
 check(!read("src/plugins/types.ts").includes("preview?: PreviewService"), "preview service contract must be removed");
 check(!read("src/plugins/pluginName.ts").includes("preview"), "preview plugin name mapping must be removed");

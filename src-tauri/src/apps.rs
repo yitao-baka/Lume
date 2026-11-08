@@ -12,7 +12,7 @@ use tauri::{Manager, State};
 use crate::cache::{self, AppEntry};
 use crate::settings::{Settings, SettingsState};
 
-/// Outcome of `launch_app`. A structured value (instead of `()`) lets the
+/// Outcome of a shell launch. A structured value (instead of `()`) lets the
 /// frontend distinguish a real launch from a UAC cancellation / shell failure
 /// before it hides the launcher.
 #[derive(serde::Serialize)]
@@ -285,17 +285,12 @@ fn display_name(path: &str) -> String {
 /// `std::process::Command` uses `CreateProcess`, which does not resolve
 /// `.lnk` targets, so we go through `ShellExecuteW`. When `elevated` is set the
 /// verb becomes `runas`, which pops the UAC confirmation and launches the
-/// target with an elevated token. A successful open is recorded for the
-/// main-menu 「最近使用」 bar (deduped by path, pruned to the configured count).
-#[tauri::command]
-pub fn launch_app(
-    path: String,
+/// target with an elevated token.
+fn open_with_shell(
+    path: &str,
     elevated: bool,
-    name: Option<String>,
-    recent: State<crate::recent::RecentState>,
-    settings: State<SettingsState>,
-    focus: State<crate::window::FocusState>,
-) -> Result<LaunchOutcome, String> {
+    focus: &crate::window::FocusState,
+) -> Result<(), String> {
     use windows_sys::Win32::Foundation::{ERROR_CANCELLED, HWND};
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -354,6 +349,35 @@ pub fn launch_app(
     if code <= 32 {
         return Err(format!("ShellExecuteW failed with code {code}"));
     }
+    Ok(())
+}
+
+/// Open a path from a non-Navigate surface (plugin `app.openPath`, clipboard
+/// links, the About homepage). This deliberately does not write the Navigate
+/// 「最近使用」 bar; only `launch_app` owns that history.
+#[tauri::command]
+pub fn open_path(
+    path: String,
+    focus: State<crate::window::FocusState>,
+) -> Result<LaunchOutcome, String> {
+    open_with_shell(&path, false, &focus)?;
+    Ok(LaunchOutcome {
+        outcome: "launched",
+    })
+}
+
+/// Launch an item selected on the Navigate page and record it for the
+/// main-menu 「最近使用」 bar (deduped by path, pruned to the configured cap).
+#[tauri::command]
+pub fn launch_app(
+    path: String,
+    elevated: bool,
+    name: Option<String>,
+    recent: State<crate::recent::RecentState>,
+    settings: State<SettingsState>,
+    focus: State<crate::window::FocusState>,
+) -> Result<LaunchOutcome, String> {
+    open_with_shell(&path, elevated, &focus)?;
     // Record the open — best-effort, never blocks the launch. Name comes from
     // the frontend (`AppEntry.name`) with a path-derived fallback.
     let display = name.unwrap_or_else(|| display_name(&path));

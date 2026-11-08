@@ -276,10 +276,10 @@ export function createClipboardStore(services: PluginServices) {
     setMultiIds(next);
   }
 
-  /** Open a link row in the default browser (ShellExecuteW via launch_app). */
+  /** Open a link row in the default browser (ShellExecuteW via open_path). */
   function openClipLink(item: ClipboardItem) {
     services.markEntryOpened(); // 打开链接即使用条目 → 首页下次呼出清查询（#40）
-    void invoke("launch_app", { path: item.content, name: item.content, elevated: false })
+    void invoke("open_path", { path: item.content })
       .then(() => services.resetAndHide())
       .catch((err) => {
         console.error("open link failed", err);

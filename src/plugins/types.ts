@@ -287,7 +287,8 @@ export interface PluginHostApi {
      * call it, but the text is only ever displayed for a mode with the
      * plugin's own id. */
     setPlaceholder(text: string): void;
-    /** Open a file path or URL via launch_app (ShellExecuteW). */
+    /** Open a file path or URL with ShellExecuteW. Plugin opens do not enter
+     * Navigate's 最近使用 bar. */
     openPath(path: string): void;
     /** Reveal a file/folder in Explorer (located and selected). Unlike
      * openPath this does NOT mark the entry opened and does NOT hide the

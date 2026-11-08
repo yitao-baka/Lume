@@ -37,7 +37,7 @@ interface LumeAppApi {
   /** 写入启动器搜索框并触发搜索。 */
   setQuery(q: string): Promise<void>;
   setPlaceholder(text: string): Promise<void>;
-  /** 打开文件/URL/目录（ShellExecute）。 */
+  /** 打开文件/URL/目录（ShellExecute）；不会计入导航页「最近使用」。 */
   openPath(path: string): Promise<void>;
   revealPath(path: string): Promise<void>;
   /** 送进回收站（权限 `trash`）。 */

@@ -83,5 +83,9 @@
     "ownWriteGuard": "clipboard-sequence",
     "preservesOuterWhitespace": true,
     "htmlTruncation": "utf8-boundary"
+  },
+  "recentOpens": {
+    "recordsNavigateLaunchesOnly": true,
+    "pluginOpenCommand": "open_path"
   }
 }

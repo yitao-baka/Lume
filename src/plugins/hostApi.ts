@@ -125,7 +125,8 @@ export function createHostApi(
       openPath: (path) => {
         plog.debug(id, "app.openPath:", path);
         services.markEntryOpened(); // opening a target = using an entry
-        void inv("launch_app", { path, name: path, elevated: false }).catch((err) =>
+        // Plugin opens are not Navigate launches: keep them out of 最近使用.
+        void inv("open_path", { path }).catch((err) =>
           plog.error(id, "app.openPath failed:", err)
         );
       },

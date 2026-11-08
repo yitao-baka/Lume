@@ -60,6 +60,10 @@ KV）、`search.files(q, max?)`（全盘文件秒搜 = `file_search` 门面，Ev
 LumeSVC 引擎自动选择；**空查询 = 最近文件**，引擎默认按修改时间倒序）、
 `search.status()`（同一门面的就绪探测：不查询就能知道 Everything 是否在运行、
 LumeSVC 引擎状态与索引文件数）。
+
+`app.openPath` 只调用 ShellExecuteW 打开文件或 URL；它不会把目标写入导航页的
+「最近使用」栏。只有用户在导航页激活条目时才会更新该栏。
+
 `app.foreground()` 返回呼出前前台窗口快照 `{process, className, title, path?}`
 （`path` 仅当那是 Explorer 文件夹；权限 `window`，§6H.2）。
 mode 桥接 iframe 还会收到 `lume.on.key` 按键事件

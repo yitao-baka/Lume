@@ -16,7 +16,7 @@ export default function AboutPane() {
   async function openHomepage() {
     setError(null);
     try {
-      await invoke("launch_app", { path: HOMEPAGE, name: HOMEPAGE, elevated: false });
+      await invoke("open_path", { path: HOMEPAGE });
     } catch (err) {
       setError(settingsError(err, "settingsAboutOpenFailed"));
     }

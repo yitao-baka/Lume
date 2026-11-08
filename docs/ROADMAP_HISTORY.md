@@ -6231,3 +6231,42 @@ Page Model、会话帧、Presenter 事件和诊断探针也缺少统一的全局
 - 生产 CSS 体积：启动器 **46.50→30.46 KB**，分离插件窗 **5.86 KB**，设置窗
   **76.10 KB**；构建产物中启动器不含 `settings/plg/picker` 选择器或
   `--settings-*` token。
+
+## 103. 导航页最近使用来源边界（2026-11-08）
+
+### 103.1 背景
+
+导航页的「最近使用」栏此前把 `launch_app` 当作所有打开动作的统一写入口。
+插件 `app.openPath` 也调用这个命令，因此文件秒搜、剪贴板链接和 About 主页的
+打开结果都会进入导航页历史。该数据模型只保存 `path/name/opened_at`，没有来源
+字段，无法在读取时区分导航页条目与其它入口。
+
+### 103.2 实现
+
+- Rust 把 ShellExecuteW 抽成内部 `open_with_shell`；新增 `open_path` 命令，
+  只负责打开且不访问 `RecentState`。
+- `launch_app` 保持导航页语义：成功打开后 upsert `recent_apps`，继续负责
+  去重、更新时间与按 `appearance.recent_count` 裁剪。
+- 插件 `app.openPath`、剪贴板链接和 About 主页改调 `open_path`；插件仍调用
+  `markEntryOpened` 清空下次呼出的首页查询，但不再写最近使用。
+- `PLUGIN_HOST_BEHAVIOR.json` 增加 recent-open ownership 契约，构建前检查
+  `hostApi` 不把 `app.openPath` 接回 `launch_app`，同时检查 Rust `open_path`
+  与 `launch_app` 保持分离。
+
+### 103.3 踩坑
+
+- 「已使用条目」是前端清查询提示状态，不等同于持久化最近使用；移除
+  `markEntryOpened` 会让插件打开后首页保留旧查询，修复时只切换打开命令。
+- 现有数据库没有来源字段，无法可靠删除历史污染项。自动清空会误删真实导航页
+  记录，因此保留现有条目，由用户通过条目菜单逐项移除。
+- 导航页内的 provider 行和插件栏目仍属于导航页激活，继续走 `launch_app`；
+  只有插件自定义页面通过 `app.openPath` 打开时才走无记录路径。
+
+### 103.4 验证
+
+- `pnpm verify:fast` PASS：docs 15、TypeScript、i18n 613 键 × 3、Page Runtime
+  18/18、clipboard model 16/16、clipboard store 8/8、skin 17/17、前端生产构建、
+  Rust **288 passed / 9 ignored**。
+- `pnpm verify:ui:changed` PASS **76/76**：smoke 23、plugin-runtime 13、
+  clipboard-ui 7、settings 33；产物
+  `test/verify/2026-11-08T11-48-55-519Z/summary.json`。

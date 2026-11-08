@@ -246,20 +246,27 @@ src/skins/
 ├── registry.ts         # 类型、注册表读取、规范化
 ├── runtime.ts          # data-skin、--surface、统一应用入口
 ├── accent.ts           # 主题色规范化、对比度派生、CSS 变量
-├── index.css           # 共享 token 与皮肤样式入口
+├── shared.css          # 所有主题窗口共用的 token 与 accent 层
+├── launcher.css        # 启动器 / 嵌入 Presenter 的皮肤组件层
+├── settings.css        # 独立设置窗的皮肤组件层
 ├── tokens.css          # 语义 token 契约与默认 fallback
-├── accent.css          # 自定义主题色到通用 token 的映射
 ├── quiet/
-│   ├── tokens.css
+│   ├── tokens.css      # Quiet 设置窗 token
 │   ├── settings.css
 │   └── launcher.css
 └── chromatic/
-    ├── tokens.css
+    ├── shared.css      # Chromatic 默认 accent（所有窗口共用）
+    ├── tokens.css      # Chromatic 设置窗 token
     ├── settings.css
     └── launcher.css
 ```
 
-设置窗的布局骨架继续放在 `src/settings/skins/base.css`。原 `src/settings/skins/quiet.css`、`chromatic.css` 中的共享 token 和 surface 专属视觉规则拆到 `src/skins/`，避免设置窗和启动器各维护一份皮肤颜色。
+入口按窗口职责分别引用：`src/index.tsx` → `launcher.css`，
+`src/settings-entry.tsx` → `settings.css`，分离插件窗 →
+`shared.css`。设置窗的布局骨架继续放在
+`src/settings/skins/base.css`。原 `src/settings/skins/quiet.css`、
+`chromatic.css` 中的共享 token 和 surface 专属视觉规则拆到
+`src/skins/`，避免设置窗和启动器各维护一份皮肤颜色。
 
 ### 单一写入器
 
@@ -699,9 +706,11 @@ skin   -> { id, accent, surface } （新增，可忽略）
 | `src/skins/registry.ts` | 新增皮肤类型、注册表访问、规范化 |
 | `src/skins/runtime.ts` | 新增 `data-skin`、`--surface` 与统一应用入口 |
 | `src/skins/accent.ts` | 全应用 accent 规范化、对比度派生与 CSS 变量写入 |
-| `src/skins/index.css` | 共享 token、双皮肤和 accent 样式入口 |
-| `src/skins/quiet/*` | Quiet token、设置和启动器样式 |
-| `src/skins/chromatic/*` | Chromatic token、设置和启动器样式 |
+| `src/skins/shared.css` | 所有主题窗口共用的 token、双皮肤和 accent 层 |
+| `src/skins/launcher.css` | 共享层 + 启动器专属皮肤规则 |
+| `src/skins/settings.css` | 共享层 + 设置窗专属皮肤规则 |
+| `src/skins/quiet/*` | Quiet 设置窗 token、设置和启动器样式 |
+| `src/skins/chromatic/*` | Chromatic 共享 accent、设置窗 token 与各窗口样式 |
 | `src/settings/skin.ts` | 删除，改由 `src/skins/runtime.ts` 统一写入 |
 | `src/settings/accent.ts` | 删除，改由 `src/skins/accent.ts` 统一写入 |
 | `src/settings/skins/base.css` | 使用 `data-skin` 和共享 token |

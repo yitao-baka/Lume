@@ -14,15 +14,8 @@ html[data-skin="chromatic"] {
   --settings-text: #dcd8d1;
   --settings-secondary: #bbb8b2;
   --settings-muted: #96949b;
-  /* Default accent = 湖蓝 (Aqua): the skin's original mauve moved into the
-     palette's first slot (src/settings/accent.ts). The selection tint is the
-     same 16% oklab mix an explicit Aqua accent produces (skins/accent.css),
-     so "follow skin" and a picked Aqua stay visually identical. */
-  --ui-accent: #5ac8fa;
-  --ui-accent-text: #5ac8fa;
-  --ui-accent-border: rgba(90, 200, 250, 0.62);
-  --ui-accent-on: #06131a;
-  --ui-focus-ring: #5ac8fa;
+  /* Default Aqua comes from chromatic/shared.css. The selection tint matches
+     an explicit Aqua accent so "follow skin" and a picked Aqua stay equal. */
   --settings-structure: var(--ui-accent);
   --settings-structure-text: var(--ui-accent-text);
   --settings-selected: color-mix(in oklab, var(--ui-accent-raw) 16%, var(--settings-panel-base));
@@ -49,11 +42,6 @@ html[data-skin="chromatic"][data-theme="light"] {
   --settings-text: #343832;
   --settings-secondary: #4e554f;
   --settings-muted: #626862;
-  --ui-accent: #64796d;
-  --ui-accent-text: #52675b;
-  --ui-accent-border: rgba(82, 103, 91, 0.72);
-  --ui-accent-on: #ffffff;
-  --ui-focus-ring: #64796d;
   --settings-structure: var(--ui-accent);
   --settings-structure-text: var(--ui-accent-text);
   --settings-selected: #d1ded4;

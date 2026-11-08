@@ -339,6 +339,42 @@ export default {
       "rebuild action asks for destructive confirmation",
       await settingsContext.evaluate('!!document.querySelector(".settings-confirm .settings-confirm-actions button")'),
     );
+    await t.sleep(220);
+    const confirmLayout = await settingsContext.evaluate(`(() => {
+      const overlay = document.querySelector(".settings-confirm-overlay");
+      const dialog = document.querySelector(".settings-confirm");
+      const overlayRect = overlay?.getBoundingClientRect();
+      const rect = dialog?.getBoundingClientRect();
+      const style = dialog ? getComputedStyle(dialog) : null;
+      return {
+        overlayPosition: overlay ? getComputedStyle(overlay).position : "",
+        overlayCoversViewport: !!overlayRect &&
+          overlayRect.left <= 0.5 &&
+          overlayRect.top <= 0.5 &&
+          overlayRect.right >= innerWidth - 0.5 &&
+          overlayRect.bottom >= innerHeight - 0.5,
+        centerX: rect ? Math.abs(rect.left + rect.width / 2 - innerWidth / 2) : Infinity,
+        centerY: rect ? Math.abs(rect.top + rect.height / 2 - innerHeight / 2) : Infinity,
+        width: rect?.width ?? 0,
+        display: style?.display ?? "",
+        background: style?.backgroundColor ?? "",
+        borderStyle: style?.borderStyle ?? "",
+        shadow: style?.boxShadow ?? "",
+      };
+    })()`);
+    t.check(
+      "settings confirmations render as a centered, styled modal",
+      confirmLayout.overlayPosition === "fixed" &&
+        confirmLayout.overlayCoversViewport &&
+        confirmLayout.centerX <= 1 &&
+        confirmLayout.centerY <= 1 &&
+        confirmLayout.width >= 300 &&
+        confirmLayout.display === "flex" &&
+        confirmLayout.background !== "rgba(0, 0, 0, 0)" &&
+        confirmLayout.borderStyle === "solid" &&
+        confirmLayout.shadow !== "none",
+      confirmLayout,
+    );
     await settingsContext.evaluate('document.querySelector(".settings-confirm-actions button:last-child")?.click()');
     await settingsContext.waitFor('!document.querySelector(".settings-confirm")', 5000);
     const rebuilt = await settingsContext.evaluate(

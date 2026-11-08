@@ -1,0 +1,4 @@
+/* Skin definitions shared by every themed window. Entry points add only the
+   component layer their window renders: launcher, settings, or plugin host. */
+@import "./tokens.css";
+@import "./chromatic/shared.css";

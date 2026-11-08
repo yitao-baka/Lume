@@ -230,7 +230,11 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
   stats, signature or SHA-256, overwrite relation) render between the hint and
   the actions, and a long facts block scrolls inside the dialog instead of
   growing it.
-- Centered dialogs animate with `confirm-in`, which keeps their
+- Settings confirmations and the program picker are owned by the separate
+  settings entry's `src/settings/skins/base.css`; they must not depend on the
+  launcher-only `src/App.css`. Their fixed backdrop owns viewport coverage and
+  centering, while `settings-dialog-in` moves only the dialog vertically.
+- Launcher centered dialogs animate with `confirm-in`, which keeps their
   `translate(-50%, -50%)` centering while easing in from 8px below center. The
   bottom toast's `toast-in` keyframes only carry the X centering — reusing them
   makes a dialog appear half a height too low and snap up on the last frame.

@@ -1,5 +1,8 @@
 // Skin registry and accent derivation unit checks through Vite SSR.
+import { readFileSync } from "node:fs";
 import { createServer } from "vite";
+
+const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
 const server = await createServer({
   configFile: false,
@@ -42,6 +45,32 @@ try {
     accent.nativeAccent("quiet", "dark") === "#5ac8fa" &&
     accent.nativeAccent("quiet", "light") === "#0969da" &&
     accent.nativeAccent("chromatic", "light") === "#64796d");
+  const appCss = source("src/App.css");
+  check("launcher CSS excludes settings-window and plugin-manager selectors",
+    !/(?:body\.settings|\.settings(?:[-:{.\s])|\.plg-|\.picker(?:[-:{.\s]))/.test(appCss));
+  const launcherEntry = source("src/index.tsx");
+  const settingsEntry = source("src/settings-entry.tsx");
+  const pluginWindow = source("src/pluginWindow.tsx");
+  const windowBootstrap = source("src/windowBootstrap.ts");
+  check("window entries load only their own skin component layer",
+    launcherEntry.includes('import "./skins/launcher.css"') &&
+    settingsEntry.includes('import "./skins/settings.css"') &&
+    pluginWindow.includes('import "./skins/shared.css"') &&
+    !windowBootstrap.includes('skins/index.css'));
+  const sharedCss = source("src/skins/shared.css");
+  const settingsCss = source("src/skins/settings.css");
+  const launcherCss = source("src/skins/launcher.css");
+  check("shared skin CSS excludes settings-only and component layers",
+    !sharedCss.includes("quiet/tokens.css") &&
+    !sharedCss.includes("chromatic/tokens.css") &&
+    !sharedCss.includes("/settings.css") &&
+    !sharedCss.includes("/launcher.css"));
+  check("settings and launcher skin CSS stay on their own sides of the split",
+    settingsCss.includes('import "./quiet/tokens.css"') &&
+    settingsCss.includes('import "./chromatic/tokens.css"') &&
+    !settingsCss.includes("/launcher.css") &&
+    !launcherCss.includes("/settings.css") &&
+    !launcherCss.includes("/tokens.css"));
 
   const customSurfaceTokens = accent.deriveAccentTokens("#5ac8fa", "dark", "quiet", "#f7f3e8");
   check("custom surface drives accent contrast",

@@ -1159,46 +1159,48 @@ export default function Settings() {
       </footer>
 
       <Show when={confirmState()}>
-        <div class="settings-confirm-overlay" onClick={closeConfirm} />
-        <div
-          class="settings-confirm"
-          ref={(el) => (dialogEl = el)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="settings-confirm-title"
-          aria-describedby="settings-confirm-hint"
-          onKeyDown={onDialogKeyDown}
-        >
-          <p class="settings-confirm-title" id="settings-confirm-title">
-            {confirmState()!.title}
-          </p>
-          <p class="settings-confirm-hint" id="settings-confirm-hint">
-            {confirmState()!.hint}
-          </p>
-          <Show when={confirmState()!.details} keyed>
-            {(details) => <div class="settings-confirm-details">{details()}</div>}
-          </Show>
-          <Show when={confirmError()}>
-            <span class="settings-inline-error" role="alert">{confirmError()}</span>
-          </Show>
-          <div class="settings-confirm-actions">
-            <button
-              class="settings-action settings-action-primary"
-              type="button"
-              disabled={confirmBusy()}
-              onClick={() => void runConfirm()}
-            >
-              {confirmState()!.confirmLabel}
-            </button>
-            <button
-              class="settings-action"
-              type="button"
-              ref={(el) => (confirmCancelButton = el)}
-              disabled={confirmBusy()}
-              onClick={closeConfirm}
-            >
-              {t("cancel")}
-            </button>
+        <div class="settings-confirm-overlay" onClick={closeConfirm}>
+          <div
+            class="settings-confirm"
+            ref={(el) => (dialogEl = el)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-confirm-title"
+            aria-describedby="settings-confirm-hint"
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={onDialogKeyDown}
+          >
+            <p class="settings-confirm-title" id="settings-confirm-title">
+              {confirmState()!.title}
+            </p>
+            <p class="settings-confirm-hint" id="settings-confirm-hint">
+              {confirmState()!.hint}
+            </p>
+            <Show when={confirmState()!.details} keyed>
+              {(details) => <div class="settings-confirm-details">{details()}</div>}
+            </Show>
+            <Show when={confirmError()}>
+              <span class="settings-inline-error" role="alert">{confirmError()}</span>
+            </Show>
+            <div class="settings-confirm-actions">
+              <button
+                class="settings-action settings-action-primary"
+                type="button"
+                disabled={confirmBusy()}
+                onClick={() => void runConfirm()}
+              >
+                {confirmState()!.confirmLabel}
+              </button>
+              <button
+                class="settings-action"
+                type="button"
+                ref={(el) => (confirmCancelButton = el)}
+                disabled={confirmBusy()}
+                onClick={closeConfirm}
+              >
+                {t("cancel")}
+              </button>
+            </div>
           </div>
         </div>
       </Show>

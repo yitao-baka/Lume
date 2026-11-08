@@ -79,31 +79,44 @@ async function connect(url) {
 }
 
 let mainTarget = null;
-let settings = null;
-for (let attempt = 0; attempt < 80 && (!settings || !mainTarget); attempt++) {
+for (let attempt = 0; attempt < 80 && !mainTarget; attempt++) {
   const pages = (await targets()).filter((target) =>
     target.type === "page" && target.url.includes("tauri.localhost"),
   );
   for (const page of pages) {
-    if (page.webSocketDebuggerUrl === mainTarget?.webSocketDebuggerUrl) continue;
     try {
       const client = await connect(page.webSocketDebuggerUrl);
       const kind = await client.evalJs(`document.body.classList.contains('settings-window')
         ? 'settings'
         : document.querySelector('#search-input') ? 'main' : ''`);
-      if (kind === "settings" && !settings) settings = client;
-      else if (kind === "main" && !mainTarget) {
+      if (kind === "main" && !mainTarget) {
         mainTarget = page;
         client.ws.close();
-      }
+      } else client.ws.close();
+    } catch {}
+  }
+  if (!mainTarget) await sleep(200);
+}
+if (!mainTarget) throw new Error("main target missing");
+const main = await connect(mainTarget.webSocketDebuggerUrl);
+await main.evalJs(`window.__TAURI_INTERNALS__.invoke('open_settings').then(() => true)`);
+let settings = null;
+for (let attempt = 0; attempt < 80 && !settings; attempt++) {
+  const pages = (await targets()).filter((target) =>
+    target.type === "page" && target.url.includes("tauri.localhost"),
+  );
+  for (const page of pages) {
+    if (page.webSocketDebuggerUrl === mainTarget.webSocketDebuggerUrl) continue;
+    try {
+      const client = await connect(page.webSocketDebuggerUrl);
+      const isSettings = await client.evalJs(`document.body.classList.contains('settings-window')`);
+      if (isSettings && !settings) settings = client;
       else client.ws.close();
     } catch {}
   }
-  if (!settings || !mainTarget) await sleep(200);
+  if (!settings) await sleep(200);
 }
-if (!settings || !mainTarget) throw new Error("main/settings targets missing");
-const main = await connect(mainTarget.webSocketDebuggerUrl);
-await main.evalJs(`window.__TAURI_INTERNALS__.invoke('open_settings').then(() => true)`);
+if (!settings) throw new Error("settings target missing");
 for (let i = 0; i < 40; i++) {
   if (await settings.evalJs(`!!document.querySelector('.settings-page-content')`)) break;
   await sleep(150);
@@ -379,7 +392,7 @@ const search = await settings.evalJs(`({
   labels: Array.from(document.querySelectorAll('.settings-result-label')).map((el) => el.textContent),
   expanded: document.querySelector('.settings-search-input').getAttribute('aria-expanded'),
 })`);
-check("catalog search finds the settings-window skin setting once", search.count === 1 && search.labels.some((label) => label.includes("设置窗口皮肤")), JSON.stringify(search));
+check("catalog search ranks the settings-window skin setting first", search.count >= 1 && search.labels[0]?.includes("设置窗口皮肤"), JSON.stringify(search));
 await settings.evalJs(`document.querySelector('.settings-search-result').click(); true`);
 await sleep(300);
 const jumped = await settings.evalJs(`({

@@ -11,7 +11,6 @@
 
 /* Dark palette (default). */
 :root {
-  --bg: rgba(30, 30, 32, 0.75);            /* modal picker card (.picker 的浮层卡) */
   --surface: #1e1e20;                      /* 唯一的实体面板色：启动器面板 + DWM 边框条
                                              + 插件页画布默认 + 设置窗口 */
   --surface-raised: rgba(38, 38, 40, 0.97);/* context menu */
@@ -60,7 +59,6 @@
 
 :root[data-theme="light"],
 :root[data-surface-tone="light"] {
-  --bg: rgba(248, 249, 250, 0.92);
   --surface: #f7f3e8;
   --surface-raised: #ffffff;
   --text: #1f2328;
@@ -91,9 +89,9 @@
   --danger-on: #ffffff;
   --danger-tint: rgba(180, 35, 24, 0.08);
   --danger-border: rgba(180, 35, 24, 0.42);
-  --warning-text: #9a6700;
-  --warning-tint: rgba(154, 103, 0, 0.09);
-  --warning-border: rgba(154, 103, 0, 0.38);
+  --warning-text: #946300;
+  --warning-tint: rgba(148, 99, 0, 0.09);
+  --warning-border: rgba(148, 99, 0, 0.38);
   --success-text: #1a7f37;
   --success-tint: rgba(26, 127, 55, 0.09);
   --service-text: #6f42c1;
@@ -107,7 +105,6 @@
    mode is light. Keep every semantic token on the matching palette so text,
    controls and status colors remain legible. */
 :root[data-theme="light"][data-surface-tone="dark"] {
-  --bg: rgba(30, 30, 32, 0.75);
   --surface: #1e1e20;
   --surface-raised: rgba(38, 38, 40, 0.97);
   --text: #f2f2f2;

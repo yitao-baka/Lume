@@ -6172,3 +6172,62 @@ Page Model、会话帧、Presenter 事件和诊断探针也缺少统一的全局
   Plugins manifest 预热未影响后续设置页。
 - `pnpm verify:fast` PASS：docs、TypeScript、i18n、前端单测/生产构建及 Rust
   **288 passed / 9 ignored**；`pnpm run tauri build --no-bundle` release 构建通过。
+
+## 102. 设置窗拆分残留清理（2026-11-08）
+
+### 102.1 背景
+
+设置窗改为独立 `settings.html` 入口后，运行时已经不再加载启动器 bundle，
+但样式与测试边界没有同步收口：确认框和 ProgramPicker 的核心样式仍只在
+`src/App.css`，导致卸载服务、注销代理等弹窗成为无样式裸 DOM；同一文件还完整
+保留旧设置窗和插件管理器规则。皮肤入口也继续由所有窗口共享，会把
+`--settings-*` token 和设置专用 custom-accent 映射带进启动器与分离插件窗。
+两个旧视觉脚本仍假设 main/settings 两个 CDP target 在启动时同时存在，设置窗
+按需创建后便无法 attach。
+
+### 102.2 实现
+
+- 共享确认框与程序选择器样式移到 `src/settings/skins/base.css`；固定遮罩负责
+  覆盖视口和居中，对话框使用 `settings-dialog-in`，并按设置窗皮肤 token 渲染。
+- 从 `src/App.css` 删除旧设置窗、`plg-*`、Picker 与 `settings-confirm-*`
+  规则，只保留启动器自身的图标/焦点/滚动规则。
+- 皮肤样式按入口拆分：`shared.css` 仅含通用 token 和 Chromatic 默认 accent，
+  `launcher.css` 加启动器组件层，`settings.css` 加设置 token/组件层；分离插件窗
+  只加载 `shared.css`。删除混合入口 `skins/index.css` 与设置专用 `skins/accent.css`。
+- `src/index.tsx`、`src/settings-entry.tsx`、`src/pluginWindow.tsx` 分别静态
+  引入自己的皮肤层，`windowBootstrap.ts` 不再隐式加载所有窗口样式。
+- `cdp_settings_skin_verify.mjs` / `cdp_settings_accent_verify.mjs` 改为先发现
+  main target、调用 `open_settings`，再等待 settings target；搜索断言改为
+  “设置窗口皮肤排第一”，允许相关窗口颜色/不透明度说明进入后续结果。
+- 浅色 `--warning-text` 从 `#9a6700` 调整为 `#946300`，在默认 Quiet surface
+  上的对比度从 4.39:1 提升到 4.68:1。
+- `skin_system_unit_test.mjs` 增加静态边界断言：启动器 CSS 不得出现设置/插件
+  管理器选择器，入口不得加载其它窗口的皮肤组件层。
+
+### 102.3 踩坑
+
+- 设置入口只加载 `src/settings/skins/base.css` 及自己的皮肤层；任何留在
+  `App.css` 的 `settings-*` / `plg-*` / `picker-*` 规则都不会生效。
+- `quiet/tokens.css`、`chromatic/tokens.css` 是设置窗 token；Chromatic 的共享
+  默认 accent 必须单独放进 `chromatic/shared.css`，否则启动器会连带打入设置 token，
+  或浅色主题丢掉 mineral green 默认色。
+- 设置 WebView 是按需创建的，旧 CDP 脚本不能同时轮询两个 target；必须先连
+  main 并触发 `open_settings`。
+- 剪贴板 `merge_skips_duplicate_last_piece` 的失败与源码断言不一致；加临时 DB
+  探针后强制重编译，单项与全量立即通过，确认是陈旧测试二进制而非生产合并逻辑。
+- 旧视觉断言要求精确命中一条会影响相关设置的正常搜索扩展；应断言排序首项，
+  不要禁止同主题说明文本参与后续结果。
+
+### 102.4 验证
+
+- `pnpm verify:fast` PASS：docs 15、TypeScript、i18n 613×3、Page Runtime
+  18/18、clipboard model 16/16、clipboard store 8/8、skin 17/17、前端生产
+  构建、Rust **288 passed / 9 ignored**。
+- `pnpm verify:ui` PASS **105/105**：smoke 23、settings 33、plugin-runtime 13、
+  clipboard-ui 7、preview 18、agent 11；产物
+  `test/verify/2026-11-08T09-38-11-298Z/summary.json`。
+- `settings-visual` PASS **140/140**：settings-skin 62/62、settings-accent
+  50/50、visual-audit 28/28；确认框 400px、程序选择器 520px 且中心偏差 ≤ 1px。
+- 生产 CSS 体积：启动器 **46.50→30.46 KB**，分离插件窗 **5.86 KB**，设置窗
+  **76.10 KB**；构建产物中启动器不含 `settings/plg/picker` 选择器或
+  `--settings-*` token。

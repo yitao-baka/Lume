@@ -1,0 +1,17 @@
+/* Chromatic's default accent is shared by every window that can select the
+   skin. Settings-only surfaces and geometry stay in chromatic/tokens.css. */
+html[data-skin="chromatic"] {
+  --ui-accent: #5ac8fa;
+  --ui-accent-text: #5ac8fa;
+  --ui-accent-border: rgba(90, 200, 250, 0.62);
+  --ui-accent-on: #06131a;
+  --ui-focus-ring: #5ac8fa;
+}
+
+html[data-skin="chromatic"][data-theme="light"] {
+  --ui-accent: #64796d;
+  --ui-accent-text: #52675b;
+  --ui-accent-border: rgba(82, 103, 91, 0.72);
+  --ui-accent-on: #ffffff;
+  --ui-focus-ring: #64796d;
+}

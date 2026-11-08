@@ -1,8 +1,0 @@
-/* Custom accent tints interactive selection only. The settings canvas, rail,
-   panels and controls stay on the active skin's native surface tokens so the
-   theme color never shifts the window background. Derived accent tokens come
-   from the inline `--ui-accent*` variables written by src/skins/accent.ts. */
-html[data-accent="custom"] body.settings-window,
-html[data-accent="custom"] .settings {
-  --settings-selected: color-mix(in oklab, var(--ui-accent-raw) 16%, var(--settings-panel-base));
-}

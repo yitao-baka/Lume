@@ -64,6 +64,33 @@ All notable changes to Lume are documented here. Format based on
   PASS（docs 15、i18n 605 键 × 3 语言、Page Runtime 18/18、clipboard model 16/16、
   clipboard store 8/8、skin 11/11、前端生产构建、Rust 287 passed / 9 ignored）。
 ### Fixed
+- **设置窗拆分残留清理（2026-11-08）** — 独立 `settings.html` 落地后，
+  `src/App.css` 仍保留约 1500 行旧设置窗、插件管理器和 ProgramPicker 规则；
+  共享 `skins/index.css` 也把 `--settings-*` token 与启动器/插件窗一起打包。
+  现在启动器样式只保留自身与共用图标规则，皮肤入口拆为 `shared.css` /
+  `launcher.css` / `settings.css`，Chromatic 默认 accent 单独留在共享层，
+  设置 token 只进入设置 bundle。两个旧视觉脚本改为先打开按需创建的设置窗
+  再连接 CDP；浅色 warning 文案 token 调整为 `#946300`，对比度从 4.39:1
+  提升到 4.68:1。验证：`pnpm verify:fast` PASS（docs 15、TS、i18n 613×3、
+  Page Runtime 18/18、clipboard model 16/16、clipboard store 8/8、skin
+  17/17、前端构建、Rust **288 passed / 9 ignored**）；`pnpm verify:ui` PASS
+  **105/105**（产物 `test/verify/2026-11-08T09-38-11-298Z/summary.json`）；
+  `settings-visual` 三脚本 PASS **140/140**（settings-skin 62、accent 50、
+  visual-audit 28）。生产 CSS：启动器 46.50→30.46 KB，插件窗 5.86 KB，
+  设置窗 76.10 KB，构建产物中启动器已不含 `settings/plg/picker` 或
+  `--settings-*`。此前偶发的剪贴板合并测试失败由陈旧 Rust 测试二进制造成，
+  重编译后单项与全量均通过，生产合并逻辑未改动。
+- **设置窗确认弹层与程序选择器丢失样式（2026-11-08）** — 设置窗拆成独立
+  `settings.html` 入口后只加载 `src/settings/skins/base.css`，共享确认框与
+  ProgramPicker 的定位、尺寸、遮罩和面板样式却仍留在启动器的 `src/App.css`，
+  导致卸载服务、注销代理等确认框变成贴在窗口左下角的裸 DOM。现在两类弹层
+  都由设置窗样式表接管：固定遮罩负责铺满视口与居中，对话框按 Quiet /
+  Chromatic 和明暗主题读取 `--settings-*` 令牌，并保持 Esc、焦点返回和背景
+  inert 行为。验证：`pnpm verify:ui --suite 'settings,agent'` PASS
+  （settings **33/33**、agent **11/11**，13.2s，确认框 400px、程序选择器
+  520px 且中心偏差 ≤ 1px，产物
+  `test/verify/2026-11-08T09-11-37-247Z/summary.json`）；`pnpm verify:fast`
+  PASS（docs、TS、i18n、前端单测/生产构建及 Rust **288 passed / 9 ignored**）。
 - **设置 pane 首次点击冷启动（2026-11-07）** — 设置页此前把九个 pane 都做成
   动态 import，第一次进入 Search / About / Plugins 时才开始下载和执行对应
   chunk；外层 shell 已经出现，但 pane 区域空白，插件页还要再等一次

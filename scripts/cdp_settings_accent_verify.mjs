@@ -101,35 +101,49 @@ async function connect(url) {
 }
 
 async function attach() {
-  let settings = null;
   let mainTarget = null;
-  for (let attempt = 0; attempt < 100 && (!settings || !mainTarget); attempt++) {
+  for (let attempt = 0; attempt < 100 && !mainTarget; attempt++) {
     const pages = (await targets()).filter((target) =>
       target.type === "page" && target.url.includes("tauri.localhost"),
     );
     for (const page of pages) {
-      if (page.webSocketDebuggerUrl === mainTarget?.webSocketDebuggerUrl) continue;
       try {
         const client = await connect(page.webSocketDebuggerUrl);
         const kind = await client.evalJs(`document.body.classList.contains('settings-window')
           ? 'settings'
           : document.querySelector('#search-input') ? 'main' : ''`);
-        if (kind === "settings" && !settings) settings = client;
-        else if (kind === "main" && !mainTarget) {
+        if (kind === "main" && !mainTarget) {
           mainTarget = page;
           client.ws.close();
         } else client.ws.close();
       } catch {}
     }
-    if (!settings || !mainTarget) await sleep(200);
+    if (!mainTarget) await sleep(200);
   }
-  if (!settings || !mainTarget) throw new Error("main/settings targets missing");
+  if (!mainTarget) throw new Error("main target missing");
   const main = await connect(mainTarget.webSocketDebuggerUrl);
+  await main.evalJs(`window.__TAURI_INTERNALS__.invoke('open_settings').then(() => true)`);
+  let settings = null;
+  for (let attempt = 0; attempt < 100 && !settings; attempt++) {
+    const pages = (await targets()).filter((target) =>
+      target.type === "page" && target.url.includes("tauri.localhost"),
+    );
+    for (const page of pages) {
+      if (page.webSocketDebuggerUrl === mainTarget.webSocketDebuggerUrl) continue;
+      try {
+        const client = await connect(page.webSocketDebuggerUrl);
+        const isSettings = await client.evalJs(`document.body.classList.contains('settings-window')`);
+        if (isSettings && !settings) settings = client;
+        else client.ws.close();
+      } catch {}
+    }
+    if (!settings) await sleep(200);
+  }
+  if (!settings) throw new Error("settings target missing");
   return { settings, main };
 }
 
 let { settings, main } = await attach();
-await main.evalJs(`window.__TAURI_INTERNALS__.invoke('open_settings').then(() => true)`);
 
 const waitReady = async () => {
   for (let i = 0; i < 50; i++) {

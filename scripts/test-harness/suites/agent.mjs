@@ -59,6 +59,53 @@ export default {
     );
     t.check("the UIPI boundary is explained to the user", helpText.includes("UIPI"), helpText);
     await evaluate('document.querySelector(".settings-help-backdrop")?.click()');
+    await settings.waitFor('!document.querySelector(".settings-help-dialog")', 5000);
+
+    await evaluate(`(() => {
+      const add = document.querySelector(".settings-rule-add");
+      if (add) add.open = true;
+      document.querySelector(".settings-pick-btn")?.click();
+      return true;
+    })()`);
+    await settings.waitFor('!!document.querySelector(".picker-backdrop .picker")', 5000);
+    await t.sleep(220);
+    const pickerLayout = await evaluate(`(() => {
+      const overlay = document.querySelector(".picker-backdrop");
+      const picker = document.querySelector(".picker");
+      const overlayRect = overlay?.getBoundingClientRect();
+      const rect = picker?.getBoundingClientRect();
+      const style = picker ? getComputedStyle(picker) : null;
+      return {
+        overlayPosition: overlay ? getComputedStyle(overlay).position : "",
+        overlayCoversViewport: !!overlayRect &&
+          overlayRect.left <= 0.5 &&
+          overlayRect.top <= 0.5 &&
+          overlayRect.right >= innerWidth - 0.5 &&
+          overlayRect.bottom >= innerHeight - 0.5,
+        centerX: rect ? Math.abs(rect.left + rect.width / 2 - innerWidth / 2) : Infinity,
+        centerY: rect ? Math.abs(rect.top + rect.height / 2 - innerHeight / 2) : Infinity,
+        width: rect?.width ?? 0,
+        display: style?.display ?? "",
+        background: style?.backgroundColor ?? "",
+        borderStyle: style?.borderStyle ?? "",
+        shadow: style?.boxShadow ?? "",
+      };
+    })()`);
+    t.check(
+      "program picker renders as a centered, styled settings modal",
+      pickerLayout.overlayPosition === "fixed" &&
+        pickerLayout.overlayCoversViewport &&
+        pickerLayout.centerX <= 1 &&
+        pickerLayout.centerY <= 1 &&
+        pickerLayout.width >= 400 &&
+        pickerLayout.display === "flex" &&
+        pickerLayout.background !== "rgba(0, 0, 0, 0)" &&
+        pickerLayout.borderStyle === "solid" &&
+        pickerLayout.shadow !== "none",
+      pickerLayout,
+    );
+    await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); true');
+    await settings.waitFor('!document.querySelector(".picker-backdrop")', 5000);
 
     await evaluate('document.querySelector(\'.settings-nav[data-section="system"]\').click()');
     await settings.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "system"', 5000);

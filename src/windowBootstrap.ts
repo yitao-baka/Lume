@@ -6,7 +6,6 @@ import { applyColorMode } from "./theme";
 import { applySkin, applyWindowSurface } from "./skins/runtime";
 import { applyAccent } from "./skins/accent";
 import { prepareLocale, resolveLocale } from "./i18n";
-import "./skins/index.css";
 
 export interface InjectedAppearance {
   skin?: string;

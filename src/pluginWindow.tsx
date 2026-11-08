@@ -40,7 +40,7 @@ import { fetchDiskFile, pluginFilePath } from "./plugins/disk";
 import { plog } from "./plugins/log";
 import { resolveLocale, setLocale, t } from "./i18n";
 import { exposeDebugProbe, pushBoundedDiagnostic } from "./page-runtime/diagnostics";
-import "./skins/index.css";
+import "./skins/shared.css";
 import "./pluginWindow.css";
 
 const id = new URLSearchParams(location.search).get("plugin") ?? "";

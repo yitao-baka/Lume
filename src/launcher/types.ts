@@ -271,10 +271,6 @@ export const CLIP_ROW_H = 52;
 export const CLIP_OVERSCAN = 4;
 /** How long the delete-collapse animation runs before the row is removed. */
 export const DELETE_ANIM_MS = 120;
-/** Default toast dwell (ms); undo toasts get a longer window. */
-export const TOAST_MS = 1600;
-export const TOAST_UNDO_MS = 3000;
-
 /** The clipboard filter tabs, in display order (labels are i18n keys). */
 export const CLIP_CATS: { kind: ClipKind; label: keyof Messages }[] = [
   { kind: "all", label: "clipCategoryAll" },

@@ -64,6 +64,20 @@ All notable changes to Lume are documented here. Format based on
   PASS（docs 15、i18n 605 键 × 3 语言、Page Runtime 18/18、clipboard model 16/16、
   clipboard store 8/8、skin 11/11、前端生产构建、Rust 287 passed / 9 ignored）。
 ### Fixed
+- **Toast 长文案可读性与溢出修正（2026-11-08）** — 检查主启动器、设置命令结果和
+  独立插件窗三类 toast：此前停留时间分别固定为 1.6s / 4s / 1.8s，主启动器与
+  插件窗缺少可靠的换行边界，插件熔断提示英文 106 字符在旧时限内无法读完。现统一
+  使用可读时长估算：普通至少 4s、撤销至少 6s，按中英文阅读权重延长，自动上限
+  12s；`opts.duration` 可以延长但不能缩短下限。三个表面都限制在视口内，长单词和
+  路径任意换行、保留显式换行，超高内容可在提示条内滚动；插件熔断文案压缩为仍保留
+  「其他插件不受影响 + 重载重试」的短句。验证：`pnpm verify:fast` PASS（docs 15、
+  TypeScript、i18n 613×3、toast 12/12、Page Runtime 18/18、clipboard model
+  16/16、clipboard store 8/8、skin 17/17、前端构建、Rust **288 passed / 9
+  ignored**）；`pnpm verify:ui --suite smoke,settings,plugin-runtime` PASS
+  **71/71**（28.3s；smoke 25、settings 33、plugin-runtime 13，产物
+  `test/verify/2026-11-08T12-25-33-376Z/summary.json`）。smoke 的长无空格文案
+  实测停留 12s，在 720×286 窗口内完整换行且无横向裁切。
+
 - **插件打开内容污染导航页最近使用（2026-11-08）** — `launch_app` 同时承担
   “打开”和“写最近使用”，插件的 `app.openPath`、剪贴板链接与 About 主页也走同一
   命令，导致文件秒搜等非导航入口污染导航页。现在拆为导航专用 `launch_app` 与

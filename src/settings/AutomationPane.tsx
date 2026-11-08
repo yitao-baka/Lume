@@ -139,7 +139,7 @@ export default function AutomationPane(props: {
   const [picking, setPicking] = createSignal(false);
   /** The button that opened the picker; focus returns here on close. */
   let pickTrigger: HTMLButtonElement | undefined;
-  /** 测试 / 代理预检 — 底部提示条状态（4s 自动消失）。 */
+/** 测试 / 代理预检 — 底部提示条状态（按文案长度自动消失，至少 4s）。 */
   const { state: toast, showToast } = createToastNotice();
   const [addError, setAddError] = createSignal<string | null>(null);
   const [duplicateIndex, setDuplicateIndex] = createSignal<number | null>(null);

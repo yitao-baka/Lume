@@ -41,7 +41,8 @@ Tauri build just to prepare the embedded executable.
 - `scripts/check_docs.mjs`
 - TypeScript type checking
 - three-language i18n key validation
-- Page Runtime, clipboard model, clipboard store, and skin-system unit tests
+- toast readability, Page Runtime, clipboard model, clipboard store, and
+  skin-system unit tests
 - the production frontend build, including the plugin-contract check
 - Rust unit tests
 

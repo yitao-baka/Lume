@@ -12,7 +12,6 @@ import {
   CLIP_OVERSCAN,
   CLIP_ROW_H,
   DELETE_ANIM_MS,
-  TOAST_UNDO_MS,
   type ClipKind,
   type ClipboardCategoryCounts,
   type ClipboardItem,
@@ -387,7 +386,7 @@ export function createClipboardStore(services: PluginServices) {
         next.delete(id);
         return next;
       });
-      services.showToast(t("clipDeletedOne"), { undo: undoDelete, duration: TOAST_UNDO_MS });
+      services.showToast(t("clipDeletedOne"), { undo: undoDelete });
       await services.runSearch(clipQuery());
     } catch (err) {
       // The row is still visible because no list mutation happens before the

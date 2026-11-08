@@ -968,8 +968,14 @@ html[data-window-kind="launcher"] #root {
   bottom: 40px;
   transform: translateX(-50%);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
+  width: max-content;
+  max-width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   padding: 9px 16px;
   border-radius: 10px;
   background: var(--surface-raised);
@@ -979,6 +985,18 @@ html[data-window-kind="launcher"] #root {
   color: var(--text);
   z-index: 60;
   animation: toast-in 150ms ease-out;
+}
+
+.toast::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.toast-text {
+  min-width: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 @keyframes toast-in {
@@ -1009,6 +1027,7 @@ html[data-window-kind="launcher"] #root {
 }
 
 .toast-undo-btn {
+  flex: none;
   border: none;
   outline: none;
   background: transparent;

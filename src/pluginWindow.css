@@ -80,17 +80,31 @@ body {
   left: 50%;
   bottom: 18px;
   transform: translateX(-50%);
-  max-width: 70%;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(640px, calc(100vw - 36px));
+  max-height: calc(100vh - 54px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   padding: 7px 14px;
   border-radius: 8px;
   background: var(--surface-raised, rgba(30, 30, 32, 0.92));
   color: var(--text);
-  font: 13px/1.4 sans-serif;
+  font: 13px/1.45 sans-serif;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: pre-wrap;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
   opacity: 0;
   transition: opacity 0.18s ease;
   pointer-events: none;
   z-index: 10;
+}
+
+#plugin-window-toast::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 /* Slot host (pluginWindow.tsx creates it once): sizes the iframe and hides

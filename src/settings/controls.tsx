@@ -6,6 +6,7 @@
 import { createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { t } from "../i18n";
+import { toastDurationMs } from "../launcher/toast";
 
 let helpRowSeq = 0;
 const HELP_TOOLTIP_WIDTH = 320;
@@ -481,14 +482,15 @@ export interface ToastState {
 
 /** State + auto-dismiss timer for `<ToastNotice>`. Used by the panes whose
  * commands sit outside the settings working copy (自动化 测试 / 代理预检、
- * 系统 服务与提权代理注册)：成功与失败共用同一条底部提示，计时器随组件清理。 */
-export function createToastNotice(timeoutMs = 4000) {
+ * 系统 服务与提权代理注册)：成功与失败共用同一条底部提示；停留时间随文案
+ * 长度增长，计时器随组件清理。 */
+export function createToastNotice(minDurationMs?: number) {
   const [state, setState] = createSignal<ToastState | null>(null);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const showToast = (text: string, ok = true) => {
     setState({ ok, text });
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => setState(null), timeoutMs);
+    timer = setTimeout(() => setState(null), toastDurationMs(text, { minDuration: minDurationMs }));
   };
   onCleanup(() => {
     if (timer) clearTimeout(timer);

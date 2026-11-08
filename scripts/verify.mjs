@@ -39,6 +39,7 @@ const BUILD_INPUTS = [
 ];
 
 const FRONTEND_UNIT_SCRIPTS = [
+  "scripts/toast_unit_test.mjs",
   "scripts/page_runtime_unit_test.mjs",
   "scripts/clipboard_model_unit_test.mjs",
   "scripts/clipboard_store_unit_test.mjs",

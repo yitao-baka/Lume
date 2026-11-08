@@ -339,7 +339,7 @@
   "pluginToastDisabled": "{name} disabled",
   "pluginToastReloaded": "{name} reloaded",
   "pluginApiRejectedHint": "This plugin cannot load: {reason}",
-  "pluginCircuitOpen": "\"{name}\" keeps failing and was paused (other plugins are unaffected — reload it or save settings to retry)",
+  "pluginCircuitOpen": "\"{name}\" paused after repeated failures; other plugins are unaffected — reload to retry",
   "pluginPermEnforcedHint": "The plugin can only call the capabilities it declares; anything else is refused.",
   "pluginsDevMode": "Developer mode",
   "pluginsDevModeHint": "Show the developer options (Reload, Trust all). 「Trust all」 only takes effect while this is on.",

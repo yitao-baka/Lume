@@ -40,6 +40,7 @@ import { fetchDiskFile, pluginFilePath } from "./plugins/disk";
 import { plog } from "./plugins/log";
 import { resolveLocale, setLocale, t } from "./i18n";
 import { exposeDebugProbe, pushBoundedDiagnostic } from "./page-runtime/diagnostics";
+import { toastDurationMs } from "./launcher/toast";
 import "./skins/shared.css";
 import "./pluginWindow.css";
 
@@ -104,7 +105,7 @@ function App() {
   let lastQuery: string | null = null;
 
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
-  const localToast = (text: string) => {
+  const localToast = (text: string, opts?: { undo?: () => void; duration?: number }) => {
     const el = document.getElementById("plugin-window-toast");
     if (!el) return;
     el.textContent = text;
@@ -112,7 +113,7 @@ function App() {
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       el.style.opacity = "0";
-    }, 1800);
+    }, toastDurationMs(text, { undo: !!opts?.undo, duration: opts?.duration }));
   };
 
   // Window-local PluginServices (rpc.ts's router needs the full shape).
@@ -124,7 +125,7 @@ function App() {
   // latch the window to the cursor. One real start per gesture window.
   let lastDragAt = 0;
   const services: PluginServices = {
-    showToast: (text) => localToast(text),
+    showToast: (text, opts) => localToast(text, opts),
     markEntryOpened: () => {},
     // `app.hide()` hides THIS window (the plugin decides when it should go
     // away); re-open via the launcher's pill/keyword focuses it again.

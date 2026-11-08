@@ -6270,3 +6270,49 @@ Page Model、会话帧、Presenter 事件和诊断探针也缺少统一的全局
 - `pnpm verify:ui:changed` PASS **76/76**：smoke 23、plugin-runtime 13、
   clipboard-ui 7、settings 33；产物
   `test/verify/2026-11-08T11-48-55-519Z/summary.json`。
+
+## 104. Toast 可读性、换行与停留时间（2026-11-08）
+
+### 104.1 背景
+
+三类 toast 各自维护计时与布局：主启动器固定 1.6s（撤销 3s）、设置命令结果固定
+4s、独立插件窗固定 1.8s。实际文案并非都足够短：插件熔断提示英文原为 106 字符，
+`autoTestSent`、`launchFailed` 等还会插入窗口标题、进程名或路径；主启动器 toast
+没有宽度/换行约束，独立插件窗只有百分比宽度，长路径或连续无空格值会越过视口。
+因此问题同时包含「文案超出可视边界」和「停留时间不足以读完」两层。
+
+### 104.2 实现
+
+- 新增共享 `src/launcher/toast.ts`：以 CJK 每字 180ms、其他字符每字 60ms 加
+  1.5s 阅读余量估算；普通 toast 至少 4s、撤销至少 6s、自动计时上限 12s。
+  `opts.duration` 仍可延长特殊场景，但不能把可读下限压短。
+- 主启动器、设置 `ToastNotice`、插件页临时状态与独立插件窗全部接入同一计时器。
+- 三个 toast 表面都增加 `max-width` / `max-height`、`overflow-y: auto`、
+  `overflow-wrap: anywhere` 与 `white-space: pre-wrap`；主启动器撤销按钮保持
+  `flex: none`，长正文不再挤压操作。
+- 插件熔断提示压缩为「连续失败，已暂停；其他插件不受影响，重载后重试」，
+  英文同步缩短，仍保留影响范围与恢复动作。
+- App 的 debug 诊断新增 `__launcherTestToast`，smoke 用超长无空格中英文文案直接
+  验证视口边界、换行、无裁切与旧的 1.6s 时限之后仍可见。
+
+### 104.3 踩坑
+
+- 不能按 `String.length` 直接统一定时：中文单字信息量高，英文又包含较多空格与
+  短词，需分别加权；纯空白字符不应计入阅读时间。
+- 只改计时不解决横向溢出，只加宽度不解决可读时间；三个表面必须同时受
+  viewport 边界和共享时限约束。
+- 设置 toast 被 Portal 到 `body`，其 `box-sizing` 不继承 `.settings *`；宽度上限
+  必须显式设为 `border-box`，否则 padding 会再次把总宽度撑出预期。
+- `opts.duration` 是插件公开 API，不能直接改成「总停留时间」：这里保留延长能力，
+  仅把明显过短覆盖钳回可读下限，避免插件既有用法失效。
+
+### 104.4 验证
+
+- `pnpm verify:fast` PASS：docs 15、TypeScript、i18n 613 键 × 3、toast
+  **12/12**、Page Runtime 18/18、clipboard model 16/16、clipboard store 8/8、
+  skin 17/17、前端生产构建、Rust **288 passed / 9 ignored**。
+- `pnpm verify:ui --suite smoke,settings,plugin-runtime` PASS **71/71**（28.3s：
+  smoke 25/25、settings 33/33、plugin-runtime 13/13，产物
+  `test/verify/2026-11-08T12-25-33-376Z/summary.json`）。超长无空格文案在
+  720×286 窗口内完整换行，`toastScrollWidth === toastClientWidth`，停留时间
+  **12000ms**，2.2s 后仍可见。

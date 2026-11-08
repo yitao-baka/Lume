@@ -278,7 +278,7 @@ export interface PluginHostApi {
   app: {
     /** Hide the launcher (equivalent to Esc/blur). */
     hide(): void;
-    /** Bottom toast (1.6s, or 3s when opts.undo is set). */
+    /** Bottom toast; dwell follows the text length (4s minimum, 6s for undo). */
     toast(text: string, opts?: { undo?: () => void; duration?: number }): void;
     /** Overwrite the launcher search-box query. */
     setQuery(q: string): void;
@@ -625,6 +625,7 @@ export interface SnapshotEnvelopeV2 {
 
 /** Services the composition root provides to every plugin. */
 export interface PluginServices {
+  /** Bottom toast; dwell follows the text length (4s minimum, 6s for undo). */
   showToast(text: string, opts?: { undo?: () => void; duration?: number }): void;
   /** Marks that an entry was used (launch/paste/…). On the next summon the
    * home page clears its own query; plugin pages keep query + state (#40). */

@@ -26,7 +26,8 @@ import { pluginColorMode, pluginColorPref } from "./plugins/themePrefs";
 import type { SettingsData } from "./settings/types";
 import "./App.css";
 import type { ClipKind, MenuState } from "./launcher/types";
-import { MIN_WINDOW_H, TOAST_MS, TOAST_UNDO_MS } from "./launcher/types";
+import { MIN_WINDOW_H } from "./launcher/types";
+import { toastDurationMs } from "./launcher/toast";
 import type { MenuStateLike, ModeId, PageRow, PluginServices } from "./plugins/types";
 import { createIconStore } from "./launcher/icons";
 import { pickIcon } from "./launcher/iconSpec";
@@ -579,13 +580,29 @@ function App() {
   }
 
   /** Show a transient toast at the bottom of the launcher (auto-dismisses). */
-  function showToast(text: string, opts?: { undo?: () => void; duration?: number }) {
+  function showToast(text: string, opts?: { undo?: () => void; duration?: number }): number {
     window.clearTimeout(toastTimer);
     setToast({ text, undo: opts?.undo });
-    toastTimer = window.setTimeout(
-      () => setToast(null),
-      opts?.duration ?? (opts?.undo ? TOAST_UNDO_MS : TOAST_MS)
-    );
+    const duration = toastDurationMs(text, {
+      undo: !!opts?.undo,
+      duration: opts?.duration,
+    });
+    toastTimer = window.setTimeout(() => {
+      toastTimer = undefined;
+      setToast(null);
+    }, duration);
+    return duration;
+  }
+
+  if (diagnosticsEnabled()) {
+    (
+      window as unknown as {
+        __launcherTestToast?: (
+          text: string,
+          opts?: { undo?: () => void; duration?: number },
+        ) => number;
+      }
+    ).__launcherTestToast = showToast;
   }
 
   /** Close the custom context menu. */
@@ -1220,7 +1237,10 @@ const services: PluginServices = {
     requestAnimationFrame(() => activeMode()?.measureViewport());
   });
 
-  onCleanup(() => clearTimeout(lastPageTimer));
+  onCleanup(() => {
+    clearTimeout(lastPageTimer);
+    clearTimeout(toastTimer);
+  });
 
   onMount(async () => {
     // Suppress the WebView2 default (browser-style) context menu everywhere.
@@ -1532,13 +1552,21 @@ const services: PluginServices = {
         </Show>
       </div>
       <Show when={toast()}>
-        <div class="toast" classList={{ "toast-undo": !!toast()?.undo }}>
+        <div
+          class="toast"
+          classList={{ "toast-undo": !!toast()?.undo }}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
           <span class="toast-text">{toast()?.text}</span>
           <Show when={toast()?.undo}>
             <button
               class="toast-undo-btn"
               onClick={() => {
                 const undo = toast()?.undo;
+                window.clearTimeout(toastTimer);
+                toastTimer = undefined;
                 setToast(null);
                 undo?.();
               }}

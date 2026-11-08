@@ -203,6 +203,55 @@ export default {
     await t.screenshot("page-error-sizing");
     await t.evaluate('document.querySelector("[data-sizing-probe]")?.remove(); true');
 
+    const toastProbe = await t.evaluate(`(() => {
+      const text = "无法完成：" + "LongUnbrokenToastToken".repeat(18);
+      const duration = window.__launcherTestToast?.(text, { duration: 1 }) ?? 0;
+      return { duration, text };
+    })()`);
+    const toastMounted = await t.waitFor(
+      `document.querySelector(".toast-text")?.textContent === ${JSON.stringify(toastProbe.text)}`,
+      3000,
+    );
+    const toastLayout = await t.evaluate(`(() => {
+      const toast = document.querySelector(".toast");
+      const text = document.querySelector(".toast-text");
+      const rect = toast?.getBoundingClientRect();
+      const style = text ? getComputedStyle(text) : null;
+      return {
+        innerWidth,
+        innerHeight,
+        left: rect?.left ?? -1,
+        right: rect?.right ?? -1,
+        top: rect?.top ?? -1,
+        bottom: rect?.bottom ?? -1,
+        toastScrollWidth: toast?.scrollWidth ?? -1,
+        toastClientWidth: toast?.clientWidth ?? -1,
+        toastScrollHeight: toast?.scrollHeight ?? -1,
+        toastClientHeight: toast?.clientHeight ?? -1,
+        overflowWrap: style?.overflowWrap ?? "",
+        whiteSpace: style?.whiteSpace ?? "",
+      };
+    })()`);
+    t.check(
+      "long launcher toast stays inside the viewport and wraps without clipping",
+      toastMounted &&
+        toastProbe.duration >= 4_000 &&
+        toastLayout.left >= 0 &&
+        toastLayout.right <= toastLayout.innerWidth + 0.5 &&
+        toastLayout.top >= 0 &&
+        toastLayout.bottom <= toastLayout.innerHeight + 0.5 &&
+        toastLayout.toastScrollWidth <= toastLayout.toastClientWidth + 1 &&
+        toastLayout.toastScrollHeight <= toastLayout.toastClientHeight + 1 &&
+        toastLayout.overflowWrap === "anywhere" &&
+        toastLayout.whiteSpace === "pre-wrap",
+      { duration: toastProbe.duration, layout: toastLayout },
+    );
+    await t.sleep(2200);
+    t.check(
+      "long toast remains visible beyond the previous fixed dwell",
+      await t.evaluate('!!document.querySelector(".toast")'),
+    );
+
     await t.invoke("hide_launcher");
     await t.waitFor(
       'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" }).then((visible) => !visible)',

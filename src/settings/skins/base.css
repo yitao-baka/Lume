@@ -1131,16 +1131,31 @@ html[data-skin] body.settings-window #root {
   /* 基准位移：入场动画结束后 transform 回到这里，提示条才能保持居中 */
   transform: translateX(-50%);
   z-index: 30;
-  max-width: min(560px, calc(100vw - 48px));
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   padding: 8px 16px;
   border: var(--settings-overlay-border-width) solid var(--settings-line-strong);
   border-radius: var(--settings-control-radius);
   background: var(--settings-panel);
   color: var(--settings-text);
   font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: pre-wrap;
   box-shadow: var(--settings-overlay-shadow);
   pointer-events: none;
   animation: settings-toast-in 180ms ease-out;
+}
+
+.settings-toast::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .settings-toast.error {

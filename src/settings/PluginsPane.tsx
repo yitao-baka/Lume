@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { t, type Messages } from "../i18n";
 import { pickIcon, resolveThemedIcon } from "../launcher/iconSpec";
+import { toastDurationMs } from "../launcher/toast";
 import { pluginDisplayName } from "../plugins/pluginName";
 import type { PickedIcon } from "../launcher/types";
 import type { PluginManifest, PluginPresenter, PluginSecretSpec, PluginSetting } from "../plugins/types";
@@ -302,7 +303,7 @@ export default function PluginsPane(props: {
   function showStatus(ok: boolean, text: string) {
     setStatus({ ok, text });
     if (statusTimer) clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => setStatus(null), 2400);
+    statusTimer = setTimeout(() => setStatus(null), toastDurationMs(text, { minDuration: 2400 }));
   }
 
   const enabledCount = () => plugins().filter((p) => p.enabled).length;

@@ -71,6 +71,31 @@ export default {
     );
     t.check("summon lazily reloads the active page logic iframe", logicReloaded);
 
+    const beforeRestartIntent = await t.evaluate(
+      'window.__pageRuntimeLatestModel("hello-mode")'
+    );
+    const expectedCount = Number(beforeRestartIntent?.data?.count || 0) + 1;
+    const firstIntent = await t.evaluate(
+      'window.__pageRuntimeDispatch("hello-mode", { type: "item.action", actionId: "count" })'
+    );
+    const firstPublish = await t.waitFor(
+      `window.__pageRuntimeLatestModel("hello-mode")?.data?.count === ${expectedCount} &&
+       window.__pageRuntimeLatestModel("hello-mode")?.revision > ${beforeRestartIntent?.revision ?? 0}`,
+      8000
+    );
+    t.check(
+      "first intent after logic restart publishes a newer Page Model",
+      firstIntent?.status === "completed" && firstPublish,
+      {
+        firstIntent,
+        before: beforeRestartIntent && {
+          revision: beforeRestartIntent.revision,
+          count: beforeRestartIntent.data?.count,
+        },
+        after: await t.evaluate('window.__pageRuntimeLatestModel("hello-mode")'),
+      }
+    );
+
     const frame = await t.evaluate(`(() => {
       const frame = document.querySelector("iframe.presenter-frame");
       return frame ? {

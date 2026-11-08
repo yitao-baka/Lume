@@ -64,6 +64,23 @@ All notable changes to Lume are documented here. Format based on
   PASS（docs 15、i18n 605 键 × 3 语言、Page Runtime 18/18、clipboard model 16/16、
   clipboard store 8/8、skin 11/11、前端生产构建、Rust 287 passed / 9 ignored）。
 ### Fixed
+- **Page Service 重启后的首击模型丢失（2026-11-08）** — 隐藏 5 分钟后逻辑
+  iframe 被回收、共享逻辑宿主关闭；再次呼出时 Page Session 仍保留旧 Page Model
+  的 revision，而新建的 Page Service 从 1 重新计数，`PageModelStore` 把新快照
+  当作过期数据静默丢弃。正式 `file-search` 4.0.2 的首个侧栏点击因此返回
+  `completed` 却看不到模型变化，直到插件自身 revision 超过旧值后才恢复。现在
+  Page Session 在服务启动边界记录保留模型的 revision offset，并把新服务快照续接
+  到旧序列之后；宿主生成的错误/清除错误模型仍走原发布路径，避免重复偏移。验证：
+  `pnpm verify:fast` PASS（docs 15、TypeScript、i18n 613×3、Page Runtime
+  **19/19**、clipboard model 16/16、clipboard store 8/8、skin 17/17、前端生产
+  构建、Rust **288 passed / 9 ignored**）；`pnpm verify:ui --suite plugin-runtime
+  --no-build` PASS **14/14**；`pnpm verify:ui:changed --no-build` PASS **108/108**
+  （smoke 25、settings 33、plugin-runtime 14、clipboard-ui 7、preview 18、agent 11，
+  产物 `test/verify/2026-11-08T13-20-54-644Z/summary.json`）；release
+  `pnpm run tauri build --no-bundle` 通过；正式插件隔离复现使用 release 目录的
+  `file-search` 4.0.2 与系统级鼠标输入，逻辑闲置加速回收后首击即可把 PDF 过滤
+  写入模型，后续 WORD/图片点击同样生效（产物
+  `test/file-search-idle/2026-11-08T13-16-44-093Z`）。
 - **Toast 长文案可读性与溢出修正（2026-11-08）** — 检查主启动器、设置命令结果和
   独立插件窗三类 toast：此前停留时间分别固定为 1.6s / 4s / 1.8s，主启动器与
   插件窗缺少可靠的换行边界，插件熔断提示英文 106 字符在旧时限内无法读完。现统一

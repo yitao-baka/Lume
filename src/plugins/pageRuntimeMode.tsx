@@ -637,7 +637,7 @@ export function createPageRuntimeMode(deps: PageRuntimeModeDeps): PageRuntimeMod
   return {
     instance,
     publishModel: (model) => {
-      session!.publish(model);
+      session!.publishServiceModel(model);
     },
     emitEvent: (event) => { postBoth("event", event); },
     publishError: (error) => {

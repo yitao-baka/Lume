@@ -320,6 +320,30 @@ export async function runPageRuntimeAsyncSelfTests(): Promise<string[]> {
   expect(session.snapshot().visible === false, "Page Session records the hidden lifecycle state");
   passed.push("fixture Presenter ready, visibility state and intent routing");
 
+  const restartedData = { items: [], groups: [], total: 0, restartMarker: "restart" };
+  const restarted = await session.start({
+    getModel: () => model(1, restartedData),
+    onIntent: () => ({ status: "accepted" }),
+  });
+  const restartedMarker = (restarted.data as { restartMarker?: string } | null)?.restartMarker;
+  expect(
+    restarted.revision === 2 && restartedMarker === "restart",
+    "a restarted Page Service revision must be rebased above the retained session model"
+  );
+  expect(
+    grid.models[grid.models.length - 1]?.revision === 2,
+    "the mounted Presenter receives the rebased restart snapshot"
+  );
+  const postRestart = session.publishServiceModel(
+    model(2, { items: [], groups: [], total: 0, restartMarker: "next" })
+  );
+  const postRestartMarker = (postRestart.data as { restartMarker?: string } | null)?.restartMarker;
+  expect(
+    postRestart.revision === 3 && postRestartMarker === "next",
+    "later service revisions retain the same restart offset"
+  );
+  passed.push("service restart keeps Page Model revisions monotonic");
+
   const before = session.store.get();
   const list = createFixturePresenter("list");
   const switched = await session.switchPresenter("fixture-list", () => list.factory);

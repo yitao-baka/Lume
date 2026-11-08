@@ -6316,3 +6316,62 @@ Page Model、会话帧、Presenter 事件和诊断探针也缺少统一的全局
   `test/verify/2026-11-08T12-25-33-376Z/summary.json`）。超长无空格文案在
   720×286 窗口内完整换行，`toastScrollWidth === toastClientWidth`，停留时间
   **12000ms**，2.2s 后仍可见。
+
+## 105. Page Service 重启后的首击模型丢失（2026-11-08）
+
+### 105.1 背景
+
+正式 `file-search` 4.0.2 在隐藏约 6 分钟后再次呼出时，页面仍显示且 Presenter
+报告 `ready`，但第一次点击侧栏分类没有可见响应；再点一次或等待后操作恢复。
+该症状只在逻辑 iframe 已按空闲策略卸载、共享逻辑宿主关闭并重新创建后出现；
+短暂隐藏且逻辑帧仍常驻时首击正常。
+
+### 105.2 根因
+
+- Page Runtime 的 `PageSession` 在逻辑 iframe 回收时保留原 Page Model 和
+  `PageModelStore`，旧模型 revision 可能已到 8。
+- 新逻辑 iframe 重新执行 Page Service，插件实例的 revision 从 1 重新计数。
+- `PageModelStore` 按 revision 单调性丢弃旧快照，于是新服务前几次 `publish`
+  全部被静默忽略；Intent 已返回 `completed`，但 Presenter 收不到新模型。
+- 文件秒搜首击产生 revision 7 左右的快照，仍小于旧值 8，所以表现为“点了
+  没反应”；下一次操作把服务 revision 推过 8 后才恢复。
+
+这是宿主 Page Runtime 的跨服务代际版本契约问题，不要求插件持久化 revision，
+也不是文件秒搜 Presenter 吞掉事件。
+
+### 105.3 实现
+
+- `PageSession.start()` 在每次服务实例启动时记录当前保留模型的 revision 作为
+  offset；新增 `publishServiceModel()`，只对服务发布的快照加上该 offset。
+- `PageRuntimeMode.publishModel()` 改走 `publishServiceModel()`；宿主生成的
+  `publishError()` / `clearError()` 继续走 `PageSession.publish()`，避免二次偏移。
+- `page-runtime/selftest.ts` 增加服务重启、Presenter 收到续接模型和后续快照
+  连续性断言。
+- `scripts/test-harness/suites/plugin-runtime.mjs` 在逻辑帧重启并重挂载后发送
+  首个 Intent，断言 Page Model revision 前进且业务字段生效。
+
+### 105.4 踩坑
+
+- 不能靠清空 `PageModelStore` 修复：Presenter、选择、页面会话和非活动页快照仍
+  依赖当前模型，清空会把可恢复状态变成空白页。
+- offset 只能应用于服务快照。`publishError`/`clearError` 的模型已经带有宿主
+  revision，再走 rebase 会重复累加。
+- 每次逻辑 iframe 重建都可能重新从 1 计数，因此 offset 必须在每个服务启动
+  边界重新取值，不能只在第一次加载时设置。
+- 复现时要同时看 `__pageIntents` 与 `__pageModels`：Intent 为 `completed` 而
+  model 不前进，说明问题在版本门而不是点击投递或插件事件监听。
+
+### 105.5 验证
+
+- `node scripts/page_runtime_unit_test.mjs` PASS **19/19**，新增“service restart
+  keeps Page Model revisions monotonic”。
+- `pnpm verify:ui --suite plugin-runtime --no-build` PASS **14/14**，新增首击
+  Intent 后 revision 与业务字段同时前进的断言。
+- `pnpm verify:ui:changed --no-build` PASS **108/108**（smoke 25、settings 33、
+  plugin-runtime 14、clipboard-ui 7、preview 18、agent 11，产物
+  `test/verify/2026-11-08T13-20-54-644Z/summary.json`）。
+- `pnpm run tauri build --no-bundle` PASS（release，39.13s）。
+- 正式插件隔离复现：release 目录的 `file-search` 4.0.2，加速逻辑空闲回收后
+  用系统级鼠标输入点击侧栏；修复前首击 Intent 完成但模型停在 EXCEL，修复后
+  首击直接切到 PDF，随后 WORD/图片均正常。产物
+  `test/file-search-idle/2026-11-08T13-16-44-093Z`。

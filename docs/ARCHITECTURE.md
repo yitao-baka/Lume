@@ -643,7 +643,10 @@ before adding a field:
   routing, Presenter compatibility/fallback and built-in model schemas.
   `PageSession.publish` validates every service snapshot; a malformed or
   oversized model becomes a visible `model.invalid` page error instead of an
-  empty/crashed Presenter. Resource refs must use a WebView-safe image URL
+  empty/crashed Presenter. When a recycled logic host restarts its Page Service,
+  the session rebases that service's fresh revision sequence above the retained
+  model so the first post-restart snapshot is not rejected as stale. Resource
+  refs must use a WebView-safe image URL
   (`http(s):`, `asset:`, `lume-resource:` or an image `data:` URL, including
   Vite's parameterless `data:image/svg+xml,...` form); another scheme rejects
   the whole snapshot. Page Service lifecycle events queue across slow

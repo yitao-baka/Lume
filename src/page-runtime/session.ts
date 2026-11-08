@@ -50,6 +50,8 @@ export class PageSession {
   private query = "";
   private visible = false;
   private destroyed = false;
+  /** A fresh logic host restarts its Page Service revision counter at 1. */
+  private revisionOffset = 0;
   private readonly unsubscribeModel: () => void;
 
   constructor(options: PageSessionOptions) {
@@ -71,9 +73,10 @@ export class PageSession {
 
   async start(service: PageService): Promise<PageModel> {
     if (this.destroyed) throw new Error("Page Session was destroyed");
+    this.revisionOffset = this.store.get()?.revision ?? 0;
     this.service = service;
     const model = await service.getModel();
-    return this.publish(model);
+    return this.publishServiceModel(model);
   }
 
   async mount(
@@ -120,6 +123,22 @@ export class PageSession {
       };
     }
     return this.router.dispatch(intent, model);
+  }
+
+  /** A fresh Page Service owns a new revision sequence. Rebase it onto the
+   * retained Page Session so its first live snapshot is not rejected as stale. */
+  publishServiceModel(model: PageModel): PageModel {
+    if (
+      this.revisionOffset === 0 ||
+      !Number.isSafeInteger(model?.revision) ||
+      model.revision <= 0
+    ) {
+      return this.publish(model);
+    }
+    const revision = model.revision + this.revisionOffset;
+    return this.publish(
+      Number.isSafeInteger(revision) ? { ...model, revision } : model
+    );
   }
 
   publish(model: PageModel): PageModel {

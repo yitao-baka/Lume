@@ -920,7 +920,9 @@ label = "API Key"
 
 Page Service 的 `ctx.page`：
 
-- `publish(model)`：发布完整快照；revision 必须递增。
+- `publish(model)`：发布完整快照；同一 Page Service 实例内 revision 必须递增。
+  逻辑 iframe 被宿主回收后，新实例可以从 1 重新计数；宿主会在服务重启边界把
+  新序列续接到当前模型之后，插件无需持久化 revision。
 - `emit(event)`：发送瞬时事件。
 - `setError(error)` / `clearError()`：统一错误状态。
 - `patch(update)`：协议保留位，当前实现拒绝并提示发布完整快照。

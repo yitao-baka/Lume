@@ -6375,3 +6375,72 @@ Page Model、会话帧、Presenter 事件和诊断探针也缺少统一的全局
   用系统级鼠标输入点击侧栏；修复前首击 Intent 完成但模型停在 EXCEL，修复后
   首击直接切到 PDF，随后 WORD/图片均正常。产物
   `test/file-search-idle/2026-11-08T13-16-44-093Z`。
+
+## 106. 启动器首帧、跨窗口焦点与原生菜单泄漏（2026-11-11）
+
+### 106.1 背景
+
+三个症状指向同一条原生窗口链路：首次启动后第一次呼出时短暂出现白色矩形；
+在设置窗或独立插件窗拥有前台焦点时呼出主窗口，主窗口可能可见但键盘仍落在
+另一个窗口；键盘导航过程中偶尔弹出 Restore / Move / Size / Minimize /
+Maximize / Close 的 Win32 系统菜单。
+
+### 106.2 根因
+
+- 主窗口使用透明 WebView2，但 controller 的默认画布仍是运行时的白色背景。
+  几何提交命令在布局测量完成后就释放了显示握手，没有确认浏览器已经提交一帧；
+  首次 renderer 冷启动时，原生窗口可能先于 CSS 画面出现。
+- Tao 即使使用 `decorations(false)`，窗口样式仍包含 `WS_SYSMENU`。全局热键
+  `Alt+Space` 会同时触发系统窗口菜单；`Shift+F10` / Menu key / 非客户区右键
+  也有原生菜单入口。DOM 的 `contextmenu.preventDefault()` 管不到这些 Win32
+  消息。
+- `Window::show()` 与 `Window::set_focus()` 是排队消息。仅调用后立即返回，
+  没有确认事件循环已完成切换；从同进程的 Settings / detached plugin 切回时，
+  Windows 前台窗口可能仍停留在原窗口。
+
+### 106.3 实现
+
+- 主 WebView2 controller 的默认背景设为完全透明；设置、预览和独立插件窗使用
+  各自解析后的不透明 surface，避免首帧白底。`index.html` 在主题启动脚本前
+  保留深色占位画布，只作用于尚未写入 `data-window-kind` 的初始文档。
+- `apply_launcher_geometry` 只记录隐藏窗口的目标几何；前端在最终测量后等待
+  两帧并调用 `launcher_show_ready(generation)`，Rust 收到匹配代际后才显示
+  窗口。160ms 渲染器超时与既有 700ms 显示握手超时仍保留。
+- 每个 host WebView2 窗口安装 Win32 subclass，吞掉 `WM_SYSCOMMAND` 的
+  `SC_KEYMENU` / `SC_MOUSEMENU`、Alt+Space 的系统键消息、键盘 `WM_CONTEXTMENU`
+  以及非客户区右键消息。页面自己的 DOM context menu 不受影响。
+- WebView2 默认 context menu、browser accelerator、zoom control、autofill、
+  pinch zoom 和 swipe navigation 在 controller 层关闭；release 构建同时关闭
+  DevTools。页面键盘路由与自定义菜单继续工作。
+- 呼出时在 `show()` / `set_focus()` 后等待 native queue 排空，再用实际
+  foreground HWND 校验；跨窗口时调用既有的 `input::force_foreground` 完成
+  前台切换，然后发送 `launcher-shown`，让搜索框获得 DOM 焦点。
+
+### 106.4 踩坑
+
+- 不能只在窗口创建时移除 `WS_SYSMENU`：Tao 在每次 show/hide 更新窗口 flags
+  时会按内部模板重写 style。subclass 对消息的拦截才是稳定边界。
+- 几何 acknowledgement 不等于 paint acknowledgement。即使 `SetWindowPos`
+  已在隐藏窗口上完成，WebView2 仍可能尚未提交第一帧。
+- controller 背景必须与窗口透明度分开处理；CSS `background` 只能覆盖页面
+  开始绘制之后的区域，无法覆盖 WebView2 的初始画布。
+- 关闭默认 context menu 不能删除页面的 DOM 菜单；原生设置只移除浏览器 UI，
+  不能把 `contextmenu` 事件一起吞掉。
+- 呼出路径必须同时验证 native focus 与 `document.hasFocus()`。只看到窗口可见
+  或 `is_visible()` 为真，不能证明键盘事件会进入主 WebView。
+
+### 106.5 验证
+
+- `cargo test webview_guard::tests --lib` PASS 2/2：系统菜单消息分类与普通窗口
+  消息放行。
+- `pnpm verify:fast` PASS：docs 15、TypeScript、i18n 613×3、toast 12/12、
+  Page Runtime 19/19、clipboard model 16/16、clipboard store 8/8、skin 17/17、
+  前端生产构建、Rust **290 passed / 9 ignored**。
+- `pnpm verify:ui --suite=smoke,settings,plugin-runtime,clipboard-ui,preview,agent`
+  PASS **111/111**（36.5s，产物
+  `test/verify/2026-11-11T09-11-54-579Z/summary.json`）。smoke 26/26 增加
+  “first show commits a renderer frame before the launcher is revealed”；
+  settings 35/35 增加从设置窗呼出后 main native focus、DOM focus 与 settings
+  blur 的联合断言。
+- 原生探针向主窗口发送 `WM_SYSCOMMAND` / `SC_KEYMENU`，同进程可见
+  `#32768` 系统菜单数量保持 `0→0`。

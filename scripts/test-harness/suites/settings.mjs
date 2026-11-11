@@ -50,6 +50,30 @@ export default {
       firstShow,
     );
 
+    // Settings owns the foreground when it opens. Summoning the launcher from
+    // there must move both the native HWND focus and the WebView document focus
+    // back to main; otherwise keyboard navigation silently targets Settings.
+    const mainHidden = await t.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" }).then((visible) => !visible)',
+      5000,
+    );
+    t.check("opening settings hides the launcher", mainHidden);
+    await settings.invoke("toggle_launcher");
+    const mainHasDomFocus = await t.waitFor(
+      'document.hasFocus() && document.activeElement?.id === "search-input"',
+      5000,
+    );
+    const mainHasNativeFocus = await t.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("plugin:window|is_focused", { label: "main" })',
+      3000,
+    );
+    const settingsHasDomFocus = await settings.evaluate("document.hasFocus()");
+    t.check(
+      "summon from settings restores launcher native and document focus",
+      mainHasDomFocus && mainHasNativeFocus && !settingsHasDomFocus,
+      { mainHasDomFocus, mainHasNativeFocus, settingsHasDomFocus },
+    );
+
     await settings.invoke("save_settings_patch", {
       patch: { appearance: { color_mode: "dark" } },
     });

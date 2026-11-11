@@ -215,6 +215,9 @@ pub fn run() {
             // cleared because DWM border colors cannot carry alpha. The
             // shadow and Win11 rounded corners stay.
             if let Some(mw) = app.get_webview_window("main") {
+                if let Err(error) = window::set_webview_default_background(&mw, (0, 0, 0, 0)) {
+                    eprintln!("[window] transparent WebView2 background failed: {error}");
+                }
                 webview_guard::install(&mw);
                 window::apply_launcher_chrome(&mw, &current.appearance);
             }
@@ -359,6 +362,7 @@ pub fn run() {
             window::window_toggle_pin,
             window::apply_position,
             window_geometry::apply_launcher_geometry,
+            window_geometry::launcher_show_ready,
             window_geometry::launcher_renderer_ready,
             window_geometry::launcher_geometry_diagnostics,
             window::get_work_area,

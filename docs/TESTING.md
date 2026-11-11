@@ -102,7 +102,7 @@ hotkey delivery, and native window interactions remain manual. Follow
 | Clipboard model/store | `pnpm verify:fast`, `pnpm verify:ui --suite clipboard-ui` |
 | Plugin runtime, permissions, or page model | `pnpm verify:fast`, `pnpm verify:ui --suite plugin-runtime,preview`, then `pnpm verify:legacy --group plugin-boundary` when the boundary changed |
 | Elevation agent or automation settings | `pnpm verify:fast`, `pnpm verify:ui --suite agent`; registration and elevated injection stay manual |
-| Native window geometry | `pnpm verify:fast`, then `pnpm verify:legacy --group window-native` |
+| Native window geometry / focus / chrome | `pnpm verify:fast`, `pnpm verify:ui --suite smoke,settings`, then `pnpm verify:legacy --group window-native`; verify `Alt+Space` and `Shift+F10` do not open a Win32 menu on a real desktop |
 | Release | `pnpm verify:release`, then [MANUAL_TESTING.md](MANUAL_TESTING.md) |
 
 `pnpm verify:ui:changed` maps current changed paths to suites in
@@ -113,8 +113,8 @@ Review the selected list instead of assuming every change needs every suite.
 
 | Suite | Contract |
 | --- | --- |
-| `smoke` | Launcher shell, hidden WebView visibility/quiet geometry, 20 hide/show cycles, direct Navigate input, mode bar, Tab mode switch, clipboard surface |
-| `settings` | Lazy first creation with renderer/plugin-manifest ready gate, warm Search/About/Plugins panes, idle destroy/rebuild, navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, ten close/reopen cycles |
+| `smoke` | Launcher shell, hidden WebView visibility/quiet geometry, pre-reveal paint handshake, 20 hide/show cycles, direct Navigate input, mode bar, Tab mode switch, clipboard surface |
+| `settings` | Lazy first creation with renderer/plugin-manifest ready gate, cross-window launcher focus recovery, warm Search/About/Plugins panes, idle destroy/rebuild, navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, ten close/reopen cycles |
 | `plugin-runtime` | API 2 keyword entry, Presenter readiness, strict CSP and sandbox |
 | `clipboard-ui` | History/empty surface, categories, row artwork, pause acknowledgement, clear confirmation |
 | `preview` | No renderer before first request, idle destroy/recreate, core/PDF rendering, undeclared-plugin denial, declared-plugin reuse, ten close/reopen cycles |

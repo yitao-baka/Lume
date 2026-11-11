@@ -35,6 +35,18 @@ export default {
     t.check("show restores WebView document visibility", shownVisibility);
     const summonFocus = await t.waitFor('document.activeElement?.id === "search-input"', 2000);
     t.check("summon returns focus to the search input", summonFocus);
+    const paintGate = await t.evaluate(`(() => ({
+      paintReadyAt: window.__launcherPaintReadyAt ?? 0,
+      shownAt: window.__summonCompletedAt ?? 0,
+      focused: document.hasFocus(),
+    }))()`);
+    t.check(
+      "first show commits a renderer frame before the launcher is revealed",
+      paintGate.paintReadyAt > 0 &&
+        paintGate.shownAt >= paintGate.paintReadyAt &&
+        paintGate.focused,
+      paintGate,
+    );
 
     let toggleCyclesOk = true;
     for (let cycle = 0; cycle < 20; cycle++) {

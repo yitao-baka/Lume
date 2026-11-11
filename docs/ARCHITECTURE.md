@@ -13,7 +13,8 @@ Tauri IPC
 Rust Core (src-tauri/src/)
   ├─ window.rs   — show / hide / toggle the launcher surface
   ├─ window_geometry.rs — work-area clamp + atomic size/position transaction
-  ├─ webview_guard.rs — native WebView2 frame navigation / new-window guard
+  ├─ webview_guard.rs — native WebView2 UI boundary (default browser chrome,
+  │                Win32 system menu, frame navigation / new-window guard)
   │                and the shared deny-only HTTP proxy
   ├─ plugins.rs  — plugin discovery (`<base>/plugins/*/plugin.toml`) +
   │                manifest registry (`get_plugins`, reload, pinyin keywords)
@@ -75,9 +76,14 @@ medium integrity), `lume-svc.exe` (the SYSTEM file-index service) and
 ### `window.rs`
 Owns the single frameless webview window (label `main`, see
 `tauri.conf.json`). A shown window is revealed only after the hidden renderer
-has reset the destination page and submitted its measured geometry; the
-hotkey then waits for that matching generation (bounded fallback) before
-`window_geometry.rs` commits the client size and anchor in one `SetWindowPos`.
+has reset the destination page, submitted its measured geometry, and
+acknowledged a committed animation frame; the hotkey then waits for that
+matching generation (bounded fallback) before `window_geometry.rs` commits the
+client size and anchor in one `SetWindowPos`. The WebView2 controller default
+background is transparent for the launcher, so an unpainted page cannot expose
+the runtime's white canvas. After reveal, `window.rs` drains the native message
+queue and verifies the foreground HWND, which keeps a summon from Settings or a
+detached plugin window from leaving keyboard focus behind.
 The 窗口位置 setting (center / corners / follow-mouse / custom) positions the
 window on its first appearance in a run — later shows inherit the spot the
 launcher was last closed at, and a manual drag stops automatic anchoring
@@ -860,8 +866,11 @@ before adding a field:
 - The main webview starts hidden with `focused(false)`; settings, preview and
   the shared plugin-logic host are absent until first use. Every show/hide pairs
   the native HWND transition with WebView controller visibility and memory
-  residency. The launcher is first shown by the hotkey, focused explicitly on
-  every show, and auto-hides on focus loss (`lib.rs` window-event handler).
+  residency. The launcher is first shown by the hotkey, waits for a committed
+  renderer frame, is focused explicitly on every show, and auto-hides on focus
+  loss (`lib.rs` window-event handler). Native Win32 system menus and WebView2
+  browser chrome are suppressed on every host window; only Lume-authored DOM
+  menus are visible.
 - Hidden launcher mode pages stop through the central `launcher-hidden` event.
   The evictable live-host budget is four. Inactive visited hosts are snapshotted and
   unmounted after two hidden minutes; a selected non-home plugin page is also

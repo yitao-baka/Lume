@@ -64,6 +64,26 @@ All notable changes to Lume are documented here. Format based on
   PASS（docs 15、i18n 605 键 × 3 语言、Page Runtime 18/18、clipboard model 16/16、
   clipboard store 8/8、skin 11/11、前端生产构建、Rust 287 passed / 9 ignored）。
 ### Fixed
+- **启动器首帧、跨窗口焦点与原生菜单泄漏修正（2026-11-11）** — 首次启动后
+  第一次呼出曾在 WebView2 冷启动画布上短暂闪白；从设置窗或独立插件窗呼出时，
+  主窗口可能只显示但未真正取得前台键盘焦点；`Alt+Space`、`Shift+F10` / Menu key
+  还可能触发 Tao 无边框窗口保留的 Win32 系统菜单。现在主 WebView2 controller
+  使用透明默认画布，隐藏 renderer 在最终测量后提交两帧并通过
+  `launcher_show_ready(generation)` 放行显示；所有 host 窗口安装 Win32 subclass
+  吞掉系统菜单入口，并在 controller 层关闭 WebView2 默认 context menu、浏览器
+  快捷键、autofill、缩放手势与 release DevTools。呼出后会排空 native queue、核对
+  实际 foreground HWND，必要时恢复前台焦点，再让搜索框接管 DOM focus。设置、
+  预览和独立插件窗也使用各自 surface 作为 WebView2 默认背景。验证：
+  `pnpm verify:fast` PASS（docs 15、TypeScript、i18n 613×3、toast 12/12、
+  Page Runtime 19/19、clipboard model 16/16、clipboard store 8/8、skin 17/17、
+  前端生产构建、Rust **290 passed / 9 ignored**）；
+  `pnpm verify:ui --suite=smoke,settings,plugin-runtime,clipboard-ui,preview,agent`
+  PASS **111/111**（36.5s，smoke 26、settings 35、plugin-runtime 14、clipboard-ui 7、
+  preview 18、agent 11，产物
+  `test/verify/2026-11-11T09-11-54-579Z/summary.json`）。smoke 实测
+  `__launcherPaintReadyAt` 后窗口才显示；settings 实测从设置窗呼出后 main
+  native / DOM focus 均为真且 settings 失焦；原生 `SC_KEYMENU` 探针的系统菜单
+  数量保持 `0→0`。
 - **Page Service 重启后的首击模型丢失（2026-11-08）** — 隐藏 5 分钟后逻辑
   iframe 被回收、共享逻辑宿主关闭；再次呼出时 Page Session 仍保留旧 Page Model
   的 revision，而新建的 Page Service 从 1 重新计数，`PageModelStore` 把新快照

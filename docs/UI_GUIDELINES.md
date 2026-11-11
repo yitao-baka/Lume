@@ -42,6 +42,12 @@ and drop shadow (`shadow(true)`, DWM), never CSS.
   sections) collapses the window to the search row — no reserved empty strip.
   A "no results" hint renders in its own `.page-hint` row (the fit window
   shrinks to search row + hint), never centered inside a tall empty page area.
+- **Native chrome is never part of the surface**: the WebView2 default context
+  menu, autofill/zoom/gesture chrome and release DevTools stay disabled, and the
+  Win32 window system menu is swallowed even though Tao gives frameless windows
+  `WS_SYSMENU`. `Alt+Space`, `Shift+F10`, the Menu key and non-client right-click
+  must not paint native Windows UI. Lume's own DOM context menu remains the only
+  keyboard/mouse menu.
 - **Loading gate**: a page that is not loaded yet is *not shown* —
   `.results` is hidden and the mode's pill carries the feedback (label tinted
   to `--accent-text`, a spinner ring over the icon). A fit page collapses to

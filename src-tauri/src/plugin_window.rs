@@ -224,6 +224,7 @@ pub async fn plugin_window_open(
     // The builder's `visible(false)` hides only the parent HWND. Keep the
     // detached page controller hidden/low until `show()` restores both.
     crate::window::set_webview_resource_state(&app, &label, false, true);
+    crate::window::set_webview_default_background(&win, (r, g, b, 255))?;
     crate::webview_guard::install(&win);
     // shadow(true) windows draw DWM's documented 1px white border — suppress
     // it (shadow + Win11 rounded corners stay).

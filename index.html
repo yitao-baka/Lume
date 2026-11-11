@@ -4,6 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#1e1e20" />
+    <style>
+      /* The initial document exists before Vite CSS/JS. Keep the unframed
+         WebView2 canvas dark until windowBootstrap applies the real theme. */
+      html:not([data-window-kind]),
+      html:not([data-window-kind]) body,
+      html:not([data-window-kind]) #root {
+        background-color: #1e1e20;
+        color-scheme: dark;
+      }
+    </style>
     <title>Lume</title>
   </head>
 

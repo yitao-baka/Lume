@@ -27,6 +27,10 @@
   },
   "impact": [
     {
+      "paths": ["index.html", "src-tauri/src/webview_guard.rs", "src-tauri/src/window_geometry.rs", "src-tauri/src/plugin_window.rs"],
+      "suites": ["smoke", "settings", "plugin-runtime", "preview"]
+    },
+    {
       "paths": ["src/index.tsx", "src/settings-entry.tsx", "src/windowBootstrap.ts", "settings.html", "vite.config.ts"],
       "suites": ["smoke", "settings"]
     },
@@ -52,7 +56,7 @@
     },
     {
       "paths": ["src/launcher/previewHost.ts", "src-tauri/src/window.rs", "src/preview.tsx", "examples/plugins/host-tools/"],
-      "suites": ["preview", "smoke"]
+      "suites": ["preview", "smoke", "settings"]
     },
     {
       "paths": ["src-tauri/src/plugin_", "src-tauri/src/plugins.rs", "public/pluginLogicFrame.js", "src/pluginLogic.tsx"],

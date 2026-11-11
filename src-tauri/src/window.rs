@@ -211,6 +211,59 @@ pub fn set_webview_resource_state(app: &AppHandle, label: &str, visible: bool, l
     });
 }
 
+/// Set WebView2's default canvas independently from the native HWND background.
+/// Wry does not expose this per-window setting, yet it is the surface WebView2
+/// paints before the document supplies its own background. The launcher uses
+/// fully transparent RGBA so a first frame can never flash an opaque white (or
+/// wrong-skin) rectangle; opaque auxiliary windows pass their resolved surface.
+pub fn set_webview_default_background(
+    window: &WebviewWindow,
+    rgba: (u8, u8, u8, u8),
+) -> Result<(), String> {
+    window
+        .as_ref()
+        .with_webview(move |pw| set_controller_background(&pw, rgba))
+        .map_err(|error| error.to_string())
+}
+
+fn set_controller_background(
+    pw: &tauri::webview::PlatformWebview,
+    (r, g, b, a): (u8, u8, u8, u8),
+) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Controller2, COREWEBVIEW2_COLOR,
+    };
+    use windows::core::Interface;
+
+    let Ok(controller2) = pw.controller().cast::<ICoreWebView2Controller2>() else {
+        return;
+    };
+    let color = COREWEBVIEW2_COLOR {
+        A: a,
+        R: r,
+        G: g,
+        B: b,
+    };
+    let _ = unsafe { controller2.SetDefaultBackgroundColor(color) };
+}
+
+/// Let queued Tauri window messages (show / set-focus / event delivery) reach
+/// the native event loop before checking the real foreground HWND. A timeout is
+/// diagnostic only: the window is already visible and must never lose its
+/// `launcher-shown` focus re-arm because the main loop was briefly busy.
+fn wait_for_native_queue(app: &AppHandle) {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    if let Err(error) = app.run_on_main_thread(move || {
+        let _ = tx.send(());
+    }) {
+        eprintln!("[window] native queue barrier failed: {error}");
+        return;
+    }
+    if let Err(error) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
+        eprintln!("[window] native queue barrier timed out: {error}");
+    }
+}
+
 /// Initialization-script suffix shared by every webview. Production builds set
 /// the flag to false so large CDP rings and test-only globals stay disabled;
 /// debug builds keep the existing probe surface for the UI harness.
@@ -441,6 +494,18 @@ async fn show(window: &WebviewWindow) -> tauri::Result<()> {
     apply_geometry(window)?;
     window.show()?;
     window.set_focus()?;
+    // `show()`/`set_focus()` are queued Tauri messages. Drain that queue, then
+    // verify the real Win32 foreground HWND. This matters when the summon came
+    // from Settings or a detached plugin window: Windows may still keep the
+    // sibling foreground while the new launcher is already visible.
+    wait_for_native_queue(app);
+    if let Ok(hwnd) = window.hwnd() {
+        if !crate::input::force_foreground(hwnd) {
+            // One final queued focus request gives Tauri a chance to replay its
+            // normal activation path after the foreground check.
+            let _ = window.set_focus();
+        }
+    }
     let _ = window.emit("launcher-shown", ());
     Ok(())
 }
@@ -539,6 +604,10 @@ fn ensure_settings_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     .build()
     .map_err(|error| error.to_string())?;
 
+    set_webview_default_background(
+        &window,
+        (background.0, background.1, background.2, 255),
+    )?;
     crate::webview_guard::install(&window);
     clear_dwm_border(&window);
     // Keep the settings dialog on small work areas while the normal 1040x720
@@ -942,6 +1011,7 @@ fn ensure_preview_window(app: &AppHandle) -> Result<(WebviewWindow, bool), Strin
     .build()
     .map_err(|error| error.to_string())?;
 
+    set_webview_default_background(&window, (30, 30, 32, 255))?;
     crate::webview_guard::install(&window);
     clear_dwm_border(&window);
     set_webview_resource_state(app, PREVIEW_WINDOW, false, true);

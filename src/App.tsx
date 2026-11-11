@@ -1178,6 +1178,24 @@ const services: PluginServices = {
     inst.setSelected(Math.min(Math.max(inst.selected() + delta, 0), len - 1));
   }
 
+  /** Wait until the hidden renderer has committed at least one full frame.
+   * Two animation frames cover the CSS/layout frame plus the compositor frame;
+   * the timeout keeps a throttled/broken renderer from wedging the hotkey. */
+  function waitForCommittedPaint(): Promise<void> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let timeout = 0;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        resolve();
+      };
+      timeout = window.setTimeout(finish, 160);
+      requestAnimationFrame(() => requestAnimationFrame(finish));
+    });
+  }
+
   /** Focus the search box (the launcher's primary keyboard target). */
   function focusSearch() {
     document.getElementById("search-input")?.focus();
@@ -1413,12 +1431,25 @@ const services: PluginServices = {
           await runSearch(query());
           await activeMode()?.onShow?.();
         } finally {
-          // Only the final measurement acknowledges the show generation.
-          // Incidental effects during page reset must not release the reveal
-          // with an earlier, partial target.
+          // Only the final measurement + committed paint acknowledges the show
+          // generation. Incidental effects during page reset must not release
+          // the reveal with an earlier, partial target.
           showPrepareGeneration = generation;
           try {
             await sizer.resizeToContent();
+            await waitForCommittedPaint();
+            if (showPrepareGeneration !== generation) return;
+            if (diagnosticsEnabled()) {
+              const diagnostics = window as unknown as {
+                __launcherPaintReadyAt?: number;
+              };
+              diagnostics.__launcherPaintReadyAt = Date.now();
+            }
+            await invoke("launcher_show_ready", { generation }).catch((error) => {
+              if (showPrepareGeneration === generation) {
+                console.error("[launcher] show-ready acknowledgement failed", error);
+              }
+            });
           } finally {
             if (showPrepareGeneration === generation) showPrepareGeneration = null;
           }

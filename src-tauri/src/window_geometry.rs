@@ -6,9 +6,10 @@
 //! anchor, and commits client size + outer position in one `SetWindowPos`.
 //!
 //! During a show the window is still hidden. `prepare_show` emits a generation
-//! and waits for the renderer's matching measurement; only then does
-//! `window.rs` reveal the window. A timeout falls back to the last target so a
-//! broken renderer cannot make the hotkey unresponsive.
+//! and waits for both the matching measurement and the renderer's post-paint
+//! acknowledgement; only then does `window.rs` reveal the window. A timeout
+//! falls back to the last target so a broken renderer cannot make the hotkey
+//! unresponsive.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -394,8 +395,9 @@ pub fn launcher_geometry_diagnostics(app: AppHandle) -> Result<serde_json::Value
     }))
 }
 
-/// Renderer-confirmed geometry command. While hidden it records the target and
-/// releases the show handshake; when visible it commits size + anchor at once.
+/// Renderer-confirmed geometry command. While hidden it only records the target;
+/// the subsequent `launcher_show_ready` acknowledgement releases the reveal.
+/// When visible it commits size + anchor immediately.
 #[tauri::command]
 pub fn apply_launcher_geometry(
     app: AppHandle,
@@ -425,9 +427,6 @@ pub fn apply_launcher_geometry(
         }
         inner.target = Some(target);
         if !visible {
-            if let Some(generation) = generation {
-                inner.prepared = Some(generation);
-            }
             return Ok(LauncherGeometryResponse {
                 width: target.width,
                 height: target.height,
@@ -452,6 +451,32 @@ pub fn apply_launcher_geometry(
     })
 }
 
+/// The hidden renderer has committed the measured DOM into a WebView2 frame.
+/// This is deliberately separate from `apply_launcher_geometry`: geometry can
+/// be recorded before CSS/layout has painted, and revealing on that earlier
+/// signal is what exposed the launcher's transparent window during a white
+/// first frame. A stale generation is ignored rather than failing a summon
+/// that has already been superseded.
+#[tauri::command]
+pub fn launcher_show_ready(
+    generation: u64,
+    window: WebviewWindow,
+    app: AppHandle,
+) -> Result<(), String> {
+    if window.label() != MAIN_WINDOW {
+        return Err("launcher_show_ready: main window required".into());
+    }
+    let state = app.state::<GeometryState>();
+    let mut inner = state.inner.lock().map_err(|e| e.to_string())?;
+    if generation != inner.generation {
+        return Ok(());
+    }
+    if inner.target.is_none() {
+        return Err("launcher_show_ready: geometry was not prepared".into());
+    }
+    inner.prepared = Some(generation);
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

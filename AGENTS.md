@@ -14,8 +14,8 @@ Windows 轻量启动器（Spotlight / uTools 式）。前端 SolidJS + TypeScrip
 - **三个二进制**（便携布局，都在 exe 同级）：`lume.exe`（启动器，中完整性）、
   `lume-svc.exe`（SYSTEM 文件索引服务）、`lume-agent.exe`（提权按键注入代理）。
 - **双版本号**：对外标签 `src/appVersion.ts` 的 `APP_VERSION_LABEL`（About 页渲染，
-  如 `26.11`）；内部 semver 在 `package.json` / `src-tauri/tauri.conf.json` /
-  `src-tauri/Cargo.toml`（当前 `3.5.0`，tauri 构建强校验 semver）。发布时两处手动同步。
+  如 `26.11.2`）；内部 semver 在 `package.json` / `src-tauri/tauri.conf.json` /
+  `src-tauri/Cargo.toml`（当前 `3.5.2`，tauri 构建强校验 semver）。发布时两处手动同步。
 
 ## 目录
 

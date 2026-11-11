@@ -9,6 +9,8 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Changed
+- **版本号更新（2026-11-11）** — 对外标签 `26.11` → `26.11.2`，内部 semver `3.5.0` → `3.5.2`；同步 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `AGENTS.md`。验证：`cargo check` PASS；`pnpm verify:fast` PASS（docs 15、i18n 613×3、Page Runtime 19/19、clipboard model 16/16、clipboard store 8/8、skin 17/17、前端生产构建、Rust **290 passed / 9 ignored**）。
+- **README 信息架构重写（2026-11-11）** — README 从阶段性状态与重复功能清单重构为面向使用者、插件开发者和仓库贡献者的项目入口，集中说明产品定位、核心能力、快速开始、架构与安全边界、验证入口和文档索引；细节契约继续由 `docs/` 承载。验证：`pnpm verify:docs` PASS（15 项，README 22 个本地链接）。
 - **WebView2 常驻内存第二轮治理（2026-11-07）** — 预览 WebView 改为首次请求
   才创建，关闭后先 `about:blank` 再于 10 分钟时销毁并可从新请求重建；设置窗
   热页保留期由 15 分钟收紧到 5 分钟。插件注册只建立代理，provider 首次搜索、

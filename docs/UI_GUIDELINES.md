@@ -311,6 +311,10 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
 
 - Every component should look modern and polished: clean hierarchy, restrained
   color, rounded corners, natural transitions.
+- The bundled application icon uses a rounded-square plate with a transparent
+  mask at roughly 22% of its side length. `src-tauri/icons/icon.png` is the
+  generation source, and every platform derivative keeps the same alpha
+  silhouette. The in-app brand mark remains the unplated transparent bird art.
 - If hand-rolled components can't meet a need, an external component library
   may be adopted — keep it consistent with the palette and the
   "launcher is content" rule.

@@ -6444,3 +6444,45 @@ Maximize / Close 的 Win32 系统菜单。
   blur 的联合断言。
 - 原生探针向主窗口发送 `WM_SYSCOMMAND` / `SC_KEYMENU`，同进程可见
   `#32768` 系统菜单数量保持 `0→0`。
+
+## 107. 应用图标圆角化（2026-11-14）
+
+### 107.1 背景
+
+启动器主体、设置窗品牌标记与主题任务栏图标都已使用透明鸽形标记，但
+`src-tauri/icons/icon.png` 仍是铺满画布的米白方形底板。Explorer、开始菜单
+和尚未套用运行期主题图标的系统入口会直接读取 exe 内嵌的静态图标，因此显示
+为带直角的方形贴片，与其余圆角表面不一致。
+
+### 107.2 实现
+
+- 以当前 `icon.png` 为源，在外轮廓应用 22% 边长的圆角遮罩；遮罩先按 8×
+  超采样绘制再缩回 512×512，保留抗锯齿的透明边缘，不裁切鸽子或月牙主体。
+- 以圆角源图执行 `pnpm exec tauri icon`，同步重建 `32x32.png`、
+  `128x128.png`、`128x128@2x.png`、Windows Store 方形图、`icon.ico` 与
+  `icon.icns`。ICO 保留 16/24/32/48/64/256 六个尺寸层。
+- 仓库中的生成物集合保持不变：不引入 64×64 独立 PNG，也不保留 Tauri CLI
+  额外生成的 Android/iOS 目录。
+- `icon-transparent.png` 是已去底的单色鸽形品牌标记，没有方形底板，因此继续
+  保持原样；设置窗顶栏和 About 页仍显示同一份透明主体。
+
+### 107.3 踩坑
+
+- 直角来自 exe 静态图标资源，不能用启动器 CSS 修补；必须把 alpha 写进所有
+  平台派生图，否则 Explorer / 开始菜单仍会显示方形底板。
+- Windows 图标缓存会优先复用已加载的 exe 图标。验证必须使用重新构建的
+  `lume.exe`，不能只检查仓库里的 PNG。
+- 小尺寸不能简单截断 alpha：24×24 ICO 层的圆角像素保留少量抗锯齿 alpha，
+  这是正常采样结果；角点是否为透明、中心是否不透明及主体是否完整才是有效
+  判据。
+
+### 107.4 验证
+
+- ICO 可解析全部 16/24/32/48/64/256 层；16/32/48/64/256 层四角 alpha 为 0，
+  24 层四角为抗锯齿 alpha 3，各层中心 alpha 为 255。ICNS 可正常解码。
+- `pnpm verify:fast` PASS：docs 15、TypeScript、i18n 613×3、toast 12/12、
+  Page Runtime 19/19、clipboard model 16/16、clipboard store 8/8、skin 17/17、
+  前端生产构建、Rust **290 passed / 9 ignored**。
+- `pnpm run tauri build --debug --no-bundle` PASS；从实际构建的
+  `src-tauri/target/debug/lume.exe` 提取关联图标为 32×32，四角透明，深色底
+  目检圆角轮廓和鸽子主体清晰。

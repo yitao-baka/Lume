@@ -468,7 +468,12 @@ fn insert_text_history(
             )
             .ok();
         if let Some((last_id, last_at, last_content)) = last {
-            let within = now_millis().saturating_sub(last_at) as u64 <= merge.window_ms;
+            // `next_created_at` can be one tick ahead of the wall clock when
+            // several copies land in the same millisecond. A future recency
+            // stamp means "just now", not an expired window; clamp the signed
+            // age before widening it, otherwise -1 wraps to u64::MAX.
+            let age_ms = now_millis().saturating_sub(last_at).max(0) as u64;
+            let within = age_ms <= merge.window_ms;
             let no_paste = !merge.last_paste_at.is_some_and(|p| p >= last_at);
             if within && no_paste {
                 if last_content.lines().last() == Some(text) {
@@ -3692,6 +3697,14 @@ mod tests {
             last_paste_at: None,
         };
         insert_text_history(&conn, "alpha", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
+        // `next_created_at` can legitimately place the row ahead of the wall
+        // clock. Force that state so the age calculation cannot regress to a
+        // wrapped u64 and reject an otherwise fresh merge candidate.
+        conn.execute(
+            "UPDATE clipboard SET created_at = ?1 WHERE kind = 'text' AND content = 'alpha'",
+            params![now_millis() + 60_000],
+        )
+        .unwrap();
         insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();
         // Re-copying the last piece is a duplicate — it must not append a third.
         insert_text_history(&conn, "beta", TEST_SRC, None, TEST_CAP, &base, &merge, true).unwrap();

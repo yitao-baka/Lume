@@ -8,6 +8,12 @@ All notable changes to Lume are documented here. Format based on
 > `docs/RULES.md`、`docs/NORMS.md`、`docs/PLUGIN_GAP_ANALYSIS.md` 已合并或删除，现状见 `docs/` 下各活跃文档。
 
 ## [Unreleased]
+### Fixed
+- **剪贴板合并窗口的未来时间戳（2026-11-14）** — `next_created_at` 在同一毫秒内会用
+  `max + 1` 保证严格递增，可能把最新行写到系统时钟之后；旧逻辑将负 age 强转 `u64`
+  后误判为超出合并窗口，自动合并会偶发拆成两行。现在先将有符号 age 收敛到 0 再比较，
+  回归测试固定覆盖未来时间戳路径。验证：
+  `cargo test clipboard::tests::merge_skips_duplicate_last_piece -- --exact` PASS。
 ### Changed
 - **发布门禁旧回归适配插件懒加载（2026-11-14）** — 插件导航/剪贴板专项回归不再假设
   启动时一定加载 provider 逻辑；先通过一次查询触发 `navBars` 逻辑帧，再断言导航栏预算，

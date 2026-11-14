@@ -9,6 +9,12 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Changed
+- **发布门禁旧回归适配插件懒加载（2026-11-14）** — 插件导航/剪贴板专项回归不再假设
+  启动时一定加载 provider 逻辑；先通过一次查询触发 `navBars` 逻辑帧，再断言导航栏预算，
+  并在重新启用 service 后等待注册恢复、首次查询触发新逻辑帧。列表模板回归改为等待懒加载
+  页面的首条结果后再验证快查询压过慢查询，消除固定延时与页面初始化重叠。验证：
+  `pnpm verify:legacy --script cdp_plugin_nav_clipboard_fix_verify.mjs --no-build` 与
+  `pnpm verify:legacy --script cdp_audit_r2_verify.mjs --no-build` PASS。
 - **应用图标圆角化（2026-11-14）** — `src-tauri/icons/icon.png` 的米白底板
   四角裁为约 22% 半径的透明圆角，并用 `tauri icon` 同步重建 32/128/256 PNG、
   Windows Store 方形图和 `icon.ico` / `icon.icns`；ICO 保留

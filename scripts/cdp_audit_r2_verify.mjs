@@ -316,11 +316,17 @@ const listKeyword = await waitText(".result-box-name", "R2 List");
 const listKeywordState = await main.ev('({ input:document.getElementById("search-input")?.value ?? "", names:[...document.querySelectorAll(".result-box-name")].map((node)=>node.textContent), overlay:!!document.querySelector(".ctx-overlay") })');
 check("list mode keyword row offered", listKeyword, JSON.stringify(listKeywordState));
 await main.ev(`(() => { const row=[...document.querySelectorAll(".result-box")].find((node)=>node.textContent.includes("R2 List")); row?.click(); return !!row; })()`);
-await sleep(1200);
+// Wait for the lazily loaded list mode to render its first result before
+// starting the stale-query probe. A fixed delay can otherwise overlap the
+// mode's initial empty search with the manually typed queries.
+await waitText(".plugin-list-name", "row-");
+await sleep(200);
 await typeQuery("slow");
 await sleep(80);
 await typeQuery("fast");
-await sleep(900);
+await waitText(".plugin-list-name", "row-fast-show1");
+// Give the 650 ms slow search enough time to settle after the fast result.
+await sleep(750);
 const listState = await main.ev('({ active:!!document.querySelector(".mode-host[data-mode=audit-r2-list].active"), body:document.querySelector(".plugin-list")?.textContent ?? "", names:[...document.querySelectorAll(".plugin-list-name")].map((node)=>node.textContent), input:document.getElementById("search-input")?.value ?? "" })');
 const listNames = listState.names;
 check("list template keeps the newest delayed query", listNames.includes("row-fast-show1") && !listNames.includes("row-slow-show1"), JSON.stringify(listState));

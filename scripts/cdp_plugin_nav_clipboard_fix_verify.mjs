@@ -162,7 +162,19 @@ try {
   check("invalid manifest registers no contribution",
     await main.evaluate('(window.__pluginRegistryProbe?.plugins?.() ?? []).every((item) => item.id !== "bad id")'));
 
-  await waitFor(main, `(window.__pageRuntimeLatestModel?.("apps")?.data?.sections ?? []).some((section) => section.id.startsWith("audit-fix-provider:flood-"))`, 15000);
+  // Logical disk plugins are lazy. A provider's navBars only become available
+  // after its first search loads the logic frame and the registry refreshes
+  // bars; startup must not create every plugin renderer just to discover them.
+  await type("navbarsprobe");
+  await waitFor(main, `(() => {
+    const loaded = window.__pluginRegistryProbe?.logic?.()?.loaded ?? [];
+    const latest = (window.__navBarsProbe ?? []).filter((entry) => entry.applied).at(-1);
+    const sections = window.__pageRuntimeLatestModel?.("apps")?.data?.sections ?? [];
+    return loaded.includes("audit-fix-provider") &&
+      (latest?.ids ?? []).some((id) => id.startsWith("audit-fix-provider:flood-")) &&
+      sections.some((section) => section.id.startsWith("audit-fix-provider:flood-"));
+  })()`, 15000);
+  await sleep(250);
   const homeBudget = await main.evaluate(`(() => {
     const model = window.__pageRuntimeLatestModel?.("apps");
     const flood = (model?.data?.sections ?? []).filter((section) => section.id.startsWith("audit-fix-provider:flood-"));
@@ -225,12 +237,16 @@ try {
     String(disabledCapability).includes("disabled"), String(disabledCapability));
 
   await invoke("set_plugin_enabled", { id: "audit-fix-service", enabled: true });
-  if (logic) {
-    check("re-enabling the service rebuilds its logic frame",
-      await waitFor(logic, 'window.__logicEntries?.get("audit-fix-service")?.loaded === true', 12000));
-  }
+  check("re-enabling the service restores its registration",
+    await waitFor(main, `(window.__pluginRegistryProbe?.plugins?.() ?? []).some((plugin) =>
+      plugin.id === "audit-fix-service" && plugin.lifecycle && plugin.enabled)`, 12000));
   const reenabled = `reenabled-${Date.now()}`;
   await type(reenabled);
+  check("re-enabling the service rebuilds its logic frame",
+    await waitFor(main, `(() => {
+      const probe = window.__pluginRegistryProbe?.logic?.();
+      return !!probe && probe.loaded.includes("audit-fix-service") && !probe.pending.includes("audit-fix-service");
+    })()`, 12000));
   await sleep(1000);
   const reenabledQuery = await main.evaluate(`window.__TAURI_INTERNALS__.invoke("plugin_storage_get", { id: "audit-fix-service", key: "lastQuery" })`);
   check("re-enabled service receives new queries", reenabledQuery === JSON.stringify(reenabled), JSON.stringify({ reenabledQuery, reenabled }));

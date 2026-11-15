@@ -1,9 +1,10 @@
-//! 便携 zip 打包 —— 现阶段唯一的分发格式。
+//! 便携 zip 打包。
 //!
 //! `pnpm tauri build` 只出二进制（tauri.conf.json 的 bundle.targets 为空数组 =
 //! 不产 MSI/NSIS）；本脚本按便携布局（docs/ARCHITECTURE.md：一切都在 exe 旁边）暂存
 //! 并压缩为 zip。产物：`src-tauri/target/release/bundle/zip/Lume_<版本>_x64_portable.zip`，
-//! zip 根是一个 `Lume/` 文件夹，解压即用。
+//! zip 根是一个 `Lume/` 文件夹，解压即用。MicaSetup EXE 安装包由
+//! `package-installer.mjs` 单独生成。
 //!
 //! 内容清单（缺一不可）：
 //!   lume.exe / lume-agent.exe / lume-svc.exe —— agent 与 svc 都按

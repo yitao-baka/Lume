@@ -21,9 +21,10 @@
     "verify:release": "node scripts/verify.mjs release",
     "serve": "vite preview",
     "tauri": "tauri",
-    "package:zip": "node scripts/package-portable.mjs"
+    "package:zip": "node scripts/package-portable.mjs",
+    "package:installer": "node scripts/package-installer.mjs"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "packageManager": "pnpm@12.3.4",
   "dependencies": {
     "@tauri-apps/api": "^2",

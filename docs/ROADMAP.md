@@ -48,6 +48,8 @@ Lume 的开放事项清单：**只记录尚未开始或尚未收尾的工作**�
   `SearchSource`，与插件 provider 走同一合并管线
 - **逐击键路径的异步化** — `search_apps` 等仍在主线程的命令，若输入卡顿
   按同法 `async`/`spawn_blocking` 处理
+- **安装包 Authenticode 签名** — 正式发布证书、RFC 3161 时间戳、签名后校验与
+  SmartScreen 实测；本地构建继续保持未签名并明确标记
 
 ## 远期方向
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Portable, zip-only release packaging (Git Bash / MSYS2 on Windows).
+# Portable zip packaging (Git Bash / MSYS2 on Windows).
 #
 # Produces `target/release/Lume-<version>-win-x64.zip` — a self-contained folder
 # (lume.exe + lume-agent.exe + lume-svc.exe + languages/ + res/) built from the
-# current source. This is the standard release artifact; MSI/NSIS installers are
-# not produced (bundle.targets is empty).
+# current source. The MicaSetup EXE installer is built separately by
+# `pnpm run package:installer`; MSI/NSIS are not produced (bundle.targets is empty).
 #
 # `pnpm run tauri build --no-bundle` builds the frontend + Rust core; the three
 # binaries are assembled under their plain names (the portable model expects the

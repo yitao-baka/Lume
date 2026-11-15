@@ -32,6 +32,14 @@ already runs the plugin-contract check. Tauri builds also run `pnpm run build`
 through `beforeBuildCommand`; do not run the frontend build immediately before a
 Tauri build just to prepare the embedded executable.
 
+Packaging commands:
+
+```powershell
+pnpm run package:zip        # portable zip
+pnpm run package:installer  # MicaSetup EXE (requires .NET SDK + VS MSBuild)
+pnpm run package:installer --no-build  # reuse current release binaries
+```
+
 ## Verification layers
 
 ### Static and unit
@@ -103,7 +111,8 @@ hotkey delivery, and native window interactions remain manual. Follow
 | Plugin runtime, permissions, or page model | `pnpm verify:fast`, `pnpm verify:ui --suite plugin-runtime,preview`, then `pnpm verify:legacy --group plugin-boundary` when the boundary changed |
 | Elevation agent or automation settings | `pnpm verify:fast`, `pnpm verify:ui --suite agent`; registration and elevated injection stay manual |
 | Native window geometry / focus / chrome | `pnpm verify:fast`, `pnpm verify:ui --suite smoke,settings`, then `pnpm verify:legacy --group window-native`; verify `Alt+Space` and `Shift+F10` do not open a Win32 menu on a real desktop |
-| Release | `pnpm verify:release`, then [MANUAL_TESTING.md](MANUAL_TESTING.md) |
+| Portable or EXE packaging | `pnpm verify:fast`, the relevant `package:zip` / `package:installer` command, then the packaging items in [MANUAL_TESTING.md](MANUAL_TESTING.md) |
+| Release | `pnpm verify:release`, run both packaging commands, then [MANUAL_TESTING.md](MANUAL_TESTING.md) |
 
 `pnpm verify:ui:changed` maps current changed paths to suites in
 `scripts/test-manifest.json`; it falls back to `smoke` when no rule matches.

@@ -293,10 +293,42 @@ dev URL instead.
    value.
 9. **Dev loopback** — `lume-svc.exe --foreground` starts the service in a
    console (Ctrl+C quits) and exposes `\\.\pipe\LumeSVC` for `search`/`status`.
-10. **Bundle** — `pnpm run package:zip` runs the release Tauri build and
-   assembles `lume.exe` + `lume-svc.exe` + `lume-agent.exe` + `languages/` +
-   `res/icons/` into the portable zip under
-   `src-tauri/target/release/bundle/zip/`.
+10. **Packaging** — `pnpm run package:zip` assembles the portable zip under
+   `src-tauri/target/release/bundle/zip/`. `pnpm run package:installer` builds
+   the MicaSetup EXE under `src-tauri/target/release/bundle/installer/`.
+   Both artifacts must contain `lume.exe`, `lume-svc.exe`, `lume-agent.exe`,
+   `languages/`, and `res/icons/`. The installer payload additionally contains
+   `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+
+### MicaSetup installer
+
+> The setup requests administrator rights and writes under `Program Files`.
+> Run these checks only on a disposable Windows profile or VM.
+
+1. **Identity** — open the setup's file properties: description is `Lume Setup`,
+   product/company is `Lume`, and the version matches the internal release
+   version. The window and shortcut icons use Lume artwork, not upstream
+   MicaSetup branding.
+2. **Fresh install** — run the setup, accept UAC, keep the default
+   `C:\Program Files\Lume` path, and finish the wizard. Desktop and Start Menu
+   shortcuts open `lume.exe`; Add/Remove Programs lists `Lume` with the correct
+   version and publisher.
+3. **No hidden system changes** — a fresh install does not add a Run-key
+   auto-start entry, firewall rule, environment variable, LumeSVC service, or
+   `Lume\LumeAgent` scheduled task.
+4. **Installed data location** — launch from the shortcut and change a setting.
+   User data is written under `%LOCALAPPDATA%\Lume\`, while the Program Files
+   tree remains read-only to the running launcher.
+5. **Upgrade with integrations** — register LumeSVC and the elevation agent
+   from Settings, then run the same setup again. The installer stops both
+   before replacing files and restores both registrations afterwards; their
+   configured executable paths point at the installation directory.
+6. **Uninstall** — uninstall from Add/Remove Programs. The installer removes
+   its files, shortcuts, uninstall registry entry, owned LumeSVC service, and
+   owned LumeAgent scheduled task. `%LOCALAPPDATA%\Lume\` remains intact.
+7. **Release signature** — a public release artifact must have a valid
+   Authenticode signature and timestamp. A local unsigned build is expected to
+   show an Unknown Publisher prompt and is not release-ready.
 
 ### Elevation agent ()
 

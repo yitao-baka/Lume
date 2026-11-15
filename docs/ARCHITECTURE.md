@@ -422,6 +422,17 @@ this table.
 `delete_recent` soft-deletes a record (the file/app is untouched). The bar shows
 only on the empty-query main menu, above the 已固定 bar.
 
+## Distribution layouts
+
+The portable zip keeps the three binaries, `languages/`, and `res/` together
+under one folder. The MicaSetup EXE installer places the same payload under
+`Program Files\Lume`, creates desktop/Start Menu shortcuts and uninstall
+metadata, and leaves Lume's optional service/agent registration decisions
+unchanged on a fresh install. Upgrades temporarily unregister only the service
+and task whose executable paths belong to that installation, then restore them;
+uninstall removes only those owned registrations. Writable user data remains in
+`%LOCALAPPDATA%\Lume`.
+
 ## Data management
 
 Everything Lume persists lives under a single writable **base dir**, decided in

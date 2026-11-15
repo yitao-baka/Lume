@@ -8,6 +8,21 @@ All notable changes to Lume are documented here. Format based on
 > `docs/RULES.md`、`docs/NORMS.md`、`docs/PLUGIN_GAP_ANALYSIS.md` 已合并或删除，现状见 `docs/` 下各活跃文档。
 
 ## [Unreleased]
+### Added
+- **MicaSetup EXE 安装包（2026-11-15）** — 新增 `pnpm run package:installer`，
+  使用固定版本 MicaSetup 2.5.7 从便携布局生成 `Lume_<version>_x64_setup.exe`；
+  工具包经华为云 NuGet 镜像获取并校验 SHA-512，安装器使用 Lume 图标、三语文案、
+  `Program Files\Lume` 默认路径，不默认创建开机启动/防火墙/服务注册，并在升级与
+  卸载时只处理属于当前安装目录的 LumeSVC 和 LumeAgent 注册。验证：
+  `pnpm run package:installer` PASS（完整 Tauri release 构建 + MicaSetup 模板编译），
+  产物 7.98 MiB，SHA-256 `268d9aed99e6e3acb58a2c1d4397f0c35c811ca9ca1aa912a589e81e51712560`，
+  file product/company/description = `Lume` / `Lume` / `Lume Setup`；
+  `pnpm verify:docs` PASS（15 项）；`pnpm verify:fast` PASS（i18n 613×3、
+  Page Runtime 19/19、clipboard model 16/16、clipboard store 8/8、skin 17/17、
+  Rust 290 passed / 9 ignored）。模板编译的 NuGet 源仅为华为云镜像，payload
+  三二进制、三语资源、`LICENSE` 与第三方 notices 齐全。`package.json` 的许可证
+  字段同步为仓库 `LICENSE` / README 已声明的 `Apache-2.0`。真实 UAC 安装/升级/卸载按
+  `docs/MANUAL_TESTING.md` 手工验收。
 ### Fixed
 - **剪贴板合并窗口的未来时间戳（2026-11-14）** — `next_created_at` 在同一毫秒内会用
   `max + 1` 保证严格递增，可能把最新行写到系统时钟之后；旧逻辑将负 age 强转 `u64`

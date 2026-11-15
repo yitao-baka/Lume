@@ -6486,3 +6486,72 @@ Maximize / Close 的 Win32 系统菜单。
 - `pnpm run tauri build --debug --no-bundle` PASS；从实际构建的
   `src-tauri/target/debug/lume.exe` 提取关联图标为 32×32，四角透明，深色底
   目检圆角轮廓和鸽子主体清晰。
+
+## 108. MicaSetup EXE 安装包（2026-11-15）
+
+### 108.1 背景
+
+Lume 此前只发布便携 zip，用户需要手工解压并自行创建快捷方式；
+`paths.rs` 已经支持 `Program Files` 安装布局和 `%LOCALAPPDATA%\Lume`
+可写数据目录，但没有对应的安装/卸载入口。目标是用 MicaSetup 2.5.7
+生成带 Mica 风格界面的单文件 EXE，同时保持便携 zip 的构建路径。
+
+### 108.2 实现
+
+- 新增 `scripts/package-installer.mjs` 与 `pnpm run package:installer`：
+  先复用正常 release 三二进制布局，再生成安装包到
+  `src-tauri/target/release/bundle/installer/Lume_<version>_x64_setup.exe`。
+- MicaSetup.Tools 固定为 2.5.7，从华为云 NuGet 镜像读取并校验
+  SHA-512；模板依赖恢复使用安装时注入的 `NuGet.Config`，同样不直连
+  nuget.org。
+- 安装包使用 `Lume` 品牌、Lume 图标、`en` / `zh-Hans` / `zh-Hant`
+  三语界面和默认 `Program Files\Lume` 路径；桌面与开始菜单快捷方式
+  由安装器创建，不默认写开机启动、防火墙规则、环境变量或服务。
+- MicaSetup 生成器只改配置里的版本和 `Option` 字段，不改
+  `AssemblyTitle` / `AssemblyProduct` / `AssemblyDescription` /
+  `AssemblyCompany`。构建脚本从官方模板派生 Lume 模板并注入这些元数据，
+  最终 EXE 属性为 `Lume Setup` / `Lume`。
+- 新增 `LumeCompanion` 模板补丁：升级前只在服务或代理任务的 executable
+  path 属于当前安装目录时暂停对应注册，复制文件后恢复；卸载时只移除
+  同一目录拥有的服务/任务，避免误删便携副本的注册。Lume 自身可写数据
+  留在 `%LOCALAPPDATA%\Lume`。
+- 安装包 payload 额外包含 `LICENSE` 与 `THIRD_PARTY_NOTICES.md`，
+  覆盖 MicaSetup 的 MIT 归属和其嵌入组件/资源的来源说明。
+
+### 108.3 踩坑
+
+- 本机 `.NET` 只有运行时；MicaSetup 模板是 net472/WPF SDK-style 项目，
+  VS MSBuild 找不到 `Microsoft.NET.Sdk`。构建脚本必须定位一个真实
+  .NET SDK，设置 `MSBuildSDKsPath` 与
+  `DOTNET_MSBUILD_SDK_RESOLVER_SDKS_DIR`，并关闭 workload resolver。
+- `MSBuildSDKsPath` 要指向 `<dotnet-root>\sdk\<version>\Sdks`，不能指向
+  `<dotnet-root>\sdk\Sdks`；差一层会让 MSBuild 继续报 SDK 解析失败。
+- MicaSetup 2.5.7 在配置自定义 `LicenseFile` 时会删除按语言拆分的
+  `Resources/Licenses/license.<lang>.txt`，但 WPF 项目仍要求这些资源，
+  构建会报 `BG1002`。安装器许可证页因此保持关闭，许可证文件随 payload
+  安装。
+- nupkg 不是 `.zip` 扩展名，`Expand-Archive` 的扩展名校验会挡路；
+  使用 `System.IO.Compression.ZipFile::ExtractToDirectory` 并校验固定
+  SHA-512，避免镜像内容漂移。
+- 安装器默认不配置 Authenticode；MicaSetup 的 `app.snk` 只是强名称签名，
+  不能替代发布证书。
+
+### 108.4 验证
+
+- `pnpm run package:installer` PASS：完整执行 Tauri release 构建、MicaSetup
+  模板补丁、WPF 编译与安装包封装。产物
+  `src-tauri/target/release/bundle/installer/Lume_3.5.2_x64_setup.exe`
+  为 7.98 MiB，SHA-256
+  `268d9aed99e6e3acb58a2c1d4397f0c35c811ca9ca1aa912a589e81e51712560`，
+  文件属性为 `Lume Setup` / product `Lume` / company `Lume` / version
+  `3.5.2`。
+- `pnpm verify:docs` PASS 15 项；`pnpm verify:fast` PASS（i18n 613×3、
+  Page Runtime 19/19、clipboard model 16/16、clipboard store 8/8、
+  skin 17/17、前端生产构建、Rust 290 passed / 9 ignored）。
+- 安装器模板编译日志确认 NuGet 只使用
+  `https://repo.huaweicloud.com/repository/nuget/v3/index.json`；payload
+  归档包含三二进制、三语资源、`LICENSE` 与 `THIRD_PARTY_NOTICES.md`。
+- MicaSetup 模板补丁编译通过；生成的安装/卸载程序均包含三语界面和
+  `LumeCompanion` 生命周期调用。
+- 真实 UAC 下的安装、升级、服务/任务恢复、卸载与快捷方式检查保留在
+  `docs/MANUAL_TESTING.md` 的 MicaSetup installer 清单。

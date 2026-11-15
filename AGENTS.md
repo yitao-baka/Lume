@@ -28,7 +28,8 @@ Windows 轻量启动器（Spotlight / uTools 式）。前端 SolidJS + TypeScrip
   `examples/plugins/`（插件示例，其 `dist/` 是源码的一部分，勿 gitignore）。
 - `docs/History/`：退出活跃文档集合的报告、审计与被取代方案；索引与归档规则见 `docs/History/README.md`。
 - `scripts/`：`test-harness/` = 分层 CDP 套件与隔离运行器；`cdp_*.mjs` = 尚未迁移的专项回归；
-  `verify.mjs` = 统一验证入口；`package-portable.mjs`、`package-zip.sh` = 打包。
+  `verify.mjs` = 统一验证入口；`package-portable.mjs`、`package-installer.mjs`、
+  `package-zip.sh` = 便携包/安装包构建。
 - `test/` = 本机 scratch（截图/日志，已 gitignore），临时产物都丢这里。
 
 ## 命令
@@ -47,7 +48,8 @@ cd src-tauri && cargo test         # Rust 单测（不碰注册表/服务/真实
 pnpm run tauri dev                 # 开发（页面走 vite dev server :1420，需先启动；有控制台窗口）
 pnpm run tauri build --debug --no-bundle   # 独立 debug exe（内嵌 dist，CDP 冒烟用这个）
 pnpm run tauri build --no-bundle           # 独立 release exe（无控制台，可分发的形态）
-pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分发格式；无 MSI/NSIS）
+pnpm run package:zip               # 便携 zip 发行包
+pnpm run package:installer         # MicaSetup EXE 安装包（需 .NET SDK + VS MSBuild；无 MSI/NSIS）
 ```
 
 - **pnpm 传参**：额外参数直接跟在脚本名后（`pnpm run tauri build --no-bundle`），
@@ -71,7 +73,7 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
 
 4. 最小化：每个新功能都要能回答「是否让用户更快」；能删的功能不维护。
 
-5. 网络不可靠：**一律用镜像源**（npm → `.npmrc`；crates 同理），不要引入需直连被墙端点的依赖。
+5. 网络不可靠：**一律用镜像源**（npm → `.npmrc`；crates / NuGet 同理），不要引入需直连被墙端点的依赖。安装包工具固定 MicaSetup 2.5.7，走华为云 NuGet 并校验 SHA-512。
 
 6. UI 视觉契约见 `docs/UI_GUIDELINES.md`：面板 / DWM 边框 / 插件页画布同为 `--surface`
    （一块连续面板，uTools 式拼接）——不给 `.launcher` 加 border / radius / 半透明。
@@ -136,6 +138,11 @@ pnpm run package:zip               # 便携 zip 发行包（现阶段唯一分�
   写进度标记或分期编号**（见硬性约定 8）。
 - CDP 观测 tap：`window.__frameStates` / `__rpcLog` / `__logicCircuit` / `__snapPending` 等
   是既有探针（见 PLUGIN_API §15），诊断帧/桥问题时先用它们。
+- **安装包构建**：MicaSetup 模板是 net472/WPF，只有 .NET Runtime 不够；`package:installer`
+  会把已发现的 .NET SDK 路径传给 VS MSBuild，并关闭 workload resolver。Mica 配置不会改
+  AssemblyCompany/Product/Description，Lume 品牌由 `scripts/installer/` 的模板补丁注入。
+- **安装包许可证**：MicaSetup 2.5.7 配置自定义 LicenseFile 后会删除按语言拆分的许可证资源，
+  但 WPF 项目仍引用它们；安装器许可证页保持关闭，`LICENSE` 与第三方 notices 随 payload 安装。
 
 ## 踩坑清单（实测固化，改动时别踩回去）
 

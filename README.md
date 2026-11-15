@@ -75,6 +75,7 @@ Lume 只维护能明显缩短高频操作路径的能力。磁盘插件使用标
 - Rust stable（MSVC toolchain）
 - Visual Studio Build Tools，包含“使用 C++ 的桌面开发”和 Windows SDK
 - Node.js 24 与 pnpm `12.3.4`
+- 构建 EXE 安装包时另需 .NET SDK 10+ 与可用的 MSBuild
 
 仓库通过 `.npmrc` 使用 npm 镜像。依赖版本以 `pnpm-lock.yaml` 与 `package.json` 的 `packageManager` 为准。
 
@@ -88,8 +89,6 @@ pnpm run tauri dev
 
 ### 构建便携包
 
-Lume 的标准交付形态是便携 zip，不生成 MSI 或 NSIS：
-
 ```powershell
 pnpm run package:zip
 ```
@@ -101,6 +100,24 @@ src-tauri/target/release/bundle/zip/Lume_<version>_x64_portable.zip
 ```
 
 将 zip 完整解压后运行 `lume.exe`。`lume.exe`、`lume-svc.exe` 与 `lume-agent.exe` 必须保持在同一个目录，`languages/` 和 `res/icons/` 也应随包保留。
+
+### 构建 EXE 安装包
+
+Lume 使用 [MicaSetup](https://github.com/lemutec/MicaSetup) 2.5.7 生成带安装界面的 EXE；不使用 MSI 或 NSIS：
+
+```powershell
+pnpm run package:installer
+```
+
+产物位于：
+
+```text
+src-tauri/target/release/bundle/installer/Lume_<version>_x64_setup.exe
+```
+
+脚本从华为云 NuGet 镜像读取固定版本的 MicaSetup 工具，并校验 SHA-512。默认安装到 `Program Files\Lume`，安装包保留现有的服务与提权代理选择；升级前会暂停归属当前安装目录的服务/任务，升级后恢复，卸载时只清理同一目录拥有的注册。用户数据仍保留在 `%LOCALAPPDATA%\Lume\`。
+
+如果 .NET SDK 不在 `PATH`，把 `LUME_INSTALLER_DOTNET_ROOT` 指向包含 `sdk/` 的 dotnet 根目录。安装包默认不做 Authenticode 签名，正式发布前需要完成代码签名。
 
 单独构建二进制时：
 
@@ -149,7 +166,7 @@ Lume 由三个同目录二进制组成：
 | --- | --- |
 | `src/` | SolidJS 启动器、设置页、Page Runtime、Presenter 与内置插件 |
 | `src-tauri/src/` | Rust 核心、Windows 集成、三个二进制与全部业务逻辑 |
-| `scripts/` | 验证入口、隔离 CDP 测试、打包与契约检查 |
+| `scripts/` | 验证入口、隔离 CDP 测试、便携/安装包构建与契约检查 |
 | `languages/` | `en`、`zh-CN`、`zh-TW` 三套运行时文案 |
 | `res/` | 主题图标等只读资源 |
 | `examples/plugins/` | 可加载的插件示例与构建产物 |

@@ -27,29 +27,29 @@ html[data-skin="quiet"] {
 }
 
 html[data-skin="quiet"][data-theme="light"] {
-  --settings-canvas-base: #f5f6f8;
-  --settings-rail-base: #f9fafb;
-  --settings-panel-base: #ffffff;
-  --settings-control-base: #f2f3f5;
+  --settings-canvas-base: #f0ede6;
+  --settings-rail-base: #f4f0e8;
+  --settings-panel-base: #f8f4ea;
+  --settings-control-base: #ece7dd;
   --settings-canvas: var(--settings-canvas-base);
   --settings-rail: var(--settings-rail-base);
   --settings-panel: var(--settings-panel-base);
   --settings-control: var(--settings-control-base);
-  --settings-line: #eceef1;
-  --settings-line-strong: #dde1e6;
-  --settings-text: #1b1d21;
-  --settings-secondary: #555d68;
-  --settings-muted: #6f7782;
+  --settings-line: #e4ded3;
+  --settings-line-strong: #d5cec2;
+  --settings-text: #201e1a;
+  --settings-secondary: #575249;
+  --settings-muted: #6d675d;
   --settings-structure: var(--ui-accent);
   --settings-structure-text: var(--ui-accent-text);
   --settings-selected: rgba(9, 105, 218, 0.14);
-  --settings-selected-text: #1b1d21;
-  --settings-hover: rgba(31, 35, 40, 0.055);
+  --settings-selected-text: #201e1a;
+  --settings-hover: rgba(48, 42, 33, 0.055);
   --settings-signal: rgba(180, 35, 24, 0.45);
   --settings-signal-text: #b42318;
   --settings-signal-tint: rgba(180, 35, 24, 0.07);
   --settings-success: #1a7f37;
-  --settings-overlay-shadow: 0 18px 46px rgba(31, 35, 40, 0.18);
+  --settings-overlay-shadow: 0 18px 46px rgba(43, 38, 30, 0.18);
 }
 
 html[data-skin="quiet"] {

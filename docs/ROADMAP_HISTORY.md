@@ -6555,3 +6555,57 @@ Lume 此前只发布便携 zip，用户需要手工解压并自行创建快捷�
   `LumeCompanion` 生命周期调用。
 - 真实 UAC 下的安装、升级、服务/任务恢复、卸载与快捷方式检查保留在
   `docs/MANUAL_TESTING.md` 的 MicaSetup installer 清单。
+
+## 109. 设置窗任务栏图标、浅色暖中性面板与自动保存强调（2026-11-15）
+
+### 109.1 背景
+
+设置窗口的标题栏使用透明品牌标记，但任务栏也沿用了同一套透明深浅主题图标，
+与用户在资源管理器和任务栏中看到的圆角米白底板应用身份不一致。浅色 Quiet
+设置窗沿用冷灰画布和纯白组面板，与启动器的暖米白表面不一致；浅色 Chromatic
+设置窗的顶部栏、侧栏和底栏共用 `#dde5de` 绿色 rail，与 `#f3efe6` 暖米白画布
+放在一起显得偏色。深色底栏的“已自动保存”勾选使用固定的语义成功绿，切换或自定义
+主题色后不会同步变化。
+
+### 109.2 实现
+
+- `appicon.rs` 新增 bundle HICON 缓存与设置窗专用应用路径：从 Tauri
+  `default_window_icon()` 读取 Windows 构建选中的 `icon.ico`，通过
+  `WM_SETICON` 同时写入 `ICON_BIG` / `ICON_SMALL`。
+- 主题刷新仍覆盖主窗、预览窗、托盘与分离插件窗，但不再覆盖设置窗；设置窗在
+  首次创建和 idle destroy 后重建时重新应用 bundle 图标。标题栏内的透明品牌标记
+  保持原样。
+- Quiet 浅色改为暖米白层次：画布 `#f0ede6`、rail `#f4f0e8`、面板
+  `#f8f4ea`、控件 `#ece7dd`；文字、分隔线、hover 与浮层阴影同步去除冷色。
+- Chromatic 浅色 rail 改为 `#ebe6dc`，画布与面板继续使用 `#f3efe6` /
+  `#fbf8f1`；顶部栏、侧栏和底栏共享这一暖中性层次。
+- `.settings-save-symbol` 从 `--settings-success` 改为
+  `--settings-structure`，其颜色随 `--ui-accent` 重算；错误态仍由
+  `[data-save-state="error"]` 使用 signal 色。
+
+### 109.3 踩坑
+
+- Tauri 的 `set_icon` 主要落在 `ICON_SMALL`，不足以保证任务栏 / Alt-Tab 的
+  `ICON_BIG`；设置窗必须在 HWND 创建后显式写两个槽位。
+- 原 `appicon::apply` 会遍历 `main` / `settings` / `preview`，如果只改创建路径，
+  后续主题保存或系统明暗切换仍会把设置窗图标换回透明主题图标，因此设置窗必须
+  从该主题刷新列表中移出。
+- 设置窗会按 idle 策略销毁重建；bundle HICON 需要进程级缓存，不能在每次打开时
+  生成一个永不释放的图标句柄。
+- “保存成功”是品牌反馈而非语义成功状态，固定使用 success 绿会绕开全局主题色；
+  signal 错误色不能一起改成 accent，否则失败提示会失去区分度。
+
+### 109.4 验证
+
+- `pnpm verify:fast` PASS：docs 15、TypeScript、i18n 613 键 × 3、toast
+  12/12、Page Runtime 19/19、clipboard model 16/16、clipboard store 8/8、
+  skin 17/17、前端生产构建、Rust **290 passed / 9 ignored**。
+- `pnpm verify:ui --suite settings` PASS **39/39**（14.4s，产物
+  `test/verify/2026-11-15T13-58-13-007Z/summary.json`）。新增断言包括原生 bundle
+  任务栏图标、Quiet/Chromatic 浅色暖中性表面，以及深色自动保存勾选与实时 accent
+  颜色一致。
+- `pnpm verify:legacy --group settings-visual --no-build` PASS **140/140**
+  （settings-skin 62、settings-accent 50、visual-audit 28）。
+- Win32 探针读取设置窗 `WM_GETICON`：`ICON_BIG` / `ICON_SMALL` 均非零，导出
+  32×32 图标右侧底板像素为 `rgb(247, 248, 241)`、alpha 255，可区分透明主题
+  品牌标记。Quiet/Chromatic 浅色表面与深色/自定义 accent 自动保存状态完成截图目检。

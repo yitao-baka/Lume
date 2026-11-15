@@ -3,11 +3,16 @@
 //! The icon pair in `res/icons/` replaces the retired `software.png` artwork:
 //! `application_dark_mode.png` (white artwork) shows on the dark theme and
 //! `application_white_mode.png` (black artwork) on the light theme. Applied at
-//! runtime to every window's taskbar icon and the system tray icon, following
-//! the same resolved color mode as the DWM frame strip
+//! runtime to the launcher/preview taskbar icons and the system tray icon,
+//! following the same resolved color mode as the DWM frame strip
 //! (`window::panel_surface_rgb`) — so icon, frame strip and panel never
 //! disagree. The static exe/Explorer icon cannot follow the theme; it comes
 //! from the bundle `icon.ico`, regenerated from the light variant.
+//!
+//! The settings window deliberately keeps the bundle icon instead of the
+//! transparent in-app brand mark: its taskbar button must match the executable
+//! users pin and recognise, while the topbar continues to use the transparent
+//! mark as part of the settings chrome.
 //!
 //! Windows note: tauri's `set_icon` only feeds ICON_SMALL (title-bar icon),
 //! which a frameless window never shows — the taskbar / Alt-Tab icon is
@@ -77,6 +82,7 @@ unsafe impl Sync for SendHicon {}
 
 static DARK_HICON: OnceLock<Option<SendHicon>> = OnceLock::new();
 static LIGHT_HICON: OnceLock<Option<SendHicon>> = OnceLock::new();
+static BUNDLE_HICON: OnceLock<Option<SendHicon>> = OnceLock::new();
 
 /// Build the WM_SETICON HICON from the decoded RGBA (once per theme, cached).
 fn themed_hicon(dark: bool) -> Option<HICON> {
@@ -87,6 +93,19 @@ fn themed_hicon(dark: bool) -> Option<HICON> {
     })
     .as_ref()
     .map(|h| h.0)
+}
+
+/// Build the embedded bundle icon once. Windows uses the `.ico` selected by
+/// Tauri for `default_window_icon`; the settings window is recreated after its
+/// idle timeout, so caching the HICON avoids leaking a handle per open.
+fn bundle_hicon<R: Runtime>(app: &AppHandle<R>) -> Option<HICON> {
+    BUNDLE_HICON
+        .get_or_init(|| {
+            let image = app.default_window_icon()?;
+            hicon_from_rgba(image.width(), image.height(), image.rgba())
+        })
+        .as_ref()
+        .map(|icon| icon.0)
 }
 
 /// Build an HICON from raw RGBA: BGRA pixel order + inverted-alpha AND mask
@@ -264,13 +283,14 @@ fn is_dark(app: &AppHandle<impl Runtime>, color_mode: &str) -> bool {
     }
 }
 
-/// Apply the theme-matched icon everywhere: all windows (main, settings,
-/// preview — detached plugin windows are covered at their creation) and the
-/// tray icon. Call sites: startup, settings save/apply and the OS theme flip
-/// in system mode (lib.rs `WindowEvent::ThemeChanged`).
+/// Apply the theme-matched icon to the launcher/preview windows and the tray.
+/// The settings window keeps the executable's bundle icon. Detached plugin
+/// windows are covered at their creation. Call sites: startup, settings
+/// save/apply and the OS theme flip in system mode (lib.rs
+/// `WindowEvent::ThemeChanged`).
 pub fn apply(app: &AppHandle<impl Runtime>, color_mode: &str) {
     let dark = is_dark(app, color_mode);
-    for label in ["main", "settings", "preview"] {
+    for label in ["main", "preview"] {
         if let Some(win) = app.get_webview_window(label) {
             set_window_icon(&win, dark);
         }
@@ -305,6 +325,14 @@ pub fn apply(app: &AppHandle<impl Runtime>, color_mode: &str) {
         }
         (None, _) => eprintln!("[appicon] failed to decode the embedded theme icons"),
         _ => {}
+    }
+}
+
+/// Apply the executable's embedded bundle icon to the settings window. This
+/// intentionally bypasses the theme-matched transparent artwork above.
+pub fn apply_bundle_window_icon<R: Runtime>(win: &WebviewWindow<R>) {
+    if let Some(hicon) = bundle_hicon(win.app_handle()) {
+        set_hicon(win, hicon);
     }
 }
 

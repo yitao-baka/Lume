@@ -604,6 +604,9 @@ fn ensure_settings_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     .build()
     .map_err(|error| error.to_string())?;
 
+    // The settings taskbar button mirrors the executable icon rather than the
+    // transparent brand mark used inside the title bar.
+    crate::appicon::apply_bundle_window_icon(&window);
     set_webview_default_background(
         &window,
         (background.0, background.1, background.2, 255),

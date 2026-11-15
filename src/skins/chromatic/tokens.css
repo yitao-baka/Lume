@@ -30,7 +30,7 @@ html[data-skin="chromatic"] {
 
 html[data-skin="chromatic"][data-theme="light"] {
   --settings-canvas-base: #f3efe6;
-  --settings-rail-base: #dde5de;
+  --settings-rail-base: #ebe6dc;
   --settings-panel-base: #fbf8f1;
   --settings-control-base: #fbf8f1;
   --settings-canvas: var(--settings-canvas-base);

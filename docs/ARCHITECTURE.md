@@ -58,7 +58,7 @@ Rust Core (src-tauri/src/)
   ├─ usnidx.rs   — self-hosted NTFS USN/MFT full-drive index (runs in lume-svc)
   ├─ automation.rs / dirwatch.rs — foreground-window rules and index watching
   ├─ explorer.rs / appicon.rs / notify.rs — Explorer context, themed icons,
-  │                and notifications
+  │                the settings bundle icon, and notifications
   └─ envwatch.rs — keep the process env block in sync with system env changes
         ▼
 Windows API (RegisterHotKey, ShellExecuteW, GetClipboardSequenceNumber,
@@ -292,6 +292,16 @@ backends have timeouts).
   worker (`SIIGBF_THUMBNAILONLY`, so a file icon is never treated as content).
   It retains the bounded PNG decoder as a fallback; providers may be absent
   for formats such as Office or PDF.
+
+### `appicon.rs`
+Owns native window/tray icon selection. The launcher, preview and tray use the
+theme-matched transparent brand artwork through both `WM_SETICON` slots
+(`ICON_BIG` feeds taskbar / Alt-Tab, `ICON_SMALL` feeds the title bar path);
+detached plugin windows use their manifest icon set. The settings window is the
+exception: it receives Tauri's decoded bundle `icon.ico` once at creation, so
+its taskbar button matches the executable's rounded app icon. Theme refreshes
+do not overwrite that settings icon, and the cached bundle `HICON` survives the
+settings renderer's idle destroy/recreate cycle.
 
 ### `tray.rs`
 Creates the system tray icon (`TrayIconBuilder`). Left-click toggles the

@@ -24,6 +24,22 @@ All notable changes to Lume are documented here. Format based on
   字段同步为仓库 `LICENSE` / README 已声明的 `Apache-2.0`。真实 UAC 安装/升级/卸载按
   `docs/MANUAL_TESTING.md` 手工验收。
 ### Fixed
+- **设置窗任务栏图标、浅色暖中性面板与自动保存强调（2026-11-15）** — 设置窗
+  任务栏按钮改用 exe 内嵌的圆角 bundle 图标，不再使用透明底品牌标记；主窗/预览窗
+  仍保持深浅主题图标。浅色 Quiet 由冷灰画布和纯白面板改为暖米白层次：画布
+  `#f0ede6`、侧栏 `#f4f0e8`、面板 `#f8f4ea`、控件 `#ece7dd`。浅色 Chromatic
+  侧栏由绿色底 `#dde5de` 调整为暖灰米白 `#ebe6dc`，与画布 `#f3efe6`、面板
+  `#fbf8f1` 形成克制层次。底栏“已自动保存”的勾选与边框改用
+  `--settings-structure`，深色和自定义主题色下都与实时 accent 一致；失败态仍
+  保留 signal 色与重试入口。验证：`pnpm verify:fast` PASS（docs 15、TypeScript、
+  i18n 613×3、toast 12/12、Page Runtime 19/19、clipboard model 16/16、clipboard
+  store 8/8、skin 17/17、前端生产构建、Rust **290 passed / 9 ignored**）；
+  `pnpm verify:ui --suite settings` PASS **39/39**（14.4s，产物
+  `test/verify/2026-11-15T13-58-13-007Z/summary.json`）；
+  `pnpm verify:legacy --group settings-visual --no-build` PASS **140/140**
+  （settings-skin 62、settings-accent 50、visual-audit 28）。Win32 `WM_GETICON`
+  探针确认设置窗 `ICON_BIG`/`ICON_SMALL` 均为 bundle HICON，导出 32×32 圆角
+  米白底板图标；Quiet/Chromatic 浅色侧栏与深色自动保存状态均完成截图目检。
 - **剪贴板合并窗口的未来时间戳（2026-11-14）** — `next_created_at` 在同一毫秒内会用
   `max + 1` 保证严格递增，可能把最新行写到系统时钟之后；旧逻辑将负 age 强转 `u64`
   后误判为超出合并窗口，自动合并会偶发拆成两行。现在先将有符号 age 收敛到 0 再比较，

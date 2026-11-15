@@ -6,7 +6,7 @@
     },
     "settings": {
       "module": "suites/settings.mjs",
-      "description": "Lazy settings lifecycle, navigation, search surface and clipboard pane"
+      "description": "Lazy settings lifecycle, native taskbar icon, light surfaces and autosave accent"
     },
     "plugin-runtime": {
       "module": "suites/plugin-runtime.mjs",
@@ -33,6 +33,10 @@
     {
       "paths": ["src/index.tsx", "src/settings-entry.tsx", "src/windowBootstrap.ts", "settings.html", "vite.config.ts"],
       "suites": ["smoke", "settings"]
+    },
+    {
+      "paths": ["src-tauri/src/appicon.rs", "res/icons/"],
+      "suites": ["settings"]
     },
     {
       "paths": ["scripts/test-harness/", "scripts/test-manifest.json", "scripts/verify.mjs"],

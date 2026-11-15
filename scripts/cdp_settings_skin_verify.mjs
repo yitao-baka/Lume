@@ -302,7 +302,7 @@ const combo = async (skin, mode, expectedBg) => {
   check(`${skin} × ${mode} applies`, state.skin === skin && state.theme === mode && state.bg === expectedBg, JSON.stringify(state));
 };
 await combo("quiet", "dark", "rgb(25, 26, 29)");
-await combo("quiet", "light", "rgb(245, 246, 248)");
+await combo("quiet", "light", "rgb(240, 237, 230)");
 await combo("chromatic", "dark", "rgb(30, 30, 32)");
 await combo("chromatic", "light", "rgb(243, 239, 230)");
 const systemCombo = async (skin, darkBg, lightBg) => {
@@ -318,7 +318,7 @@ const systemCombo = async (skin, darkBg, lightBg) => {
     JSON.stringify(state),
   );
 };
-await systemCombo("quiet", "rgb(25, 26, 29)", "rgb(245, 246, 248)");
+await systemCombo("quiet", "rgb(25, 26, 29)", "rgb(240, 237, 230)");
 await systemCombo("chromatic", "rgb(30, 30, 32)", "rgb(243, 239, 230)");
 
 await go("launcher");

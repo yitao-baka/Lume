@@ -608,7 +608,7 @@ html[data-skin] body.settings-window #root {
   display: inline-grid;
   place-items: center;
   border: 1px solid currentColor;
-  color: var(--settings-success);
+  color: var(--settings-structure);
   font-size: 10px;
 }
 

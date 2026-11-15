@@ -81,6 +81,15 @@ Primary/secondary/muted text, danger/warning/success tiers and raised surfaces
 follow the resolved light/dark palette. Custom accent overrides derive all five
 accent tiers from the current skin's `accentAnchors` in the shared metadata.
 
+- Settings surfaces remain a warm neutral family. Quiet light uses
+  `#f0ede6` canvas, `#f4f0e8` rail, `#f8f4ea` panel and `#ece7dd` control;
+  Chromatic light uses `#f3efe6` canvas, `#ebe6dc` rail and `#fbf8f1` panel.
+  Neither skin uses a pure-white settings panel, and Chromatic's rail must not
+  carry a green cast.
+- The settings autosave confirmation's box and check use
+  `--settings-structure` (`--ui-accent`), so saved feedback follows the live
+  accent. Save failures keep the signal tone and its retry affordance.
+
 - Every text token clears `4.5:1` on `--surface`. The focus ring and selected
   borders clear `3:1`; `--danger-fill` keeps white button text above `4.5:1`.
 - `--accent` is for decoration and fills, `--accent-text` for small text and

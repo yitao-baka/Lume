@@ -1,5 +1,7 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { ROOT } from "../cdp.mjs";
 
 const EXPECTED_SECTIONS = [
   "appearance",
@@ -48,6 +50,114 @@ export default {
         !firstShow.loadingPane &&
         firstShow.contentText > 0,
       firstShow,
+    );
+
+    t.check("settings footer exposes restore but no global save", await settingsContext.evaluate(`(() => {
+      const buttons = [...document.querySelectorAll(".settings-footer button")];
+      return buttons.length === 1 && buttons[0].classList.contains("settings-footer-action");
+    })()`));
+
+    const taskbarIconPath = join(t.resultDir, "settings-taskbar-icon.png");
+    const taskbarIconProbe = spawnSync(
+      "pwsh",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        join(ROOT, "scripts", "test-harness", "probe-window-icon.ps1"),
+        "-ProcessId",
+        String(t.session.pid),
+        "-OutputPath",
+        taskbarIconPath,
+      ],
+      { encoding: "utf8" },
+    );
+    const taskbarIconOutput = taskbarIconProbe.stdout.trim().split(/\r?\n/).at(-1) ?? "";
+    let taskbarIcon = null;
+    try { taskbarIcon = JSON.parse(taskbarIconOutput); } catch {}
+    t.artifacts.push(taskbarIconPath);
+    t.check(
+      "settings taskbar icon uses the opaque bundle artwork",
+      taskbarIconProbe.status === 0 &&
+        taskbarIcon?.bigHandle > 0 &&
+        taskbarIcon?.smallHandle > 0 &&
+        taskbarIcon?.width === 32 &&
+        taskbarIcon?.height === 32 &&
+        taskbarIcon?.rightAlpha === 255 &&
+        taskbarIcon?.rightR > 220 &&
+        taskbarIcon?.rightG > 220 &&
+        taskbarIcon?.rightB > 210,
+      {
+        status: taskbarIconProbe.status,
+        stderr: taskbarIconProbe.stderr.trim(),
+        icon: taskbarIcon,
+      },
+    );
+
+    await settings.invoke("save_settings_patch", {
+      patch: { appearance: { settings_skin: "quiet", color_mode: "light" } },
+    });
+    await settingsContext.waitFor(
+      'document.documentElement.dataset.skin === "quiet" && document.documentElement.dataset.theme === "light"',
+      5000,
+    );
+    const quietLightSurfaces = await settingsContext.evaluate(`(() => {
+      const root = getComputedStyle(document.documentElement);
+      return {
+        skin: document.documentElement.dataset.skin,
+        theme: document.documentElement.dataset.theme,
+        canvas: getComputedStyle(document.querySelector(".settings-main")).backgroundColor,
+        rail: getComputedStyle(document.querySelector(".settings-sidebar")).backgroundColor,
+        panel: getComputedStyle(document.querySelector(".settings-group-panel")).backgroundColor,
+        control: getComputedStyle(document.querySelector(".settings-search")).backgroundColor,
+        canvasToken: root.getPropertyValue("--settings-canvas-base").trim(),
+        railToken: root.getPropertyValue("--settings-rail-base").trim(),
+        panelToken: root.getPropertyValue("--settings-panel-base").trim(),
+        controlToken: root.getPropertyValue("--settings-control-base").trim(),
+      };
+    })()`);
+    t.check(
+      "Quiet light settings surfaces use warm rice-white layers instead of pure white",
+      quietLightSurfaces.skin === "quiet" &&
+        quietLightSurfaces.theme === "light" &&
+        quietLightSurfaces.canvasToken === "#f0ede6" &&
+        quietLightSurfaces.railToken === "#f4f0e8" &&
+        quietLightSurfaces.panelToken === "#f8f4ea" &&
+        quietLightSurfaces.controlToken === "#ece7dd" &&
+        quietLightSurfaces.canvas === "rgb(240, 237, 230)" &&
+        quietLightSurfaces.rail === "rgb(244, 240, 232)" &&
+        quietLightSurfaces.panel === "rgb(248, 244, 234)" &&
+        quietLightSurfaces.control === "rgb(236, 231, 221)" &&
+        quietLightSurfaces.panel !== "rgb(255, 255, 255)",
+      quietLightSurfaces,
+    );
+
+    await settings.invoke("save_settings_patch", {
+      patch: { appearance: { settings_skin: "chromatic", color_mode: "light" } },
+    });
+    await settingsContext.waitFor(
+      'document.documentElement.dataset.skin === "chromatic" && document.documentElement.dataset.theme === "light"',
+      5000,
+    );
+    const chromaticLightRail = await settingsContext.evaluate(`(() => {
+      const root = getComputedStyle(document.documentElement);
+      return {
+        skin: document.documentElement.dataset.skin,
+        theme: document.documentElement.dataset.theme,
+        rail: getComputedStyle(document.querySelector(".settings-sidebar")).backgroundColor,
+        canvas: getComputedStyle(document.querySelector(".settings-main")).backgroundColor,
+        railToken: root.getPropertyValue("--settings-rail-base").trim(),
+      };
+    })()`);
+    t.check(
+      "Chromatic light settings rail stays a warm neutral near the canvas",
+      chromaticLightRail.skin === "chromatic" &&
+        chromaticLightRail.theme === "light" &&
+        chromaticLightRail.railToken === "#ebe6dc" &&
+        chromaticLightRail.rail === "rgb(235, 230, 220)" &&
+        chromaticLightRail.canvas === "rgb(243, 239, 230)" &&
+        chromaticLightRail.rail !== chromaticLightRail.canvas,
+      chromaticLightRail,
     );
 
     // Settings owns the foreground when it opens. Summoning the launcher from
@@ -117,16 +227,56 @@ export default {
     );
     await measurePane("appearance", '[data-setting-id="appearance.window_color"]');
 
+    await settings.invoke("save_settings_patch", {
+      patch: { appearance: { accent: "#6f7cff" } },
+    });
+    await settingsContext.waitFor(
+      'document.documentElement.style.getPropertyValue("--ui-accent-raw").trim() === "#6f7cff"',
+      5000,
+    );
+    const clickTheme = (index) => settingsContext.evaluate(
+      `document.querySelectorAll('[data-setting-id="appearance.color_mode"] [role="radio"]')[${index}]?.click(); true`,
+    );
+    await clickTheme(2);
+    await settingsContext.waitFor(
+      'document.documentElement.dataset.theme === "light" && document.documentElement.dataset.settingsSaveState === "saved"',
+      5000,
+    );
+    await clickTheme(1);
+    await settingsContext.waitFor(
+      'document.documentElement.dataset.theme === "dark" && document.documentElement.dataset.settingsSaveState === "saved" && document.querySelector(".settings-save-symbol")?.textContent === "✓"',
+      5000,
+    );
+    const autosaveAccent = await settingsContext.evaluate(`(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--ui-accent)";
+      document.body.append(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.style.color = "var(--settings-success)";
+      const success = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        theme: document.documentElement.dataset.theme,
+        state: document.documentElement.dataset.settingsSaveState,
+        symbol: getComputedStyle(document.querySelector(".settings-save-symbol")).color,
+        accent,
+        success,
+      };
+    })()`);
+    t.check(
+      "dark autosave confirmation follows the live accent instead of semantic success",
+      autosaveAccent.theme === "dark" &&
+        autosaveAccent.state === "saved" &&
+        autosaveAccent.symbol === autosaveAccent.accent &&
+        autosaveAccent.symbol !== autosaveAccent.success,
+      autosaveAccent,
+    );
+
     const sections = await settingsContext.evaluate(
       '[...document.querySelectorAll(".settings-nav")].map((item) => item.dataset.section)',
     );
     t.deepEqual("settings navigation exposes the current section set", sections, EXPECTED_SECTIONS);
     t.check("settings command search is present", await settingsContext.evaluate('!!document.querySelector(".settings-search-input")'));
-    t.check("settings footer exposes restore but no global save", await settingsContext.evaluate(`(() => {
-      const buttons = [...document.querySelectorAll(".settings-footer button")];
-      return buttons.length === 1 && buttons[0].classList.contains("settings-footer-action");
-    })()`));
-
     await settingsContext.evaluate('document.querySelector(\'.settings-nav[data-section="appearance"]\').click()');
     await settingsContext.waitFor('document.querySelector(".settings-nav.active")?.dataset.section === "appearance"', 5000);
     await settingsContext.waitFor('!document.querySelector(".settings-page-loading")', 5000);

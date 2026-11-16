@@ -48,6 +48,7 @@ Rust Core (src-tauri/src/)
   ├─ texts.rs    — tray / notification / service / task / window-title wording
   ├─ tray.rs     — system tray icon, Restart/Exit menu, left-click toggle
   ├─ hotkey.rs   — toggle shortcut: the configured combo (default Alt+Space)
+  ├─ onboarding.rs — first-run state, independent welcome window and lesson routing
   ├─ svc.rs      — LumeSVC SYSTEM service (SCM + IPC pipe + index dormancy)
   ├─ agent.rs    — elevation-agent client, `\\.\pipe\LumeAgent` server, task
   ├─ input.rs    — synthetic keys (SendInput) + window/process/token probes
@@ -84,6 +85,13 @@ background is transparent for the launcher, so an unpainted page cannot expose
 the runtime's white canvas. After reveal, `window.rs` drains the native message
 queue and verifies the foreground HWND, which keeps a summon from Settings or a
 detached plugin window from leaving keyboard focus behind.
+The independent `welcome` window is created only while the first-run lesson is
+pending or from the About-page replay action. It stays focused above the hidden
+launcher, and `onboarding::toggle_launcher` transfers the shortcut activation to
+the main window while advancing to the in-launcher lesson. Welcome/window state
+is addressed through `data/onboarding.json`; an existing settings file marks an
+old installation as skipped instead of replaying the tour after an upgrade.
+
 The 窗口位置 setting (center / corners / follow-mouse / custom) positions the
 window on its first appearance in a run — later shows inherit the spot the
 launcher was last closed at, and a manual drag stops automatic anchoring
@@ -316,6 +324,17 @@ The restart path releases the process-lifetime single-instance mutex before
 Tauri spawns the replacement process; otherwise the new instance can see the
 old guard and exit silently.
 
+The single-instance guard pairs the named mutex with a named manual-reset event.
+The first process creates the event before entering Tauri and runs an
+`instance-activation` waiter thread; a second `lume.exe` launch opens and signals
+the event, then exits with code 0. The resident instance handles the event on
+Tauri's async runtime through `onboarding::activate_launcher`, which reveals a
+hidden launcher or focuses a visible one without toggling it. Debug harness
+copies append `LUME_INSTANCE_ID` to both kernel-object names, so duplicate-launch
+tests cannot attach to the user's running Lume. The signaling side retries for
+200 ms to cover the tiny first-process startup race between creating the mutex
+and creating the activation event.
+
 ### `pins.rs`
 Persists the Navigate **已固定 bar** in a `pinned_apps` table (`path` unique,
 ordered by pin time) inside `lume.db`. It uses its own WAL-mode connection so
@@ -463,10 +482,21 @@ First run migrates the legacy `app_data_dir()/lume.db` into `data/`
 ```
 <base>/
 ├── settings/   settings.toml (the only one read) · default.toml (factory, read-only) · backup.toml (pre-save snapshot)
-├── data/       SQLite databases
+├── data/       SQLite databases · onboarding.json (first-run lesson state)
 ├── languages/  runtime i18n overrides
 └── res/        (read-only assets, stays next to the exe)
 ```
+
+### Onboarding state (`data/onboarding.json`)
+
+`onboarding.json` stores the current lesson, status and final choice. It is
+kept outside `settings.toml` so restore-default, import and backup do not turn
+the tour back on. A genuinely new data root starts at lesson 1; an existing
+install is recorded as `skipped` with outcome `existing_install`. The About-page
+replay is memory-only, so abandoning it cannot change the durable completed
+state. The welcome window and lesson handoff live in `onboarding.rs`; the
+launcher coach consumes the same snapshot through first-paint injection and the
+`onboarding-changed` event.
 
 ### SQLite databases (`data/`)
 
@@ -885,7 +915,10 @@ before adding a field:
 ## State & lifecycle
 
 - The main webview starts hidden with `focused(false)`; settings, preview and
-  the shared plugin-logic host are absent until first use. Every show/hide pairs
+  the shared plugin-logic host are absent until first use. The one exception is
+  an unfinished first-run tour: the shortcut lesson opens the separate `welcome` window, and
+  later lessons reveal the launcher until the autostart choice is recorded.
+  Every show/hide pairs
   the native HWND transition with WebView controller visibility and memory
   residency. The launcher is first shown by the hotkey, waits for a committed
   renderer frame, is focused explicitly on every show, and auto-hides on focus

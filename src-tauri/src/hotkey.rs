@@ -54,7 +54,7 @@ pub fn build() -> tauri::plugin::TauriPlugin<tauri::Wry> {
             if event.state() == ShortcutState::Pressed && is_active(app, shortcut) {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = crate::window::toggle_launcher(app).await;
+                    let _ = crate::onboarding::toggle_launcher(app).await;
                 });
             }
         })

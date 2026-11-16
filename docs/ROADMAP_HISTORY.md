@@ -6609,3 +6609,114 @@ Lume 此前只发布便携 zip，用户需要手工解压并自行创建快捷�
 - Win32 探针读取设置窗 `WM_GETICON`：`ICON_BIG` / `ICON_SMALL` 均非零，导出
   32×32 图标右侧底板像素为 `rgb(247, 248, 241)`、alpha 255，可区分透明主题
   品牌标记。Quiet/Chromatic 浅色表面与深色/自定义 accent 自动保存状态完成截图目检。
+
+## 110. 首次使用引导与独立欢迎窗口（2026-11-16）
+
+### 110.1 背景
+
+Lume 此前的启动路径始终隐藏主窗口，只等待全局快捷键或托盘。新用户没有机会先
+理解 `Alt+Space`、`Tab`、设置入口与开机自启之间的关系；空数据目录也没有能区分
+“全新安装”和“升级后的已有安装”的引导状态。目标是用一次可恢复的交互引导缩短
+首次使用路径，同时不自动启停系统集成。
+
+### 110.2 实现
+
+- 新增独立 `welcome` WebView 窗口：480×330 逻辑像素、无系统装饰、跟随启动器
+  皮肤，显示当前注册的呼出快捷键和冲突降级入口。主窗口在快捷键呼出前保持隐藏。
+- `onboarding.rs` 持有引导状态机与窗口衔接：快捷呼出或欢迎页 fallback 都会隐藏
+  欢迎窗、显示主窗口并推进到模式课；主窗口的 Tab 热键路径单独上报，打开设置时
+  快进到系统页第 4 课。
+- 主窗口使用独立 `Coach` 组件占用页面区域，模式栏/齿轮用静态焦点轮廓强调；
+  `sizer` 增加 onboarding 高度模型，避免加载门把窗口压回搜索行。
+- 设置页新增 `SettingsRoute` 定向事件；系统页的 autostart 卡片复用既有
+  `autostart_get` / `autostart_set`，失败保留卡片和行内告警。关于页新增
+  “重新观看新手引导”，replay 只改内存，不覆盖 durable 决策。
+- 状态保存在 `<base>/data/onboarding.json`，不进入 `settings.toml`。全新数据
+  目录从快捷键课开始；已有 `settings.toml` 记录为 `skipped/existing_install`。
+- 测试 harness 默认给既有套件预置 skipped 标记；新增 `onboarding` 隔离套件覆盖
+  欢迎窗口、Tab 课、系统页路由、自启决策、持久化和 replay。
+
+### 110.3 踩坑
+
+- 引导状态不能放进设置恢复/导入会替换的文件；否则恢复默认或导入旧配置会把
+  已完成引导重新打开。
+- `welcome` 成为前台时不能复用普通 `remember_foreground`，否则剪贴板自动粘贴会
+  把欢迎窗当成目标；主窗口从欢迎页交接时必须使用不覆盖已记录前台 HWND 的显示路径。
+- 启动末尾的内存裁剪会与“恢复未完成引导时自动显示主窗口”竞争；引导启动必须
+  排在 `trim_main_now` / `sync_aux_memory_targets` 之后。
+- 隐藏主窗口的 renderer 可能还没注册 `onboarding-changed` 监听；每次
+  `launcher-shown` 都要重新读取 `onboarding_get`，不能只依赖事件。
+- sizer 的页面查询限定在 active host，而 coach 是 host 之外的 shell 内容；
+  不显式接入 onboarding 高度会把窗口裁成只有搜索行的高度。
+- 测试环境可能已经有真实的 HKCU 自启项；UI 套件不能断言起点必为关闭，更不能
+  在自动测试中写注册表，只验证用户明确选择后的状态与持久化。
+
+### 110.4 验证
+
+- `pnpm verify:fast` PASS：docs 15、i18n 649×3、toast 12/12、Page Runtime
+  19、clipboard model 16/16、clipboard store 8/8、skin 17/17、前端生产构建、
+  Rust **296 passed / 9 ignored**。
+- `pnpm verify:ui --suite onboarding,smoke,settings` PASS **79/79**，产物
+  `test/verify/2026-11-16T04-13-58-976Z/summary.json`：
+  onboarding **14/14**（3.4s）、smoke **26/26**（9.6s）、settings **39/39**
+  （12.1s）。截图覆盖欢迎窗口、主窗口模式课与设置页自启课。
+- 真实 `Alt+Space` 注册冲突、HKCU 自启写入/拒绝，以及 100%/150%/200% DPI、
+  Quiet/Chromatic、明暗与自定义 accent 的最终目检保留在 `docs/MANUAL_TESTING.md`。
+
+## 111. 重复启动唤醒已有实例（2026-11-16）
+
+### 111.1 背景
+
+单实例互斥量只负责阻止第二个进程，用户再次双击 `lume.exe` 或桌面快捷方式时
+没有任何可见反馈；主窗口若已隐藏，只能依赖全局快捷键或托盘重新呼出。目标是让
+第二次启动成为“显示并聚焦已有窗口”的明确入口，同时继续保证不会产生第二个
+托盘、WebView 或后台所有者。
+
+### 111.2 实现
+
+- 首个进程在取得 `LumeLauncher_SingleInstance` 互斥量后，立即创建命名手动复位
+  事件 `LumeLauncher_Activate`。事件在进入 Tauri 前建立，消除启动初期的握手
+  空窗。
+- 后续进程读取到 `ERROR_ALREADY_EXISTS` 后打开激活事件并 `SetEvent`，然后保持
+  原有退出码 0 退出。打开事件最多重试 200 ms，覆盖首进程“互斥量已建立、事件
+  尚未建立”的极短区间。
+- 首进程的 `instance-activation` 等待线程收到事件后复位信号，并通过 Tauri async
+  runtime 调用 `onboarding::activate_launcher`。激活路径与快捷键 toggle 分离：
+  隐藏时复用预绘制显示流程，已显示时只恢复原生/DOM 焦点，绝不反向隐藏。
+- 欢迎引导尚未完成时，重复启动执行与全局快捷键相同的课程交接：推进到模式课、
+  显示主窗口并销毁欢迎窗。
+- `LUME_INSTANCE_ID` 现在同时隔离 debug 测试的互斥量与事件名；测试会话可以生成
+  第二个真实进程验证完整内核对象握手，而不会接触用户实例。
+- 托盘重启继续先释放互斥量和事件句柄，再请求 Tauri 重建进程，避免替换实例被
+  旧 guard 挡下。
+
+### 111.3 踩坑
+
+- 只创建激活事件而不等待会丢掉第二次启动；事件必须由首进程的阻塞等待线程消费。
+- 手动复位事件适合重复启动合并：重置后下一轮可继续接收；自动复位事件在快速
+  连续启动下更难覆盖等待线程尚未进入下一次 wait 的窗口。
+- 激活不能复用 toggle。用户重复点击快捷方式时，窗口若已经可见，切换逻辑会把它
+  隐藏，正好违背预期。
+- 事件句柄不能跨线程直接传裸 `*mut c_void`；等待线程内部改为整数句柄再构造
+  `HANDLE`，满足 `Send` 要求。
+- 测试若只检查“第二进程退出”仍可能漏掉窗口没有显示；必须同时断言主窗口可见、
+  搜索框获得焦点、进程退出码为 0，以及已显示窗口不会被隐藏。
+- `.NET Runtime` 不等于 SDK；安装器环境需要 `Microsoft.DotNet.SDK.10 10.0.404`。
+  本机已持久安装到 `C:\Program Files\dotnet`，VS 2026 MSBuild 位于
+  `E:\SoftwareDevelopment\VisualStudio\Software\MSBuild\Current\Bin\MSBuild.exe`。
+
+### 111.4 验证
+
+- `pnpm verify:fast` PASS：docs 15、i18n 649×3、toast 12/12、Page Runtime
+  19、clipboard model 16/16、clipboard store 8/8、skin 17/17、前端生产构建、
+  Rust **296 passed / 9 ignored**。
+- `pnpm verify:ui --suite onboarding,smoke,settings --no-build` PASS **83/83**：
+  onboarding **14/14**（2.7s）、smoke **30/30**（13.4s）、settings **39/39**
+  （12.2s），产物
+  `test/verify/2026-11-16T04-44-09-741Z/summary.json`。smoke 的四项新增断言
+  覆盖第二进程退出、隐藏主窗唤醒、搜索框焦点与已显示主窗不反向隐藏。
+- `pnpm package:installer` PASS：release 构建、MicaSetup 模板编译与安装包封装
+  均成功；产物 `Lume_3.5.2_x64_setup.exe` 为 8,410,112 bytes，SHA-256
+  `40709d8fcb75361f41ab411ad4f5bc2d3e763ad4c4cc611d8c253bd03ad32218`。
+- 真实桌面快捷方式、UAC 安装/升级/卸载与不同 DPI 下的重复启动仍按
+  `docs/MANUAL_TESTING.md` 验收。

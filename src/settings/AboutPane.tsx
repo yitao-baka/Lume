@@ -12,6 +12,7 @@ const HOMEPAGE = "https://github.com/yitao-baka/Lume";
 export default function AboutPane() {
   const [error, setError] = createSignal<string | null>(null);
   const [copied, setCopied] = createSignal(false);
+  const [replaying, setReplaying] = createSignal(false);
 
   async function openHomepage() {
     setError(null);
@@ -19,6 +20,20 @@ export default function AboutPane() {
       await invoke("open_path", { path: HOMEPAGE });
     } catch (err) {
       setError(settingsError(err, "settingsAboutOpenFailed"));
+    }
+  }
+
+  async function replayOnboarding() {
+    if (replaying()) return;
+    setError(null);
+    setReplaying(true);
+    try {
+      await invoke("onboarding_replay");
+    } catch (err) {
+      console.error("[settings] onboarding replay", err);
+      setError(settingsError(err, "onboardingReplayFailed"));
+    } finally {
+      setReplaying(false);
     }
   }
 
@@ -67,6 +82,19 @@ export default function AboutPane() {
           <span role="cell">
             <button class="settings-action settings-action-primary" type="button" onClick={() => void openHomepage()}>
               {HOMEPAGE} ↗
+            </button>
+          </span>
+        </div>
+        <div class="settings-about-row" role="row" id="about.onboarding" data-setting-id="about.onboarding" tabIndex={-1}>
+          <span role="rowheader">{t("onboardingReplay")}</span>
+          <span role="cell">
+            <button
+              class="settings-action"
+              type="button"
+              disabled={replaying()}
+              onClick={() => void replayOnboarding()}
+            >
+              {t("onboardingReplayAction")}
             </button>
           </span>
         </div>

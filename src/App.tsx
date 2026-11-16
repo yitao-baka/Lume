@@ -35,6 +35,13 @@ import { createWindowSizer } from "./launcher/sizing";
 import { buildMenuItems, type ClipMenuActions, type NavMenuActions } from "./launcher/menu";
 import { createKeyRouter } from "./launcher/keyboard";
 import { SearchBox, type SearchBoxPage } from "./shell/SearchBox";
+import Coach from "./onboarding/Coach";
+import {
+  activeOnboardingStep,
+  COMPLETED_ONBOARDING,
+  type InjectedOnboarding,
+  type OnboardingSnapshot,
+} from "./onboarding/types";
 import {
   allPlugins,
   applyPluginColorMode,
@@ -104,6 +111,13 @@ function App() {
   // first run, dev), fall back to defaults matching Settings::default().
   const _cfg = (window as any).__LUME_CONFIG__ as SettingsData | undefined;
   const _a = _cfg?.appearance;
+  const [onboarding, setOnboarding] = createSignal<OnboardingSnapshot>(
+    (window as { __LUME_ONBOARDING__?: InjectedOnboarding }).__LUME_ONBOARDING__ ??
+      COMPLETED_ONBOARDING,
+  );
+  const onboardingStep = () => activeOnboardingStep(onboarding());
+  const [onboardingBusy, setOnboardingBusy] = createSignal(false);
+  const [onboardingError, setOnboardingError] = createSignal<string | null>(null);
 
   /** Max launcher height for auto-sizing (settings → 窗口大小 → 高度). */
   const [windowHeight, setWindowHeight] = createSignal(_a?.window_height ?? 520);
@@ -501,6 +515,7 @@ function App() {
   // read at call time, so later-created state is safe to close over here.
   const icons = createIconStore();
   const sizer = createWindowSizer({
+    onboardingActive: () => onboardingStep() >= 2,
     // Fit pages (the navigate home) auto-size to content; every other page
     // splices in under the search box at a fixed height.
     fixedHeight: () => (activeMode()?.heightPolicy?.() ?? "fixed") !== "fit",
@@ -904,6 +919,9 @@ const services: PluginServices = {
     moveSelection,
     activate,
     switchMode,
+    onModeSwitchHotkey: () => {
+      if (onboardingStep() === 2) void advanceOnboarding(3);
+    },
     resetAndHide: () => void resetAndHide(),
     closeMenu,
     openSettings: () => void openSettings(),
@@ -963,12 +981,68 @@ const services: PluginServices = {
       handleInput;
   }
 
-  /** Open the settings window (gear button). */
-  async function openSettings() {
+  async function advanceOnboarding(target: number) {
+    if (onboardingBusy()) return;
+    setOnboardingBusy(true);
+    setOnboardingError(null);
     try {
-      await invoke("open_settings");
-    } catch {
-      // Settings window missing — ignore.
+      const next = await invoke<OnboardingSnapshot>("onboarding_advance", { target });
+      setOnboarding(next);
+    } catch (err) {
+      console.error("[onboarding] advance", err);
+      setOnboardingError(t("onboardingOperationFailed"));
+    } finally {
+      setOnboardingBusy(false);
+    }
+  }
+
+  async function skipOnboarding() {
+    if (onboardingBusy()) return;
+    setOnboardingBusy(true);
+    setOnboardingError(null);
+    try {
+      const next = await invoke<OnboardingSnapshot>("onboarding_skip");
+      setOnboarding(next);
+      showToast(t("onboardingSkippedToast"));
+    } catch (err) {
+      console.error("[onboarding] skip", err);
+      setOnboardingError(t("onboardingOperationFailed"));
+    } finally {
+      setOnboardingBusy(false);
+    }
+  }
+
+  async function declineAutostart() {
+    if (onboardingBusy()) return;
+    setOnboardingBusy(true);
+    setOnboardingError(null);
+    try {
+      const next = await invoke<OnboardingSnapshot>("onboarding_finish", {
+        reason: "autostart_declined",
+      });
+      setOnboarding(next);
+      showToast(t("onboardingAutostartDeclined"));
+    } catch (err) {
+      console.error("[onboarding] decline autostart", err);
+      setOnboardingError(t("onboardingOperationFailed"));
+    } finally {
+      setOnboardingBusy(false);
+    }
+  }
+
+  /** Open Settings. During the tour, route directly to the autostart lesson. */
+  async function openSettings() {
+    setOnboardingError(null);
+    try {
+      if (onboardingStep() >= 2) {
+        const next = await invoke<OnboardingSnapshot>("onboarding_open_settings");
+        setOnboarding(next);
+      } else {
+        await invoke("open_settings");
+      }
+    } catch (err) {
+      console.error("[onboarding] open settings", err);
+      if (onboardingStep() >= 2) setOnboardingError(t("onboardingOperationFailed"));
     }
   }
 
@@ -1301,6 +1375,13 @@ const services: PluginServices = {
     // every mode's onShow built DOM/models for pages the user had not opened.
     sizer.scheduleResize();
 
+    const unlistenOnboarding = await listen<OnboardingSnapshot>(
+      "onboarding-changed",
+      (event) => setOnboarding(event.payload),
+      { target: getCurrentWindow().label },
+    );
+    onCleanup(() => unlistenOnboarding());
+
     const unlistenSettings = await listen("settings-applied", () => {
       void applyRuntimeSettings();
     });
@@ -1467,6 +1548,12 @@ const services: PluginServices = {
     // there would clear summon-scoped state mid-drag.
     const unlisten = await getCurrentWindow().listen("launcher-shown", () => {
       queueMicrotask(() => document.getElementById("search-input")?.focus());
+      // The welcome handoff can race the hidden renderer's listener setup.
+      // Read the authoritative step again on every reveal so the coach cannot
+      // be skipped by an event emitted before this webview was ready.
+      void invoke<OnboardingSnapshot>("onboarding_get")
+        .then(setOnboarding)
+        .catch((error) => console.error("[onboarding] launcher state", error));
       if (diagnosticsEnabled()) {
         (window as unknown as { __summonCompletedAt?: number }).__summonCompletedAt = Date.now();
       }
@@ -1525,6 +1612,13 @@ const services: PluginServices = {
     requestAnimationFrame(sizer.measureBarCols);
   });
 
+  // The onboarding card replaces the page area and has its own fit height.
+  createEffect(() => {
+    void onboardingStep();
+    sizer.invalidate();
+    sizer.scheduleResize();
+  });
+
   // Skin geometry can change row/grid rhythm without rebuilding the page.
   // Re-measure the bar columns and force one fit pass while the Page Service,
   // Presenter selection, query and selection stay intact.
@@ -1538,7 +1632,11 @@ const services: PluginServices = {
   });
 
   return (
-    <div class="launcher" classList={{ "circle-app-icons": circleAppIcons() }}>
+    <div
+      class="launcher"
+      classList={{ "circle-app-icons": circleAppIcons() }}
+      data-onboarding-step={onboardingStep() || undefined}
+    >
       <SearchBox
         query={query}
         placeholder={placeholder}
@@ -1549,7 +1647,26 @@ const services: PluginServices = {
         onSwitchPage={(id) => void switchMode(id)}
         onOpenSettings={() => void openSettings()}
       />
-      <div class="results" tabIndex={-1} classList={{ "results-loading": pageLoading() }}>
+      <div
+        class="results"
+        tabIndex={-1}
+        classList={{
+          "results-loading": pageLoading() && onboardingStep() < 2,
+          "onboarding-active": onboardingStep() >= 2,
+        }}
+      >
+        <Show when={onboardingStep() >= 2}>
+          <Coach
+            step={onboardingStep()}
+            switchKey={switchKey()}
+            busy={onboardingBusy()}
+            error={onboardingError()}
+            onAdvance={() => void advanceOnboarding(3)}
+            onOpenSettings={() => void openSettings()}
+            onDecline={() => void declineAutostart()}
+            onSkip={() => void skipOnboarding()}
+          />
+        </Show>
         {/* Keep-alive pages (#40): every visited mode stays mounted; only the
             active host is laid out (display:contents), the rest are hidden. */}
         <For each={hostStack.hosts()}>

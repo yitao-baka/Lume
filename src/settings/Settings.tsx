@@ -77,6 +77,16 @@ const SECTION_ICONS: Record<SectionId, string> = {
 
 type SaveState = "saved" | "saving" | "error";
 
+interface SettingsRoute {
+  section?: string | null;
+  onboarding?: boolean;
+}
+
+function routeSection(route: SettingsRoute | undefined): SectionId | null {
+  const value = route?.section;
+  return value && SECTION_ORDER.includes(value as SectionId) ? (value as SectionId) : null;
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -176,7 +186,12 @@ function highlightMatch(text: string, query: string) {
 }
 
 export default function Settings() {
-  const [section, setSection] = createSignal<SectionId>("appearance");
+  const initialRoute = (window as { __LUME_SETTINGS_ROUTE__?: SettingsRoute })
+    .__LUME_SETTINGS_ROUTE__;
+  const [section, setSection] = createSignal<SectionId>(
+    routeSection(initialRoute) ?? "appearance",
+  );
+  const [onboardingActive, setOnboardingActive] = createSignal(initialRoute?.onboarding === true);
   const [query, setQuery] = createSignal("");
   const [searchFocused, setSearchFocused] = createSignal(false);
   const [selectedResult, setSelectedResult] = createSignal(0);
@@ -586,6 +601,12 @@ export default function Settings() {
     });
   }
 
+  function applySettingsRoute(route: SettingsRoute | undefined) {
+    setOnboardingActive(route?.onboarding === true);
+    const next = routeSection(route);
+    if (next) navigateTo(next);
+  }
+
   /** Jump scrolling: centering a deep-linked row inside the plugin detail pane
    * scrolls the card head out of view, leaving a clipped sliver of the title
    * at the pane's top edge. Anchor the pane on the card head and only scroll
@@ -744,6 +765,16 @@ export default function Settings() {
         else unlistenFocus = unlisten;
       });
 
+    let unlistenRoute: (() => void) | undefined;
+    void listen<SettingsRoute>(
+      "settings-route",
+      (event) => applySettingsRoute(event.payload),
+      { target: getCurrentWindow().label },
+    ).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenRoute = unlisten;
+    });
+
     let unlistenClose: (() => void) | undefined;
     void listen("settings-close-requested", () => void requestClose()).then((unlisten) => {
       if (disposed) unlisten();
@@ -795,6 +826,7 @@ export default function Settings() {
     onCleanup(() => {
       disposed = true;
       unlistenFocus?.();
+      unlistenRoute?.();
       unlistenClose?.();
       unlistenApplied?.();
       unlistenShown?.();
@@ -1106,6 +1138,8 @@ export default function Settings() {
                   clipboardPluginEnabled={
                     plugins().find((plugin) => plugin.id === "clipboard")?.enabled ?? true
                   }
+                  onboardingActive={onboardingActive()}
+                  onOnboardingFinished={() => setOnboardingActive(false)}
                 />
               </div>
             </Show>
@@ -1228,6 +1262,8 @@ function SectionBody(props: {
   requestConfirm: (state: ConfirmState) => void;
   clipboardPluginEnabled: boolean;
   initialPlugins: PluginManifest[];
+  onboardingActive: boolean;
+  onOnboardingFinished: () => void;
 }) {
   return (
     <Switch>
@@ -1284,6 +1320,8 @@ function SectionBody(props: {
           onReload={props.onReload}
           confirmDiscard={props.confirmDiscard}
           requestConfirm={props.requestConfirm}
+          onboarding={props.onboardingActive}
+          onOnboardingFinished={props.onOnboardingFinished}
         />
       </Match>
       <Match when={props.section === "about"}>

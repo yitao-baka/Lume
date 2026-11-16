@@ -1,3 +1,8 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+
 export default {
   id: "smoke",
   description: "Launcher shell, hidden resource lifecycle, mode switching and clipboard surface",
@@ -76,6 +81,57 @@ export default {
       '[...document.querySelectorAll(".mode-switch-item")].map((item) => item.textContent.trim())',
     );
     t.check("mode bar renders at least Navigate and Clipboard", modes.length >= 2, modes);
+
+    const duplicateExe = join(
+      t.runtimeDir,
+      process.platform === "win32" ? "lume.exe" : "lume",
+    );
+    const launchDuplicate = () => {
+      const child = spawn(duplicateExe, [], {
+        cwd: t.runtimeDir,
+        env: { ...process.env, LUME_INSTANCE_ID: t.session.instanceId },
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      return Promise.race([
+        once(child, "exit").then(([code, signal]) => ({ kind: "exit", code, signal })),
+        once(child, "error").then(([error]) => ({ kind: "error", error: String(error) })),
+        delay(5000).then(() => ({ kind: "timeout" })),
+      ]);
+    };
+
+    await t.invoke("hide_launcher");
+    await t.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" }).then((visible) => !visible)',
+      5000,
+    );
+    const hiddenLaunch = await launchDuplicate();
+    t.check(
+      "duplicate launch hands off and exits without starting a second instance",
+      hiddenLaunch.kind === "exit" && hiddenLaunch.code === 0,
+      hiddenLaunch,
+    );
+    const duplicateReveal = await t.waitFor(
+      'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" })',
+      5000,
+    );
+    t.check("duplicate launch reveals the hidden launcher", duplicateReveal);
+    t.check(
+      "duplicate-launch reveal restores search focus",
+      await t.waitFor('document.activeElement?.id === "search-input"', 3000),
+    );
+
+    const visibleLaunch = await launchDuplicate();
+    await t.sleep(150);
+    t.check(
+      "duplicate launch focuses but never hides an already-visible launcher",
+      visibleLaunch.kind === "exit" &&
+        visibleLaunch.code === 0 &&
+        (await t.evaluate(
+          'window.__TAURI_INTERNALS__.invoke("plugin:window|is_visible", { label: "main" })',
+        )),
+      visibleLaunch,
+    );
 
     await t.setQuery("lume");
     t.equal("search input accepts text", await t.evaluate('document.getElementById("search-input").value'), "lume");

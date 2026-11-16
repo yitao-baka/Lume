@@ -342,6 +342,10 @@ export class LumeSession {
     return this.findPage('document.body.classList.contains("settings-window")');
   }
 
+  welcome() {
+    return this.findPage('!!document.querySelector(".welcome-window")');
+  }
+
   preview() {
     return this.findPage('location.pathname.endsWith("/preview.html") || !!document.querySelector(".preview-page")');
   }

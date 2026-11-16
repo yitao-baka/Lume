@@ -36,6 +36,7 @@ export default defineConfig(async () => ({
     rollupOptions: {
       input: {
         main: "index.html",
+        welcome: "welcome.html",
         settings: "settings.html",
         blank: "blank.html",
         preview: "preview.html",

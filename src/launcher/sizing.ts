@@ -39,6 +39,8 @@ export function errorPageTargetHeight(
 /** Everything the sizer reads from the composition root. Accessors are Solid
  * signal getters; the whole object is read at call time (late-bound deps). */
 export interface SizerDeps {
+  /** The first-run coach replaces page content with its own fit-height model. */
+  onboardingActive: () => boolean;
   /** Fixed-height model (plugin modes) vs auto-fit (Navigate). */
   fixedHeight: () => boolean;
   /** The active page has not finished loading (`ModeInstance.ready` is false).
@@ -141,6 +143,20 @@ export function createWindowSizer(deps: SizerDeps) {
   }
 
   function targetFromDeps(): number {
+    if (deps.onboardingActive()) {
+      const searchH =
+        (document.querySelector(".search") as HTMLElement | null)?.offsetHeight ?? 0;
+      const coach = document.querySelector<HTMLElement>(".onboarding-coach");
+      const panel = coach?.querySelector<HTMLElement>(".onboarding-coach-panel");
+      const style = coach ? getComputedStyle(coach) : null;
+      const verticalPadding = style
+        ? (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0)
+        : 0;
+      return Math.max(
+        MIN_WINDOW_H,
+        Math.round(searchH + (panel?.offsetHeight ?? 0) + verticalPadding + WINDOW_PAD),
+      );
+    }
     if (deps.fixedHeight()) {
       const declared = deps.modeHeight();
       const configured = Number.isFinite(deps.windowHeight()) ? deps.windowHeight() : 520;

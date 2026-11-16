@@ -393,7 +393,9 @@ id，值为 Presenter id。缺省或未知值回落到页面清单声明的默�
 不纳入自动保存或泛化撤销。
 
 - **开机启动**：`autostart_get` / `autostart_set`，写入当前用户启动项，不需要
-  管理员权限。
+  管理员权限。首次引导进入本页时，`system.autostart` 上方显示一张上下文卡片；
+  用户选择启用或暂不启用会写入独立的 onboarding 状态，关闭窗口而未选择则保留
+  第 4 步，下次呼出时继续。
 - **后台组件**：
   - `svc_status` / `svc_install` / `svc_start` / `svc_restart` / `svc_uninstall`
   - `agent_status` / `agent_install` / `agent_uninstall`
@@ -418,6 +420,8 @@ id，值为 Presenter id。缺省或未知值回落到页面清单声明的默�
 - 品牌区显示 `Lume` 与一句 tagline。
 - 版本 `APP_VERSION_LABEL` 可选择复制；许可证、贡献者与项目主页使用细线表格。
 - 主页通过 `launch_app`（ShellExecuteW）打开；失败在按钮下方显示 `role="alert"`。
+- “重新观看新手引导”启动一次内存态 replay：隐藏设置，重新显示欢迎窗口；中途
+  放弃不会覆盖 durable 决策状态。失败结果留在当前页并显示 `role="alert"`。
 - 该页不承担设置写入，不显示自动保存状态。
 
 ## 数据文件与恢复
@@ -425,6 +429,7 @@ id，值为 Presenter id。缺省或未知值回落到页面清单声明的默�
 - 生效文件：`<base>/settings/settings.toml`
 - 出厂只读：`<base>/settings/default.toml`
 - 保存前快照：`<base>/settings/backup.toml`
+- 首启引导状态：`<base>/data/onboarding.json`（与设置备份、恢复默认和导入隔离）
 - dev / debug 运行的 `<base>` 为 `src-tauri/target/debug/`，release 为
   `src-tauri/target/release/`；安装布局下位于 `%LOCALAPPDATA%\Lume\`。
 - `appearance.skin` 与 `appearance.settings_skin` 任一缺失时继承另一个，兼容

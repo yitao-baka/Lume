@@ -1,0 +1,215 @@
+.results.onboarding-active > .mode-host,
+.results.onboarding-active > .detach-btn {
+  display: none;
+}
+
+.onboarding-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.onboarding-progress span {
+  height: 2px;
+  background: var(--border-strong);
+}
+
+.onboarding-progress span.active {
+  background: var(--ui-accent);
+}
+
+.onboarding-coach {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 18px 20px 22px;
+}
+
+.onboarding-coach-panel {
+  width: min(560px, 100%);
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--launcher-control-radius, 8px);
+  background:
+    linear-gradient(135deg, var(--accent-tint), transparent 58%),
+    var(--surface);
+}
+
+.onboarding-coach-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 15px;
+}
+
+.onboarding-coach-counter {
+  flex: none;
+  color: var(--accent-text);
+  font: 700 10px/1.2 "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.onboarding-coach-head .onboarding-progress {
+  flex: 1;
+  margin: 0;
+}
+
+.onboarding-coach h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-coach-body {
+  max-width: 500px;
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.onboarding-coach-key {
+  margin-top: 15px;
+}
+
+.onboarding-coach-key .onboarding-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.onboarding-coach-key .onboarding-key {
+  min-width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-bottom-color: var(--ui-accent-border);
+  border-radius: var(--launcher-control-radius, 8px);
+  background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
+  box-shadow: inset 0 -2px 0 var(--border);
+  color: var(--text);
+  font: 650 12px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+.onboarding-coach-key .onboarding-key-plus {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.onboarding-coach-hint {
+  margin: 11px 0 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.onboarding-coach-error {
+  margin: 11px 0 0;
+  color: var(--danger-text);
+  font-size: 11.5px;
+}
+
+.onboarding-coach-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 17px;
+}
+
+.onboarding-primary-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.onboarding-skip,
+.onboarding-primary,
+.onboarding-secondary {
+  min-height: 32px;
+  border-radius: var(--launcher-control-radius, 8px);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.onboarding-skip {
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.onboarding-skip:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.onboarding-primary,
+.onboarding-secondary {
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.onboarding-primary {
+  border-color: var(--ui-accent-border);
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+.onboarding-primary:hover:not(:disabled),
+.onboarding-secondary:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.onboarding-primary:focus-visible,
+.onboarding-secondary:focus-visible,
+.onboarding-skip:focus-visible {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 2px;
+}
+
+.onboarding-skip:disabled,
+.onboarding-primary:disabled,
+.onboarding-secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Target emphasis is static; text in the coach always states the action, so
+   color is never the only cue. */
+.launcher[data-onboarding-step="2"] .mode-switch-shell {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 3px;
+  border-radius: var(--launcher-control-radius, 8px);
+}
+
+.launcher[data-onboarding-step="3"] .search > .icon-btn,
+.launcher[data-onboarding-step="4"] .search > .icon-btn {
+  outline: 2px solid var(--ui-focus-ring);
+  outline-offset: 3px;
+}
+
+@media (max-width: 560px) {
+  .onboarding-coach {
+    padding-inline: 14px;
+  }
+
+  .onboarding-coach-panel {
+    padding-inline: 15px;
+  }
+
+  .onboarding-coach-actions {
+    align-items: flex-end;
+    flex-direction: column-reverse;
+  }
+
+  .onboarding-primary-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

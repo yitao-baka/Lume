@@ -39,6 +39,33 @@ dev URL instead.
    handler now enabled, in-page HTML5 drag is unavailable — reordering is
    pointer-event based, so a plain click must still launch the app.
 
+### First-run onboarding
+
+1. **New data root** — launch a staged portable copy with no `settings/` or
+   `data/onboarding.json`. The compact welcome window appears, the main launcher
+   stays hidden, and the configured summon shortcut is rendered as keycaps.
+2. **Shortcut handoff** — press the real global shortcut. The welcome window
+   disappears, the launcher appears with the mode-switch coach, and the search
+   box owns focus. Repeat after denying the shortcut to another app and verify
+   the conflict warning plus the “continue” fallback.
+3. **Mode lesson** — press `Tab` while the search box is focused. The active mode
+   changes and the coach advances to the Settings lesson. Verify the mouse
+   fallback also advances without trapping keyboard focus.
+4. **Settings handoff** — click the highlighted gear or press `Ctrl+,`. Settings
+   opens on 系统 with the autostart card above `system.autostart`; closing it
+   without a choice leaves the launcher on the final lesson.
+5. **Autostart choice** — choose 暂不启用 and confirm the card disappears, no HKCU
+   Run value is written, and `data/onboarding.json` records the decision. Repeat
+   on a disposable profile with 启用开机自启 and verify the HKCU Run path. Test a
+   denied registry write and confirm the card stays with an inline alert.
+6. **Restart and replay** — restart: the welcome window must not auto-open and
+   the launcher remains hidden until summoned. Use 设置 → 关于 → 重新观看新手引导,
+   then close/skip the welcome: the durable completed state must remain unchanged.
+7. **Visual matrices** — repeat the welcome, launcher coach and settings card at
+   100% / 150% / 200% scaling in Quiet/Chromatic, dark/light and a custom accent.
+   No native titlebar/menu, clipped copy, focus-ring overlap or horizontal scroll
+   may appear.
+
 ### Launcher basics
 
 1. **Shortcut registers** — the console logs the configured combo, e.g.
@@ -71,27 +98,32 @@ dev URL instead.
    launcher; right-click shows 「重启」/「关闭」(or Restart / Exit on English
    systems). 「关闭」exits the app; 「重启」starts a fresh instance.
 9. **Esc** — pressing `Esc` hides without launching.
-10. **Focus and keyboard commands** — click a mode pill / clipboard category /
+10. **Re-launch activation** — with the launcher hidden, double-click
+    `lume.exe` or its desktop shortcut. The second process exits, the existing
+    instance reveals the main window and focuses the search box. Repeat while
+    the launcher is visible: it must focus without hiding or creating another
+    tray icon/process.
+11. **Focus and keyboard commands** — click a mode pill / clipboard category /
     bar 展开; typing immediately continues in the search box. With focus in
     the search box, `Tab` still switches modes; move focus to a pill or page
     control and `Tab` / `Shift+Tab` traverse normally. `Ctrl+Tab` switches
     modes from anywhere, `F6` / `Shift+F6` cycle search box → mode bar → page
     control → settings gear, `Ctrl+,` opens settings, and `Shift+F10` (or the
     Menu key) opens the context menu for the selected tile / row.
-11. **Blocked shortcuts** — Ctrl+F, Ctrl+P, Ctrl+R, F12 and Alt+←/→ do nothing
+12. **Blocked shortcuts** — Ctrl+F, Ctrl+P, Ctrl+R, F12 and Alt+←/→ do nothing
     (no Find bar, no print, no reload, no DevTools). Ctrl+C/V/X/A still work
     for editing the search box, and the launcher's own keys (Tab, arrows,
     Enter, Esc, Del) are unaffected.
-12. **Auto-sizing** — the window height fits the results: the full app grid
+13. **Auto-sizing** — the window height fits the results: the full app grid
     caps at 520px (scrolls internally), a few results shrink it (e.g. "no" →
     ~300px), and it stays anchored (centered / cornered per the preset until
-    you drag it — see 13). A fixed-height page keeps that height through its
+    you drag it — see 15). A fixed-height page keeps that height through its
     loading gate; only fit pages may temporarily collapse to the search row.
     Width/height submitted through settings, content measurement or
     `app.resize` are clamped to the current monitor work area.
-13. **Fresh state** — re-showing the launcher clears the previous query and
+14. **Fresh state** — re-showing the launcher clears the previous query and
     returns to the Navigate grid.
-14. **Position memory** — drag the launcher somewhere, then Esc + summon
+15. **Position memory** — drag the launcher somewhere, then Esc + summon
     again: it reopens at the dragged spot instead of jumping back to the
     窗口位置 preset, and typing / clearing the query (content resizes) does
     not move it either. Picking another preset in 设置 → 导航页 positions it
@@ -102,7 +134,7 @@ dev URL instead.
     无搜索栏中间态、尺寸与锚点同帧、工作区边界、透明像素）。Native probes:
     `scripts/ps_lume_geometry_probe.ps1` / `scripts/ps_lume_pixel_probe.ps1`.
     DPI/多显示器验收：几何脚本用 DPI-aware 探针枚举各显示器，并把真实 HWND 移到每屏检查工作区；实际份额覆盖仍需在 100% / 150% / 200% 与混合缩放桌面分别运行。
-15. **Navigate IME** — switch Windows to a Chinese IME, then enable
+16. **Navigate IME** — switch Windows to a Chinese IME, then enable
     设置 → 启动器 → 「导航页禁用输入法」. On Navigate, typing pinyin must insert
     raw Latin letters with no candidate window; switch to Clipboard or a plugin
     page and the same typing must show the normal IME candidates. Turn the

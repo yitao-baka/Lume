@@ -9,6 +9,29 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Added
+- **重复启动唤醒已有实例（2026-11-16）** — 单实例互斥量现在配套一个命名手动
+  复位事件。启动器隐藏时再次运行 `lume.exe` 或桌面快捷方式，第二进程只发出
+  激活信号并以 0 退出，常驻实例随即显示主窗口并聚焦搜索框；主窗口已显示时只
+  聚焦、不再切换隐藏。欢迎引导尚未完成时，重复启动按快捷键交接路径进入主窗口。
+  debug harness 的 `LUME_INSTANCE_ID` 同时隔离互斥量与事件名。验证：
+  `pnpm verify:fast` PASS（Rust 296 passed / 9 ignored，其余静态/前端门禁同下）；
+  `smoke` **30/30** 新增第二进程退出、隐藏窗口唤醒、搜索框焦点和“不反向隐藏”
+  四项断言；组合 UI 套件 **83/83**，产物
+  `test/verify/2026-11-16T04-44-09-741Z/summary.json`；`pnpm package:installer`
+  PASS，产物 8,410,112 bytes，SHA-256
+  `40709d8fcb75361f41ab411ad4f5bc2d3e763ad4c4cc611d8c253bd03ad32218`。
+- **首次使用引导（2026-11-16）** — 全新数据目录首次启动时显示独立的 480×330
+  欢迎窗口，完成 `Alt+Space` 呼出教学后自动切到主窗口；随后用静态焦点提示引导
+  `Tab` 切换模式、打开设置，并在“系统 → 开机自启”显示可选确认卡。引导状态保存
+  在 `data/onboarding.json`，与设置恢复/导入隔离；已有安装不自动弹出，可从
+  “设置 → 关于 → 重新观看新手引导”进入内存态 replay。开机自启不会自动写入，
+  只在用户明确选择后调用既有 `autostart_set`。验证：`pnpm verify:fast` PASS
+  （docs 15、i18n 649×3、toast 12/12、Page Runtime 19、clipboard model 16/16、
+  clipboard store 8/8、skin 17/17、前端生产构建、Rust 296 passed / 9 ignored）；
+  `pnpm verify:ui --suite onboarding,smoke,settings` PASS **83/83**（onboarding
+  14/14 2.7s、smoke 30/30 13.4s、settings 39/39 12.2s，产物
+  `test/verify/2026-11-16T04-44-09-741Z/summary.json`）。真实全局快捷键、注册表
+  自启写入/失败与多 DPI 视觉检查保留在 `docs/MANUAL_TESTING.md`。
 - **MicaSetup EXE 安装包（2026-11-15）** — 新增 `pnpm run package:installer`，
   使用固定版本 MicaSetup 2.5.7 从便携布局生成 `Lume_<version>_x64_setup.exe`；
   工具包经华为云 NuGet 镜像获取并校验 SHA-512，安装器使用 Lume 图标、三语文案、

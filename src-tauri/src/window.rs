@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalRect, PhysicalSize, State,
@@ -27,6 +27,16 @@ const MAIN_WINDOW: &str = "main";
 const SETTINGS_WINDOW: &str = "settings";
 /// Label of the satellite preview window (created on the first preview).
 const PREVIEW_WINDOW: &str = "preview";
+/// The welcome window is created by onboarding only on a first run / replay.
+const WELCOME_WINDOW: &str = "welcome";
+
+/// Optional navigation context for the settings window. `onboarding` keeps the
+/// autostart lesson visible until the user makes an explicit choice.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SettingsRoute {
+    pub section: Option<String>,
+    pub onboarding: bool,
+}
 /// Fixed logical width of the satellite preview window (the old `PREVIEW_W`).
 const PREVIEW_W_LOGICAL: f64 = 320.0;
 /// Logical px of breathing room between the launcher and the satellite preview
@@ -332,7 +342,7 @@ fn set_controller_memory_level(pw: &tauri::webview::PlatformWebview, low: bool) 
 pub fn sync_aux_memory_targets(app: &AppHandle) {
     // plugin-logic-host never shows: controller-invisible and low from creation.
     set_webview_resource_state(app, "plugin-logic-host", false, true);
-    for label in [SETTINGS_WINDOW, PREVIEW_WINDOW] {
+    for label in [SETTINGS_WINDOW, PREVIEW_WINDOW, WELCOME_WINDOW] {
         let visible = app
             .get_webview_window(label)
             .and_then(|w| w.is_visible().ok())
@@ -510,6 +520,45 @@ async fn show(window: &WebviewWindow) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Record the window that had focus before a launcher/welcome surface appears.
+/// Clipboard auto-paste targets this HWND after the launcher closes.
+pub(crate) fn remember_foreground(app: &AppHandle) {
+    if let Some(focus) = app.try_state::<FocusState>() {
+        let fg = unsafe { GetForegroundWindow() };
+        *focus.last_hwnd.lock().unwrap() = Some(fg.0 as isize);
+    }
+}
+
+/// Reveal the launcher without overwriting the remembered foreground window.
+/// Used by onboarding after the welcome window closes; the welcome itself must
+/// never become the clipboard paste target.
+pub(crate) async fn show_launcher_from_onboarding(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or_else(|| "main window not found".to_string())?;
+    show(&window).await.map_err(|error| error.to_string())
+}
+
+/// Reveal a hidden launcher or bring an already-visible one to the foreground.
+/// Unlike the hotkey toggle, a repeated exe/shortcut launch never hides it.
+pub(crate) async fn activate_launcher(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or_else(|| "main window not found".to_string())?;
+    if !window.is_visible().map_err(|error| error.to_string())? {
+        remember_foreground(app);
+        return show(&window).await.map_err(|error| error.to_string());
+    }
+    window.set_focus().map_err(|error| error.to_string())?;
+    wait_for_native_queue(app);
+    if let Ok(hwnd) = window.hwnd() {
+        if !crate::input::force_foreground(hwnd) {
+            let _ = window.set_focus();
+        }
+    }
+    Ok(())
+}
+
 /// Toggle the launcher window.
 ///
 /// Hidden → shown (geometry applied + focused); shown → hidden.
@@ -523,11 +572,7 @@ pub async fn toggle_launcher(app: AppHandle) -> Result<(), String> {
     if window.is_visible().map_err(|e| e.to_string())? {
         hide_main(&app)?;
     } else {
-        // Record which window had focus before the launcher appeared.
-        if let Some(focus) = app.try_state::<FocusState>() {
-            let fg = unsafe { GetForegroundWindow() };
-            *focus.last_hwnd.lock().unwrap() = Some(fg.0 as isize);
-        }
+        remember_foreground(&app);
         show(&window).await.map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -563,7 +608,10 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
 
 /// Create the settings webview on first use. The page is deliberately absent
 /// from startup so an unused settings surface costs no renderer/DOM/JS memory.
-fn ensure_settings_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+fn ensure_settings_window(
+    app: &AppHandle,
+    route: Option<&SettingsRoute>,
+) -> Result<WebviewWindow, String> {
     let _guard = SETTINGS_CREATE_LOCK
         .lock()
         .map_err(|_| "settings window creation lock poisoned".to_string())?;
@@ -575,8 +623,10 @@ fn ensure_settings_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     let generation = SETTINGS_RENDERER_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
     SETTINGS_READY_EPOCH.store(0, Ordering::SeqCst);
     let config_json = serde_json::to_string(&settings).unwrap_or_else(|_| "{}".into());
+    let route_json = serde_json::to_string(&route.cloned().unwrap_or_default())
+        .unwrap_or_else(|_| "{}".into());
     let init_script = format!(
-        "window.__LUME_SETTINGS_EPOCH__ = {generation};window.__LUME_CONFIG__ = {config_json};{}",
+        "window.__LUME_SETTINGS_EPOCH__ = {generation};window.__LUME_CONFIG__ = {config_json};window.__LUME_SETTINGS_ROUTE__ = {route_json};{}",
         debug_flag_script()
     );
     let lang = crate::i18n::UiLang::from_setting(&settings.appearance.language);
@@ -722,13 +772,24 @@ fn schedule_settings_destroy_if_idle(app: &AppHandle) {
 /// Open (show + focus) the settings window, creating its webview on first use.
 #[tauri::command]
 pub async fn open_settings(app: AppHandle) -> Result<(), String> {
+    open_settings_with_route(app, SettingsRoute::default()).await
+}
+
+/// Open Settings with an optional first-page route. The extra context is
+/// private to this window and is also cleared on ordinary opens so a previous
+/// onboarding card cannot survive into a later visit.
+pub(crate) async fn open_settings_with_route(
+    app: AppHandle,
+    route: SettingsRoute,
+) -> Result<(), String> {
     // Bump before touching the window so a concurrently waking idle-destroy
     // timer observes the new activity epoch and backs off.
     SETTINGS_ACTIVITY.fetch_add(1, Ordering::SeqCst);
-    let window = ensure_settings_window(&app)?;
+    let window = ensure_settings_window(&app, Some(&route))?;
     let generation = SETTINGS_RENDERER_EPOCH.load(Ordering::SeqCst);
     wait_for_settings_renderer(&app, generation).await?;
     set_webview_resource_state(&app, SETTINGS_WINDOW, true, false);
+    let _ = window.emit_to(SETTINGS_WINDOW, "settings-route", route);
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     let _ = window.emit("settings-shown", ());

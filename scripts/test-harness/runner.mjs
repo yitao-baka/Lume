@@ -139,6 +139,23 @@ export async function runSuite(suite, {
       extraFiles: suite.extraFiles ?? [],
       prepareRuntime: suite.prepareRuntime,
     });
+    // Most suites exercise an established installation. Seed the durable tour
+    // marker as skipped so the welcome window cannot steal their first frame;
+    // the onboarding suite opts into the real empty first-run state.
+    if (suite.firstRun !== true) {
+      const dataDir = join(staged.runtimeDir, "data");
+      mkdirSync(dataDir, { recursive: true });
+      writeFileSync(
+        join(dataDir, "onboarding.json"),
+        `${JSON.stringify({
+          schema: 1,
+          status: "skipped",
+          step: 4,
+          outcome: "test_fixture",
+        }, null, 2)}
+`,
+      );
+    }
     session = await LumeSession.launch({
       ...staged,
       runDir: resultDir,

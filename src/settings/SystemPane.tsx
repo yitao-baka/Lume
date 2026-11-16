@@ -89,13 +89,18 @@ export default function SystemPane(props: {
     confirmLabel: string;
     action: () => Promise<void>;
   }) => void;
+  onboarding?: boolean;
+  onOnboardingFinished?: () => void;
 }) {
   const [status, setStatus] = createSignal<{ ok: boolean; text: string } | null>(null);
 
   // --- LumeSVC service + auto-start (independent of the settings working copy:
   // the registry is the single source of truth, not settings.toml). ---
   const [autostart, setAutostart] = createSignal(false);
+  const [autostartLoaded, setAutostartLoaded] = createSignal(false);
   const [autostartMsg, setAutostartMsg] = createSignal<{ ok: boolean; text: string } | null>(null);
+  const [onboardingBusy, setOnboardingBusy] = createSignal(false);
+  const [onboardingMsg, setOnboardingMsg] = createSignal<string | null>(null);
   const [svc, setSvc] = createSignal<SvcStatus>({
     installed: false,
     running: false,
@@ -128,6 +133,8 @@ export default function SystemPane(props: {
         setAutostart(await invoke<boolean>("autostart_get"));
       } catch (err) {
         setAutostartMsg({ ok: false, text: settingsError(err) });
+      } finally {
+        setAutostartLoaded(true);
       }
       try {
         setSvc(await invoke<SvcStatus>("svc_status"));
@@ -142,13 +149,51 @@ export default function SystemPane(props: {
     })();
   });
 
-  async function toggleAutostart(v: boolean) {
+  async function toggleAutostart(v: boolean): Promise<boolean> {
     try {
       await invoke("autostart_set", { enabled: v });
       setAutostart(v);
       setAutostartMsg({ ok: true, text: t(v ? "settingsAutostartOn" : "settingsAutostartOff") });
+      return true;
     } catch (err) {
       setAutostartMsg({ ok: false, text: settingsError(err) });
+      return false;
+    }
+  }
+
+  async function finishOnboarding(reason: "autostart_enabled" | "autostart_declined") {
+    if (onboardingBusy()) return;
+    setOnboardingBusy(true);
+    setOnboardingMsg(null);
+    try {
+      await invoke("onboarding_finish", { reason });
+      props.onOnboardingFinished?.();
+      showToast(
+        t(
+          reason === "autostart_enabled"
+            ? "onboardingAutostartEnabledToast"
+            : "onboardingAutostartDeclined",
+        ),
+      );
+    } catch (err) {
+      setOnboardingMsg(settingsError(err, "onboardingOperationFailed"));
+    } finally {
+      setOnboardingBusy(false);
+    }
+  }
+
+  async function changeAutostart(v: boolean) {
+    const ok = await toggleAutostart(v);
+    if (ok && props.onboarding) {
+      await finishOnboarding(v ? "autostart_enabled" : "autostart_declined");
+    }
+  }
+
+  async function enableFromOnboarding() {
+    if (autostart()) {
+      await finishOnboarding("autostart_enabled");
+    } else {
+      await changeAutostart(true);
     }
   }
 
@@ -356,6 +401,70 @@ export default function SystemPane(props: {
 
   return (
     <>
+      <Show when={props.onboarding}>
+        <section
+          id="settings-onboarding-card"
+          class="settings-onboarding-card"
+          role="region"
+          aria-labelledby="settings-onboarding-title"
+        >
+          <div class="settings-onboarding-progress" aria-hidden="true">
+            <span /><span /><span /><span class="active" />
+          </div>
+          <span class="settings-onboarding-counter">{t("onboardingStepCounter", { step: 4 })}</span>
+          <h2 id="settings-onboarding-title">
+            {autostart()
+              ? t("onboardingAutostartEnabledTitle")
+              : t("onboardingAutostartCardTitle")}
+          </h2>
+          <p>
+            {autostart()
+              ? t("onboardingAutostartEnabledBody")
+              : t("onboardingAutostartCardBody")}
+          </p>
+          <div class="settings-onboarding-actions">
+            <Show
+              when={autostart()}
+              fallback={
+                <>
+                  <button
+                    id="onboarding-autostart-enable"
+                    class="settings-action settings-action-primary"
+                    type="button"
+                    disabled={!autostartLoaded() || onboardingBusy()}
+                    onClick={() => void enableFromOnboarding()}
+                  >
+                    {t("onboardingAutostartEnable")}
+                  </button>
+                  <button
+                    id="onboarding-autostart-decline-settings"
+                    class="settings-action"
+                    type="button"
+                    disabled={!autostartLoaded() || onboardingBusy()}
+                    onClick={() => void finishOnboarding("autostart_declined")}
+                  >
+                    {t("onboardingNotNow")}
+                  </button>
+                </>
+              }
+            >
+              <button
+                id="onboarding-autostart-done"
+                class="settings-action settings-action-primary"
+                type="button"
+                disabled={onboardingBusy()}
+                onClick={() => void finishOnboarding("autostart_enabled")}
+              >
+                {t("onboardingDone")}
+              </button>
+            </Show>
+          </div>
+          <Show when={onboardingMsg()}>
+            <span class="settings-inline-error" role="alert">{onboardingMsg()}</span>
+          </Show>
+        </section>
+      </Show>
+
       <SettingGroup title={t("settingsAutostart")} number="08.1">
         <SettingRow
           id="system.autostart"
@@ -365,7 +474,7 @@ export default function SystemPane(props: {
           <Toggle
             checked={autostart()}
             label={t("settingsAutostart")}
-            onChange={(value) => void toggleAutostart(value)}
+            onChange={(value) => void changeAutostart(value)}
           />
         </SettingRow>
         <Show when={autostartMsg()}>

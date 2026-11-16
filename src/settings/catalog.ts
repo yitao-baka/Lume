@@ -914,6 +914,15 @@ export function buildSettingsCatalog(
       keywords: ["github", "homepage", "主页", "主頁", "首頁"],
       value: "https://github.com/yitao-baka/Lume",
     }),
+    descriptor({
+      id: "about.onboarding",
+      section: "about",
+      labelKey: "onboardingReplay",
+      groupKey: "about",
+      kind: "action",
+      keywords: ["onboarding", "welcome", "tour", "guide", "新手", "引导", "引導"],
+      value: t("onboardingReplayAction"),
+    }),
   ];
 
   for (const plugin of plugins) {

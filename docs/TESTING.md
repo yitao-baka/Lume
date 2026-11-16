@@ -107,6 +107,7 @@ hotkey delivery, and native window interactions remain manual. Follow
 | Shared frontend logic | `pnpm verify:fast`, then the impacted UI suites |
 | Launcher shell or keyboard routing | `pnpm verify:fast`, `pnpm verify:ui --suite smoke` |
 | Settings, launcher surface color/opacity or skins | `pnpm verify:fast`, `pnpm verify:ui --suite settings`, then `pnpm verify:legacy --group settings-visual` when visual behavior changed |
+| First-run onboarding, welcome window or launcher coach | `pnpm verify:fast`, `pnpm verify:ui --suite onboarding`, then real-desktop `Alt+Space` / autostart checks from [MANUAL_TESTING.md](MANUAL_TESTING.md) |
 | Clipboard model/store | `pnpm verify:fast`, `pnpm verify:ui --suite clipboard-ui` |
 | Plugin runtime, permissions, or page model | `pnpm verify:fast`, `pnpm verify:ui --suite plugin-runtime,preview`, then `pnpm verify:legacy --group plugin-boundary` when the boundary changed |
 | Elevation agent or automation settings | `pnpm verify:fast`, `pnpm verify:ui --suite agent`; registration and elevated injection stay manual |
@@ -122,14 +123,19 @@ Review the selected list instead of assuming every change needs every suite.
 
 | Suite | Contract |
 | --- | --- |
-| `smoke` | Launcher shell, hidden WebView visibility/quiet geometry, pre-reveal paint handshake, 20 hide/show cycles, direct Navigate input, mode bar, Tab mode switch, clipboard surface |
+| `smoke` | Launcher shell, hidden WebView visibility/quiet geometry, pre-reveal paint handshake, 20 hide/show cycles, duplicate-exe activation handoff, direct Navigate input, mode bar, Tab mode switch, clipboard surface |
 | `settings` | Lazy first creation with renderer/plugin-manifest ready gate, native bundle taskbar icon, warm-neutral light surfaces, accent-following autosave feedback, cross-window launcher focus recovery, warm Search/About/Plugins panes, idle destroy/rebuild, navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, ten close/reopen cycles |
 | `plugin-runtime` | API 2 keyword entry, Presenter readiness, strict CSP and sandbox |
 | `clipboard-ui` | History/empty surface, categories, row artwork, pause acknowledgement, clear confirmation |
 | `preview` | No renderer before first request, idle destroy/recreate, core/PDF rendering, undeclared-plugin denial, declared-plugin reuse, ten close/reopen cycles |
 | `agent` | Elevation-agent switches, fail-closed registration gate, UIPI explanation and status shape |
+| `onboarding` | Empty first-run data root, independent welcome window, launcher Tab lesson, System-page autostart decision, durable completion and memory-only replay |
 
 List the current set with `pnpm verify:ui --list`.
+
+All harness suites except `onboarding` seed `data/onboarding.json` as skipped
+because they model an established installation. The onboarding suite starts
+with an empty data root and reads the real first-run marker.
 
 The `settings`, `preview` and `plugin-runtime` suites set debug-only timeout
 variables (`LUME_SETTINGS_IDLE_DESTROY_SECS`, `LUME_PREVIEW_IDLE_DESTROY_SECS`,

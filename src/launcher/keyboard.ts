@@ -31,6 +31,8 @@ export interface KeyDeps {
   moveSelection: (delta: number) => void;
   activate: (opts?: { elevated?: boolean }) => void;
   switchMode: (m: Mode) => void;
+  /** Called only when the user actually invokes the mode-switch shortcut. */
+  onModeSwitchHotkey?: () => void;
   resetAndHide: () => void;
   closeMenu: () => void;
   openSettings: () => void;
@@ -185,6 +187,7 @@ export function createKeyRouter(deps: KeyDeps) {
       const modes = deps.modeIds();
       if (modes.length === 0) return;
       const idx = modes.indexOf(deps.mode());
+      deps.onModeSwitchHotkey?.();
       void deps.switchMode(idx < 0 ? modes[0] : modes[(idx + 1) % modes.length]);
     } else {
       // Page-owned keys first (grid arrows + bar navigation, category

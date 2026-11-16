@@ -26,6 +26,7 @@ const BUILD_INPUTS = [
   "pnpm-lock.yaml",
   "vite.config.ts",
   "index.html",
+  "welcome.html",
   "settings.html",
   "plugin.html",
   "pluginLogic.html",

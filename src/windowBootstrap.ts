@@ -21,12 +21,13 @@ export interface InjectedConfig {
   appearance?: InjectedAppearance;
 }
 
-export type WindowKind = "launcher" | "settings";
+export type WindowKind = "launcher" | "welcome" | "settings";
 
 export async function prepareWindow(kind: WindowKind): Promise<InjectedConfig | undefined> {
   const cfg = (window as { __LUME_CONFIG__?: InjectedConfig }).__LUME_CONFIG__;
   const appearance = cfg?.appearance;
   const settings = kind === "settings";
+  const launcher = kind === "launcher";
 
   document.documentElement.dataset.windowKind = kind;
   if (settings) document.body.classList.add("settings-window");
@@ -38,7 +39,7 @@ export async function prepareWindow(kind: WindowKind): Promise<InjectedConfig | 
       ? appearance?.settings_skin ?? appearance?.skin ?? "chromatic"
       : appearance?.skin ?? appearance?.settings_skin,
   );
-  if (!settings) {
+  if (launcher) {
     applyWindowSurface(appearance?.window_color, appearance?.window_opacity);
   }
   applyAccent(appearance?.accent);

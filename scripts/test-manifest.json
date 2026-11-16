@@ -23,9 +23,17 @@
     "agent": {
       "module": "suites/agent.mjs",
       "description": "Elevation-agent settings, status shape and fail-closed registration gate"
+    },
+    "onboarding": {
+      "module": "suites/onboarding.mjs",
+      "description": "Independent welcome window, launcher lessons, settings autostart decision and replay"
     }
   },
   "impact": [
+    {
+      "paths": ["src/onboarding/", "src/welcome-entry.tsx", "welcome.html", "src-tauri/src/onboarding.rs"],
+      "suites": ["onboarding", "smoke", "settings"]
+    },
     {
       "paths": ["index.html", "src-tauri/src/webview_guard.rs", "src-tauri/src/window_geometry.rs", "src-tauri/src/plugin_window.rs"],
       "suites": ["smoke", "settings", "plugin-runtime", "preview"]
@@ -40,7 +48,7 @@
     },
     {
       "paths": ["scripts/test-harness/", "scripts/test-manifest.json", "scripts/verify.mjs"],
-      "suites": ["smoke", "settings", "plugin-runtime", "clipboard-ui", "preview", "agent"]
+      "suites": ["smoke", "settings", "plugin-runtime", "clipboard-ui", "preview", "agent", "onboarding"]
     },
     {
       "paths": ["src/plugins/", "src/page-runtime/", "src/page-services/", "src/presenters/"],
@@ -52,11 +60,15 @@
     },
     {
       "paths": ["src/settings/", "src/skins/", "languages/"],
-      "suites": ["settings"]
+      "suites": ["settings", "onboarding"]
     },
     {
       "paths": ["src/shell/"],
       "suites": ["smoke", "settings"]
+    },
+    {
+      "paths": ["src/App.tsx", "src/launcher/keyboard.ts"],
+      "suites": ["smoke", "onboarding"]
     },
     {
       "paths": ["src/launcher/previewHost.ts", "src-tauri/src/window.rs", "src/preview.tsx", "examples/plugins/host-tools/"],

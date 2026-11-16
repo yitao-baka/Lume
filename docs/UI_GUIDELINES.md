@@ -268,6 +268,23 @@ accent tiers from the current skin's `accentAnchors` in the shared metadata.
 - Position preset marks and every help/tooltip surface must remain legible in
   both Quiet/Chromatic and light/dark combinations.
 
+## Onboarding surfaces
+
+- The shortcut lesson uses the independent opaque `welcome` window. It follows the active
+  launcher skin, uses the same title-bar rhythm and keycap treatment as the
+  main surface, and stays compact (480×330 logical px). Its only persistent
+  actions are the shortcut fallback and “跳过引导”; no decorative progress
+  animation is used.
+- The mode, settings and autostart lessons remain inside the normal launcher/settings surfaces. The launcher
+  coach occupies the page area while search and mode controls remain usable;
+  the settings lesson appears as a contextual card above `system.autostart`.
+  Neither surface adds a backdrop, scrim or extra window.
+- Target emphasis is a static focus-ring outline on the mode strip or settings
+  gear, with the action stated in text. Progress segments and step numbers are
+  present so color is never the only state cue.
+- All onboarding labels, keycaps and recovery copy use the active locale. The
+  shortcut is rendered from the registered/current setting, not hard-coded.
+
 ## Behavior
 
 - The launcher is content — never the point. No decorative motion, no

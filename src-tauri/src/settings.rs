@@ -883,12 +883,16 @@ fn write_settings_light(base: &Path, s: &Settings) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// Ensure the settings files exist and manage the effective settings state.
-pub fn init(app: &App) {
+/// Returns whether `settings.toml` was created by this call, which distinguishes
+/// a genuinely new data root from an existing installation during onboarding.
+pub fn init(app: &App) -> bool {
     let base = paths::base_dir();
+    let first_run = !settings_path(&base).exists();
     let _ = ensure_settings_files(&base);
     let mut settings = read_settings(&base);
     ensure_known_system_dirs(&mut settings);
     app.manage(SettingsState(Mutex::new(settings)));
+    first_run
 }
 
 /// The well-known system index dirs. New ones are appended (with defaults) so

@@ -15,6 +15,7 @@ mod i18n;
 mod icons;
 pub mod input;
 mod notify;
+pub mod onboarding;
 pub mod paths;
 mod pins;
 pub mod pipe;
@@ -51,37 +52,68 @@ use tauri::{Manager, WindowEvent};
 /// replacement process.
 static INSTANCE_MUTEX: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
+/// Manual-reset event held by the first instance. A second launch signals this
+/// once and exits; the resident instance wakes and reveals the launcher.
+static INSTANCE_ACTIVATION_EVENT: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+fn instance_suffix() -> String {
+    // The verification harness runs isolated copies of the debug executable
+    // beside a private data directory. Give those copies their own kernel
+    // objects so tests never attach to the user's launcher.
+    #[cfg(debug_assertions)]
+    {
+        std::env::var("LUME_INSTANCE_ID")
+            .ok()
+            .filter(|value| {
+                !value.is_empty()
+                    && value.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+            })
+            .map(|value| format!("-{value}"))
+            .unwrap_or_default()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        String::new()
+    }
+}
+
+fn instance_object_name(stem: &str, suffix: &str) -> Vec<u16> {
+    format!("{stem}{suffix}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+/// Tell an already-running instance to reveal the launcher. Retry briefly so a
+/// very fast second launch cannot race the first process creating its event.
+fn signal_existing_instance(suffix: &str) {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
+
+    let name = instance_object_name("LumeLauncher_Activate", suffix);
+    for _ in 0..20 {
+        if let Ok(event) = unsafe { OpenEventW(EVENT_MODIFY_STATE, false, PCWSTR(name.as_ptr())) } {
+            let _ = unsafe { SetEvent(event) };
+            let _ = unsafe { CloseHandle(event) };
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    eprintln!("[lume] second launch could not signal the running instance");
+}
+
 /// Single-instance guard: a per-session named mutex held for the process
-/// lifetime. A second launch fails to acquire it and exits immediately, so
-/// Lume never multi-opens. The handle must stay alive for the whole run.
+/// lifetime. A second launch signals the resident instance, then exits, so
+/// Lume never multi-opens and re-launching its exe/shortcut summons the window.
 fn acquire_single_instance() -> bool {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
-    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::System::Threading::{CreateEventW, CreateMutexW};
 
-    // The verification harness runs isolated copies of the debug executable
-    // beside a private data directory. Give those copies their own mutex so a
-    // test never has to stop (or accidentally attach to) the user's launcher.
-    // Release builds always use the process-wide name below.
-    #[cfg(debug_assertions)]
-    let test_suffix = std::env::var("LUME_INSTANCE_ID")
-        .ok()
-        .filter(|value| {
-            !value.is_empty()
-                && value
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-        })
-        .map(|value| format!("-{value}"))
-        .unwrap_or_default();
-    #[cfg(not(debug_assertions))]
-    let test_suffix = String::new();
-
-    let name: Vec<u16> = format!("LumeLauncher_SingleInstance{test_suffix}")
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let handle = match unsafe { CreateMutexW(None, true, PCWSTR(name.as_ptr())) } {
+    let suffix = instance_suffix();
+    let mutex_name = instance_object_name("LumeLauncher_SingleInstance", &suffix);
+    let handle = match unsafe { CreateMutexW(None, true, PCWSTR(mutex_name.as_ptr())) } {
         Ok(handle) => handle,
         Err(e) => {
             // Can't acquire the mutex — fail open so a mutex fault never
@@ -94,18 +126,60 @@ fn acquire_single_instance() -> bool {
         if !handle.0.is_null() {
             let _ = unsafe { CloseHandle(handle) };
         }
+        signal_existing_instance(&suffix);
         return false;
     }
     INSTANCE_MUTEX.store(handle.0, Ordering::SeqCst);
+
+    let event_name = instance_object_name("LumeLauncher_Activate", &suffix);
+    match unsafe { CreateEventW(None, true, false, PCWSTR(event_name.as_ptr())) } {
+        Ok(event) => INSTANCE_ACTIVATION_EVENT.store(event.0, Ordering::SeqCst),
+        Err(error) => eprintln!("[lume] instance activation event failed: {error}"),
+    }
     true
+}
+
+/// Wait for second-launch signals and reveal/focus the resident launcher. The
+/// manual-reset event coalesces rapid duplicate launches; each wake activates
+/// the window once.
+fn install_activation_listener(app: tauri::AppHandle) {
+    use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{ResetEvent, WaitForSingleObject, INFINITE};
+
+    let raw = INSTANCE_ACTIVATION_EVENT.load(Ordering::SeqCst) as usize;
+    if raw == 0 {
+        return;
+    }
+    let result = std::thread::Builder::new()
+        .name("instance-activation".into())
+        .spawn(move || loop {
+            let wait = unsafe { WaitForSingleObject(HANDLE(raw as _), INFINITE) };
+            if wait != WAIT_OBJECT_0 {
+                break;
+            }
+            let _ = unsafe { ResetEvent(HANDLE(raw as _)) };
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = onboarding::activate_launcher(app).await {
+                    eprintln!("[lume] second-launch activation failed: {error}");
+                }
+            });
+        });
+    if let Err(error) = result {
+        eprintln!("[lume] instance activation listener failed: {error}");
+    }
 }
 
 /// Drop the process-lifetime single-instance guard. Tauri restarts by spawning
 /// the new process before the old process exits, so the replacement otherwise
-/// races this mutex and exits silently.
+/// races this mutex and is mistaken for a duplicate launch.
 fn release_single_instance() {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
+    let event = INSTANCE_ACTIVATION_EVENT.swap(std::ptr::null_mut(), Ordering::SeqCst);
+    if !event.is_null() {
+        let _ = unsafe { CloseHandle(HANDLE(event)) };
+    }
     let handle = INSTANCE_MUTEX.swap(std::ptr::null_mut(), Ordering::SeqCst);
     if !handle.is_null() {
         let _ = unsafe { CloseHandle(HANDLE(handle)) };
@@ -123,7 +197,7 @@ pub(crate) fn restart_app(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Single instance: hold a named mutex for the process lifetime; a second
-    // launch exits immediately (docs/ARCHITECTURE.md).
+    // launch signals the resident window and exits (docs/ARCHITECTURE.md).
     if !acquire_single_instance() {
         return;
     }
@@ -154,8 +228,10 @@ pub fn run() {
             // junk under data/ (plugin_install.rs).
             plugin_install::cleanup_staging(&paths::base_dir());
             // Settings: ensure settings/default.toml/settings.toml exist and
-            // manage the effective settings state (docs/SETTINGS.md).
-            settings::init(app);
+            // manage the effective settings state (docs/SETTINGS.md). The
+            // returned first-run bit also seeds the one-time onboarding state.
+            let first_run = settings::init(app);
+            onboarding::init(app, first_run);
 
             // ── Inject settings into the frontend before the first render ──
             // Serialize the effective settings and set window.__LUME_CONFIG__
@@ -163,8 +239,12 @@ pub fn run() {
             // from createSignal defaults — no async IPC race on first paint.
             let current = app.state::<settings::SettingsState>().current();
             let config_json = serde_json::to_string(&current).unwrap_or_else(|_| "{}".into());
+            let onboarding_json = serde_json::to_string(
+                &app.state::<onboarding::OnboardingStateStore>().snapshot(),
+            )
+            .unwrap_or_else(|_| "{}".into());
             let init_script = format!(
-                "window.__LUME_CONFIG__ = {config_json};{}",
+                "window.__LUME_CONFIG__ = {config_json};window.__LUME_ONBOARDING__ = {onboarding_json};{}",
                 window::debug_flag_script()
             );
 
@@ -349,6 +429,11 @@ pub fn run() {
             // restores Normal in `window::show` before the window is painted.
             window::trim_main_now(app.handle());
             window::sync_aux_memory_targets(app.handle());
+            // Run last so startup memory bookkeeping cannot make a just-revealed
+            // launcher controller invisible. First launch opens the independent
+            // welcome; a resumed tour reveals the launcher at its saved lesson.
+            onboarding::show_startup(app.handle());
+            install_activation_listener(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -356,6 +441,13 @@ pub fn run() {
             window::hide_launcher,
             window::open_settings,
             window::close_settings,
+            onboarding::onboarding_get,
+            onboarding::onboarding_advance,
+            onboarding::onboarding_continue_from_welcome,
+            onboarding::onboarding_open_settings,
+            onboarding::onboarding_finish,
+            onboarding::onboarding_skip,
+            onboarding::onboarding_replay,
             window::settings_renderer_ready,
             window::window_minimize,
             window::window_toggle_maximize,

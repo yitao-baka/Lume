@@ -51,7 +51,7 @@ fn build_tray(
             {
                 let app = tray.app_handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = crate::window::toggle_launcher(app).await;
+                    let _ = crate::onboarding::toggle_launcher(app).await;
                 });
             }
         })

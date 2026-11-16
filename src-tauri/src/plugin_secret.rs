@@ -32,6 +32,10 @@ fn target_name(id: &str, key: &str) -> Result<String, String> {
     Ok(format!("Lume.Plugin.{id}.{key}"))
 }
 
+fn is_lume_secret_target(target: &str) -> bool {
+    target.starts_with("Lume.Plugin.")
+}
+
 fn declared_secret(base: &Path, id: &str, key: &str) -> Result<(), String> {
     validate_key(key)?;
     let manifest = manifest_for_id(base, id)
@@ -217,6 +221,82 @@ fn delete_secret(target: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove every Lume plugin credential in the current user's vault.
+///
+/// The elevated uninstaller runs under the same Windows identity (a split UAC
+/// token), so this only touches that user's Credential Manager entries. All
+/// matching targets are attempted; failures are returned together.
+#[cfg(windows)]
+pub(crate) fn purge_plugin_secrets() -> Result<usize, String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::ERROR_NOT_FOUND;
+    use windows::Win32::Security::Credentials::{
+        CredDeleteW, CredEnumerateW, CredFree, CREDENTIALW,
+    };
+
+    const FILTER: &str = "Lume.Plugin.*";
+
+    let filter = wide(FILTER);
+    let mut count = 0u32;
+    let mut credentials: *mut *mut CREDENTIALW = std::ptr::null_mut();
+    let listed = unsafe {
+        CredEnumerateW(
+            PCWSTR(filter.as_ptr()),
+            None,
+            &mut count,
+            &mut credentials,
+        )
+    };
+    if let Err(error) = listed {
+        if error.code() == ERROR_NOT_FOUND.to_hresult() {
+            return Ok(0);
+        }
+        return Err(format!("credential enumeration failed: {error}"));
+    }
+
+    if count == 0 || credentials.is_null() {
+        if !credentials.is_null() {
+            unsafe { CredFree(credentials as *const std::ffi::c_void) };
+        }
+        return Ok(0);
+    }
+
+    let entries = unsafe { std::slice::from_raw_parts(credentials, count as usize) };
+    let mut targets = Vec::new();
+    let mut errors = Vec::new();
+    for credential in entries {
+        let credential = unsafe { &**credential };
+        if credential.TargetName.is_null() {
+            continue;
+        }
+        match unsafe { credential.TargetName.to_string() } {
+            Ok(target) if is_lume_secret_target(&target) => targets.push((target, credential.Type)),
+            Ok(_) => {}
+            Err(error) => errors.push(format!("credential target decode failed: {error}")),
+        }
+    }
+    unsafe { CredFree(credentials as *const std::ffi::c_void) };
+
+    let mut deleted = 0usize;
+    for (target, credential_type) in targets {
+        let target_wide = wide(&target);
+        match unsafe { CredDeleteW(PCWSTR(target_wide.as_ptr()), credential_type, Some(0)) } {
+            Ok(()) => deleted += 1,
+            Err(error) => errors.push(format!("{target}: {error}")),
+        }
+    }
+    if errors.is_empty() {
+        Ok(deleted)
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn purge_plugin_secrets() -> Result<usize, String> {
+    Err("plugin credentials require Windows Credential Manager".into())
+}
+
 #[cfg(not(windows))]
 fn read_secret(_target: &str) -> Result<Option<String>, String> {
     Err("plugin secrets require Windows Credential Manager".into())
@@ -242,6 +322,8 @@ mod tests {
             target_name("translation-demo", "api_key").unwrap(),
             "Lume.Plugin.translation-demo.api_key"
         );
+        assert!(is_lume_secret_target("Lume.Plugin.translation-demo.api_key"));
+        assert!(!is_lume_secret_target("Other.Lume.Plugin.key"));
         assert!(target_name("translation-demo", "../key").is_err());
         assert!(target_name("../plugin", "api_key").is_err());
     }

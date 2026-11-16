@@ -930,6 +930,8 @@ Page Service 的 `ctx.page`：
 Page Service 还独有 `ctx.secrets.has(key)` / `ctx.secrets.get(key)`。秘密值只存在
 Windows Credential Manager，不进入模型、事件、日志、快照或 Presenter。设置窗
 通过 `plugin_secret_status/set/clear` 管理清单声明的槽位，并且从不回读明文。
+EXE 安装包选择彻底卸载时，会枚举并删除当前 Windows 用户下全部
+`Lume.Plugin.*` 凭据；普通卸载默认保留。
 只有 Page Service mode 的逻辑帧会被登记为 `service` role；provider、service 与
 普通 mode 逻辑均为 `logic` role，不能访问 `page/secrets`。Rust 侧也只接受
 `service` / `logic` 两种 host role。

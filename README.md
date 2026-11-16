@@ -116,7 +116,7 @@ pnpm run package:installer
 src-tauri/target/release/bundle/installer/Lume_<version>_x64_setup.exe
 ```
 
-脚本从华为云 NuGet 镜像读取固定版本的 MicaSetup 工具，并校验 SHA-512。默认安装到 `Program Files\Lume`，安装包保留现有的服务与提权代理选择；升级前会暂停归属当前安装目录的服务/任务，升级后恢复，卸载时只清理同一目录拥有的注册。用户数据仍保留在 `%LOCALAPPDATA%\Lume\`。
+脚本从华为云 NuGet 镜像读取固定版本的 MicaSetup 工具，并校验 SHA-512。默认安装到 `Program Files\Lume`，安装包保留现有的服务与提权代理选择；安装、升级和卸载时只强制终止可执行路径属于当前安装目录的 `lume.exe`、`lume-agent.exe` 与 `LumeSVC` 进程。`LumeSVC` 先走 SCM 正常停止，8 秒内未退出才按 SCM 返回的 PID 终止。升级后恢复原有服务/任务。普通卸载默认保留用户数据；取消“保留设置和个人数据”或传入 `/purge` 后，卸载器会经 Rust 清理入口删除当前 Windows 用户的 `%LOCALAPPDATA%\Lume`、WebView2 数据、插件凭据、自启项和相关注册。被占用的文件安排到重启后删除，清理失败会向用户显示具体结果。
 
 如果 .NET SDK 不在 `PATH`，把 `LUME_INSTALLER_DOTNET_ROOT` 指向包含 `sdk/` 的 dotnet 根目录。安装包默认不做 Authenticode 签名，正式发布前需要完成代码签名。
 

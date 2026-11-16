@@ -17,6 +17,20 @@ use tauri::Manager;
 /// (`lume-svc.exe`) once it learns the real data dir (registry / pipe HELLO).
 static BASE_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+pub(crate) const LEGACY_DATA_DATABASES: &[&str] = &[
+    "lume.db",
+    "plugin_store.db",
+    "system32_cache.db",
+    "user_cache.db",
+    "icons.db",
+];
+pub(crate) const LEGACY_DATA_FILES: &[&str] = &["onboarding.json"];
+pub(crate) const LEGACY_DATA_DIRS: &[&str] = &["PictureCache"];
+pub(crate) const LEGACY_SETTINGS_FILES: &[&str] =
+    &["settings.toml", "default.toml", "backup.toml"];
+pub(crate) const LEGACY_SETTINGS_DIRS: &[&str] = &["trust-keys"];
+pub(crate) const LEGACY_LANGUAGE_FILES: &[&str] = &["en.json", "zh-CN.json", "zh-TW.json"];
+
 /// Directory of the running executable.
 pub fn exe_dir() -> PathBuf {
     std::env::current_exe()
@@ -79,11 +93,19 @@ pub fn db_path() -> PathBuf {
     data_dir().join("lume.db")
 }
 
-/// `%LOCALAPPDATA%` for the current token. NOTE: under the SYSTEM account this
-/// resolves to the system profile — callers running as SYSTEM must use
+/// `%LOCALAPPDATA%` root for the current token. NOTE: under the SYSTEM account
+/// this resolves to the system profile — callers running as SYSTEM must use
 /// `registry_data_dir()` / `set_base_dir()` instead.
-fn local_app_data_dir() -> Option<PathBuf> {
+pub(crate) fn local_app_data_root() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+}
+
+fn installed_app_dir(local_app_data: &std::path::Path) -> PathBuf {
+    local_app_data.join("Lume")
+}
+
+fn local_app_data_dir() -> Option<PathBuf> {
+    local_app_data_root().map(|root| installed_app_dir(&root))
 }
 
 /// `HKLM\Software\Lume\DataDir` — written by the elevated `lume-svc --install`
@@ -149,6 +171,7 @@ pub fn migrate_installed() {
     if target == exe_dir() {
         return;
     }
+    migrate_misplaced_local_app_data(&target);
     for sub in ["data", "settings", "languages"] {
         let src = exe_dir().join(sub);
         let dst = target.join(sub);
@@ -165,6 +188,115 @@ pub fn migrate_installed() {
                     let _ = std::fs::copy(&from, dst.join(entry.file_name()));
                 }
             }
+        }
+    }
+}
+
+/// Earlier installed builds accidentally used `%LOCALAPPDATA%` itself as the
+/// writable base. Copy only unmistakable Lume-owned files into the corrected
+/// `%LOCALAPPDATA%\Lume` root without moving or deleting mixed sibling data.
+fn migrate_misplaced_local_app_data(target: &std::path::Path) {
+    let Some(root) = local_app_data_root() else {
+        return;
+    };
+    migrate_misplaced_local_app_data_from(&root, target);
+}
+
+fn migrate_misplaced_local_app_data_from(root: &std::path::Path, target: &std::path::Path) {
+    if root == target {
+        return;
+    }
+
+    let legacy_data = root.join("data");
+    if legacy_data.join("lume.db").is_file() || legacy_data.join("plugin_store.db").is_file() {
+        if let Some(dst) = ensure_dir(&target.join("data")) {
+            copy_legacy_database_set(&legacy_data, &dst, LEGACY_DATA_DATABASES);
+            for name in LEGACY_DATA_FILES {
+                copy_missing_file(&legacy_data.join(name), &dst.join(name));
+            }
+            for name in LEGACY_DATA_DIRS {
+                copy_missing_tree(&legacy_data.join(name), &dst.join(name));
+            }
+        }
+    }
+
+    let legacy_settings = root.join("settings");
+    if legacy_settings.join("settings.toml").is_file()
+        || legacy_settings.join("default.toml").is_file()
+    {
+        if let Some(dst) = ensure_dir(&target.join("settings")) {
+            for name in LEGACY_SETTINGS_FILES {
+                copy_missing_file(&legacy_settings.join(name), &dst.join(name));
+            }
+            for name in LEGACY_SETTINGS_DIRS {
+                copy_missing_tree(&legacy_settings.join(name), &dst.join(name));
+            }
+        }
+    }
+
+    let legacy_languages = root.join("languages");
+    if legacy_languages.is_dir() {
+        if let Some(dst) = ensure_dir(&target.join("languages")) {
+            for name in LEGACY_LANGUAGE_FILES {
+                copy_missing_file(&legacy_languages.join(name), &dst.join(name));
+            }
+        }
+    }
+
+    let legacy_plugins = root.join("plugins");
+    if let Ok(entries) = std::fs::read_dir(&legacy_plugins) {
+        let dst_root = ensure_dir(&target.join("plugins"));
+        for entry in entries.flatten() {
+            let src = entry.path();
+            if !src.is_dir() || !src.join("plugin.toml").is_file() {
+                continue;
+            }
+            if let Some(dst) = dst_root.as_ref() {
+                copy_missing_tree(&src, &dst.join(entry.file_name()));
+            }
+        }
+    }
+}
+
+fn copy_legacy_database_set(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    databases: &[&str],
+) {
+    for database in databases {
+        copy_missing_file(&src.join(database), &dst.join(database));
+        for suffix in ["-wal", "-shm"] {
+            let name = format!("{database}{suffix}");
+            copy_missing_file(&src.join(&name), &dst.join(&name));
+        }
+    }
+}
+
+fn ensure_dir(path: &std::path::Path) -> Option<PathBuf> {
+    std::fs::create_dir_all(path).ok()?;
+    Some(path.to_path_buf())
+}
+
+fn copy_missing_file(src: &std::path::Path, dst: &std::path::Path) {
+    if src.is_file() && !dst.exists() {
+        let _ = std::fs::copy(src, dst);
+    }
+}
+
+fn copy_missing_tree(src: &std::path::Path, dst: &std::path::Path) {
+    let Some(dst) = ensure_dir(dst) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(src) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => copy_missing_tree(&from, &to),
+            Ok(kind) if kind.is_file() => copy_missing_file(&from, &to),
+            _ => {}
         }
     }
 }
@@ -201,6 +333,59 @@ pub fn migrate_db(app: &tauri::App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn misplaced_installed_data_copies_only_known_entries() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "lume-misplaced-{}-{stamp}",
+            std::process::id()
+        ));
+        let data = root.join("data");
+        let settings = root.join("settings");
+        let languages = root.join("languages");
+        let plugins = root.join("plugins");
+        std::fs::create_dir_all(data.join("PictureCache")).unwrap();
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::create_dir_all(&languages).unwrap();
+        std::fs::create_dir_all(plugins.join("demo")).unwrap();
+        std::fs::write(data.join("lume.db"), b"db").unwrap();
+        std::fs::write(data.join("unrelated.bin"), b"no").unwrap();
+        std::fs::write(data.join("PictureCache/1.png"), b"png").unwrap();
+        std::fs::write(settings.join("settings.toml"), b"settings").unwrap();
+        std::fs::write(settings.join("unrelated.toml"), b"no").unwrap();
+        std::fs::write(languages.join("en.json"), b"{}").unwrap();
+        std::fs::write(languages.join("other.json"), b"{}").unwrap();
+        std::fs::write(plugins.join("demo/plugin.toml"), b"id='demo'").unwrap();
+        std::fs::write(plugins.join("demo/main.js"), b"main").unwrap();
+        std::fs::create_dir_all(plugins.join("other")).unwrap();
+        std::fs::write(plugins.join("other/README.txt"), b"no").unwrap();
+
+        let target = root.join("Lume");
+        migrate_misplaced_local_app_data_from(&root, &target);
+
+        assert!(target.join("data/lume.db").is_file());
+        assert!(target.join("data/PictureCache/1.png").is_file());
+        assert!(!target.join("data/unrelated.bin").exists());
+        assert!(target.join("settings/settings.toml").is_file());
+        assert!(!target.join("settings/unrelated.toml").exists());
+        assert!(target.join("languages/en.json").is_file());
+        assert!(!target.join("languages/other.json").exists());
+        assert!(target.join("plugins/demo/main.js").is_file());
+        assert!(!target.join("plugins/other").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installed_local_app_data_appends_lume() {
+        assert_eq!(
+            installed_app_dir(&PathBuf::from(r"C:\Users\me\AppData\Local")),
+            PathBuf::from(r"C:\Users\me\AppData\Local\Lume")
+        );
+    }
 
     #[test]
     fn program_files_is_detected_case_insensitively() {

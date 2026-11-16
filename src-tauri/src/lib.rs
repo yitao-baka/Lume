@@ -36,6 +36,7 @@ pub mod recent;
 pub mod settings;
 pub mod svc;
 mod texts;
+pub mod uninstall_cleanup;
 mod tray;
 pub mod usnidx;
 mod webview_guard;

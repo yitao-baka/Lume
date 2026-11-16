@@ -50,6 +50,8 @@ Rust Core (src-tauri/src/)
   ├─ hotkey.rs   — toggle shortcut: the configured combo (default Alt+Space)
   ├─ onboarding.rs — first-run state, independent welcome window and lesson routing
   ├─ svc.rs      — LumeSVC SYSTEM service (SCM + IPC pipe + index dormancy)
+  ├─ uninstall_cleanup.rs — opt-in full-uninstall cleanup of current-user data,
+  │                credentials, startup, and Lume registry state
   ├─ agent.rs    — elevation-agent client, `\\.\pipe\LumeAgent` server, task
   ├─ input.rs    — synthetic keys (SendInput) + window/process/token probes
   ├─ pipe.rs     — length-prefixed JSON pipe client (svc + agent share it)
@@ -457,15 +459,35 @@ The portable zip keeps the three binaries, `languages/`, and `res/` together
 under one folder. The MicaSetup EXE installer places the same payload under
 `Program Files\Lume`, creates desktop/Start Menu shortcuts and uninstall
 metadata, and leaves Lume's optional service/agent registration decisions
-unchanged on a fresh install. Upgrades temporarily unregister only the service
-and task whose executable paths belong to that installation, then restore them;
-uninstall removes only those owned registrations. Writable user data remains in
-`%LOCALAPPDATA%\Lume`.
+unchanged on a fresh install. Before an upgrade or uninstall replaces files,
+`LumeCompanion` enumerates process names but terminates only executables whose
+full path matches the current installation directory. `LumeSVC` receives a
+normal SCM stop first; after eight seconds the Rust service uninstaller obtains
+the service PID from `QueryServiceStatusEx`, enables `SeDebugPrivilege`, and
+terminates that exact PID before deleting the service. Upgrades then restore
+the previously owned service/task registrations. Ordinary uninstall keeps
+writable user data in `%LOCALAPPDATA%\Lume`.
+
+Clearing “Keep my settings and personal data”, or passing `/purge`, runs
+`lume-svc.exe --purge-user-data` before MicaSetup removes the installation.
+The Rust helper owns the destructive policy and only touches fixed Lume roots:
+`%LOCALAPPDATA%\Lume`, `%LOCALAPPDATA%\com.lume.app`,
+`%APPDATA%\Lume`, `%APPDATA%\com.lume.app`, Lume-authored agent temp files,
+the `Lume.Plugin.*` Credential Manager entries, `HKCU\...\Run\Lume`, and
+`HKLM\Software\Lume`. It runs in the elevated uninstaller's current Windows
+identity. Other users and OS-owned traces such as event logs, Prefetch,
+notification history, and Jump Lists are outside this operation. A portable copy
+elsewhere keeps its own directory, but under the same Windows account it shares
+the WebView2 profile and plugin credentials removed by this purge. Locked paths
+are registered with `MOVEFILE_DELAY_UNTIL_REBOOT`; a distinct exit code makes the
+uninstaller tell the user that a restart is needed.
 
 ## Data management
 
-Everything Lume persists lives under a single writable **base dir**, decided in
-`paths.rs` (`base_dir()`):
+Lume's settings, databases, plugins and caches live under a single writable
+**base dir**, decided in `paths.rs` (`base_dir()`). WebView2 state and plugin
+credentials use Windows-owned stores under the current user; full uninstall
+removes both alongside the base dir.
 
 - **Portable** (exe not under `Program Files`): `<exe_dir>/` — the whole folder
   can be carried around.
@@ -478,6 +500,13 @@ First run migrates the legacy `app_data_dir()/lume.db` into `data/`
 (`paths::migrate_db`) and, in installed mode, copies any exe-adjacent `data/`,
 `settings/`, `languages/` folders into the writable base
 (`migrate_installed`). Both are copy-only — never delete.
+
+Earlier installed builds used `%LOCALAPPDATA%` itself as the fallback base and
+left Lume data directly in `%LOCALAPPDATA%\data`, `settings`, `languages`, and
+`plugins`. `migrate_installed` copies only unmistakable Lume-owned files from
+that root into `%LOCALAPPDATA%\Lume`; unrelated siblings are neither copied nor
+deleted. A full uninstall removes the same known legacy entries alongside the
+correct base dir, including `data/lume.db` and its WAL/SHM companions.
 
 ```
 <base>/

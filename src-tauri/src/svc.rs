@@ -451,18 +451,43 @@ pub fn uninstall() -> Result<(), String> {
                 return Ok(());
             }
         };
-        // Stop if running, waiting up to ~30s for STOPPED.
+        // Give the service's control handler a short graceful window, then
+        // terminate the exact service PID reported by SCM if it is stuck. The
+        // uninstaller is already elevated and the user explicitly asked to
+        // remove Lume; leaving a live process would keep files locked.
         let mut st = SERVICE_STATUS::default();
         let running = QueryServiceStatus(svc, &mut st).is_ok()
             && st.dwCurrentState != SERVICE_STOPPED;
         if running {
             let _ = ControlService(svc, SERVICE_CONTROL_STOP, &mut st);
-            for _ in 0..150 {
+            for _ in 0..40 {
                 let _ = QueryServiceStatus(svc, &mut st);
                 if st.dwCurrentState == SERVICE_STOPPED {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+        if !service_is_stopped(svc) {
+            let pid = query_service_process_id(svc)?;
+            match force_terminate_process(pid) {
+                Ok(()) => {}
+                Err(_) if service_is_stopped(svc) => {}
+                Err(error) => return Err(error),
+            }
+            let mut stopped = false;
+            for _ in 0..25 {
+                let _ = QueryServiceStatus(svc, &mut st);
+                if st.dwCurrentState == SERVICE_STOPPED {
+                    stopped = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            if !stopped && !service_is_stopped(svc) {
+                return Err(format!(
+                    "LumeSVC process {pid} could not be terminated before uninstall"
+                ));
             }
         }
         DeleteService(svc).map_err(win_err)?;
@@ -471,6 +496,99 @@ pub fn uninstall() -> Result<(), String> {
     }
     let _ = reg_delete_value(HKEY_LOCAL_MACHINE, REG_KEY, REG_VALUE);
     Ok(())
+}
+
+fn enable_debug_privilege() -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
+        TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = windows::Win32::Foundation::HANDLE::default();
+    unsafe {
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        )
+    }
+    .map_err(|e| format!("OpenProcessToken failed: {e}"))?;
+
+    let mut luid = windows::Win32::Foundation::LUID::default();
+    let name: Vec<u16> = "SeDebugPrivilege\0".encode_utf16().collect();
+    let result = unsafe {
+        LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(name.as_ptr()), &mut luid)
+    };
+    if let Err(error) = result {
+        let _ = unsafe { CloseHandle(token) };
+        return Err(format!("LookupPrivilegeValueW failed: {error}"));
+    }
+
+    let privileges = TOKEN_PRIVILEGES {
+        PrivilegeCount: 1,
+        Privileges: [LUID_AND_ATTRIBUTES {
+            Luid: luid,
+            Attributes: SE_PRIVILEGE_ENABLED,
+        }],
+    };
+    let result = unsafe {
+        AdjustTokenPrivileges(
+            token,
+            false,
+            Some(&privileges),
+            0,
+            None,
+            None,
+        )
+    };
+    let _ = unsafe { CloseHandle(token) };
+    result.map_err(|e| format!("AdjustTokenPrivileges failed: {e}"))
+}
+
+fn service_is_stopped(svc: windows::Win32::System::Services::SC_HANDLE) -> bool {
+    use windows::Win32::System::Services::{QueryServiceStatus, SERVICE_STATUS, SERVICE_STOPPED};
+    let mut status = SERVICE_STATUS::default();
+    unsafe { QueryServiceStatus(svc, &mut status) }.is_ok()
+        && status.dwCurrentState == SERVICE_STOPPED
+}
+
+fn query_service_process_id(
+    svc: windows::Win32::System::Services::SC_HANDLE,
+) -> Result<u32, String> {
+    use windows::Win32::System::Services::{
+        QueryServiceStatusEx, SC_STATUS_PROCESS_INFO, SERVICE_STATUS_PROCESS,
+    };
+    let mut buffer = [0u8; std::mem::size_of::<SERVICE_STATUS_PROCESS>()];
+    let mut needed = 0u32;
+    unsafe {
+        QueryServiceStatusEx(
+            svc,
+            SC_STATUS_PROCESS_INFO,
+            Some(&mut buffer),
+            &mut needed,
+        )
+    }
+    .map_err(|e| format!("QueryServiceStatusEx failed: {e}"))?;
+    let status = unsafe { &*(buffer.as_ptr() as *const SERVICE_STATUS_PROCESS) };
+    if status.dwProcessId == 0 {
+        Err("LumeSVC is still running but SCM reported no process id".into())
+    } else {
+        Ok(status.dwProcessId)
+    }
+}
+
+fn force_terminate_process(pid: u32) -> Result<(), String> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    let _ = enable_debug_privilege();
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }
+        .map_err(|e| format!("OpenProcess({pid}) failed: {e}"))?;
+    let result = unsafe { TerminateProcess(process, 1) };
+    let _ = unsafe { CloseHandle(process) };
+    result.map_err(|e| format!("TerminateProcess({pid}) failed: {e}"))
 }
 
 /// Start an existing service and wait until SCM reports RUNNING.
@@ -1011,6 +1129,21 @@ pub fn pipe_transact(payload: &str, timeout: Duration) -> Result<String, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn force_terminate_stops_a_child_process() {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        force_terminate_process(child.id()).unwrap();
+        assert!(!child.wait().unwrap().success());
+    }
 
     /// The Everything **service** instance (session 0) must not count as
     /// "in use" — it answers no IPC queries, so Lume must index for itself

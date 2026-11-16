@@ -9,6 +9,34 @@ All notable changes to Lume are documented here. Format based on
 
 ## [Unreleased]
 ### Added
+- **EXE 安装包彻底卸载用户数据（2026-11-16）** — 卸载页默认保留设置和个人数据；
+  取消勾选或传入 `/purge` 后先显示破坏性确认，再由新增的 Rust
+  `uninstall_cleanup` 入口清除当前 Windows 用户的 `%LOCALAPPDATA%\Lume`、
+  `%LOCALAPPDATA%\com.lume.app`、`%APPDATA%` 下的旧数据与 WebView2 状态、
+  `Lume.Plugin.*` 凭据、`HKCU\...\Run\Lume`、`HKLM\Software\Lume` 和
+  Lume 自有临时文件；安装目录仍由 MicaSetup 递归删除。安装版无服务的回退路径
+  现在正确追加 `Lume`，旧版本误写到 `%LOCALAPPDATA%\data`、`settings`、
+  `languages`、`plugins` 的已知 Lume 文件会在启动时复制到正确根，并在彻底卸载时
+  一并删除，同时保留同目录其他程序的未识别文件。安装、升级和卸载都先按
+  完整可执行路径终止当前安装目录拥有的 `lume.exe` 与 `lume-agent.exe`；安装页与
+  卸载页都会先检测当前安装目录是否有进程运行，检测到后先弹出三语确认，选择“否”
+  会保持 Lume 运行并中止，选择“是”才关闭。文件可写检查随后执行，并通过 10 次、
+  每次 200 ms 的短暂重试等待文件锁释放，不再先弹出“lume.exe 正由另一进程使用”。
+  LumeSVC 先经 SCM 正常停止，8 秒内未退出时由 Rust 读取服务 PID、启用
+  `SeDebugPrivilege`
+  并终止该 PID。清理器只接受固定 Lume 路径，遇到占用文件按剩余目录树逐项登记到
+  重启后删除，并以独立退出码让卸载器显示重启提示；硬失败会保留具体错误供用户
+  处理。三语卸载文案覆盖保留范围、彻底删除确认、重启和失败提示。验证：
+  `pnpm verify:fast` PASS（docs 15、i18n 649×3、Page Runtime 19/19、clipboard
+  model 16/16、clipboard store 8/8、skin 17/17、前端生产构建、Rust
+  **302 passed / 9 ignored**，含真实子进程强制终止测试）；
+  `cargo clippy --all-targets --message-format=short` 的新增代码无告警（仓库既有
+  4 条 warning 未改）；`pnpm run package:installer` PASS（release、MicaSetup
+  模板编译 0 warning / 0 error、安装包封装），产物 8,455,680 bytes，SHA-256
+  `f9d77b86c6bd67a33de89010bb8eb001be0fabbc37ff6ffe56f73331df98fe60`；
+  非管理员执行 `lume-svc.exe --purge-user-data` 在触碰数据前以 1 退出。真实 UAC
+  下的保留/彻底两条卸载路径、凭据删除与锁文件重启后清理按
+  `docs/MANUAL_TESTING.md` 验收。
 - **重复启动唤醒已有实例（2026-11-16）** — 单实例互斥量现在配套一个命名手动
   复位事件。启动器隐藏时再次运行 `lume.exe` 或桌面快捷方式，第二进程只发出
   激活信号并以 0 退出，常驻实例随即显示主窗口并聚焦搜索框；主窗口已显示时只

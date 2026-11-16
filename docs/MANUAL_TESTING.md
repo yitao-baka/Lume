@@ -297,7 +297,11 @@ dev URL instead.
    `C:\Program Files\Lume\`, first run: `%LOCALAPPDATA%\Lume\{data,settings,
    languages}` are created with content (the Program Files copies stay, copy-only).
    The portable folder (anywhere outside Program Files) still reads/writes next
-   to the exe.
+   to the exe. Then create a disposable legacy tree under `%LOCALAPPDATA%\data`
+   with `lume.db`, `PictureCache`, an unrelated sibling file, and matching
+   `settings`/`languages`; launch the installed app and confirm only known Lume
+   entries are copied into `%LOCALAPPDATA%\Lume` and the unrelated sibling stays
+   outside.
 2. **Register service** — 设置→系统→「注册服务」→ accept UAC → `sc query
    LumeSVC` shows RUNNING with start type AUTO; the button flips to
    「启动服务 / 重启服务 / 卸载服务」 and the status line reads 服务运行中.
@@ -352,13 +356,37 @@ dev URL instead.
    User data is written under `%LOCALAPPDATA%\Lume\`, while the Program Files
    tree remains read-only to the running launcher.
 5. **Upgrade with integrations** — register LumeSVC and the elevation agent
-   from Settings, then run the same setup again. The installer stops both
-   before replacing files and restores both registrations afterwards; their
-   configured executable paths point at the installation directory.
-6. **Uninstall** — uninstall from Add/Remove Programs. The installer removes
-   its files, shortcuts, uninstall registry entry, owned LumeSVC service, and
-   owned LumeAgent scheduled task. `%LOCALAPPDATA%\Lume\` remains intact.
-7. **Release signature** — a public release artifact must have a valid
+   from Settings, leave the installed launcher running, then run the same setup
+   again. The setup first asks whether it may close the running launcher/agent/
+   service; choose No once and verify Lume stays open, then run it again and
+   choose Yes. The installer stops both integrations before replacing files and
+   restores both registrations afterwards; their configured executable paths
+   point at the installation directory.
+6. **Uninstall while running and keeping data** — launch the installed Lume and
+   ensure LumeSVC is running, then uninstall from Add/Remove Programs with
+   “Keep my settings and personal data” checked. The close-running confirmation
+   must appear before any process exits; choose No once and verify both remain
+   running, then choose Yes. `lume.exe` and `lume-svc.exe`
+   must exit, and the installer must remove its files, shortcuts, uninstall
+   registry entry, owned LumeSVC service, and owned LumeAgent scheduled task.
+   `%LOCALAPPDATA%\Lume\` remains intact. On a disposable VM, suspend the
+   LumeSVC process for more than eight seconds before uninstalling to exercise
+   the PID fallback; the service must still disappear without deleting an
+   unrelated portable copy.
+7. **Full uninstall** — before uninstalling, leave the installed Lume running,
+   enable auto-start, create a clipboard item, and save a plugin credential when
+   a fixture exposes one. Uncheck “Keep my settings and personal data”,
+   confirm the destructive question, and finish. Verify the uninstall key,
+   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Lume`,
+   `HKLM\Software\Lume`, LumeSVC, `Lume\LumeAgent`, `%LOCALAPPDATA%\Lume`,
+   `%LOCALAPPDATA%\com.lume.app`, `%APPDATA%\Lume`,
+   `%APPDATA%\com.lume.app`, every `Lume.Plugin.*` Credential Manager entry,
+   and the known Lume files under the legacy `%LOCALAPPDATA%\data`,
+   `settings`, `languages`, and `plugins` roots are gone. Unrelated files sitting
+   beside them must remain. If a path is locked, the reboot-required prompt must appear;
+   after restarting, confirm the path is gone. Launch the same uninstaller with
+   `/purge` on a disposable profile and confirm the checkbox starts unchecked.
+8. **Release signature** — a public release artifact must have a valid
    Authenticode signature and timestamp. A local unsigned build is expected to
    show an Unknown Publisher prompt and is not release-ready.
 

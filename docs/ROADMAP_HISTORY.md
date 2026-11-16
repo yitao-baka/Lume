@@ -6720,3 +6720,94 @@ Lume 此前的启动路径始终隐藏主窗口，只等待全局快捷键或托
   `40709d8fcb75361f41ab411ad4f5bc2d3e763ad4c4cc611d8c253bd03ad32218`。
 - 真实桌面快捷方式、UAC 安装/升级/卸载与不同 DPI 下的重复启动仍按
   `docs/MANUAL_TESTING.md` 验收。
+
+## 112. EXE 安装包彻底卸载用户数据（2026-11-16）
+
+### 112.1 背景
+
+MicaSetup 的“保留我的数据”只决定安装目录是否递归删除，安装版真正可写的
+`%LOCALAPPDATA%\Lume`、WebView2 profile、Credential Manager 条目和 HKCU
+自启值都不在该路径内。普通卸载因此适合升级和重装，但不能满足用户明确要求彻底
+清除本机 Lume 数据的场景。
+
+### 112.2 实现
+
+- 新增 Rust `uninstall_cleanup` 模块和 `lume-svc.exe --purge-user-data` 入口。
+  入口要求管理员令牌，只删除固定 Lume 根和当前用户数据，不接受调用者提供的
+  任意删除路径。
+- 修正安装版在没有 `HKLM\Software\Lume\DataDir` 时的回退：base dir 必须追加
+  `Lume`，不能再把 `%LOCALAPPDATA%` 本身当数据根。旧版本误放在
+  `%LOCALAPPDATA%\data`、`settings`、`languages`、`plugins` 的已知 Lume 文件
+  会在启动时复制到 `%LOCALAPPDATA%\Lume`，并在彻底卸载时按固定文件名清理。
+- 清理范围包括 `%LOCALAPPDATA%\Lume`、`%LOCALAPPDATA%\com.lume.app`、
+  `%APPDATA%\Lume`、`%APPDATA%\com.lume.app`、Lume agent 的固定临时文件、
+  `Lume.Plugin.*` Windows Credential Manager 条目、HKCU Run 的 `Lume` 值，
+  以及 `HKLM\Software\Lume`。安装目录、快捷方式和卸载元数据继续由
+  MicaSetup 删除。
+- Credential Manager 清理使用 `CredEnumerateW` 枚举固定前缀，并继续用
+  `CredDeleteW` 删除匹配项；空结果和单个删除失败区分处理，失败项汇总返回。
+- 安装、升级和卸载前，`LumeCompanion` 只对完整路径等于当前安装目录的
+  `lume.exe` / `lume-agent.exe` 执行强制终止；MicaSetup 的全局名称匹配
+  `CloseApplications` 改为空，避免误杀其他便携副本。安装页与卸载页先调用
+  `HasOwnedRunningProcesses`，检测到当前安装拥有的进程时弹出三语确认；
+  选择“否”保持现状，选择“是”才继续终止。`FileWritableHelper.CheckWritable`
+  随后执行，并以 10 次、每次 200 ms 的重试等待文件句柄释放，避免运行中的
+  `lume.exe` 先触发“文件正被使用”并阻断覆盖安装或卸载。
+- `svc::uninstall` 先请求 SCM 正常停止 LumeSVC，8 秒超时后通过
+  `QueryServiceStatusEx` 读取服务 PID，启用 `SeDebugPrivilege` 并对该 PID 调用
+  `TerminateProcess`；服务注销成功后再按当前安装路径清理残留进程。
+- 目录先正常递归删除并短暂重试。仍被占用的剩余目录树按深度优先顺序逐项调用
+  `MoveFileExW(..., MOVEFILE_DELAY_UNTIL_REBOOT)`；全部可延期时以专用退出码
+  返回，存在硬错误时以失败退出码返回。
+- MicaSetup 模板把普通卸载默认设为保留，把 `/purge` 映射为默认取消勾选；
+  取消勾选时先弹出范围警告，点击卸载再确认一次。Rust 清理失败、服务/任务
+  注销失败或需要重启时都通过三语对话框显示，不再只写安装器日志。
+- `plugin_secret.rs` 的凭据前缀判定和清理遍历补充单元断言；README、架构、
+  Testing 与手工验收清单同步记录当前契约。
+
+### 112.3 踩坑
+
+- MicaSetup 的 `KeepMyData=false` 不能复用为用户数据清理：它只遍历
+  `InstallLocation`，而默认安装布局的数据在 `%LOCALAPPDATA%\Lume`。
+- 安装版 base dir 的旧回退实现漏了 `Lume` 后缀，服务未注册时把 DB 写到
+  `%LOCALAPPDATA%\data\lume.db`；仅清理 `%LOCALAPPDATA%\Lume` 会漏掉
+  “最近使用”。旧根只能按已知 Lume 文件逐项迁移和删除，不能整目录清理，
+  因为 `%LOCALAPPDATA%\data` / `settings` 是通用名称，可能混有其他程序文件。
+- Tauri 的 WebView2 profile 不在应用 base dir；销毁 `%LOCALAPPDATA%\Lume`
+  不会删除 `%LOCALAPPDATA%\com.lume.app\EBWebView`。
+- Credential Manager 不是文件，不能靠删除 `%LOCALAPPDATA%\Microsoft\Credentials`
+  完成；必须通过凭据 API，且只能覆盖运行卸载器的同一 Windows 用户。
+- `MoveFileExW` 不能可靠删除非空目录。锁文件的场景需要先登记剩余文件，再登记
+  深层到浅层的空目录。
+- 便携副本自己的目录不属于安装版卸载器；但同一 Windows 用户共享 WebView2
+  profile 与插件凭据，彻底卸载会清除这些共享项，界面和文档必须提前说明。
+- 进程不能只按 `lume.exe` / `lume-svc.exe` 名称终止：机器上可能并存便携副本，
+  名称匹配会误杀。进程终止必须比较完整可执行路径；服务进程则由 SCM PID
+  精确定位。
+- `ControlService` 只能发停止请求；服务卡死时仍需第二步强制终止。服务运行在
+  SYSTEM 下，Rust 侧在 `OpenProcess(PROCESS_TERMINATE)` 前尝试启用
+  `SeDebugPrivilege`，失败时把真实错误交给卸载器显示。
+- 卸载器由标准 UAC 提权时仍是同一用户的分裂令牌；如果用户输入另一个管理员
+  凭据，HKCU 和凭据库属于那个管理员账户。跨用户清理需要独立的登录态清理器，
+  不在本次范围。
+
+### 112.4 验证
+
+- `pnpm verify:fast` PASS：docs 15、TypeScript、i18n 649×3、toast 12/12、
+  Page Runtime 19/19、clipboard model 16/16、clipboard store 8/8、
+  skin 17/17、前端生产构建、Rust **302 passed / 9 ignored**。
+- `cargo clippy --all-targets --message-format=short` PASS；新增清理模块和凭据
+  枚举无告警，仓库既有 4 条 warning 不在本次修改范围。
+- `pnpm run package:installer` PASS：release 构建、MicaSetup 模板编译
+  0 warning / 0 error、三语资源与安装包封装完成。产物
+  `Lume_3.5.2_x64_setup.exe` 为 8,455,680 bytes，SHA-256
+  `f9d77b86c6bd67a33de89010bb8eb001be0fabbc37ff6ffe56f73331df98fe60`。
+- `svc::tests::force_terminate_stops_a_child_process` PASS：真实启动子进程后调用
+  Windows 强制终止 helper，确认进程以失败状态退出。
+- release `lume-svc.exe --purge-user-data` 在非管理员会话中于清理前以 1 退出并
+  报告“full uninstall cleanup requires administrator elevation”；模板中
+  `/purge` 默认取消勾选、破坏性确认、按路径终止进程与 Rust 清理调用均已编译进
+  安装器。
+- 真实 UAC 下的保留/彻底卸载、Credential Manager 条目、共享 WebView2 profile、
+  自启注册和锁文件重启后删除保留在 `docs/MANUAL_TESTING.md` 的 MicaSetup
+  安装器清单。

@@ -5,6 +5,7 @@
 //! - `lume-svc.exe --install`    register + start (needs elevation, UAC)
 //! - `lume-svc.exe --uninstall`  stop + unregister (needs elevation, UAC)
 //! - `lume-svc.exe --start`      start an installed service (needs elevation)
+//! - `lume-svc.exe --purge-user-data`  full-uninstall cleanup (needs elevation)
 //! - `lume-svc.exe --restart`    stop + start an installed service (needs elevation)
 //! - `lume-svc.exe --foreground [--data-dir <path>]`  dev: run without SCM
 //! - `lume-svc.exe` (no args)    run as a service via the SCM dispatcher
@@ -16,6 +17,9 @@ use std::path::PathBuf;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--purge-user-data") {
+        std::process::exit(lume_lib::uninstall_cleanup::run_cli());
+    }
     let result = match args.first().map(String::as_str) {
         Some("--install") => lume_lib::svc::install(),
         Some("--uninstall") => lume_lib::svc::uninstall(),

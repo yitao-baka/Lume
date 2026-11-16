@@ -318,18 +318,149 @@ function patchTemplate(templateDir) {
     "        try\n        {\n            StartMenuHelper.AddToRecent(Path.Combine(Option.Current.InstallLocation, Option.Current.ExeName));\n        }\n        catch (Exception e)\n        {\n            Logger.Error(e);\n        }\n\n        LumeCompanion.RestoreAfterInstall();\n    }\n\n    public static void CreateUninst",
   );
 
+  patchOnce(
+    uninstProgram,
+    "                option.IsEnableUninstallDelayUntilReboot = true;\n",
+    "                option.IsEnableUninstallDelayUntilReboot = true;\n                option.KeepMyData = !MicaSetup.Helper.LumeCompanion.PurgeRequested();\n",
+  );
+
+  patchOnce(
+    path.join(templateDir, "ViewModels", "Uninst", "MainViewModel.cs"),
+    "    private void StartUninstall()\n    {\n        try\n",
+    "    private void StartUninstall()\n" +
+      "    {\n" +
+      "        if (!KeepMyData && RuntimeHelper.IsElevated)\n" +
+      "        {\n" +
+      "            if (Design.Controls.MessageBox.Question(ApplicationDispatcherHelper.MainWindow, \"LumePurgeConfirmTips\".Tr()) != WindowDialogResult.Yes)\n" +
+      "            {\n" +
+      "                return;\n" +
+      "            }\n" +
+      "        }\n" +
+      "        try\n",
+  );
+
+  patchOnce(
+    path.join(templateDir, "ViewModels", "Uninst", "MainViewModel.cs"),
+    "                Option.Current.InstallLocation = uinfo.InstallLocation;\n                if (!FileWritableHelper.CheckWritable(Path.Combine(Option.Current.InstallLocation, Option.Current.ExeName)))\n",
+    "                Option.Current.InstallLocation = uinfo.InstallLocation;\n" +
+      "                if (LumeCompanion.HasOwnedRunningProcesses() && Design.Controls.MessageBox.Question(ApplicationDispatcherHelper.MainWindow, \"LumeCloseRunningTips\".Tr()) != WindowDialogResult.Yes)\n" +
+      "                {\n" +
+      "                    return;\n" +
+      "                }\n" +
+      "                Exception? processError = LumeCompanion.StopOwnedLauncherProcesses();\n" +
+      "                if (processError != null)\n" +
+      "                {\n" +
+      "                    _ = Design.Controls.MessageBox.Info(ApplicationDispatcherHelper.MainWindow, \"LockedTipsAndExitTry\".Tr(Option.Current.ExeName));\n" +
+      "                    return;\n" +
+      "                }\n" +
+      "                bool installExecutableWritable = FileWritableHelper.CheckWritable(Path.Combine(Option.Current.InstallLocation, Option.Current.ExeName));\n" +
+      "                for (int attempt = 0; !installExecutableWritable && attempt < 10; attempt++)\n" +
+      "                {\n" +
+      "                    System.Threading.Thread.Sleep(200);\n" +
+      "                    installExecutableWritable = FileWritableHelper.CheckWritable(Path.Combine(Option.Current.InstallLocation, Option.Current.ExeName));\n" +
+      "                }\n" +
+      "                if (!installExecutableWritable)\n",
+  );
+
+  patchOnce(
+    path.join(templateDir, "ViewModels", "Inst", "MainViewModel.cs"),
+    "        try\n        {\n            if (!FileWritableHelper.CheckWritable(Path.Combine(InstallPath, Option.Current.ExeName)))\n",
+    "        try\n" +
+      "        {\n" +
+      "            if (LumeCompanion.HasOwnedRunningProcesses() && MessageBox.Question(ApplicationDispatcherHelper.MainWindow, \"LumeCloseRunningTips\".Tr()) != WindowDialogResult.Yes)\n" +
+      "            {\n" +
+      "                return;\n" +
+      "            }\n" +
+      "            Exception? processError = LumeCompanion.StopOwnedLauncherProcesses();\n" +
+      "            if (processError != null)\n" +
+      "            {\n" +
+      "                _ = MessageBox.Info(ApplicationDispatcherHelper.MainWindow, \"LockedTipsAndExitTry\".Tr(Option.Current.ExeName));\n" +
+      "                return;\n" +
+      "            }\n" +
+      "            bool installExecutableWritable = FileWritableHelper.CheckWritable(Path.Combine(InstallPath, Option.Current.ExeName));\n" +
+      "            for (int attempt = 0; !installExecutableWritable && attempt < 10; attempt++)\n" +
+      "            {\n" +
+      "                System.Threading.Thread.Sleep(200);\n" +
+      "                installExecutableWritable = FileWritableHelper.CheckWritable(Path.Combine(InstallPath, Option.Current.ExeName));\n" +
+      "            }\n" +
+      "            if (!installExecutableWritable)\n",
+  );
+
   const uninstallHelper = path.join(templateDir, "Helper", "Setup", "UninstallHelper.cs");
   patchOnce(
     uninstallHelper,
     "        Option.Current.InstallLocation = uinfo.InstallLocation;\n",
-    "        Option.Current.InstallLocation = uinfo.InstallLocation;\n        LumeCompanion.RemoveOwnedInstall();\n",
+    "        Option.Current.InstallLocation = uinfo.InstallLocation;\n" +
+      "        Exception? companionError = LumeCompanion.RemoveOwnedInstall();\n" +
+      "        if (!Option.Current.KeepMyData)\n" +
+      "        {\n" +
+      "            LumeCompanion.PurgeAllData(companionError);\n" +
+      "        }\n" +
+      "        else if (companionError != null)\n" +
+      "        {\n" +
+      "            Logger.Error(companionError);\n" +
+      "        }\n",
   );
+
+  patchUninstallLanguageStrings(templateDir);
 
   copyFileSync(
     path.join(ROOT, "scripts", "installer", "LumeCompanion.cs"),
     path.join(templateDir, "Helper", "Setup", "LumeCompanion.cs"),
   );
   copyFileSync(path.join(ROOT, "scripts", "installer", "NuGet.Config"), path.join(templateDir, "NuGet.Config"));
+}
+
+function patchUninstallLanguageStrings(templateDir) {
+  const languages = path.join(templateDir, "Resources", "Languages");
+  const files = {
+    en: {
+      keep: "Keep my settings and personal data",
+      warning: "If '{0}' is not checked, Lume will permanently delete this Windows user's settings, clipboard history, plugins, WebView data, startup entry, service data, and saved plugin credentials. Portable copies under the same Windows user share some of these items.",
+      reboot: "Some Lume data is still in use and was scheduled for deletion at the next restart. Restart Windows to finish the cleanup.",
+      failed: "Lume could not remove all personal data. Close every Lume and WebView2 process, restart Windows, and remove any remaining items if they are still present.",
+      confirm: "Permanently delete all Lume settings, clipboard history, plugins, WebView data, startup entries, service data, and saved plugin credentials for this Windows user?",
+      closeRunning: "Lume is running. Continuing will close the running Lume launcher, elevation agent, and LumeSVC service. Continue?",
+    },
+    "zh-Hans": {
+      keep: "保留设置和个人数据",
+      warning: "不勾选“{0}”将永久删除当前 Windows 用户的 Lume 设置、剪贴板历史、插件、WebView 数据、开机启动项、服务数据和已保存的插件凭据。同一 Windows 账户下的便携版也会共用其中部分数据。",
+      reboot: "部分 Lume 数据仍被占用，已安排在下一次重启时删除。请重启 Windows 完成清理。",
+      failed: "Lume 未能删除全部个人数据。请关闭所有 Lume 与 WebView2 进程，重启 Windows；如仍有残留，请手动删除。",
+      confirm: "要永久删除当前 Windows 用户的全部 Lume 设置、剪贴板历史、插件、WebView 数据、开机启动项、服务数据和已保存的插件凭据吗？",
+      closeRunning: "检测到 Lume 正在运行。继续后将关闭正在运行的 Lume 启动器、提权代理和 LumeSVC 服务。是否继续？",
+    },
+    "zh-Hant": {
+      keep: "保留設定與個人資料",
+      warning: "未勾選「{0}」將永久刪除目前 Windows 使用者的 Lume 設定、剪貼簿歷程、外掛、WebView 資料、開機啟動項目、服務資料與已儲存的外掛認證。同一 Windows 帳戶下的可攜版也會共用其中部分資料。",
+      reboot: "部分 Lume 資料仍被占用，已安排於下次重新啟動時刪除。請重新啟動 Windows 完成清理。",
+      failed: "Lume 未能刪除全部個人資料。請關閉所有 Lume 與 WebView2 程序，重新啟動 Windows；如仍有殘留，請手動刪除。",
+      confirm: "要永久刪除目前 Windows 使用者的全部 Lume 設定、剪貼簿歷程、外掛、WebView 資料、開機啟動項目、服務資料與已儲存的外掛認證嗎？",
+      closeRunning: "偵測到 Lume 正在執行。繼續後將關閉正在執行的 Lume 啟動器、提權代理與 LumeSVC 服務。是否繼續？",
+    },
+  };
+
+  for (const [language, strings] of Object.entries(files)) {
+    const file = path.join(languages, `${language}.xaml`);
+    const source = readFileSync(file, "utf8").replace(/\r\n/g, "\n");
+    const keepPattern = /<s:String x:Key="KeepMyDataTips">[\s\S]*?<\/s:String>/;
+    const warningPattern = /<s:String x:Key="NotKeepMyDataTips">[\s\S]*?<\/s:String>/;
+    const finalKeyPattern = /(<s:String x:Key="InstallationInfoLostHint">[\s\S]*?<\/s:String>)\n<\/ResourceDictionary>/;
+    if (!keepPattern.test(source) || !warningPattern.test(source) || !finalKeyPattern.test(source)) {
+      throw new Error(`MicaSetup language template changed; could not patch ${language}.xaml`);
+    }
+    const updated = source
+      .replace(keepPattern, `<s:String x:Key="KeepMyDataTips">${strings.keep}</s:String>`)
+      .replace(warningPattern, `<s:String x:Key="NotKeepMyDataTips">${strings.warning}</s:String>`)
+      .replace(
+        finalKeyPattern,
+        `$1\n    <s:String x:Key="LumePurgeRebootTips">${strings.reboot}</s:String>\n` +
+          `    <s:String x:Key="LumePurgeFailedTips">${strings.failed}</s:String>\n` +
+          `    <s:String x:Key="LumePurgeConfirmTips">${strings.confirm}</s:String>\n` +
+          `    <s:String x:Key="LumeCloseRunningTips">${strings.closeRunning}</s:String>\n</ResourceDictionary>`,
+      );
+    writeFileSync(file, updated);
+  }
 }
 
 function stagePayload(stage) {
@@ -406,24 +537,10 @@ function writeConfig(workDir, template, payload, output) {
     IsEnableUninstallDelayUntilReboot: true,
     IsEnvironmentVariable: false,
     OverlayInstallRemoveExt: "exe,dll,pdb,7z,zip,json",
-    CloseApplications: [
-      {
-        Target: "lume.exe",
-        Description: "Lume",
-        CloseMessage: true,
-        RebootPrompt: false,
-        TerminateProcess: true,
-        Timeout: 8,
-      },
-      {
-        Target: "lume-agent.exe",
-        Description: "Lume elevation agent",
-        CloseMessage: true,
-        RebootPrompt: false,
-        TerminateProcess: true,
-        Timeout: 8,
-      },
-    ],
+    // LumeCompanion terminates only the executables owned by this install
+    // directory. MicaSetup's name-only CloseApplications can kill a portable
+    // copy elsewhere that happens to use the same binary names.
+    CloseApplications: [],
   };
   const configPath = path.join(workDir, "micasetup.json");
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);

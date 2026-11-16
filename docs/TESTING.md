@@ -95,9 +95,9 @@ only when no important Lume session is active.
 
 ### Manual verification
 
-Real UAC prompts, service registration, real Explorer drag-and-drop, actual
-hotkey delivery, and native window interactions remain manual. Follow
-[MANUAL_TESTING.md](MANUAL_TESTING.md) for the release checklist.
+Real UAC prompts, service registration, full-uninstall data purge, real Explorer
+drag-and-drop, actual hotkey delivery, and native window interactions remain
+manual. Follow [MANUAL_TESTING.md](MANUAL_TESTING.md) for the release checklist.
 
 ## Change-to-verification matrix
 

@@ -123,7 +123,7 @@ Review the selected list instead of assuming every change needs every suite.
 
 | Suite | Contract |
 | --- | --- |
-| `smoke` | Launcher shell, hidden WebView visibility/quiet geometry, pre-reveal paint handshake, 20 hide/show cycles, duplicate-exe activation handoff, direct Navigate input, mode bar, Tab mode switch, clipboard surface |
+| `smoke` | Launcher shell, hidden WebView visibility/quiet geometry, pre-reveal paint handshake, 20 hide/show cycles, duplicate-exe activation handoff, Shift+Enter admin launch request, direct Navigate input, mode bar, Tab mode switch, clipboard surface |
 | `settings` | Lazy first creation with renderer/plugin-manifest ready gate, native bundle taskbar icon, warm-neutral light surfaces, accent-following autosave feedback, cross-window launcher focus recovery, warm Search/About/Plugins panes, idle destroy/rebuild, navigation, command search, launcher color/opacity save + reset, index actions/opt-in, Navigate IME opt-in, clipboard pane, ten close/reopen cycles |
 | `plugin-runtime` | API 2 keyword entry, Presenter readiness, strict CSP and sandbox |
 | `clipboard-ui` | History/empty surface, categories, row artwork, pause acknowledgement, clear confirmation |

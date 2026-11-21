@@ -75,6 +75,24 @@ All notable changes to Lume are documented here. Format based on
   字段同步为仓库 `LICENSE` / README 已声明的 `Apache-2.0`。真实 UAC 安装/升级/卸载按
   `docs/MANUAL_TESTING.md` 手工验收。
 ### Fixed
+- **Shift+Enter 管理员启动回归（2026-11-21）** — Page Runtime 迁移后，Navigate
+  的页面级 `onKey` 抢先把 `Enter` 转成普通激活，绕过了外壳负责的
+  `appearance.shift_enter_admin` 判定；其 `ModeInstance.activate(opts)` 也没有把
+  `elevated` 继续传给页面服务。现在 `Shift+Enter` 交还窗口级路由，普通 `Enter`
+  继续使用同一套带可见条目夹取的激活路径，页面适配器把提权请求原样传到
+  `launch_app`。搜索/固定栏启动统一经过 debug-only 可观测的 Navigate 启动适配器，
+  release 构建始终直接调用 Tauri 命令；构建前契约检查固定这条链路。验证：
+  `pnpm verify:fast` PASS（docs 15、TypeScript、i18n 649×3、Page Runtime 19、
+  clipboard model 16/16、clipboard store 8/8、skin 17/17、前端生产构建、Rust
+  **302 passed / 9 ignored**）；`pnpm verify:ui --suite smoke,plugin-runtime`
+  PASS（smoke **33/33** 10.6s、plugin-runtime **14/14** 7.5s，产物
+  `test/verify/2026-11-21T15-32-27-150Z/summary.json`）；
+  `pnpm verify:release` PASS（7 个 UI 套件 **136/136**、release-core 遗留套件
+  PASS、Clippy 既有 4 条 warning、release 构建完成，产物
+  `test/verify/2026-11-21T15-47-57-264Z/summary.json`），实测选中
+  `C:\Windows\System32\cmd.exe` 后 `Shift+Enter` 请求
+  `{"path":"C:\\Windows\\System32\\cmd.exe","name":"cmd.exe","elevated":true}`，
+  测试钩子阻断真实 UAC；真实管理员进程仍需按 `docs/MANUAL_TESTING.md` 验收。
 - **设置窗任务栏图标、浅色暖中性面板与自动保存强调（2026-11-15）** — 设置窗
   任务栏按钮改用 exe 内嵌的圆角 bundle 图标，不再使用透明底品牌标记；主窗/预览窗
   仍保持深浅主题图标。浅色 Quiet 由冷灰画布和纯白面板改为暖米白层次：画布

@@ -103,6 +103,7 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
   reset: () => void;
   onKey: (e: KeyboardEvent, ctx: ModeKeyContext, layout?: "grid" | "list") => boolean;
   openContextMenu: () => boolean;
+  activateSelected: (elevated?: boolean, layout?: "grid" | "list") => void;
   applySettings: (s: unknown) => void;
 } {
   const nav = createNavigateStore({
@@ -264,6 +265,24 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
       return;
     }
     search.activate({ elevated });
+  }
+
+  /** Activate the visible selection through the same clamped target used by
+   * keyboard navigation. The shell calls this for Shift+Enter after its own
+   * settings-aware elevation decision, so `elevated` must cross this adapter. */
+  function activateSelected(elevated = false, layout: "grid" | "list" = "grid"): void {
+    const section = nav.activeSection();
+    if (section) {
+      const index = layout === "list" && section.expandable && !section.expanded()
+        ? 0
+        : nav.activateIndex(section);
+      const item = section.items[index];
+      if (item) void activateTarget({ kind: "bar", section, index, item }, elevated);
+      return;
+    }
+    const index = search.selected();
+    const item = search.apps()[index];
+    if (item) void activateTarget({ kind: "result", index, app: item }, elevated);
   }
 
   function targetApp(target: NavigateTarget): AppEntry | null {
@@ -509,19 +528,12 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
       return true;
     }
     if (e.key === "Enter") {
+      // Shift+Enter belongs to the shell: it owns the appearance setting and
+      // forwards the resulting elevation request through ModeInstance.activate.
+      if (e.shiftKey) return false;
       if (ctx.hasResults) {
         e.preventDefault();
-        const section = nav.activeSection();
-        if (section) {
-          const index = layout === "list" && section.expandable && !section.expanded()
-            ? 0
-            : nav.activateIndex(section);
-          const item = section.items[index];
-          if (item) void activateTarget({ kind: "bar", section, index, item });
-        } else {
-          const item = search.apps()[search.selected()];
-          if (item) void activateTarget({ kind: "result", index: search.selected(), app: item });
-        }
+        activateSelected(false, layout);
         return true;
       }
       return false;
@@ -580,6 +592,7 @@ export function createNavigatePageService(deps: NavigatePageDeps): {
     reset,
     onKey,
     openContextMenu,
+    activateSelected,
     applySettings: () => {},
   };
 }

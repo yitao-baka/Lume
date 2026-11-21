@@ -30,6 +30,7 @@ import {
 } from "../registry";
 import type { NavigateStore } from "./store";
 import { sanitizeProviderRows } from "../contributionBudget";
+import { invokeLaunchApp } from "./launch";
 
 export interface NavigateSearchDeps {
   /** This page's own mode id ("apps") — activity checks against `services.mode()`. */
@@ -468,7 +469,7 @@ export function createNavigateSearch(deps: NavigateSearchDeps) {
       return;
     }
     try {
-      await invoke("launch_app", { path: item.path, name: item.name, elevated });
+      await invokeLaunchApp(item.path, item.name, elevated);
       services.resetAndHide();
     } catch (err) {
       if (String(err).includes("canceled")) {

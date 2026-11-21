@@ -133,6 +133,37 @@ export default {
       visibleLaunch,
     );
 
+    await t.setQuery("cmd");
+    const adminProbeReady = await t.waitFor(
+      '!!document.querySelector(".mode-host.active .result-grid [data-target-id]")',
+      10000,
+    );
+    t.check("Navigate exposes a result for the Shift+Enter launch probe", adminProbeReady);
+    const adminProbeInstalled = await t.evaluate(`(() => {
+      window.__lumeAdminLaunchCalls = [];
+      window.__LUME_TEST_LAUNCH_APP__ = (request) => {
+        window.__lumeAdminLaunchCalls.push(request);
+        return new Promise(() => {});
+      };
+      return typeof window.__LUME_TEST_LAUNCH_APP__ === "function";
+    })()`);
+    t.check("debug launch probe installs", adminProbeInstalled);
+    await t.evaluate(
+      'window.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", shiftKey: true, bubbles: true, cancelable: true }))',
+    );
+    const adminLaunch = await t.waitFor('window.__lumeAdminLaunchCalls?.[0] ?? null', 3000);
+    t.check(
+      "Shift+Enter carries the administrator request into launch_app",
+      adminLaunch?.elevated === true,
+      adminLaunch,
+    );
+    await t.evaluate(`(() => {
+      delete window.__LUME_TEST_LAUNCH_APP__;
+      delete window.__lumeAdminLaunchCalls;
+      return true;
+    })()`);
+    await t.setQuery("");
+
     await t.setQuery("lume");
     t.equal("search input accepts text", await t.evaluate('document.getElementById("search-input").value'), "lume");
     await t.screenshot("launcher-search");

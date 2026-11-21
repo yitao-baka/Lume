@@ -1413,55 +1413,74 @@ fn read_custom_png_image() -> Option<Vec<u8>> {
             return None;
         }
         let _guard = OpenClipboardGuard;
-        let mut found: Option<Vec<u8>> = None;
-        let mut fmt: u32 = 0;
-        loop {
-            fmt = EnumClipboardFormats(fmt);
-            if fmt == 0 {
+        read_custom_png_image_locked()
+    }
+}
+
+/// Accept a custom clipboard format whose registered name identifies PNG data.
+/// Already-encoded PNG bytes pass through; another image encoding is normalized
+/// to PNG so the history pipeline receives one representation.
+fn png_from_custom_format(name: &str, bytes: &[u8]) -> Option<Vec<u8>> {
+    let name = name.to_lowercase();
+    if !(name.contains("png") || name.contains("image/png")) {
+        return None;
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return Some(bytes.to_vec());
+    }
+    let img = decode_image_bounded(bytes).ok()?;
+    let mut out = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut out),
+        image::ImageFormat::Png,
+    )
+    .ok()?;
+    Some(out)
+}
+
+/// Read the custom PNG while the caller owns the open clipboard. Splitting
+/// this from the open/close wrapper keeps the format-decoding path testable
+/// without mutating the shared system clipboard.
+///
+/// # Safety
+/// The caller must hold the Windows clipboard open for the duration of the
+/// call.
+unsafe fn read_custom_png_image_locked() -> Option<Vec<u8>> {
+    let mut found: Option<Vec<u8>> = None;
+    let mut fmt: u32 = 0;
+    loop {
+        fmt = EnumClipboardFormats(fmt);
+        if fmt == 0 {
+            break;
+        }
+        if fmt == CF_HDROP {
+            continue; // handled by the file branch
+        }
+        let mut name = [0u16; 80];
+        let n = GetClipboardFormatNameW(fmt, &mut name);
+        if n <= 0 {
+            continue; // system format without a name — not a custom image
+        }
+        let nm = String::from_utf16_lossy(&name[..n as usize]).to_lowercase();
+        if !(nm.contains("png") || nm.contains("image/png")) {
+            continue;
+        }
+        if let Ok(handle) = GetClipboardData(fmt) {
+            let ptr = GlobalLock(HGLOBAL(handle.0));
+            if !ptr.is_null() {
+                let size = GlobalSize(HGLOBAL(handle.0));
+                if size > 0 && size <= MAX_CLIPBOARD_IMAGE_BYTES {
+                    let bytes = std::slice::from_raw_parts(ptr as *const u8, size);
+                    found = png_from_custom_format(&nm, bytes);
+                }
+                let _ = GlobalUnlock(HGLOBAL(handle.0));
+            }
+            if found.is_some() {
                 break;
             }
-            if fmt == CF_HDROP {
-                continue; // handled by the file branch
-            }
-            let mut name = [0u16; 80];
-            let n = GetClipboardFormatNameW(fmt, &mut name);
-            if n <= 0 {
-                continue; // system format without a name — not a custom image
-            }
-            let nm = String::from_utf16_lossy(&name[..n as usize]).to_lowercase();
-            if !(nm.contains("png") || nm.contains("image/png")) {
-                continue;
-            }
-            if let Ok(handle) = GetClipboardData(fmt) {
-                let ptr = GlobalLock(HGLOBAL(handle.0));
-                if !ptr.is_null() {
-                    let size = GlobalSize(HGLOBAL(handle.0));
-                    if size > 0 && size <= MAX_CLIPBOARD_IMAGE_BYTES {
-                        let bytes = std::slice::from_raw_parts(ptr as *const u8, size).to_vec();
-                        if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-                            found = Some(bytes);
-                        } else if let Ok(img) = decode_image_bounded(&bytes) {
-                            let mut buf = Vec::new();
-                            if img
-                                .write_to(
-                                    &mut std::io::Cursor::new(&mut buf),
-                                    image::ImageFormat::Png,
-                                )
-                                .is_ok()
-                            {
-                                found = Some(buf);
-                            }
-                        }
-                    }
-                    let _ = GlobalUnlock(HGLOBAL(handle.0));
-                }
-                if found.is_some() {
-                    break;
-                }
-            }
         }
-        found
     }
+    found
 }
 
 /// Read a CF_HDROP file list from the clipboard (files/folders copied from
@@ -3073,36 +3092,13 @@ mod tests {
     }
 
     #[test]
-    fn read_custom_png_finds_png_format() {
-        let _guard = CLIPBOARD_LOCK.lock().unwrap();
-        use windows::Win32::System::DataExchange::{
-            CloseClipboard, EmptyClipboard, RegisterClipboardFormatW, SetClipboardData,
-        };
-        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-        unsafe {
-            let data = sample_png();
-            let fmt = RegisterClipboardFormatW(windows::core::w!("PNG"));
-            assert!(fmt != 0, "register PNG format");
-            if OpenClipboard(None).is_err() {
-                eprintln!("clipboard busy — skipping");
-                return;
-            }
-            assert!(EmptyClipboard().is_ok());
-            let h = GlobalAlloc(GMEM_MOVEABLE, data.len()).unwrap();
-            let ptr = GlobalLock(h);
-            assert!(!ptr.is_null());
-            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, data.len());
-            let _ = GlobalUnlock(h);
-            let res = SetClipboardData(fmt, Some(HANDLE(h.0 as _)));
-            assert!(res.is_ok(), "SetClipboardData: {res:?}");
-            let _ = CloseClipboard();
-            if res.is_err() {
-                let _ = GlobalFree(Some(h));
-            }
-        }
-        let got = read_custom_png_image();
-        assert!(got.is_some(), "fallback should read the custom PNG format");
-        assert!(got.unwrap().starts_with(&[0x89, b'P', b'N', b'G']));
+    fn custom_png_format_rejects_unrelated_names_and_keeps_png_bytes() {
+        let data = sample_png();
+        let got = png_from_custom_format("PNG", &data)
+            .expect("PNG-registered format should yield PNG bytes");
+        assert_eq!(got, data);
+        assert!(png_from_custom_format("HTML Format", &data).is_none());
+        assert!(png_from_custom_format("PNG", b"not an image").is_none());
     }
 
     /// A disabled merge config — most tests don't exercise auto-merge.

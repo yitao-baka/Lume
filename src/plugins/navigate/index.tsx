@@ -81,6 +81,8 @@ export function createNavigatePlugin(
     const section = page.store.activeSection();
     return section ? section.selected() : page.search.selected();
   };
+  const layout = (): "grid" | "list" =>
+    presenterId() === "navigate-list" ? "list" : "grid";
 
   const instance: ModeInstance = {
     query: page.search.appsQuery,
@@ -104,13 +106,11 @@ export function createNavigatePlugin(
       page.store.setNavHidden(false);
     },
     rows,
-    activate: () => {
-      const id = model()?.selection?.primaryId;
-      if (id) void session.dispatch({ type: "item.activate", targetId: id });
+    activate: (opts) => {
+      page.activateSelected(opts?.elevated === true, layout());
     },
     handleQuery: page.search.handleQuery,
-    onKey: (event: KeyboardEvent, ctx: ModeKeyContext) =>
-      page.onKey(event, ctx, presenterId() === "navigate-list" ? "list" : "grid"),
+    onKey: (event: KeyboardEvent, ctx: ModeKeyContext) => page.onKey(event, ctx, layout()),
     openContextMenu: page.openContextMenu,
     onEscape: () => page.search.popDrill(),
     // Navigate's fit height is data-driven (`page.store` / `search` schedule a

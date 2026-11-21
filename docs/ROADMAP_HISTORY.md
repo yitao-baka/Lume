@@ -1,6 +1,6 @@
 # Roadmap History — Lume 历史决策与迭代记录
 
-> 归档说明：本文保存 Lume 路线图 #0–#98 的原始条目、日期、验证记录与踩坑判据，
+> 归档说明：本文保存 Lume 路线图 #0–#113 的原始条目、日期、验证记录与踩坑判据，
 > 是历史决策与迭代详情的唯一归档（编号不变，引用形如 #22）。
 > 现状以代码与 `docs/ARCHITECTURE.md`、`docs/PLUGIN_API.md`、`docs/SETTINGS.md`、
 > `CHANGELOG.md` 为准；未来的开放事项见 `docs/ROADMAP.md`。
@@ -6811,3 +6811,58 @@ MicaSetup 的“保留我的数据”只决定安装目录是否递归删除，�
 - 真实 UAC 下的保留/彻底卸载、Credential Manager 条目、共享 WebView2 profile、
   自启注册和锁文件重启后删除保留在 `docs/MANUAL_TESTING.md` 的 MicaSetup
   安装器清单。
+
+## 113. Navigate Shift+Enter 管理员启动回归（2026-11-21）
+
+### 113.1 背景
+
+用户反馈启动器内 `Shift+Enter` 以管理员身份启动失效。页面运行时迁移后，
+Navigate 的 `onKey` 在页面层消费 `Enter` 并以默认参数执行激活，窗口级路由器
+没有机会应用 `appearance.shift_enter_admin`；即使走到通用回退，
+`ModeInstance.activate(opts)` 也没有把 `elevated` 传给 Navigate Page Service。
+
+### 113.2 实现
+
+- Navigate 只消费普通 `Enter`；带 `Shift` 的 Enter 返回 `false`，由窗口级路由
+  读取设置并调用 `ModeInstance.activate({ elevated })`。
+- Navigate Page Service 统一通过 `activateSelected(elevated)` 解析当前可见、
+  已夹取的栏位或结果目标，普通 Enter 与提权回退共用该路径。
+- Navigate 的 `ModeInstance.activate` 把 `opts.elevated` 原样传入页面服务；
+  搜索结果和固定/最近栏都经同一个启动适配器调用 `launch_app`。
+- 启动适配器在 debug 构建提供 `__LUME_TEST_LAUNCH_APP__` 观测钩子；release
+  构建始终直接调用 Tauri 命令。`check_plugin_contract.mjs` 固定
+  `Shift+Enter -> ModeInstance.activate -> activateSelected -> launch_app`
+  的参数链路。
+
+### 113.3 踩坑
+
+- `window.__TAURI_INTERNALS__.invoke` 在 WebView2 中是不可配置、不可写属性，
+  CDP 不能用替换函数的方式截获 `launch_app`；直接触发会进入真实 `runas` 和
+  UAC，不能作为自动回归。
+- `Shift+Enter` 的提权策略属于窗口级设置，不应由每个页面的 `onKey` 各自判断；
+  页面只在自身需要时消费普通 Enter。
+- 页面适配器不能只发出不带上下文的标准 intent：`ModeInstance.activate`
+  收到的提权参数必须显式穿过页面服务，否则 UI 看起来正常但参数在边界丢失。
+- 系统剪贴板是进程间共享状态，自定义 PNG 单测不能可靠地写入真实剪贴板再断言。
+  读取逻辑拆成“打开剪贴板入口 + 持锁枚举”和纯格式名/字节解码两层；单测只覆盖
+  后者，生产入口仍执行完整枚举，不再让 `cargo test` 依赖其它进程的剪贴板占用。
+
+### 113.4 验证
+
+- `pnpm verify:ui --suite smoke,plugin-runtime` PASS：smoke **33/33**（10.6s）、
+  plugin-runtime **14/14**（7.5s），产物
+  `test/verify/2026-11-21T15-32-27-150Z/summary.json`。
+- `pnpm verify:release` PASS：7 个 UI 套件 **136/136**、release-core 遗留套件
+  PASS、Clippy 既有 4 条 warning、release 构建完成，产物
+  `test/verify/2026-11-21T15-47-57-264Z/summary.json`。
+- 新增 smoke 断言选中 `C:\Windows\System32\cmd.exe` 后发送 `Shift+Enter`，
+  debug 启动钩子收到
+  `{"path":"C:\\Windows\\System32\\cmd.exe","name":"cmd.exe","elevated":true}`；
+  测试不启动真实进程，也不弹出 UAC。
+- `pnpm verify:fast` PASS：docs 15、TypeScript、i18n 649×3、toast 12/12、
+  Page Runtime 19、clipboard model 16/16、clipboard store 8/8、skin 17/17、
+  前端生产构建、Rust **302 passed / 9 ignored**。
+- `cargo test --lib --quiet` 连续 3 次 PASS **302 passed / 9 ignored**，覆盖修正后
+  的自定义 PNG 剪贴板读取测试。
+- 真实 UAC 下的管理员进程确认仍按 `docs/MANUAL_TESTING.md` 执行，自动测试只
+  覆盖到 `launch_app` 的 `elevated: true` 参数边界。

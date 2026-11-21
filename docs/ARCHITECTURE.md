@@ -783,7 +783,11 @@ before adding a field:
     Page Service to the grid/list Presenters while preserving bar expansion,
     keyboard/mouse selection, context menus and pinned drag reorder. The list
     Presenter uses linear ↑/↓ movement and clamps a collapsed section to its
-    one visible row; the grid keeps two-dimensional arrow movement.
+    one visible row; the grid keeps two-dimensional arrow movement. Plain
+    Enter activates the clamped visible target inside the page; Shift+Enter is
+    left to the shell so `appearance.shift_enter_admin` is applied before
+    `ModeInstance.activate` forwards the elevation request to the Navigate
+    Page Service and its launch adapter.
   - `clipboard/` — the clipboard-history contribution. Its `index.tsx`
     joins the clipboard Page Service to the history/compact Presenters and
     retains the settings, modal and keyboard lifecycle exposed by

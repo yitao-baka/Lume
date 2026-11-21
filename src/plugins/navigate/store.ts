@@ -14,6 +14,7 @@ import { t } from "../../i18n";
 import copyIcon from "../../../res/icons/copy.svg";
 import runIcon from "../../../res/icons/normal_run.svg";
 import type { AppEntry, MenuState, PluginIconSpec } from "../../launcher/types";
+import { invokeLaunchApp } from "./launch";
 
 export interface NavigateDeps {
   /** Settings: show the 「最近使用」 bar (display-only toggle). */
@@ -562,7 +563,7 @@ export function createNavigateStore(deps: NavigateDeps) {
   async function launchApp(app: AppEntry, elevated = false) {
     deps.markEntryOpened(); // 打开条目 → 首页下次呼出清查询（#40）
     try {
-      await invoke("launch_app", { path: app.path, name: app.name, elevated });
+      await invokeLaunchApp(app.path, app.name, elevated);
       deps.resetAndHide();
     } catch (err) {
       if (String(err).includes("canceled")) {

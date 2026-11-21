@@ -25,8 +25,11 @@ const registry = read("src/plugins/registry.ts");
 const iconSpec = read("src/launcher/iconSpec.ts");
 const presenterHost = read("src/page-runtime/presenterHost.ts");
 const clipboardService = read("src/page-services/clipboard/service.ts");
+const navigateService = read("src/page-services/navigate/service.ts");
+const navigatePlugin = read("src/plugins/navigate/index.tsx");
 const navigateSearch = read("src/plugins/navigate/search.ts");
 const navigateStore = read("src/plugins/navigate/store.ts");
+const navigateLaunch = read("src/plugins/navigate/launch.ts");
 const pageRuntime = read("src/plugins/pageRuntimeMode.tsx");
 const presenterBridge = read("src/page-runtime/presenterBridge.tsx");
 const hostApi = read("src/plugins/hostApi.ts");
@@ -47,6 +50,13 @@ check(iconSpec.includes("/^https?:/i.test(icon)"), "icon resolver does not rejec
 check(presenterHost.includes("mountGeneration"), "PresenterHost has no mount generation guard");
 check(clipboardService.includes("isInteractiveKeyTarget"), "clipboard Space handling does not exclude controls");
 check(navigateSearch.includes("asyncGeneration"), "Navigate provider work has no local generation guard");
+check(
+  navigateService.includes("if (e.shiftKey) return false") &&
+    navigateService.includes("activateSelected(elevated = false, layout") &&
+    navigatePlugin.includes("page.activateSelected(opts?.elevated === true, layout())") &&
+    navigateService.includes("activateSelected(false, layout)"),
+  "Navigate Shift+Enter elevation is dropped before launch_app",
+);
 check(contract.pageService?.startupEventsQueued === true, "Page Service startup events must queue");
 check(pageRuntime.includes("flushPendingLifecycle"), "Page Service lifecycle flush is missing");
 check(contract.presenter?.passwordValuesRedacted === true, "Presenter password redaction contract drifted");
@@ -68,7 +78,9 @@ check(
   "plugin app.openPath must not call the Navigate recent-open chokepoint",
 );
 check(
-  navigateSearch.includes('invoke("launch_app"') && navigateStore.includes('invoke("launch_app"'),
+  navigateLaunch.includes('invoke<LaunchAppOutcome>("launch_app"') &&
+    navigateSearch.includes("invokeLaunchApp(") &&
+    navigateStore.includes("invokeLaunchApp("),
   "Navigate launches must keep recording through launch_app",
 );
 const openPathStart = rustApps.indexOf("pub fn open_path(");
